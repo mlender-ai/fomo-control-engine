@@ -6,16 +6,20 @@
     "dev": "next dev",
     "start": "next start",
     "build": "next build",
-    "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "astryx": "node node_modules/@astryxdesign/cli/bin/astryx.mjs"
   },
   "dependencies": {
+    "@astryxdesign/core": "^0.1.2",
+    "@astryxdesign/theme-neutral": "^0.1.2",
     "lucide-react": "^0.468.0",
     "next": "^16.2.10",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "devDependencies": {
+    "@astryxdesign/cli": "^0.1.2",
     "@types/node": "^22.10.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",

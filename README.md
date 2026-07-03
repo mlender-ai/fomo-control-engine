@@ -13,7 +13,7 @@ FOMO Control Engine is a personal trading decision engine. It does not place tra
 - Shadow Account extraction from completed trades
 - Liquidation Intelligence proxy analysis from score/OI/funding context
 - Validation Lab with Monte Carlo, Bootstrap Sharpe CI, and Walk Forward checks
-- Next.js dashboard for market summary, ticker detail, open positions, trade journal, research runs, shadow journal, and validation lab
+- Astryx-based Next.js terminal dashboard for market summary, ticker detail, research runs, positions, journal, shadow account, validation lab, and settings
 - pytest coverage for scoring, reports, mock provider, persistence, position flow, research runs, shadow extraction, liquidity analysis, validation, and memory
 
 ## Run Locally
@@ -35,6 +35,14 @@ NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8875 npm run dev -- -H 127.0.0.1 -p 88
 ```
 
 Open [http://127.0.0.1:8876](http://127.0.0.1:8876).
+
+Production-style dashboard check:
+
+```bash
+cd dashboard
+npm run build
+NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8875 npm run start -- -H 127.0.0.1 -p 8876
+```
 
 ## Configuration
 
@@ -88,8 +96,16 @@ cd backend
 python3 -m pytest
 
 cd ../dashboard
+npm run lint
 npm run typecheck
 npm run build
+```
+
+Astryx component reference:
+
+```bash
+cd dashboard
+npm run astryx -- component --list --detail brief
 ```
 
 ## Safety Principles
@@ -99,3 +115,15 @@ npm run build
 - No automatic buy or sell execution is included.
 - Scores are deterministic. LLM usage, when added later, must only transform computed JSON into natural language.
 - Agent outputs explain a fixed score snapshot. They do not recalculate price, score, or order intent.
+
+## Design Notes
+
+- Dashboard implementation uses Astryx packages for accessible shell, navigation, command palette, badges, status dots, tables, keyboard hints, and theme structure.
+- The visual direction is terminal-style information density and multi-panel scanning. It does not copy Bloomberg Terminal branding, proprietary screens, logo, colors, text, or layout.
+- Keyboard workflow: `Cmd/Ctrl+K` or `/` opens the command palette. `G` then `D/R/P/J/S/V` routes to Dashboard, Research, Positions, Journal, Shadow, and Validation.
+
+See:
+
+- `docs/UXUIDesignSystem.md`
+- `docs/AstryxIntegration.md`
+- `docs/TerminalUX.md`

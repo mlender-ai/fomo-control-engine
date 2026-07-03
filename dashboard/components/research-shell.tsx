@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Play, RefreshCw } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
+import { TerminalMetric, TerminalPanel, TerminalScoreBadge, TerminalTable, TerminalWarning } from "@/components/terminal";
 import { api, type DecisionMemory, type ResearchRun } from "@/lib/api";
 
 export function ResearchShell() {
@@ -10,6 +11,7 @@ export function ResearchShell() {
   const [memories, setMemories] = useState<DecisionMemory[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -32,18 +34,24 @@ export function ResearchShell() {
   async function createRun(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
+    setCreating(true);
     setError("");
     try {
-      await api.createResearchRun({
+      const result = await api.createResearchRun({
         symbol: String(form.get("symbol") || "BTCUSDT").toUpperCase(),
         timeframe: String(form.get("timeframe") || "4h")
       });
       event.currentTarget.reset();
       await load();
+      window.location.href = `/research/${result.research_run_id}`;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create research run");
+    } finally {
+      setCreating(false);
     }
   }
+
+  const latest = runs[0];
 
   return (
     <div className="page">
@@ -51,18 +59,24 @@ export function ResearchShell() {
         <div>
           <p className="eyebrow">Agentic Research</p>
           <h1>Research Runs</h1>
-          <p className="subtle">동일 snapshot을 7개 관점으로 검토합니다. 매수/매도 지시가 아닙니다.</p>
+          <p className="subtle">동일 market snapshot을 Bull, Bear, Risk Guardian, FOMO Gatekeeper 관점에서 검토합니다.</p>
         </div>
         <button className="button secondary" onClick={load} disabled={loading}>
           <RefreshCw size={16} />
           Refresh
         </button>
       </header>
-      {error ? <div className="panel dangerText">{error}</div> : null}
-      <section className="panel">
-        <div className="panelHeader">
-          <h2>Create Research Run</h2>
-        </div>
+
+      {error ? <TerminalWarning tone="error">{error}</TerminalWarning> : null}
+
+      <section className="grid four">
+        <TerminalMetric label="Total Runs" value={runs.length} tone="info" />
+        <TerminalMetric label="Latest Symbol" value={latest?.symbol ?? "-"} delta={latest?.timeframe?.toUpperCase() ?? "No run"} tone="agent" />
+        <TerminalMetric label="Latest Entry" value={latest?.entry_score ?? "-"} tone="positive" />
+        <TerminalMetric label="Decision Memories" value={memories.length} tone="warning" />
+      </section>
+
+      <TerminalPanel title="Create Research Run" subtitle="No order intent is generated; this is a pre-trade review record" status="accent">
         <form className="formGrid" onSubmit={createRun}>
           <input name="symbol" placeholder="BTCUSDT" required />
           <select name="timeframe" defaultValue="4h">
@@ -70,86 +84,64 @@ export function ResearchShell() {
             <option value="4h">4H</option>
             <option value="1d">1D</option>
           </select>
-          <button className="button" type="submit">
+          <button className="button" type="submit" disabled={creating}>
             <Play size={16} />
-            Run Review
+            {creating ? "Running" : "Run Review"}
           </button>
         </form>
-      </section>
-      <section className="panel">
-        <div className="panelHeader">
-          <h2>Timeline</h2>
-        </div>
+      </TerminalPanel>
+
+      <TerminalPanel title="Research Timeline" subtitle="Stored report tree and final FOMO gate label" status={runs.length ? "ok" : "neutral"}>
         {loading ? (
-          <div className="empty">Loading research runs...</div>
-        ) : runs.length ? (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Symbol</th>
-                <th>Score</th>
-                <th>FOMO</th>
-                <th>Final Label</th>
-                <th>Bull</th>
-                <th>Bear</th>
-                <th>Created</th>
-              </tr>
-            </thead>
-            <tbody>
-              {runs.map((run) => (
-                <tr key={run.research_run_id}>
-                  <td>
-                    <Link href={`/research/${run.research_run_id}`}>
-                      <strong>{run.symbol}</strong>
-                    </Link>
-                  </td>
-                  <td>{run.entry_score}</td>
-                  <td>{run.fomo_index}</td>
-                  <td>{run.final_action_label}</td>
-                  <td>{agentConfidence(run, "bull_researcher")}</td>
-                  <td>{agentConfidence(run, "bear_researcher")}</td>
-                  <td>{new Date(run.created_at).toLocaleString()}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="terminalEmpty">Loading research runs...</div>
         ) : (
-          <div className="empty">No research runs yet</div>
+          <TerminalTable<ResearchRun>
+            data={runs}
+            idKey="research_run_id"
+            emptyLabel="No research runs yet"
+            columns={[
+              {
+                key: "symbol",
+                header: "Symbol",
+                width: 120,
+                render: (run) => (
+                  <Link href={`/research/${run.research_run_id}`}>
+                    <strong>{run.symbol}</strong>
+                  </Link>
+                )
+              },
+              { key: "timeframe", header: "TF", width: 70, render: (run) => run.timeframe.toUpperCase() },
+              { key: "entry_score", header: "Entry", align: "center", render: (run) => <TerminalScoreBadge score={run.entry_score} type="entry" /> },
+              { key: "fomo_index", header: "FOMO", align: "center", render: (run) => <TerminalScoreBadge score={run.fomo_index} type="fomo" /> },
+              { key: "bull", header: "Bull", align: "center", render: (run) => agentConfidence(run, "bull_researcher") },
+              { key: "bear", header: "Bear", align: "center", render: (run) => agentConfidence(run, "bear_researcher") },
+              { key: "risk", header: "Risk", align: "center", render: (run) => agentConfidence(run, "risk_guardian") },
+              { key: "final_action_label", header: "Gatekeeper", render: (run) => run.final_action_label },
+              { key: "created_at", header: "Created", render: (run) => new Date(run.created_at).toLocaleString() }
+            ]}
+          />
         )}
-      </section>
-      <section className="panel">
-        <div className="panelHeader">
-          <h2>Decision Memory</h2>
-        </div>
-        {memories.length ? (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Symbol</th>
-                <th>Type</th>
-                <th>Summary</th>
-                <th>Weight</th>
-              </tr>
-            </thead>
-            <tbody>
-              {memories.slice(0, 8).map((memory) => (
-                <tr key={memory.id}>
-                  <td>{memory.symbol ?? "global"}</td>
-                  <td>{memory.memory_type}</td>
-                  <td>{memory.summary}</td>
-                  <td>{memory.weight}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : (
-          <div className="empty">No decision memory yet</div>
-        )}
-      </section>
+      </TerminalPanel>
+
+      <TerminalPanel title="Decision Memory" subtitle="Evidence-backed memory connected to reports and trades" status={memories.length ? "ok" : "neutral"}>
+        <TerminalTable<DecisionMemory>
+          data={memories.slice(0, 12)}
+          idKey="id"
+          emptyLabel="No decision memory yet"
+          columns={[
+            { key: "symbol", header: "Symbol", width: 120, render: (memory) => memory.symbol ?? "GLOBAL" },
+            { key: "memory_type", header: "Type", width: 150, render: (memory) => memory.memory_type },
+            { key: "summary", header: "Summary", render: (memory) => memory.summary },
+            { key: "weight", header: "Weight", align: "end", width: 90, render: (memory) => memory.weight },
+            { key: "created_at", header: "Created", render: (memory) => new Date(memory.created_at).toLocaleString() }
+          ]}
+        />
+      </TerminalPanel>
     </div>
   );
 }
 
 function agentConfidence(run: ResearchRun, agent: string) {
-  return run.agents.find((item) => item.agent === agent)?.confidence ?? "-";
+  const value = run.agents.find((item) => item.agent === agent)?.confidence;
+  return value === undefined ? "-" : Math.round(value);
 }

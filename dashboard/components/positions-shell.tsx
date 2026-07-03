@@ -1,7 +1,8 @@
 "use client";
 
-import { Activity, LogOut, Plus } from "lucide-react";
-import { FormEvent, useEffect, useState } from "react";
+import { Activity, LogOut, Plus, RefreshCw } from "lucide-react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import { TerminalMetric, TerminalPanel, TerminalTable, TerminalWarning } from "@/components/terminal";
 import { api, type Position } from "@/lib/api";
 import { formatPrice, signedPercent } from "@/lib/format";
 
@@ -60,23 +61,33 @@ export function PositionsShell() {
     }
   }
 
-  async function exit(position: Position) {
-    const exitPrice = position.current_price ?? position.entry_price;
+  async function recordExit(position: Position) {
+    const exitPrice = position.current_price ?? position.mark_price ?? position.entry_price;
     setBusyId(position.id);
     setError("");
     try {
       await api.exit(position.id, {
         exit_price: exitPrice,
-        exit_reason: "대시보드에서 수동 청산 기록",
-        memo: ""
+        exit_reason: "대시보드에서 내부 청산 기록",
+        memo: "Read-only 기록 업데이트이며 거래소 주문이 아닙니다."
       });
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to exit position");
+      setError(err instanceof Error ? err.message : "Failed to record exit");
     } finally {
       setBusyId("");
     }
   }
+
+  const openPositions = useMemo(() => positions.filter((position) => position.status === "open"), [positions]);
+  const totalUnrealized = useMemo(
+    () => positions.reduce((sum, position) => sum + (position.unrealized_pl ?? 0), 0),
+    [positions]
+  );
+  const maxRisk = useMemo(
+    () => Math.max(0, ...positions.map((position) => position.margin_ratio ?? 0)),
+    [positions]
+  );
 
   return (
     <div className="page">
@@ -84,16 +95,24 @@ export function PositionsShell() {
         <div>
           <p className="eyebrow">Position tracking</p>
           <h1>Positions</h1>
-          <p className="subtle">진입 기록을 저장하고 현재 점수 변화와 PnL을 점검합니다.</p>
+          <p className="subtle">거래소 read-only position sync와 수동 진입 기록을 한 화면에서 추적합니다.</p>
         </div>
+        <button className="button secondary" onClick={load} disabled={loading}>
+          <RefreshCw size={16} />
+          Refresh
+        </button>
       </header>
 
-      {error ? <div className="panel dangerText">{error}</div> : null}
+      {error ? <TerminalWarning tone="error">{error}</TerminalWarning> : null}
 
-      <section className="panel">
-        <div className="panelHeader">
-          <h2>Manual Entry</h2>
-        </div>
+      <section className="grid four">
+        <TerminalMetric label="Open Positions" value={openPositions.length} tone={openPositions.length ? "warning" : "neutral"} />
+        <TerminalMetric label="Tracked Total" value={positions.length} tone="info" />
+        <TerminalMetric label="Unrealized PnL" value={`${totalUnrealized.toFixed(2)} USDT`} tone={totalUnrealized >= 0 ? "positive" : "negative"} />
+        <TerminalMetric label="Max Margin Ratio" value={maxRisk ? maxRisk.toFixed(4) : "-"} tone={maxRisk > 0.8 ? "negative" : "neutral"} />
+      </section>
+
+      <TerminalPanel title="Manual Entry Record" subtitle="Local journal input only; this does not submit an exchange order" status="accent">
         <form className="formGrid" onSubmit={createPosition}>
           <input name="symbol" placeholder="BTCUSDT" required />
           <select name="direction" defaultValue="long">
@@ -103,72 +122,54 @@ export function PositionsShell() {
           <input name="entry_price" type="number" step="0.0001" placeholder="Entry price" required />
           <input name="quantity" type="number" step="0.0001" placeholder="Quantity" required />
           <input name="leverage" type="number" step="0.1" defaultValue="1" min="1" />
-          <textarea name="memo" placeholder="진입 이유 또는 손절 기준" />
+          <textarea name="memo" placeholder="진입 이유, 무효화 기준, 감정 상태" />
           <button className="button" type="submit">
             <Plus size={16} />
-            Save Entry
+            Save Entry Record
           </button>
         </form>
-      </section>
+      </TerminalPanel>
 
-      <section className="panel">
-        <div className="panelHeader">
-          <h2>Position List</h2>
-        </div>
+      <TerminalPanel title="Position Monitor" subtitle="Monitor updates score and PnL; record exit only writes an internal journal row" status={openPositions.length ? "warning" : "neutral"}>
         {loading ? (
-          <div className="empty">Loading positions...</div>
-        ) : positions.length ? (
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Ticker</th>
-                <th>Side</th>
-                <th>Entry</th>
-                <th>Current</th>
-                <th>Leverage</th>
-                <th>Size</th>
-                <th>PnL</th>
-                <th>Liq.</th>
-                <th>Score</th>
-                <th>Status</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {positions.map((position) => (
-                <tr key={position.id}>
-                  <td>
-                    <strong>{position.symbol}</strong>
-                  </td>
-                  <td>{position.direction}</td>
-                  <td>{formatPrice(position.entry_price)}</td>
-                  <td>{position.mark_price ? formatPrice(position.mark_price) : position.current_price ? formatPrice(position.current_price) : "-"}</td>
-                  <td>{position.leverage}x</td>
-                  <td>{position.quantity}</td>
-                  <td className={position.pnl_percent >= 0 ? "successText" : "dangerText"}>{signedPercent(position.pnl_percent)}</td>
-                  <td>{position.liquidation_price ? formatPrice(position.liquidation_price) : "-"}</td>
-                  <td>
-                    {position.entry_score ?? "-"} → {position.current_score ?? "-"}
-                  </td>
-                  <td>{position.status} · {position.source}</td>
-                  <td>
-                    <button className="button secondary" onClick={() => monitor(position.id)} disabled={position.status !== "open" || busyId === position.id} title="Monitor">
-                      <Activity size={16} />
+          <div className="terminalEmpty">Loading positions...</div>
+        ) : (
+          <TerminalTable<Position>
+            data={positions}
+            idKey="id"
+            emptyLabel="No positions yet"
+            columns={[
+              { key: "symbol", header: "Ticker", width: 112, render: (position) => <strong>{position.symbol}</strong> },
+              { key: "direction", header: "Side", width: 76, render: (position) => position.direction.toUpperCase() },
+              { key: "entry_price", header: "Entry", align: "end", render: (position) => formatPrice(position.entry_price) },
+              { key: "mark_price", header: "Mark", align: "end", render: (position) => position.mark_price ? formatPrice(position.mark_price) : position.current_price ? formatPrice(position.current_price) : "-" },
+              { key: "leverage", header: "Lev", align: "end", width: 72, render: (position) => `${position.leverage}x` },
+              { key: "quantity", header: "Size", align: "end", render: (position) => position.quantity },
+              { key: "pnl_percent", header: "PnL", align: "end", render: (position) => <span className={position.pnl_percent >= 0 ? "successText" : "dangerText"}>{signedPercent(position.pnl_percent)}</span> },
+              { key: "liquidation_price", header: "Liq", align: "end", render: (position) => position.liquidation_price ? formatPrice(position.liquidation_price) : "-" },
+              { key: "score", header: "Score", render: (position) => `${position.entry_score ?? "-"} -> ${position.current_score ?? "-"}` },
+              { key: "status", header: "Status", render: (position) => `${position.status} · ${position.source}` },
+              {
+                key: "actions",
+                header: "Record",
+                width: 260,
+                render: (position) => (
+                  <div className="actionGroup">
+                    <button className="button secondary" onClick={() => monitor(position.id)} disabled={position.status !== "open" || busyId === position.id} title="Refresh monitoring snapshot">
+                      <Activity size={15} />
                       Monitor
-                    </button>{" "}
-                    <button className="button secondary" onClick={() => exit(position)} disabled={position.status !== "open" || busyId === position.id} title="Record Exit">
-                      <LogOut size={16} />
+                    </button>
+                    <button className="button secondary" onClick={() => recordExit(position)} disabled={position.status !== "open" || busyId === position.id} title="Record internal exit only">
+                      <LogOut size={15} />
                       Record Exit
                     </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : (
-          <div className="empty">No positions yet</div>
+                  </div>
+                )
+              }
+            ]}
+          />
         )}
-      </section>
+      </TerminalPanel>
     </div>
   );
 }

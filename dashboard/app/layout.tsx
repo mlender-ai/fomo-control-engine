@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
-import Link from "next/link";
-import { Activity, BookOpen, BriefcaseBusiness, FlaskConical, LayoutDashboard, Microscope, Orbit } from "lucide-react";
+import { TerminalShell } from "@/components/terminal";
+import { Providers } from "./providers";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -10,48 +10,11 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="ko">
+    <html lang="ko" data-theme="dark">
       <body>
-        <aside className="sidebar">
-          <Link href="/" className="brand" aria-label="FOMO Control Engine home">
-            <span className="brandMark">F</span>
-            <span>
-              <strong>FOMO Control</strong>
-              <small>Decision Engine</small>
-            </span>
-          </Link>
-          <nav className="nav">
-            <Link href="/">
-              <LayoutDashboard size={18} />
-              Dashboard
-            </Link>
-            <Link href="/positions">
-              <BriefcaseBusiness size={18} />
-              Positions
-            </Link>
-            <Link href="/research">
-              <Microscope size={18} />
-              Research
-            </Link>
-            <Link href="/shadow">
-              <Orbit size={18} />
-              Shadow
-            </Link>
-            <Link href="/validation">
-              <FlaskConical size={18} />
-              Validation
-            </Link>
-            <Link href="/journal">
-              <BookOpen size={18} />
-              Journal
-            </Link>
-          </nav>
-          <div className="sidebarStatus">
-            <Activity size={16} />
-            Read-only v0.4
-          </div>
-        </aside>
-        <main className="main">{children}</main>
+        <Providers>
+          <TerminalShell>{children}</TerminalShell>
+        </Providers>
       </body>
     </html>
   );
