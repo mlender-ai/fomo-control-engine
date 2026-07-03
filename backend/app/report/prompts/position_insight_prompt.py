@@ -45,3 +45,7 @@ POSITION_INSIGHT_PROMPT = """
 제 의견:
 {{매수/매도 단정 없이 포지션 점검 관점의 결론}}
 """
+
+
+def build_position_insight_prompt(position_state_json: str) -> str:
+    return POSITION_INSIGHT_PROMPT.replace("{{POSITION_STATE_JSON}}", position_state_json)

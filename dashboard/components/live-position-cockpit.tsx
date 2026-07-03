@@ -117,9 +117,9 @@ export function LivePositionCockpit() {
           positions: current.positions.map((item) => (item.position.id === positionId ? result : item))
         };
       });
-      setNotice("AI Position Insight를 생성했습니다. 점수 계산은 deterministic JSON을 그대로 사용합니다.");
+      setNotice("포지션 인사이트가 생성되었습니다.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Insight creation failed");
+      setError(err instanceof Error ? err.message : "AI 인사이트 생성에 실패했습니다. 데이터 상태 또는 OpenAI API 설정을 확인해주세요.");
     } finally {
       setActionLoading("");
     }
@@ -559,9 +559,9 @@ export function PositionDetailShell({ positionId }: { positionId: string }) {
     try {
       await api.createPositionInsight(positionId);
       await load();
-      setNotice("AI Position Insight를 생성했습니다.");
+      setNotice("포지션 인사이트가 생성되었습니다.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Insight failed");
+      setError(err instanceof Error ? err.message : "AI 인사이트 생성에 실패했습니다. 데이터 상태 또는 OpenAI API 설정을 확인해주세요.");
     } finally {
       setBusy("");
     }
@@ -759,9 +759,21 @@ function PositionInsightRail({
   busy: boolean;
 }) {
   const { position, state, latest_insight: insight } = payload;
+  const [showInputJson, setShowInputJson] = useState(false);
+  const [copied, setCopied] = useState(false);
   const support = chartAnalysis?.price_levels.support[0];
   const resistance = chartAnalysis?.price_levels.resistance[0];
   const invalidation = chartAnalysis?.price_levels.invalidation[0];
+  async function copyInsight() {
+    if (!insight) return;
+    try {
+      await navigator.clipboard.writeText(insight.insight_text);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1800);
+    } catch {
+      setCopied(false);
+    }
+  }
   return (
     <aside className="positionInsightRail">
       <div className={`railJudgement status-${state.status}`}>
@@ -791,18 +803,35 @@ function PositionInsightRail({
         <RailPrice label="Liq Dist" value={formatDistance(state.liquidation_distance_pct)} tone={liquidationTone(state.liquidation_distance_pct)} />
         <RailPrice label="Giveback" value={formatDistance(state.analysis.risk.profit_giveback_pct)} />
       </div>
-      <div className="railSection">
-        <div className="railSectionHeader">
-          <strong>AI Insight</strong>
+      <div className="railSection aiInsightRailSection">
+        <div className="railSectionHeader aiInsightHeader">
+          <div>
+            <strong>AI Position Insight</strong>
+            {insight ? <small>Updated {new Date(insight.created_at).toLocaleTimeString()}</small> : null}
+          </div>
           <button className="button secondary" onClick={onCreateInsight} disabled={busy}>
             <BrainCircuit size={16} />
-            {busy ? "Generating" : "Generate"}
+            {busy ? "Generating insight..." : insight ? "Regenerate" : "Generate Insight"}
           </button>
         </div>
         {insight ? (
-          <p className="railInsightText">{firstInsightParagraph(insight.insight_text)}</p>
+          <>
+            <div className="railInsightText full">{insight.insight_text}</div>
+            <div className="insightActionRow">
+              <button className="button secondary" onClick={copyInsight} type="button">{copied ? "Copied" : "Copy"}</button>
+              <button className="button secondary" onClick={() => setShowInputJson((value) => !value)} type="button">
+                {showInputJson ? "Hide Input JSON" : "View Input JSON"}
+              </button>
+            </div>
+            {showInputJson ? (
+              <pre className="insightInputJson">{JSON.stringify(insight.input_json, null, 2)}</pre>
+            ) : null}
+          </>
         ) : (
-          <p className="railInsightText muted">아직 인사이트가 없습니다. 차트와 가격 라인을 확인한 뒤 필요하면 생성하세요.</p>
+          <div className="railInsightEmpty">
+            <strong>아직 생성된 포지션 인사이트가 없습니다.</strong>
+            <p>현재 포지션 상태를 분석하려면 Generate Insight를 눌러주세요.</p>
+          </div>
         )}
       </div>
     </aside>

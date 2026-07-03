@@ -12,7 +12,6 @@ from app.db.models import (
     Position,
     PositionCreate,
     PositionEvent,
-    PositionInsight,
     PositionMemoUpdate,
     PositionSnapshot,
     PositionStatus,
@@ -35,7 +34,8 @@ from app.liquidity.liquidation_clusters import analyze_liquidation
 from app.memory.engine import memory_from_shadow, memory_from_trade, memory_from_validation
 from app.monitoring.engine import build_monitoring_log, calculate_pnl
 from app.positions.chart_analysis import build_chart_analysis
-from app.positions.engine import build_events, build_position_state, make_insight, make_snapshot
+from app.positions.engine import build_events, build_position_state, make_snapshot
+from app.positions.insight import build_position_insight_input, make_ai_position_insight
 from app.report.engine import generate_report
 from app.review.engine import render_review
 from app.shadow.engine import ShadowSampleError, compare_shadow_profile, extract_shadow_profile
@@ -549,7 +549,16 @@ def create_position_insight(position_id: UUID) -> dict:
     payload = _live_position_payload(position, store_snapshot=True)
     snapshot = PositionSnapshot.model_validate(payload["latest_snapshot"])
     previous_insights = repository.list_position_insights(position.id, limit=1)
-    insight = make_insight(position, snapshot, previous_insights[0] if previous_insights else None)
+    try:
+        chart_analysis = build_chart_analysis(position, market_provider.get_snapshot(position.symbol, "4h"))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except MarketDataError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    snapshots = repository.list_position_snapshots(position.id, limit=100)
+    previous_insight = previous_insights[0] if previous_insights else None
+    input_json = build_position_insight_input(position, snapshot, chart_analysis, snapshots, previous_insight)
+    insight = make_ai_position_insight(position, snapshot, input_json, previous_insight)
     saved_insight = repository.add_position_insight(insight)
     repository.add_position_event(
         PositionEvent(

@@ -1,0 +1,39 @@
+def test_position_insight_api_generates_structured_saved_insight(client) -> None:
+    report = client.post("/api/reports", json={"symbol": "BTCUSDT", "timeframe": "4h"}).json()
+    position_response = client.post(
+        "/api/positions",
+        json={
+            "symbol": "BTCUSDT",
+            "direction": "long",
+            "entry_price": report["price"],
+            "quantity": 0.02,
+            "leverage": 3,
+            "entry_report_id": report["id"],
+            "entry_memo": "4H 지지선 반등과 거래량 증가 보고 진입",
+            "planned_stop_price": report["price"] * 0.96,
+        },
+    )
+    assert position_response.status_code == 200
+    position = position_response.json()
+
+    response = client.post(f"/api/live/positions/{position['id']}/insight")
+    assert response.status_code == 200
+    payload = response.json()
+    insight = payload["latest_insight"]
+
+    assert insight["position_id"] == position["id"]
+    assert insight["insight_type"] == "position_status"
+    assert insight["input_json"]["position"]["symbol"] == "BTCUSDT"
+    assert "chart" in insight["input_json"]
+    assert "wyckoff" in insight["input_json"]
+    assert "technical" in insight["input_json"]
+    assert "volume_profile" in insight["input_json"]
+    assert "📍 BTCUSDT LONG 포지션 상태" in insight["insight_text"]
+    for section in ["현재 상태:", "수익/리스크:", "차트 구조:", "와이코프/기술적 분석:", "진입 논리:", "주의할 가격:", "제 의견:"]:
+        assert section in insight["insight_text"]
+    assert "매수하세요" not in insight["insight_text"]
+    assert "매도하세요" not in insight["insight_text"]
+
+    latest_response = client.get(f"/api/live/positions/{position['id']}")
+    assert latest_response.status_code == 200
+    assert latest_response.json()["latest_insight"]["id"] == insight["id"]
