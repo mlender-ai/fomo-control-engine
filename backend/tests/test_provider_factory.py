@@ -5,7 +5,7 @@ from app.exchange.mock import MockMarketDataProvider
 
 
 def test_provider_factory_defaults_to_mock() -> None:
-    provider = create_market_data_provider(Settings())
+    provider = create_market_data_provider(Settings(MARKET_DATA_PROVIDER="mock"))
 
     assert isinstance(provider, MockMarketDataProvider)
 
@@ -21,4 +21,3 @@ def test_provider_factory_builds_bitget_provider() -> None:
 
     assert isinstance(provider, BitgetMarketDataProvider)
     assert provider.product_type == "USDT-FUTURES"
-

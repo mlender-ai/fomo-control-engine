@@ -3,8 +3,22 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
 
+from app.agents.orchestrator import create_research_run
 from app.core.config import get_settings
-from app.db.models import Direction, ExitRequest, Position, PositionCreate, PositionStatus, ReportRequest, Trade, utc_now
+from app.db.models import (
+    Direction,
+    ExitRequest,
+    LiquidityAnalyzeRequest,
+    Position,
+    PositionCreate,
+    PositionStatus,
+    ReportRequest,
+    ResearchRunRequest,
+    ShadowExtractRequest,
+    Trade,
+    ValidationRunRequest,
+    utc_now,
+)
 from app.db.repository import Repository, create_repository
 from app.exchange.base import MarketDataProvider
 from app.exchange.bitget.errors import BitgetAPIError, BitgetNotConfiguredError, BitgetPermissionError
@@ -12,9 +26,13 @@ from app.exchange.bitget.provider import BitgetMarketDataProvider
 from app.exchange.bitget.schemas import BitgetPosition
 from app.exchange.errors import MarketDataError
 from app.exchange.factory import create_market_data_provider
+from app.liquidity.liquidation_clusters import analyze_liquidation
+from app.memory.engine import memory_from_shadow, memory_from_trade, memory_from_validation
 from app.monitoring.engine import build_monitoring_log, calculate_pnl
 from app.report.engine import generate_report
 from app.review.engine import render_review
+from app.shadow.engine import ShadowSampleError, compare_shadow_profile, extract_shadow_profile
+from app.validation.engine import run_validation
 
 router = APIRouter()
 settings = get_settings()
@@ -151,6 +169,127 @@ def get_report(symbol: str):
     return report
 
 
+@router.post("/api/research-runs")
+def create_research_run_api(request: ResearchRunRequest) -> dict:
+    report = _generate_and_store_report(request.symbol, request.timeframe)
+    memories = [memory.model_dump(mode="json") for memory in repository.list_decision_memories(report.symbol, limit=8)]
+    run, outputs = create_research_run(repository, report, memories=memories)
+    return _research_run_payload(run, outputs)
+
+
+@router.get("/api/research-runs")
+def list_research_runs(symbol: str | None = None, limit: int = 20) -> dict:
+    runs = repository.list_research_runs(symbol=symbol, limit=limit)
+    return {"research_runs": [_research_run_summary(run) for run in runs]}
+
+
+@router.get("/api/research-runs/compare")
+def compare_research_runs(symbol: str, limit: int = 5) -> dict:
+    runs = repository.list_research_runs(symbol=symbol, limit=limit)
+    return {
+        "symbol": symbol.upper(),
+        "runs": [
+            {
+                "research_run_id": str(run.id),
+                "symbol": run.symbol,
+                "timeframe": run.timeframe,
+                "entry_score": run.entry_score,
+                "fomo_index": run.fomo_index,
+                "final_action_label": run.final_action_label,
+                "created_at": run.created_at,
+                "agents": _agent_summaries(repository.list_agent_outputs(run.id)),
+            }
+            for run in runs
+        ],
+    }
+
+
+@router.get("/api/research-runs/{run_id}")
+def get_research_run(run_id: UUID) -> dict:
+    run = repository.get_research_run(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="Research run not found")
+    outputs = repository.list_agent_outputs(run.id)
+    return {**_research_run_payload(run, outputs), "raw_input": run.raw_input, "raw_output": run.raw_output}
+
+
+@router.post("/api/liquidity/analyze")
+def analyze_liquidity_api(request: LiquidityAnalyzeRequest):
+    report = _generate_and_store_report(request.symbol, request.timeframe)
+    analysis = analyze_liquidation(report)
+    return {
+        **analysis.model_dump(mode="json"),
+        "clusters": [*analysis.upper_clusters, *analysis.lower_clusters],
+    }
+
+
+@router.post("/api/shadow/extract")
+def extract_shadow(request: ShadowExtractRequest):
+    try:
+        profile = extract_shadow_profile(repository.list_trades(), request)
+    except ShadowSampleError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    repository.add_shadow_profile(profile)
+    repository.add_decision_memory(memory_from_shadow(profile))
+    return profile
+
+
+@router.get("/api/shadow")
+def list_shadow_profiles(limit: int = 20) -> dict:
+    return {"shadow_profiles": repository.list_shadow_profiles(limit=limit)}
+
+
+@router.get("/api/shadow/{shadow_id}")
+def get_shadow_profile(shadow_id: str):
+    profile = repository.get_shadow_profile(shadow_id)
+    if profile is None:
+        raise HTTPException(status_code=404, detail="Shadow profile not found")
+    return profile
+
+
+@router.post("/api/shadow/{shadow_id}/compare")
+def compare_shadow(shadow_id: str):
+    profile = repository.get_shadow_profile(shadow_id)
+    if profile is None:
+        raise HTTPException(status_code=404, detail="Shadow profile not found")
+    return compare_shadow_profile(profile, repository.list_trades())
+
+
+@router.post("/api/validation/run")
+def run_validation_api(request: ValidationRunRequest):
+    validation_run = run_validation(repository.list_trades(), request)
+    repository.add_validation_run(validation_run)
+    repository.add_decision_memory(memory_from_validation(validation_run.id, validation_run.symbol, validation_run.summary, validation_run.warnings))
+    return validation_run
+
+
+@router.get("/api/validation/runs")
+def list_validation_runs(limit: int = 20) -> dict:
+    return {"validation_runs": repository.list_validation_runs(limit=limit)}
+
+
+@router.get("/api/validation/runs/{run_id}")
+def get_validation_run(run_id: UUID):
+    validation_run = repository.get_validation_run(run_id)
+    if validation_run is None:
+        raise HTTPException(status_code=404, detail="Validation run not found")
+    return validation_run
+
+
+@router.get("/api/memory")
+def list_memory(symbol: str | None = None, limit: int = 20) -> dict:
+    return {"memories": repository.list_decision_memories(symbol=symbol, limit=limit)}
+
+
+@router.post("/api/memory/reflect")
+def reflect_memory() -> dict:
+    created = 0
+    for trade in repository.list_trades():
+        repository.add_decision_memory(memory_from_trade(trade))
+        created += 1
+    return {"created": created}
+
+
 @router.get("/api/positions")
 def list_positions():
     return repository.list_positions()
@@ -225,6 +364,51 @@ def sync_bitget_positions() -> dict:
         "updated": updated,
         "missing_from_exchange": missing,
     }
+
+
+def _research_run_summary(run) -> dict:
+    outputs = repository.list_agent_outputs(run.id)
+    return {
+        "research_run_id": str(run.id),
+        "symbol": run.symbol,
+        "timeframe": run.timeframe,
+        "entry_score": run.entry_score,
+        "fomo_index": run.fomo_index,
+        "state_label": run.state_label,
+        "final_action_label": run.final_action_label,
+        "summary": run.final_summary,
+        "created_at": run.created_at,
+        "agents": _agent_summaries(outputs),
+    }
+
+
+def _research_run_payload(run, outputs) -> dict:
+    return {
+        "research_run_id": str(run.id),
+        "symbol": run.symbol,
+        "timeframe": run.timeframe,
+        "entry_score": run.entry_score,
+        "fomo_index": run.fomo_index,
+        "state_label": run.state_label,
+        "final_action_label": run.final_action_label,
+        "summary": run.final_summary,
+        "agents": _agent_summaries(outputs),
+        "created_at": run.created_at,
+    }
+
+
+def _agent_summaries(outputs) -> list[dict]:
+    return [
+        {
+            "id": str(output.id),
+            "agent": output.agent_name,
+            "stance": output.stance,
+            "confidence": output.confidence,
+            "text_output": output.text_output,
+            "raw_json": output.raw_json,
+        }
+        for output in outputs
+    ]
 
 
 def _find_bitget_position(positions: list[Position], symbol: str, direction: Direction) -> Position | None:
@@ -350,7 +534,20 @@ def exit_position(position_id: UUID, request: ExitRequest):
     position.current_score = report.entry_score
     position.pnl_percent = trade.pnl_percent
     repository.update_position(position)
-    return repository.add_trade(trade)
+    saved_trade = repository.add_trade(trade)
+    repository.add_decision_memory(memory_from_trade(saved_trade))
+    return saved_trade
+
+
+@router.post("/api/trades/{trade_id}/review")
+def review_trade(trade_id: UUID):
+    for trade in repository.list_trades():
+        if trade.id == trade_id:
+            trade.review_text = render_review(trade)
+            repository.add_trade(trade)
+            repository.add_decision_memory(memory_from_trade(trade))
+            return trade
+    raise HTTPException(status_code=404, detail="Trade not found")
 
 
 @router.get("/api/trades")

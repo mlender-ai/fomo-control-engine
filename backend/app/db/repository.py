@@ -7,7 +7,19 @@ from pathlib import Path
 from typing import Protocol
 from uuid import UUID
 
-from app.db.models import MonitoringLog, Position, PositionStatus, Report, Trade
+from app.db.models import (
+    AgentOutput,
+    DecisionMemory,
+    MarketSnapshotRecord,
+    MonitoringLog,
+    Position,
+    PositionStatus,
+    Report,
+    ResearchRun,
+    ShadowProfile,
+    Trade,
+    ValidationRun,
+)
 
 
 class Repository(Protocol):
@@ -22,6 +34,20 @@ class Repository(Protocol):
     def add_monitoring_log(self, log: MonitoringLog) -> MonitoringLog: ...
     def add_trade(self, trade: Trade) -> Trade: ...
     def list_trades(self) -> list[Trade]: ...
+    def add_market_snapshot(self, snapshot: MarketSnapshotRecord) -> MarketSnapshotRecord: ...
+    def add_research_run(self, run: ResearchRun) -> ResearchRun: ...
+    def get_research_run(self, run_id: UUID) -> ResearchRun | None: ...
+    def list_research_runs(self, symbol: str | None = None, limit: int = 20) -> list[ResearchRun]: ...
+    def add_agent_output(self, output: AgentOutput) -> AgentOutput: ...
+    def list_agent_outputs(self, research_run_id: UUID) -> list[AgentOutput]: ...
+    def add_shadow_profile(self, profile: ShadowProfile) -> ShadowProfile: ...
+    def get_shadow_profile(self, shadow_id: str) -> ShadowProfile | None: ...
+    def list_shadow_profiles(self, limit: int = 20) -> list[ShadowProfile]: ...
+    def add_decision_memory(self, memory: DecisionMemory) -> DecisionMemory: ...
+    def list_decision_memories(self, symbol: str | None = None, limit: int = 20) -> list[DecisionMemory]: ...
+    def add_validation_run(self, run: ValidationRun) -> ValidationRun: ...
+    def get_validation_run(self, run_id: UUID) -> ValidationRun | None: ...
+    def list_validation_runs(self, limit: int = 20) -> list[ValidationRun]: ...
 
 
 class MemoryRepository:
@@ -31,6 +57,12 @@ class MemoryRepository:
         self.positions: dict[UUID, Position] = {}
         self.monitoring_logs: dict[UUID, list[MonitoringLog]] = {}
         self.trades: dict[UUID, Trade] = {}
+        self.market_snapshots: dict[UUID, MarketSnapshotRecord] = {}
+        self.research_runs: dict[UUID, ResearchRun] = {}
+        self.agent_outputs: dict[UUID, list[AgentOutput]] = {}
+        self.shadow_profiles: dict[str, ShadowProfile] = {}
+        self.decision_memories: dict[UUID, DecisionMemory] = {}
+        self.validation_runs: dict[UUID, ValidationRun] = {}
 
     def add_report(self, report: Report) -> Report:
         self.reports[report.id] = report
@@ -75,6 +107,60 @@ class MemoryRepository:
 
     def list_trades(self) -> list[Trade]:
         return sorted(self.trades.values(), key=lambda item: item.created_at, reverse=True)
+
+    def add_market_snapshot(self, snapshot: MarketSnapshotRecord) -> MarketSnapshotRecord:
+        self.market_snapshots[snapshot.id] = snapshot
+        return snapshot
+
+    def add_research_run(self, run: ResearchRun) -> ResearchRun:
+        self.research_runs[run.id] = run
+        return run
+
+    def get_research_run(self, run_id: UUID) -> ResearchRun | None:
+        return self.research_runs.get(run_id)
+
+    def list_research_runs(self, symbol: str | None = None, limit: int = 20) -> list[ResearchRun]:
+        runs = list(self.research_runs.values())
+        if symbol:
+            runs = [run for run in runs if run.symbol == symbol.upper()]
+        return sorted(runs, key=lambda item: item.created_at, reverse=True)[:limit]
+
+    def add_agent_output(self, output: AgentOutput) -> AgentOutput:
+        self.agent_outputs.setdefault(output.research_run_id, []).append(output)
+        return output
+
+    def list_agent_outputs(self, research_run_id: UUID) -> list[AgentOutput]:
+        return sorted(self.agent_outputs.get(research_run_id, []), key=lambda item: item.created_at)
+
+    def add_shadow_profile(self, profile: ShadowProfile) -> ShadowProfile:
+        self.shadow_profiles[profile.shadow_id] = profile
+        return profile
+
+    def get_shadow_profile(self, shadow_id: str) -> ShadowProfile | None:
+        return self.shadow_profiles.get(shadow_id)
+
+    def list_shadow_profiles(self, limit: int = 20) -> list[ShadowProfile]:
+        return sorted(self.shadow_profiles.values(), key=lambda item: item.created_at, reverse=True)[:limit]
+
+    def add_decision_memory(self, memory: DecisionMemory) -> DecisionMemory:
+        self.decision_memories[memory.id] = memory
+        return memory
+
+    def list_decision_memories(self, symbol: str | None = None, limit: int = 20) -> list[DecisionMemory]:
+        memories = list(self.decision_memories.values())
+        if symbol:
+            memories = [memory for memory in memories if memory.symbol in {symbol.upper(), None}]
+        return sorted(memories, key=lambda item: item.created_at, reverse=True)[:limit]
+
+    def add_validation_run(self, run: ValidationRun) -> ValidationRun:
+        self.validation_runs[run.id] = run
+        return run
+
+    def get_validation_run(self, run_id: UUID) -> ValidationRun | None:
+        return self.validation_runs.get(run_id)
+
+    def list_validation_runs(self, limit: int = 20) -> list[ValidationRun]:
+        return sorted(self.validation_runs.values(), key=lambda item: item.created_at, reverse=True)[:limit]
 
 
 class SQLiteRepository:
@@ -134,6 +220,65 @@ class SQLiteRepository:
                 );
                 CREATE INDEX IF NOT EXISTS idx_trades_created
                     ON trades(created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS market_snapshots (
+                    id TEXT PRIMARY KEY,
+                    symbol TEXT NOT NULL,
+                    timeframe TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_market_snapshots_symbol_created
+                    ON market_snapshots(symbol, created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS research_runs (
+                    id TEXT PRIMARY KEY,
+                    symbol TEXT NOT NULL,
+                    timeframe TEXT NOT NULL,
+                    report_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_research_runs_symbol_created
+                    ON research_runs(symbol, created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS agent_outputs (
+                    id TEXT PRIMARY KEY,
+                    research_run_id TEXT NOT NULL,
+                    agent_name TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_agent_outputs_run_created
+                    ON agent_outputs(research_run_id, created_at ASC);
+
+                CREATE TABLE IF NOT EXISTS shadow_profiles (
+                    shadow_id TEXT PRIMARY KEY,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS decision_memories (
+                    id TEXT PRIMARY KEY,
+                    symbol TEXT,
+                    memory_type TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_decision_memories_symbol_created
+                    ON decision_memories(symbol, created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS validation_runs (
+                    id TEXT PRIMARY KEY,
+                    symbol TEXT NOT NULL,
+                    timeframe TEXT NOT NULL,
+                    strategy_type TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_validation_runs_created
+                    ON validation_runs(created_at DESC);
                 """
             )
 
@@ -226,6 +371,130 @@ class SQLiteRepository:
         with self._lock, self._connect() as connection:
             rows = connection.execute("SELECT payload FROM trades ORDER BY created_at DESC").fetchall()
         return [Trade.model_validate_json(row["payload"]) for row in rows]
+
+    def add_market_snapshot(self, snapshot: MarketSnapshotRecord) -> MarketSnapshotRecord:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO market_snapshots
+                    (id, symbol, timeframe, provider, created_at, payload)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (str(snapshot.id), snapshot.symbol.upper(), snapshot.timeframe, snapshot.provider, snapshot.created_at.isoformat(), _dump_model(snapshot)),
+            )
+        return snapshot
+
+    def add_research_run(self, run: ResearchRun) -> ResearchRun:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO research_runs
+                    (id, symbol, timeframe, report_id, created_at, payload)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (str(run.id), run.symbol.upper(), run.timeframe, str(run.report_id), run.created_at.isoformat(), _dump_model(run)),
+            )
+        return run
+
+    def get_research_run(self, run_id: UUID) -> ResearchRun | None:
+        with self._lock, self._connect() as connection:
+            row = connection.execute("SELECT payload FROM research_runs WHERE id = ?", (str(run_id),)).fetchone()
+        return ResearchRun.model_validate_json(row["payload"]) if row else None
+
+    def list_research_runs(self, symbol: str | None = None, limit: int = 20) -> list[ResearchRun]:
+        query = "SELECT payload FROM research_runs"
+        params: tuple = ()
+        if symbol:
+            query += " WHERE symbol = ?"
+            params = (symbol.upper(),)
+        query += " ORDER BY created_at DESC LIMIT ?"
+        params = (*params, limit)
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [ResearchRun.model_validate_json(row["payload"]) for row in rows]
+
+    def add_agent_output(self, output: AgentOutput) -> AgentOutput:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO agent_outputs
+                    (id, research_run_id, agent_name, created_at, payload)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (str(output.id), str(output.research_run_id), output.agent_name, output.created_at.isoformat(), _dump_model(output)),
+            )
+        return output
+
+    def list_agent_outputs(self, research_run_id: UUID) -> list[AgentOutput]:
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                "SELECT payload FROM agent_outputs WHERE research_run_id = ? ORDER BY created_at ASC",
+                (str(research_run_id),),
+            ).fetchall()
+        return [AgentOutput.model_validate_json(row["payload"]) for row in rows]
+
+    def add_shadow_profile(self, profile: ShadowProfile) -> ShadowProfile:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                "INSERT OR REPLACE INTO shadow_profiles (shadow_id, created_at, payload) VALUES (?, ?, ?)",
+                (profile.shadow_id, profile.created_at.isoformat(), _dump_model(profile)),
+            )
+        return profile
+
+    def get_shadow_profile(self, shadow_id: str) -> ShadowProfile | None:
+        with self._lock, self._connect() as connection:
+            row = connection.execute("SELECT payload FROM shadow_profiles WHERE shadow_id = ?", (shadow_id,)).fetchone()
+        return ShadowProfile.model_validate_json(row["payload"]) if row else None
+
+    def list_shadow_profiles(self, limit: int = 20) -> list[ShadowProfile]:
+        with self._lock, self._connect() as connection:
+            rows = connection.execute("SELECT payload FROM shadow_profiles ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        return [ShadowProfile.model_validate_json(row["payload"]) for row in rows]
+
+    def add_decision_memory(self, memory: DecisionMemory) -> DecisionMemory:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO decision_memories
+                    (id, symbol, memory_type, created_at, payload)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (str(memory.id), memory.symbol.upper() if memory.symbol else None, memory.memory_type, memory.created_at.isoformat(), _dump_model(memory)),
+            )
+        return memory
+
+    def list_decision_memories(self, symbol: str | None = None, limit: int = 20) -> list[DecisionMemory]:
+        if symbol:
+            query = "SELECT payload FROM decision_memories WHERE symbol = ? OR symbol IS NULL ORDER BY created_at DESC LIMIT ?"
+            params = (symbol.upper(), limit)
+        else:
+            query = "SELECT payload FROM decision_memories ORDER BY created_at DESC LIMIT ?"
+            params = (limit,)
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [DecisionMemory.model_validate_json(row["payload"]) for row in rows]
+
+    def add_validation_run(self, run: ValidationRun) -> ValidationRun:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO validation_runs
+                    (id, symbol, timeframe, strategy_type, created_at, payload)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (str(run.id), run.symbol.upper(), run.timeframe, run.strategy_type, run.created_at.isoformat(), _dump_model(run)),
+            )
+        return run
+
+    def get_validation_run(self, run_id: UUID) -> ValidationRun | None:
+        with self._lock, self._connect() as connection:
+            row = connection.execute("SELECT payload FROM validation_runs WHERE id = ?", (str(run_id),)).fetchone()
+        return ValidationRun.model_validate_json(row["payload"]) if row else None
+
+    def list_validation_runs(self, limit: int = 20) -> list[ValidationRun]:
+        with self._lock, self._connect() as connection:
+            rows = connection.execute("SELECT payload FROM validation_runs ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        return [ValidationRun.model_validate_json(row["payload"]) for row in rows]
 
     def _upsert_position(self, position: Position) -> Position:
         with self._lock, self._connect() as connection:

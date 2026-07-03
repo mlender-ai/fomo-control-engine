@@ -40,7 +40,7 @@ export type Position = {
   entry_price: number;
   quantity: number;
   leverage: number;
-  status: "open" | "closed";
+  status: "open" | "closed" | "missing_from_exchange";
   entry_score: number | null;
   current_score: number | null;
   current_price: number | null;
@@ -116,6 +116,65 @@ export type BitgetSyncResult = {
   error?: string;
 };
 
+export type AgentSummary = {
+  id: string;
+  agent: string;
+  stance: string;
+  confidence: number;
+  text_output: string;
+  raw_json: Record<string, unknown>;
+};
+
+export type ResearchRun = {
+  research_run_id: string;
+  symbol: string;
+  timeframe: string;
+  entry_score: number;
+  fomo_index: number;
+  state_label: string;
+  final_action_label: string;
+  summary: string;
+  agents: AgentSummary[];
+  created_at: string;
+  raw_input?: Record<string, unknown>;
+  raw_output?: Record<string, unknown>;
+};
+
+export type ShadowProfile = {
+  shadow_id: string;
+  created_at: string;
+  total_trades: number;
+  profitable_trades: number;
+  losing_trades: number;
+  profile_text: string;
+  rules: Array<Record<string, unknown>>;
+  fomo_patterns: Array<Record<string, unknown>>;
+  common_mistakes: Array<Record<string, unknown>>;
+  attribution: Record<string, unknown>;
+};
+
+export type ValidationRun = {
+  id: string;
+  strategy_type: string;
+  symbol: string;
+  timeframe: string;
+  params: Record<string, unknown>;
+  summary: Record<string, number>;
+  results: Record<string, unknown>;
+  warnings: string[];
+  created_at: string;
+};
+
+export type DecisionMemory = {
+  id: string;
+  symbol: string | null;
+  memory_type: string;
+  summary: string;
+  evidence: Record<string, unknown>;
+  weight: number;
+  created_at: string;
+};
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
@@ -181,5 +240,35 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload)
     }),
-  trades: () => request<Trade[]>("/api/trades")
+  trades: () => request<Trade[]>("/api/trades"),
+  createResearchRun: (payload: { symbol: string; timeframe: string; mode?: string }) =>
+    request<ResearchRun>("/api/research-runs", {
+      method: "POST",
+      body: JSON.stringify({ mode: "entry_review", ...payload })
+    }),
+  researchRuns: () => request<{ research_runs: ResearchRun[] }>("/api/research-runs"),
+  researchRun: (runId: string) => request<ResearchRun>(`/api/research-runs/${runId}`),
+  extractShadow: () =>
+    request<ShadowProfile>("/api/shadow/extract", {
+      method: "POST",
+      body: JSON.stringify({ min_trades: 10, min_profitable_trades: 5 })
+    }),
+  shadowProfiles: () => request<{ shadow_profiles: ShadowProfile[] }>("/api/shadow"),
+  runValidation: (payload?: { symbol?: string; timeframe?: string }) =>
+    request<ValidationRun>("/api/validation/run", {
+      method: "POST",
+      body: JSON.stringify({
+        strategy_type: "entry_score_threshold",
+        symbol: payload?.symbol ?? "BTCUSDT",
+        timeframe: payload?.timeframe ?? "4h",
+        params: { entry_score_min: 75, risk_score_max: 60, fomo_index_max: 70 },
+        validation: {
+          monte_carlo: { n_simulations: 500, seed: 42 },
+          bootstrap: { n_bootstrap: 500, confidence: 0.95, seed: 42 },
+          walk_forward: { n_windows: 5 }
+        }
+      })
+    }),
+  validationRuns: () => request<{ validation_runs: ValidationRun[] }>("/api/validation/runs"),
+  memories: () => request<{ memories: DecisionMemory[] }>("/api/memory")
 };

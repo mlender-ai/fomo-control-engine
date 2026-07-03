@@ -7,6 +7,8 @@ MarketDataProvider
   -> Liquidity Engine
   -> Scoring Engine
   -> Report Engine
+  -> Agentic Research Orchestrator
+  -> Shadow / Validation / Decision Memory
   -> FastAPI
   -> Next.js Dashboard
   -> Entry / Monitoring / Exit / Review
@@ -26,6 +28,10 @@ MarketDataProvider
 - `app/liquidity`: OI/Funding/liquidity score logic
 - `app/scoring`: deterministic Entry Opportunity Score and FOMO Index
 - `app/report`: JSON-to-natural-language report rendering
+- `app/agents`: deterministic agent contracts and research-run orchestration
+- `app/shadow`: completed-trade pattern extraction and Shadow Account comparison
+- `app/validation`: Monte Carlo, Bootstrap Sharpe CI, and Walk Forward checks
+- `app/memory`: decision memory creation from trades, shadow profiles, and validation runs
 - `app/monitoring`: position state comparison
 - `app/review`: trade review rendering
 
@@ -34,6 +40,9 @@ MarketDataProvider
 - Home: market summary, top candidates, warnings, latest report
 - Ticker detail: score breakdown, report, raw indicators
 - Positions: manual position entry, monitoring, exit
+- Research: agentic research runs, Bull/Bear confidence, recent decision memory
+- Shadow: extracted Shadow Account profile and profile history
+- Validation: validation run history and warnings
 - Journal: completed trades and review text
 
 ## Bitget Integration Rule
@@ -43,7 +52,7 @@ The application depends on `MarketDataProvider`, not on Bitget directly. Choose 
 - `mock`: deterministic local snapshots for tests and UI development
 - `bitget`: public read-only futures market data from Bitget
 
-Bitget endpoints used in v0.2:
+Bitget endpoints used in v0.4:
 
 - `GET /api/v2/mix/market/candles`
 - `GET /api/v2/mix/market/ticker`
@@ -55,7 +64,7 @@ Order placement is intentionally absent.
 
 ## Persistence
 
-Default persistence is SQLite:
+Default persistence is SQLite. v0.4 persists reports, positions, monitoring logs, trades, market snapshots, research runs, agent outputs, shadow profiles, decision memories, and validation runs.
 
 ```text
 FCE_DATABASE_URL=sqlite:///./fomo_control_engine.db

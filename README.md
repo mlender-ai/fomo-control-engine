@@ -2,16 +2,19 @@
 
 FOMO Control Engine is a personal trading decision engine. It does not place trades or promise signals. It scores whether a planned entry is supported by market structure, volume, liquidity, momentum, and risk data, then turns the structured result into a plain-language report.
 
-## Current v0.3 Scope
+## Current v0.4 Scope
 
 - FastAPI backend with report, position, monitoring, exit, and review endpoints
 - Deterministic Entry Opportunity Score calculation
 - Mock and live Bitget read-only market data providers
 - Bitget private read-only position lookup and sync
-- SQLite persistence for reports, positions, monitoring logs, and trades
-- Next.js dashboard for market summary, ticker detail, open positions, and trade journal
-- pytest coverage for scoring, reports, mock provider, persistence, and position flow
-- Documentation for PRD, architecture, and scoring logic
+- SQLite persistence for reports, positions, monitoring logs, trades, research runs, agent outputs, shadow profiles, decision memories, and validation runs
+- Agentic Research runs with deterministic market snapshots, Bull/Bear debate, Risk Guardian, and FOMO Gatekeeper outputs
+- Shadow Account extraction from completed trades
+- Liquidation Intelligence proxy analysis from score/OI/funding context
+- Validation Lab with Monte Carlo, Bootstrap Sharpe CI, and Walk Forward checks
+- Next.js dashboard for market summary, ticker detail, open positions, trade journal, research runs, shadow journal, and validation lab
+- pytest coverage for scoring, reports, mock provider, persistence, position flow, research runs, shadow extraction, liquidity analysis, validation, and memory
 
 ## Run Locally
 
@@ -67,6 +70,15 @@ curl -X POST http://127.0.0.1:8875/api/reports \
   -d '{"symbol":"BTCUSDT","timeframe":"4h"}'
 curl http://127.0.0.1:8875/api/account/bitget/positions
 curl -X POST http://127.0.0.1:8875/api/account/bitget/sync-positions
+curl -X POST http://127.0.0.1:8875/api/research-runs \
+  -H "Content-Type: application/json" \
+  -d '{"symbol":"BTCUSDT","timeframe":"4h","mode":"entry_review"}'
+curl -X POST http://127.0.0.1:8875/api/liquidity/analyze \
+  -H "Content-Type: application/json" \
+  -d '{"symbol":"BTCUSDT","timeframe":"4h"}'
+curl -X POST http://127.0.0.1:8875/api/validation/run \
+  -H "Content-Type: application/json" \
+  -d '{"strategy_type":"entry_score_threshold","symbol":"BTCUSDT","timeframe":"4h"}'
 ```
 
 ## Tests
@@ -82,7 +94,8 @@ npm run build
 
 ## Safety Principles
 
-- V0.3 is read-only for exchange integrations.
+- V0.4 is read-only for exchange integrations.
 - Bitget API keys must be read-only and provided through environment variables.
 - No automatic buy or sell execution is included.
 - Scores are deterministic. LLM usage, when added later, must only transform computed JSON into natural language.
+- Agent outputs explain a fixed score snapshot. They do not recalculate price, score, or order intent.

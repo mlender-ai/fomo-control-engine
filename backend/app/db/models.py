@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from enum import Enum
+from typing import Literal
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
@@ -153,3 +154,158 @@ class Trade(BaseModel):
     exit_reason: str
     review_text: str
     created_at: datetime = Field(default_factory=utc_now)
+
+
+class MarketSnapshotRecord(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    symbol: str
+    timeframe: str
+    provider: str
+    candle_count: int
+    latest_price: float
+    latest_candle_time: datetime | None = None
+    data_quality: dict
+    indicators: dict
+    scores: dict
+    reason_codes: list[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class AgentOutput(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    research_run_id: UUID
+    agent_name: str
+    confidence: float
+    stance: str
+    raw_json: dict
+    text_output: str = ""
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class ResearchRun(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    symbol: str
+    timeframe: str
+    report_id: UUID
+    snapshot_id: UUID
+    entry_score: int
+    fomo_index: int
+    state_label: str
+    final_summary: str
+    final_action_label: str
+    raw_input: dict
+    raw_output: dict
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class ResearchRunRequest(BaseModel):
+    symbol: str = "BTCUSDT"
+    timeframe: str = "4h"
+    mode: str = "entry_review"
+
+
+class ShadowRule(BaseModel):
+    rule_id: str
+    human_text: str
+    entry_conditions: dict
+    exit_conditions: dict = Field(default_factory=dict)
+    support_count: int
+    coverage_rate: float
+    avg_pnl: float
+    avg_holding_minutes: int
+    sample_trade_ids: list[str]
+    weight: float = 1.0
+
+
+class ShadowAttribution(BaseModel):
+    noise_trades_pnl: float = 0
+    early_exit_pnl: float = 0
+    late_exit_pnl: float = 0
+    overtrading_pnl: float = 0
+    missed_signals_pnl: float = 0
+    fomo_trades_pnl: float = 0
+    counterfactual_trades: list[dict] = Field(default_factory=list)
+
+
+class ShadowProfile(BaseModel):
+    shadow_id: str
+    created_at: datetime = Field(default_factory=utc_now)
+    total_trades: int
+    profitable_trades: int
+    losing_trades: int
+    date_range: tuple[datetime, datetime] | None = None
+    profile_text: str
+    rules: list[ShadowRule]
+    fomo_patterns: list[dict]
+    common_mistakes: list[dict]
+    attribution: ShadowAttribution = Field(default_factory=ShadowAttribution)
+
+
+class ShadowExtractRequest(BaseModel):
+    min_trades: int = 10
+    min_profitable_trades: int = 5
+
+
+class DecisionMemory(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    symbol: str | None = None
+    memory_type: str
+    source_trade_id: UUID | None = None
+    source_research_run_id: UUID | None = None
+    summary: str
+    evidence: dict
+    weight: float = 1.0
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class LiquidationCluster(BaseModel):
+    price: float
+    side: Literal["long_liquidation", "short_liquidation"]
+    magnitude: float
+    distance_pct: float
+    priority: Literal["low", "medium", "high"]
+    source: str = "oi_funding_proxy"
+
+
+class LiquidationAnalysis(BaseModel):
+    symbol: str
+    timeframe: str
+    current_price: float
+    liquidity_score: int
+    upper_clusters: list[LiquidationCluster]
+    lower_clusters: list[LiquidationCluster]
+    dominant_magnet: str
+    asymmetry_score: int
+    cascade_risk_up: str
+    cascade_risk_down: str
+    cascade_risk: str
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class LiquidityAnalyzeRequest(BaseModel):
+    symbol: str = "BTCUSDT"
+    timeframe: str = "4h"
+
+
+class ValidationRun(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    strategy_type: str
+    symbol: str
+    timeframe: str
+    start_time: datetime | None = None
+    end_time: datetime | None = None
+    params: dict
+    summary: dict
+    results: dict
+    warnings: list[str]
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class ValidationRunRequest(BaseModel):
+    strategy_type: str = "entry_score_threshold"
+    symbol: str = "BTCUSDT"
+    timeframe: str = "4h"
+    start: datetime | None = None
+    end: datetime | None = None
+    params: dict = Field(default_factory=lambda: {"entry_score_min": 75, "risk_score_max": 60, "fomo_index_max": 70})
+    validation: dict = Field(default_factory=dict)

@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { Activity, BookOpen, BriefcaseBusiness, LayoutDashboard } from "lucide-react";
+import { Activity, BookOpen, BriefcaseBusiness, FlaskConical, LayoutDashboard, Microscope, Orbit } from "lucide-react";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -29,6 +29,18 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
               <BriefcaseBusiness size={18} />
               Positions
             </Link>
+            <Link href="/research">
+              <Microscope size={18} />
+              Research
+            </Link>
+            <Link href="/shadow">
+              <Orbit size={18} />
+              Shadow
+            </Link>
+            <Link href="/validation">
+              <FlaskConical size={18} />
+              Validation
+            </Link>
             <Link href="/journal">
               <BookOpen size={18} />
               Journal
@@ -36,7 +48,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
           </nav>
           <div className="sidebarStatus">
             <Activity size={16} />
-            Read-only v0.1
+            Read-only v0.4
           </div>
         </aside>
         <main className="main">{children}</main>
@@ -44,4 +56,3 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     </html>
   );
 }
-
