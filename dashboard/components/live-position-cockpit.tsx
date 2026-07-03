@@ -3,7 +3,6 @@
 import Link from "next/link";
 import {
   Activity,
-  AlertTriangle,
   BrainCircuit,
   FileClock,
   NotebookPen,
@@ -13,7 +12,7 @@ import {
   TestTube2,
   UploadCloud
 } from "lucide-react";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { TerminalMetric, TerminalPanel, TerminalTable, TerminalWarning } from "@/components/terminal";
 import {
   api,
@@ -21,7 +20,6 @@ import {
   type LivePositionDetail,
   type LivePositionPayload,
   type LivePositionsResponse,
-  type Position,
   type PositionEvent,
   type PositionState
 } from "@/lib/api";
@@ -29,6 +27,15 @@ import { formatPrice, signedPercent } from "@/lib/format";
 
 type PanelStatus = "ok" | "warning" | "error" | "neutral" | "accent";
 type MetricTone = "positive" | "negative" | "warning" | "neutral" | "info" | "agent";
+type DetailTab = "insight" | "wyckoff" | "technical" | "risk" | "timeline";
+
+const detailTabs: Array<{ id: DetailTab; label: string }> = [
+  { id: "insight", label: "Insight" },
+  { id: "wyckoff", label: "Wyckoff" },
+  { id: "technical", label: "Technical" },
+  { id: "risk", label: "Risk" },
+  { id: "timeline", label: "Timeline" }
+];
 
 export function LivePositionCockpit() {
   const [data, setData] = useState<LivePositionsResponse | null>(null);
@@ -38,6 +45,7 @@ export function LivePositionCockpit() {
   const [actionLoading, setActionLoading] = useState("");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const [activeTab, setActiveTab] = useState<DetailTab>("insight");
 
   async function load(sync = false) {
     setError("");
@@ -115,31 +123,25 @@ export function LivePositionCockpit() {
 
   const positions = data?.positions ?? [];
   const selected = positions.find((item) => item.position.id === selectedId) ?? positions[0];
-  const metrics = useMemo(() => summarizePositions(positions, data?.needs_exit_record_count ?? 0), [positions, data?.needs_exit_record_count]);
 
   return (
-    <div className="page">
-      <header className="pageHeader cockpitHeader">
+    <div className="page cockpitPage">
+      <header className="cockpitToolbar">
         <div>
-          <p className="eyebrow">Live Position Intelligence Cockpit</p>
-          <h1>
-            <span>지금 들고 있는 포지션,</span>
-            <span>계속 들고 있어도 되는 상태인가?</span>
-          </h1>
-          <p className="subtle">Bitget read-only 포지션을 추적하고, 리스크/차트/와이코프/진입 논리 유지 여부를 한 화면에서 점검합니다.</p>
+          <p className="eyebrow">Live Position Cockpit</p>
+          <h1>내 포지션 관제</h1>
         </div>
-        <div className="actionGroup">
-          <button className="button secondary" onClick={testConnection} disabled={actionLoading === "test"}>
-            <TestTube2 size={16} />
-            Test Bitget
-          </button>
+        <div className="cockpitToolbarActions">
+          <span className="lastSyncText">{data?.timestamp ? `Last Sync ${new Date(data.timestamp).toLocaleTimeString()}` : "Last Sync -"}</span>
           <button className="button" onClick={syncPositions} disabled={actionLoading === "sync"}>
             <UploadCloud size={16} />
             {actionLoading === "sync" ? "Syncing" : "Sync Live"}
           </button>
-          <button className="button secondary" onClick={() => void load(false)} disabled={loading}>
+          <button className="iconButton secondary" onClick={() => void load(false)} disabled={loading} title="Refresh local view">
             <RefreshCw size={16} />
-            Refresh
+          </button>
+          <button className="iconButton secondary" onClick={testConnection} disabled={actionLoading === "test"} title="Test Bitget connection">
+            <TestTube2 size={16} />
           </button>
         </div>
       </header>
@@ -147,24 +149,10 @@ export function LivePositionCockpit() {
       {error ? <TerminalWarning tone="error">{error}</TerminalWarning> : null}
       {notice ? <TerminalWarning tone="info">{notice}</TerminalWarning> : null}
 
-      <section className="grid four">
-        <TerminalMetric label="Open Positions" value={data?.open_count ?? 0} delta={data?.provider ?? "provider"} tone={(data?.open_count ?? 0) ? "warning" : "neutral"} />
-        <TerminalMetric label="Unrealized PnL" value={`${metrics.totalPnl.toFixed(2)} USDT`} delta={signedPercent(metrics.avgPnlPercent)} tone={metrics.totalPnl >= 0 ? "positive" : "negative"} />
-        <TerminalMetric label="Highest Risk" value={metrics.highestRisk ? `${metrics.highestRisk}/100` : "-"} delta={metrics.highestRiskSymbol || "no active risk"} tone={metrics.highestRisk >= 70 ? "negative" : metrics.highestRisk >= 55 ? "warning" : "neutral"} />
-        <TerminalMetric label="Exit Record Needed" value={metrics.needsExitRecord} delta={data?.timestamp ? `updated ${new Date(data.timestamp).toLocaleTimeString()}` : "not synced"} tone={metrics.needsExitRecord ? "warning" : "neutral"} />
-      </section>
-
       {connectionTest ? (
-        <TerminalPanel title="Bitget Connection" subtitle="Read-only public market data and private position boundary" status={connectionTest.private_positions.ok ? "ok" : "warning"}>
-          <div className="statusGrid">
-            <StatusItem label="Provider" value={connectionTest.provider} tone={connectionTest.provider === "bitget" ? "ok" : "warn"} />
-            <StatusItem label="Public Data" value={connectionTest.public_market_data.ok ? "ok" : "error"} tone={connectionTest.public_market_data.ok ? "ok" : "error"} />
-            <StatusItem label="Private Positions" value={connectionTest.private_positions.status} tone={connectionTest.private_positions.ok ? "ok" : "warn"} />
-            <StatusItem label="Private Count" value={String(connectionTest.private_positions.count)} tone="muted" />
-            <StatusItem label="Candles" value={String(connectionTest.public_market_data.candles)} tone="muted" />
-            <StatusItem label="Funding" value={connectionTest.funding_rate.ok ? String(connectionTest.funding_rate.value) : "n/a"} tone="muted" />
-          </div>
-        </TerminalPanel>
+        <div className={`connectionNotice ${connectionTest.private_positions.ok ? "ok" : "warn"}`}>
+          Bitget public {connectionTest.public_market_data.ok ? "OK" : "ERROR"} · private {connectionTest.private_positions.status} · positions {connectionTest.private_positions.count}
+        </div>
       ) : null}
 
       {loading && !data ? (
@@ -172,57 +160,330 @@ export function LivePositionCockpit() {
           <div className="terminalEmpty">Loading live position cockpit...</div>
         </TerminalPanel>
       ) : positions.length ? (
-        <section className="cockpitLayout">
-          <TerminalPanel title="Live Position Tape" subtitle="실제 보유/추적 포지션만 표시합니다" status={metrics.highestRisk >= 70 ? "warning" : "ok"}>
-            <div className="positionTape">
-              {positions.map((item) => (
-                <button
-                  className={`positionCard ${selected?.position.id === item.position.id ? "selected" : ""}`}
-                  key={item.position.id}
-                  onClick={() => setSelectedId(item.position.id)}
-                  type="button"
-                >
-                  <div className="positionCardTop">
-                    <div>
-                      <strong>{item.position.symbol}</strong>
-                      <span>{item.position.direction.toUpperCase()} · {item.position.leverage}x · {item.position.source}</span>
-                    </div>
-                    <StatusPill status={item.state.status} label={item.state.status_label} />
-                  </div>
-                  <div className="positionCardMetrics">
-                    <MiniMetric label="PnL" value={signedPercent(item.state.pnl_percent)} tone={item.state.pnl_percent >= 0 ? "positive" : "negative"} />
-                    <MiniMetric label="Health" value={`${item.state.health_score}/100`} tone={healthTone(item.state.health_score)} />
-                    <MiniMetric label="Liq Dist" value={formatDistance(item.state.liquidation_distance_pct)} tone={liquidationTone(item.state.liquidation_distance_pct)} />
-                  </div>
-                  <div className="positionCardFooter">
-                    <span>Entry {formatPrice(item.position.entry_price)}</span>
-                    <span>Mark {formatNullablePrice(item.state.mark_price)}</span>
-                  </div>
-                </button>
-              ))}
-            </div>
-          </TerminalPanel>
-
+        <>
+          <PositionStrip positions={positions} selectedId={selected?.position.id ?? ""} onSelect={setSelectedId} />
           {selected ? (
-            <div className="cockpitDetail">
-              <PositionDecisionPanel payload={selected} onCreateInsight={createInsight} busy={actionLoading === `insight:${selected.position.id}`} />
-              <section className="grid two">
-                <PositionRiskPanel payload={selected} />
-                <PositionTechnicalPanel state={selected.state} />
+            <>
+              <SelectedPositionHeader payload={selected} />
+              <section className="cockpitMainGrid">
+                <ChartPanel payload={selected} />
+                <InsightSummaryPanel payload={selected} onCreateInsight={createInsight} busy={actionLoading === `insight:${selected.position.id}`} />
               </section>
-              <section className="grid two">
-                <PositionLevelsPanel payload={selected} />
-                <PositionInsightPanel payload={selected} onCreateInsight={createInsight} busy={actionLoading === `insight:${selected.position.id}`} />
-              </section>
-              <TerminalPanel title="Recent Position Events" subtitle="점수/리스크/인사이트 변경 기록" status={selected.recent_events.length ? "warning" : "neutral"}>
-                <EventList events={selected.recent_events} />
-              </TerminalPanel>
-            </div>
+              <PositionDetailTabs payload={selected} activeTab={activeTab} onTabChange={setActiveTab} onCreateInsight={createInsight} busy={actionLoading === `insight:${selected.position.id}`} />
+            </>
           ) : null}
-        </section>
+        </>
       ) : (
         <NoPositionsState onSync={syncPositions} syncing={actionLoading === "sync"} />
       )}
+    </div>
+  );
+}
+
+function PositionStrip({
+  positions,
+  selectedId,
+  onSelect
+}: {
+  positions: LivePositionPayload[];
+  selectedId: string;
+  onSelect: (positionId: string) => void;
+}) {
+  return (
+    <section className="positionStrip" aria-label="Open positions">
+      {positions.map((item) => (
+        <button
+          className={`positionStripCard ${item.position.id === selectedId ? "selected" : ""}`}
+          key={item.position.id}
+          onClick={() => onSelect(item.position.id)}
+          type="button"
+        >
+          <strong>{item.position.symbol}</strong>
+          <span>{item.position.direction.toUpperCase()} · {item.position.leverage}x</span>
+          <em className={item.state.pnl_percent >= 0 ? "successText" : "dangerText"}>{signedPercent(item.state.pnl_percent)}</em>
+          <small>Health {item.state.health_score}</small>
+          <StatusPill status={item.state.status} label={item.state.status_label} />
+        </button>
+      ))}
+    </section>
+  );
+}
+
+function SelectedPositionHeader({ payload }: { payload: LivePositionPayload }) {
+  const { position, state } = payload;
+  return (
+    <section className={`selectedPositionHeader status-${state.status}`}>
+      <div className="selectedPositionTitle">
+        <span>Selected Position</span>
+        <strong>{position.symbol} · {position.direction.toUpperCase()} {position.leverage}x</strong>
+      </div>
+      <div className="selectedPositionMetrics">
+        <PositionHeaderMetric label="PnL" value={signedPercent(state.pnl_percent)} tone={state.pnl_percent >= 0 ? "positive" : "negative"} />
+        <PositionHeaderMetric label="Entry" value={formatPrice(position.entry_price)} />
+        <PositionHeaderMetric label="Mark" value={formatNullablePrice(state.mark_price)} tone="info" />
+        <PositionHeaderMetric label="Liq" value={formatNullablePrice(position.liquidation_price)} tone="warning" />
+        <PositionHeaderMetric label="Liq Dist" value={formatDistance(state.liquidation_distance_pct)} tone={liquidationTone(state.liquidation_distance_pct)} />
+        <PositionHeaderMetric label="Health" value={`${state.health_score}/100`} tone={healthTone(state.health_score)} />
+      </div>
+      <div className="selectedPositionState">
+        <span>상태</span>
+        <strong>{state.status_label}</strong>
+      </div>
+    </section>
+  );
+}
+
+function ChartPanel({ payload }: { payload: LivePositionPayload }) {
+  const { position, state } = payload;
+  const technical = state.analysis.technical;
+  const levels = chartLevels(payload);
+  const prices = levels.map((level) => level.price).filter((price) => Number.isFinite(price));
+  const min = Math.min(...prices);
+  const max = Math.max(...prices);
+  const candles = [44, 58, 46, 64, 52, 72, 68, 61, 49, 56, 42, 48, 54, 51];
+  return (
+    <section className="focusPanel chartFocusPanel">
+      <div className="focusPanelHeader">
+        <div>
+          <h2>{position.symbol} Chart</h2>
+          <p>Entry / Mark / Liquidation / Support / Resistance</p>
+        </div>
+        <span>{technical.trend.replaceAll("_", " ")}</span>
+      </div>
+      <div className="chartMock" aria-label="Position chart placeholder">
+        <div className="chartGridLayer" />
+        <div className="mockCandleLayer">
+          {candles.map((height, index) => (
+            <i
+              className={index % 3 === 0 ? "down" : "up"}
+              key={index}
+              style={{ height: `${height}%`, left: `${7 + index * 6.5}%` }}
+            />
+          ))}
+        </div>
+        {levels.map((level) => (
+          <div className={`chartLevel chartLevel-${level.className}`} key={`${level.type}-${level.price}`} style={{ top: `${priceToTop(level.price, min, max)}%` }}>
+            <span>{level.label}</span>
+            <strong>{formatPrice(level.price)}</strong>
+          </div>
+        ))}
+        <div className="volumePlaceholder">
+          <span>Volume</span>
+          {candles.slice(0, 12).map((height, index) => (
+            <i key={index} style={{ height: `${Math.max(18, height / 1.8)}%` }} />
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function InsightSummaryPanel({
+  payload,
+  onCreateInsight,
+  busy
+}: {
+  payload: LivePositionPayload;
+  onCreateInsight: (positionId: string) => Promise<void> | void;
+  busy: boolean;
+}) {
+  const { position, state, latest_insight: insight } = payload;
+  return (
+    <section className="focusPanel insightFocusPanel">
+      <div className="focusPanelHeader">
+        <div>
+          <h2>AI Position Insight</h2>
+          <p>현재 판단과 다음 확인 지점</p>
+        </div>
+        <button className="button secondary" onClick={() => onCreateInsight(position.id)} disabled={busy}>
+          <BrainCircuit size={16} />
+          {busy ? "Generating" : "Generate"}
+        </button>
+      </div>
+      <div className={`insightJudgement status-${state.status}`}>
+        <span>현재 판단</span>
+        <strong>{state.status_label}</strong>
+        <p>{verdictForState(state)}</p>
+      </div>
+      {insight ? (
+        <div className="insightPreview">
+          <p>{firstInsightParagraph(insight.insight_text)}</p>
+          <small>{new Date(insight.created_at).toLocaleString()} · Health {insight.health_score}/100</small>
+        </div>
+      ) : (
+        <div className="insightEmpty">
+          <strong>아직 인사이트가 없습니다.</strong>
+          <span>Generate Insight 버튼을 눌러 현재 포지션 상태를 분석하세요.</span>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function PositionDetailTabs({
+  payload,
+  activeTab,
+  onTabChange,
+  onCreateInsight,
+  busy
+}: {
+  payload: LivePositionPayload;
+  activeTab: DetailTab;
+  onTabChange: (tab: DetailTab) => void;
+  onCreateInsight: (positionId: string) => Promise<void> | void;
+  busy: boolean;
+}) {
+  return (
+    <section className="detailTabsPanel">
+      <div className="detailTabList" role="tablist" aria-label="Position detail tabs">
+        {detailTabs.map((tab) => (
+          <button
+            aria-selected={activeTab === tab.id}
+            className={activeTab === tab.id ? "active" : ""}
+            key={tab.id}
+            onClick={() => onTabChange(tab.id)}
+            role="tab"
+            type="button"
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+      <div className="detailTabBody">
+        {activeTab === "insight" ? <InsightTab payload={payload} onCreateInsight={onCreateInsight} busy={busy} /> : null}
+        {activeTab === "wyckoff" ? <WyckoffTab state={payload.state} /> : null}
+        {activeTab === "technical" ? <TechnicalTab state={payload.state} /> : null}
+        {activeTab === "risk" ? <RiskTab payload={payload} /> : null}
+        {activeTab === "timeline" ? <TimelineTab payload={payload} /> : null}
+      </div>
+    </section>
+  );
+}
+
+function InsightTab({
+  payload,
+  onCreateInsight,
+  busy
+}: {
+  payload: LivePositionPayload;
+  onCreateInsight: (positionId: string) => Promise<void> | void;
+  busy: boolean;
+}) {
+  const insight = payload.latest_insight;
+  return (
+    <div className="tabContentGrid">
+      <div className={`tabJudgement status-${payload.state.status}`}>
+        <span>현재 판단</span>
+        <strong>{payload.state.status_label}</strong>
+        <p>{verdictForState(payload.state)}</p>
+      </div>
+      <div className="tabTextBlock">
+        {insight ? (
+          <>
+            <p>{insight.insight_text}</p>
+            <small>{new Date(insight.created_at).toLocaleString()} · Health {insight.health_score}/100</small>
+          </>
+        ) : (
+          <div className="insightEmpty">
+            <strong>아직 인사이트가 없습니다.</strong>
+            <span>Generate Insight 버튼을 눌러 현재 포지션 상태를 분석하세요.</span>
+            <button className="button" onClick={() => onCreateInsight(payload.position.id)} disabled={busy}>
+              <BrainCircuit size={16} />
+              {busy ? "Generating" : "Generate Insight"}
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function WyckoffTab({ state }: { state: PositionState }) {
+  const wyckoff = state.analysis.wyckoff;
+  return (
+    <div className="tabMetricLayout">
+      <PositionHeaderMetric label="Accumulation" value={wyckoff.accumulation_score} tone="info" />
+      <PositionHeaderMetric label="Distribution" value={wyckoff.distribution_score} tone="warning" />
+      <PositionHeaderMetric label="Phase" value={humanizeToken(wyckoff.phase_hint)} />
+      <PositionHeaderMetric label="Spring" value={wyckoff.spring_candidate ? "Yes" : "No"} />
+      <PositionHeaderMetric label="SOS" value={wyckoff.sos_candidate ? "Yes" : "No"} />
+      <PositionHeaderMetric label="LPS" value={wyckoff.lps_candidate ? "Yes" : "No"} />
+      <p className="tabExplanation">{wyckoff.structure_comment}</p>
+    </div>
+  );
+}
+
+function TechnicalTab({ state }: { state: PositionState }) {
+  const technical = state.analysis.technical;
+  return (
+    <div className="tabMetricLayout">
+      <PositionHeaderMetric label="Trend" value={humanizeToken(technical.trend)} tone={technical.trend_alignment.includes("against") ? "negative" : "positive"} />
+      <PositionHeaderMetric label="RSI" value={humanizeToken(technical.rsi_state)} />
+      <PositionHeaderMetric label="MACD" value={humanizeToken(technical.macd_state)} tone={technical.macd_state.includes("bearish") ? "negative" : "positive"} />
+      <PositionHeaderMetric label="Bollinger" value={humanizeToken(technical.bollinger_state)} />
+      <PositionHeaderMetric label="Volume" value={humanizeToken(technical.volume_state)} tone={technical.volume_state.includes("declining") ? "warning" : "positive"} />
+      <PositionHeaderMetric label="Support" value={humanizeToken(technical.support_status)} tone={technical.support_status === "at_risk" ? "negative" : "positive"} />
+      <PositionHeaderMetric label="Resistance" value={humanizeToken(technical.resistance_status)} />
+    </div>
+  );
+}
+
+function RiskTab({ payload }: { payload: LivePositionPayload }) {
+  const { position, state } = payload;
+  return (
+    <div className="tabRiskGrid">
+      <div className="tabMetricLayout">
+        <PositionHeaderMetric label="Liq Distance" value={formatDistance(state.liquidation_distance_pct)} tone={liquidationTone(state.liquidation_distance_pct)} />
+        <PositionHeaderMetric label="Risk Score" value={`${state.risk_score}/100`} tone={state.risk_score >= 70 ? "negative" : state.risk_score >= 55 ? "warning" : "neutral"} />
+        <PositionHeaderMetric label="PnL" value={signedPercent(state.pnl_percent)} tone={state.pnl_percent >= 0 ? "positive" : "negative"} />
+        <PositionHeaderMetric label="Giveback" value={formatDistance(state.analysis.risk.profit_giveback_pct)} />
+        <PositionHeaderMetric label="Stop" value={formatNullablePrice(position.planned_stop_price)} tone="warning" />
+        <PositionHeaderMetric label="ATR Risk" value={state.analysis.risk.atr_risk} />
+      </div>
+      <div className="tabLevelsList">
+        <strong>주의할 가격</strong>
+        {state.analysis.risk.critical_levels.length ? (
+          state.analysis.risk.critical_levels.map((level) => (
+            <div key={`${level.type}-${level.price}`}>
+              <span>{level.type}</span>
+              <em>{formatPrice(level.price)}</em>
+              <p>{level.meaning}</p>
+            </div>
+          ))
+        ) : (
+          <p>중요 가격대 데이터가 아직 충분하지 않습니다.</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function TimelineTab({ payload }: { payload: LivePositionPayload }) {
+  return (
+    <div className="timelineTab">
+      <div className="snapshotSummary">
+        <PositionHeaderMetric label="Latest Health" value={`${payload.latest_snapshot.health_score}/100`} tone={healthTone(payload.latest_snapshot.health_score)} />
+        <PositionHeaderMetric label="Risk" value={`${payload.latest_snapshot.risk_score}/100`} />
+        <PositionHeaderMetric label="Snapshot" value={new Date(payload.latest_snapshot.created_at).toLocaleTimeString()} />
+      </div>
+      <EventList events={payload.recent_events} />
+    </div>
+  );
+}
+
+function PositionHeaderMetric({
+  label,
+  value,
+  tone = "neutral"
+}: {
+  label: string;
+  value: string | number;
+  tone?: MetricTone;
+}) {
+  return (
+    <div className={`positionHeaderMetric tone-${tone}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
     </div>
   );
 }
@@ -698,15 +959,6 @@ function StatusPill({ status, label }: { status: string; label: string }) {
   return <span className={`statusPill status-${status}`}>{label}</span>;
 }
 
-function MiniMetric({ label, value, tone }: { label: string; value: string; tone: MetricTone }) {
-  return (
-    <div className={`miniMetric tone-${tone}`}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
-}
-
 function TechnicalItem({ label, value, tone = "neutral" }: { label: string; value: string; tone?: "ok" | "warn" | "danger" | "neutral" }) {
   return (
     <div className={`technicalItem ${tone}`}>
@@ -714,28 +966,6 @@ function TechnicalItem({ label, value, tone = "neutral" }: { label: string; valu
       <strong>{humanizeToken(value)}</strong>
     </div>
   );
-}
-
-function StatusItem({ label, value, tone }: { label: string; value: string; tone: string }) {
-  return (
-    <div className={`statusItem ${tone}`}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
-}
-
-function summarizePositions(positions: LivePositionPayload[], needsExitRecord: number) {
-  const totalPnl = positions.reduce((sum, item) => sum + (item.state.pnl_amount ?? 0), 0);
-  const avgPnlPercent = positions.length ? positions.reduce((sum, item) => sum + item.state.pnl_percent, 0) / positions.length : 0;
-  const riskiest = [...positions].sort((a, b) => b.state.risk_score - a.state.risk_score)[0];
-  return {
-    totalPnl,
-    avgPnlPercent,
-    highestRisk: riskiest?.state.risk_score ?? 0,
-    highestRiskSymbol: riskiest?.position.symbol ?? "",
-    needsExitRecord
-  };
 }
 
 function verdictForState(state: PositionState): string {
@@ -776,6 +1006,33 @@ function formatDistance(value: number | null): string {
   return value === null ? "-" : signedPercent(value);
 }
 
+function chartLevels(payload: LivePositionPayload): Array<{ label: string; price: number; type: string; className: string }> {
+  const { position, state } = payload;
+  const base = [
+    { label: "Entry", price: position.entry_price, type: "entry" },
+    { label: "Mark", price: state.mark_price, type: "mark" },
+    { label: "Liq", price: position.liquidation_price, type: "liquidation" },
+    ...state.analysis.risk.critical_levels.map((level) => ({
+      label: level.type,
+      price: level.price,
+      type: level.type
+    }))
+  ];
+  const valid = base
+    .filter((level): level is { label: string; price: number; type: string } => Number.isFinite(level.price))
+    .map((level) => ({
+      ...level,
+      className: level.type.replace(/[^a-z0-9_-]/gi, "_").toLowerCase()
+    }));
+  if (valid.length) return valid;
+  return [{ label: "Mark", price: state.mark_price ?? position.entry_price, type: "mark", className: "mark" }];
+}
+
+function priceToTop(price: number, min: number, max: number): number {
+  if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) return 50;
+  return Math.max(8, Math.min(92, 100 - ((price - min) / (max - min)) * 100));
+}
+
 function levelPosition(price: number, min: number, max: number): number {
   if (max <= min) return 50;
   return Math.max(2, Math.min(98, ((price - min) / (max - min)) * 100));
@@ -788,4 +1045,9 @@ function numberOrNull(value: FormDataEntryValue | null): number | null {
 
 function humanizeToken(value: string): string {
   return value.replaceAll("_", " ");
+}
+
+function firstInsightParagraph(text: string): string {
+  const paragraph = text.split("\n\n").find((part) => part.trim().length > 0)?.trim() ?? text.trim();
+  return paragraph.length > 260 ? `${paragraph.slice(0, 257)}...` : paragraph;
 }

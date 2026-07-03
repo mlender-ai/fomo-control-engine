@@ -786,6 +786,554 @@ h3 {
   background: rgba(98, 207, 232, 0.08);
 }
 
+.cockpitPage {
+  gap: 10px;
+}
+
+.cockpitToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px solid var(--terminal-line);
+  border-radius: 6px;
+  background: rgba(17, 21, 29, 0.88);
+  padding: 12px;
+}
+
+.cockpitToolbar h1 {
+  margin-top: 3px;
+  font-size: 20px;
+}
+
+.cockpitToolbarActions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.lastSyncText,
+.connectionNotice {
+  color: var(--terminal-muted);
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.connectionNotice {
+  border: 1px solid var(--terminal-line);
+  border-left: 3px solid var(--terminal-warning);
+  border-radius: 5px;
+  background: rgba(240, 184, 64, 0.07);
+  padding: 8px 10px;
+}
+
+.connectionNotice.ok {
+  border-left-color: var(--terminal-positive);
+  background: rgba(110, 210, 143, 0.07);
+}
+
+.positionStrip {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
+}
+
+.positionStripCard {
+  display: grid;
+  flex: 0 0 168px;
+  gap: 5px;
+  min-height: 126px;
+  border: 1px solid var(--terminal-line);
+  border-radius: 6px;
+  background: rgba(17, 21, 29, 0.82);
+  color: var(--terminal-text);
+  cursor: pointer;
+  padding: 10px;
+  text-align: left;
+}
+
+.positionStripCard:hover,
+.positionStripCard.selected {
+  border-color: rgba(240, 184, 64, 0.72);
+  background: rgba(240, 184, 64, 0.09);
+}
+
+.positionStripCard.selected {
+  box-shadow: inset 0 0 0 1px rgba(240, 184, 64, 0.38);
+}
+
+.positionStripCard strong {
+  overflow: hidden;
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.positionStripCard span,
+.positionStripCard small {
+  color: var(--terminal-muted);
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 11px;
+}
+
+.positionStripCard em {
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 18px;
+  font-style: normal;
+  font-weight: 800;
+  line-height: 1.08;
+}
+
+.selectedPositionHeader {
+  display: grid;
+  grid-template-columns: minmax(190px, 0.7fr) minmax(0, 2.4fr) minmax(150px, 0.5fr);
+  align-items: stretch;
+  gap: 10px;
+  border: 1px solid var(--terminal-line);
+  border-left: 4px solid var(--terminal-cyan);
+  border-radius: 6px;
+  background: rgba(17, 21, 29, 0.92);
+  padding: 12px;
+}
+
+.selectedPositionHeader.status-watch {
+  border-left-color: var(--terminal-warning);
+}
+
+.selectedPositionHeader.status-risk_rising,
+.selectedPositionHeader.status-thesis_weakening,
+.selectedPositionHeader.status-critical {
+  border-left-color: var(--terminal-negative);
+}
+
+.selectedPositionTitle,
+.selectedPositionState,
+.positionHeaderMetric {
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 5px;
+  background: rgba(8, 11, 16, 0.34);
+  padding: 9px;
+}
+
+.selectedPositionTitle {
+  display: grid;
+  align-content: center;
+  gap: 5px;
+}
+
+.selectedPositionTitle span,
+.selectedPositionState span,
+.positionHeaderMetric span {
+  color: var(--terminal-muted);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.selectedPositionTitle strong {
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 18px;
+  line-height: 1.18;
+}
+
+.selectedPositionMetrics {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.selectedPositionState {
+  display: grid;
+  align-content: center;
+  gap: 6px;
+}
+
+.selectedPositionState strong {
+  color: var(--terminal-amber);
+  font-size: 17px;
+  line-height: 1.2;
+}
+
+.positionHeaderMetric {
+  min-width: 0;
+}
+
+.positionHeaderMetric strong {
+  display: block;
+  overflow: hidden;
+  margin-top: 6px;
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 16px;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.positionHeaderMetric.tone-positive strong,
+.successText {
+  color: var(--terminal-positive);
+}
+
+.positionHeaderMetric.tone-negative strong,
+.dangerText {
+  color: var(--terminal-negative);
+}
+
+.positionHeaderMetric.tone-warning strong {
+  color: var(--terminal-warning);
+}
+
+.positionHeaderMetric.tone-info strong,
+.positionHeaderMetric.tone-agent strong {
+  color: var(--terminal-cyan);
+}
+
+.cockpitMainGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.42fr) minmax(340px, 0.58fr);
+  gap: 10px;
+  align-items: stretch;
+}
+
+.focusPanel,
+.detailTabsPanel {
+  border: 1px solid var(--terminal-line);
+  border-radius: 6px;
+  background: rgba(17, 21, 29, 0.86);
+}
+
+.focusPanel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.focusPanelHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.focusPanelHeader p {
+  margin-top: 4px;
+  color: var(--terminal-muted);
+  font-size: 12px;
+}
+
+.focusPanelHeader > span {
+  border: 1px solid var(--terminal-line);
+  border-radius: 4px;
+  color: var(--terminal-muted);
+  padding: 4px 7px;
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 11px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.chartMock {
+  position: relative;
+  min-height: 420px;
+  overflow: hidden;
+  border: 1px solid var(--terminal-line);
+  border-radius: 5px;
+  background:
+    linear-gradient(180deg, rgba(98, 207, 232, 0.05), transparent 44%),
+    #0b0f15;
+}
+
+.chartGridLayer {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(rgba(255, 255, 255, 0.052) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.044) 1px, transparent 1px);
+  background-size: 100% 20%, 10% 100%;
+}
+
+.mockCandleLayer {
+  position: absolute;
+  inset: 44px 72px 116px 20px;
+}
+
+.mockCandleLayer i {
+  position: absolute;
+  bottom: 0;
+  width: 9px;
+  border-radius: 2px;
+  background: var(--terminal-cyan);
+  opacity: 0.82;
+}
+
+.mockCandleLayer i.down {
+  background: var(--terminal-negative);
+}
+
+.chartLevel {
+  position: absolute;
+  right: 0;
+  left: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-top: 1px solid rgba(98, 207, 232, 0.56);
+  padding: 2px 8px 0;
+  color: var(--terminal-cyan);
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 11px;
+}
+
+.chartLevel strong {
+  color: inherit;
+}
+
+.chartLevel-entry {
+  border-top-color: rgba(240, 184, 64, 0.78);
+  color: var(--terminal-warning);
+}
+
+.chartLevel-liquidation,
+.chartLevel-stop {
+  border-top-color: rgba(238, 123, 128, 0.82);
+  color: var(--terminal-negative);
+}
+
+.volumePlaceholder {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  left: 12px;
+  display: flex;
+  align-items: end;
+  gap: 7px;
+  height: 72px;
+  border-top: 1px solid var(--terminal-line);
+  padding-top: 10px;
+}
+
+.volumePlaceholder span {
+  align-self: flex-start;
+  color: var(--terminal-muted);
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.volumePlaceholder i {
+  flex: 1;
+  max-width: 28px;
+  border-radius: 2px 2px 0 0;
+  background: rgba(240, 184, 64, 0.38);
+}
+
+.insightFocusPanel {
+  align-content: start;
+}
+
+.insightJudgement,
+.tabJudgement {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--terminal-line);
+  border-left: 3px solid var(--terminal-cyan);
+  border-radius: 5px;
+  background: rgba(8, 11, 16, 0.42);
+  padding: 12px;
+}
+
+.insightJudgement.status-watch,
+.tabJudgement.status-watch {
+  border-left-color: var(--terminal-warning);
+}
+
+.insightJudgement.status-risk_rising,
+.insightJudgement.status-thesis_weakening,
+.insightJudgement.status-critical,
+.tabJudgement.status-risk_rising,
+.tabJudgement.status-thesis_weakening,
+.tabJudgement.status-critical {
+  border-left-color: var(--terminal-negative);
+}
+
+.insightJudgement span,
+.tabJudgement span {
+  color: var(--terminal-muted);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.insightJudgement strong,
+.tabJudgement strong {
+  color: var(--terminal-amber);
+  font-size: 25px;
+  line-height: 1.12;
+}
+
+.insightJudgement p,
+.tabJudgement p,
+.tabTextBlock p,
+.tabExplanation {
+  color: #d8dee8;
+  line-height: 1.52;
+}
+
+.insightPreview,
+.insightEmpty {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--terminal-line);
+  border-radius: 5px;
+  background: rgba(8, 11, 16, 0.32);
+  padding: 11px;
+}
+
+.insightPreview p {
+  display: -webkit-box;
+  overflow: hidden;
+  color: #d8dee8;
+  line-height: 1.5;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.insightPreview small,
+.insightEmpty span,
+.tabTextBlock small {
+  color: var(--terminal-muted);
+  font-size: 11px;
+}
+
+.detailTabsPanel {
+  overflow: hidden;
+}
+
+.detailTabList {
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--terminal-line);
+  padding: 8px 8px 0;
+}
+
+.detailTabList button {
+  border: 1px solid transparent;
+  border-bottom: 0;
+  border-radius: 5px 5px 0 0;
+  background: transparent;
+  color: var(--terminal-muted);
+  cursor: pointer;
+  padding: 9px 12px;
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.detailTabList button.active {
+  border-color: var(--terminal-line);
+  background: rgba(240, 184, 64, 0.09);
+  color: var(--terminal-amber);
+}
+
+.detailTabBody {
+  padding: 12px;
+}
+
+.tabContentGrid,
+.tabRiskGrid {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.42fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.tabTextBlock {
+  min-width: 0;
+  border: 1px solid var(--terminal-line);
+  border-radius: 5px;
+  background: rgba(8, 11, 16, 0.34);
+  padding: 12px;
+}
+
+.tabTextBlock p {
+  white-space: pre-line;
+}
+
+.tabMetricLayout {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.tabMetricLayout > .tabExplanation {
+  grid-column: 1 / -1;
+  border: 1px solid var(--terminal-line);
+  border-radius: 5px;
+  background: rgba(8, 11, 16, 0.34);
+  padding: 10px;
+}
+
+.tabRiskGrid {
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 0.45fr);
+}
+
+.tabLevelsList {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--terminal-line);
+  border-radius: 5px;
+  background: rgba(8, 11, 16, 0.34);
+  padding: 10px;
+}
+
+.tabLevelsList > strong {
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.tabLevelsList div {
+  display: grid;
+  grid-template-columns: minmax(80px, 0.35fr) minmax(90px, 0.35fr) minmax(0, 1fr);
+  gap: 8px;
+  border-top: 1px solid var(--terminal-line);
+  padding-top: 8px;
+}
+
+.tabLevelsList span,
+.tabLevelsList em {
+  color: var(--terminal-muted);
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 11px;
+  font-style: normal;
+}
+
+.tabLevelsList em {
+  color: var(--terminal-text);
+}
+
+.tabLevelsList p {
+  color: #d8dee8;
+  line-height: 1.42;
+}
+
+.timelineTab {
+  display: grid;
+  gap: 10px;
+}
+
+.snapshotSummary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
 .cockpitHeader h1 {
   max-width: 980px;
 }
@@ -1273,15 +1821,24 @@ h3 {
   .grid.three,
   .grid.four,
   .cockpitLayout,
+  .cockpitMainGrid,
   .metricGrid,
   .terminalMetricGrid,
   .statusGrid,
-  .technicalGrid {
+  .technicalGrid,
+  .selectedPositionHeader {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .cockpitLayout {
+  .cockpitLayout,
+  .cockpitMainGrid,
+  .selectedPositionHeader {
     grid-template-columns: 1fr;
+  }
+
+  .selectedPositionMetrics,
+  .tabMetricLayout {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .positionDecisionGrid {
@@ -1325,6 +1882,20 @@ h3 {
     flex-direction: column;
   }
 
+  .cockpitToolbar,
+  .cockpitToolbarActions {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .cockpitToolbarActions {
+    width: 100%;
+  }
+
+  .lastSyncText {
+    white-space: normal;
+  }
+
   .pageHeader > div {
     max-width: calc(100vw - 44px);
     width: 100%;
@@ -1343,11 +1914,32 @@ h3 {
   .statusGrid,
   .technicalGrid,
   .formGrid,
-  .scoreRow,
-  .positionCardMetrics,
-  .healthBarRow,
-  .levelRow,
-  .memoPriceGrid {
+    .scoreRow,
+    .positionCardMetrics,
+    .selectedPositionMetrics,
+    .tabMetricLayout,
+    .tabContentGrid,
+    .tabRiskGrid,
+    .snapshotSummary,
+    .healthBarRow,
+    .levelRow,
+    .memoPriceGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .positionStripCard {
+    flex-basis: 152px;
+  }
+
+  .chartMock {
+    min-height: 320px;
+  }
+
+  .mockCandleLayer {
+    inset: 36px 52px 104px 14px;
+  }
+
+  .tabLevelsList div {
     grid-template-columns: 1fr;
   }
 
