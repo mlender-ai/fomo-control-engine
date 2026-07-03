@@ -1,0 +1,16 @@
+[project]
+name = "fomo-control-engine-backend"
+version = "0.1.0"
+description = "FastAPI backend for the FOMO Control Engine"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115.0",
+  "uvicorn>=0.30.0",
+  "pydantic>=2.7.0",
+  "pydantic-settings>=2.3.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
