@@ -1,21 +1,27 @@
 "use client";
 
 import Link from "next/link";
-import { RefreshCw, ShieldAlert } from "lucide-react";
+import { RefreshCw, ShieldAlert, TestTube2, UploadCloud } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { api, type MarketSummary } from "@/lib/api";
+import { api, type BitgetConnectionTest, type MarketSummary, type SystemStatus } from "@/lib/api";
 import { formatPrice, scoreTone, signedPercent } from "@/lib/format";
 
 export function DashboardShell() {
   const [summary, setSummary] = useState<MarketSummary | null>(null);
+  const [status, setStatus] = useState<SystemStatus | null>(null);
+  const [connectionTest, setConnectionTest] = useState<BitgetConnectionTest | null>(null);
+  const [actionMessage, setActionMessage] = useState("");
   const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState("");
   const [error, setError] = useState("");
 
   async function load() {
     setLoading(true);
     setError("");
     try {
-      setSummary(await api.summary());
+      const [nextStatus, nextSummary] = await Promise.all([api.systemStatus(), api.summary()]);
+      setStatus(nextStatus);
+      setSummary(nextSummary);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load summary");
     } finally {
@@ -33,6 +39,36 @@ export function DashboardShell() {
   );
   const fomoWarnings = useMemo(() => (summary?.reports ?? []).filter((report) => report.scores.fomo >= 70), [summary]);
 
+  async function testConnection() {
+    setActionLoading("test");
+    setActionMessage("");
+    setError("");
+    try {
+      const result = await api.testBitgetConnection();
+      setConnectionTest(result);
+      setActionMessage(`Public API ${result.public_market_data.ok ? "OK" : "ERROR"} · Private ${result.private_positions.status}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to test Bitget connection");
+    } finally {
+      setActionLoading("");
+    }
+  }
+
+  async function syncPositions() {
+    setActionLoading("sync");
+    setActionMessage("");
+    setError("");
+    try {
+      const result = await api.syncBitgetPositions();
+      setActionMessage(`Position sync: ${result.status}, created ${result.created}, updated ${result.updated}`);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to sync positions");
+    } finally {
+      setActionLoading("");
+    }
+  }
+
   return (
     <div className="page">
       <header className="pageHeader">
@@ -48,6 +84,34 @@ export function DashboardShell() {
       </header>
 
       {error ? <div className="panel dangerText">{error}</div> : null}
+      {actionMessage ? <div className="panel subtle">{actionMessage}</div> : null}
+
+      <section className="panel">
+        <div className="panelHeader">
+          <div>
+            <h2>API Status</h2>
+            <p className="subtle">Provider, public market data, private read-only position sync 상태입니다.</p>
+          </div>
+          <div className="actionGroup">
+            <button className="button secondary" onClick={testConnection} disabled={actionLoading === "test"}>
+              <TestTube2 size={16} />
+              Test Bitget Connection
+            </button>
+            <button className="button secondary" onClick={syncPositions} disabled={actionLoading === "sync"}>
+              <UploadCloud size={16} />
+              Sync Positions
+            </button>
+          </div>
+        </div>
+        <div className="statusGrid">
+          <StatusItem label="Provider" value={status?.market_data_provider ?? summary?.market_data_provider ?? "..."} tone="ok" />
+          <StatusItem label="Database" value={status?.database ?? "..."} tone={status?.database === "ok" ? "ok" : "error"} />
+          <StatusItem label="Public API" value={connectionTest?.public_market_data.ok ? "ok" : status?.bitget_public_api ?? "..."} tone={connectionTest?.public_market_data.ok ? "ok" : "muted"} />
+          <StatusItem label="Private API" value={connectionTest?.private_positions.status ?? status?.bitget_private_api ?? "..."} tone={statusTone(connectionTest?.private_positions.status ?? status?.bitget_private_api)} />
+          <StatusItem label="Candles" value={String(connectionTest?.public_market_data.candles ?? topCandidates[0]?.data_quality.candles ?? "-")} tone="muted" />
+          <StatusItem label="Last Sync" value={status?.timestamp ? new Date(status.timestamp).toLocaleString() : "-"} tone="muted" />
+        </div>
+      </section>
 
       <section className="grid three">
         <div className="panel">
@@ -131,4 +195,20 @@ export function DashboardShell() {
       </section>
     </div>
   );
+}
+
+function StatusItem({ label, value, tone }: { label: string; value: string; tone: "ok" | "warn" | "error" | "muted" }) {
+  return (
+    <div className={`statusItem ${tone}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function statusTone(value: string | undefined): "ok" | "warn" | "error" | "muted" {
+  if (!value || value === "not_configured" || value === "not_active" || value === "configured") return "muted";
+  if (value === "ok") return "ok";
+  if (value === "permission_error") return "warn";
+  return "error";
 }

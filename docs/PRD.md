@@ -4,7 +4,7 @@
 
 FOMO Control Engine is a personal trading decision engine. It helps the user decide whether a planned entry is supported by data, then records entry, monitoring, exit, and review decisions.
 
-## V0.2 Goals
+## V0.3 Goals
 
 - Generate reports for BTCUSDT, ETHUSDT, SOLUSDT, and other major tickers.
 - Calculate Entry Opportunity Score from deterministic sub-scores.
@@ -14,6 +14,9 @@ FOMO Control Engine is a personal trading decision engine. It helps the user dec
 - Save exits and generate review text.
 - Persist reports, positions, monitoring logs, and completed trades.
 - Allow mock/live Bitget market data switching.
+- Read actual Bitget futures positions through private read-only API.
+- Sync actual exchange positions into internal position tracking without closing them automatically.
+- Show API provider, public API, private API, and data quality state in the dashboard.
 
 ## Non-Goals
 
@@ -21,7 +24,8 @@ FOMO Control Engine is a personal trading decision engine. It helps the user dec
 - No order execution.
 - No guaranteed signal language.
 - No machine learning prediction in v0.1.
-- No automatic trading in v0.2.
+- No automatic trading in v0.3.
+- No order, close-position, batch-order, trigger-order, or withdrawal endpoint integration.
 
 ## Success Criteria
 

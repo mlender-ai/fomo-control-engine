@@ -2,7 +2,7 @@ from datetime import timedelta
 import math
 import random
 
-from app.db.models import MarketCandle, MarketSnapshot, utc_now
+from app.db.models import DataQuality, MarketCandle, MarketSnapshot, utc_now
 from app.exchange.base import MarketDataProvider
 
 
@@ -45,6 +45,7 @@ class MockMarketDataProvider(MarketDataProvider):
                     low=round(low, 4),
                     close=round(close, 4),
                     volume=round(volume, 2),
+                    quote_volume=round(volume * close, 2),
                 )
             )
 
@@ -59,4 +60,14 @@ class MockMarketDataProvider(MarketDataProvider):
             funding_rate=round(rng.uniform(-0.018, 0.026), 4),
             open_interest_change=round(rng.uniform(-8.5, 14.5), 2),
             candles=candles,
+            provider="mock",
+            data_quality=DataQuality(
+                ohlcv_ok=True,
+                funding_ok=True,
+                open_interest_ok=True,
+                min_candles_met=True,
+                fallback_used=False,
+                candles=len(candles),
+                last_candle_at=candles[-1].timestamp,
+            ),
         )

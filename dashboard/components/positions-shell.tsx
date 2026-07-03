@@ -125,7 +125,10 @@ export function PositionsShell() {
                 <th>Side</th>
                 <th>Entry</th>
                 <th>Current</th>
+                <th>Leverage</th>
+                <th>Size</th>
                 <th>PnL</th>
+                <th>Liq.</th>
                 <th>Score</th>
                 <th>Status</th>
                 <th>Action</th>
@@ -139,18 +142,23 @@ export function PositionsShell() {
                   </td>
                   <td>{position.direction}</td>
                   <td>{formatPrice(position.entry_price)}</td>
-                  <td>{position.current_price ? formatPrice(position.current_price) : "-"}</td>
+                  <td>{position.mark_price ? formatPrice(position.mark_price) : position.current_price ? formatPrice(position.current_price) : "-"}</td>
+                  <td>{position.leverage}x</td>
+                  <td>{position.quantity}</td>
                   <td className={position.pnl_percent >= 0 ? "successText" : "dangerText"}>{signedPercent(position.pnl_percent)}</td>
+                  <td>{position.liquidation_price ? formatPrice(position.liquidation_price) : "-"}</td>
                   <td>
                     {position.entry_score ?? "-"} → {position.current_score ?? "-"}
                   </td>
-                  <td>{position.status}</td>
+                  <td>{position.status} · {position.source}</td>
                   <td>
-                    <button className="iconButton secondary" onClick={() => monitor(position.id)} disabled={position.status !== "open" || busyId === position.id} title="Monitor">
+                    <button className="button secondary" onClick={() => monitor(position.id)} disabled={position.status !== "open" || busyId === position.id} title="Monitor">
                       <Activity size={16} />
+                      Monitor
                     </button>{" "}
-                    <button className="iconButton secondary" onClick={() => exit(position)} disabled={position.status !== "open" || busyId === position.id} title="Exit">
+                    <button className="button secondary" onClick={() => exit(position)} disabled={position.status !== "open" || busyId === position.id} title="Record Exit">
                       <LogOut size={16} />
+                      Record Exit
                     </button>
                   </td>
                 </tr>

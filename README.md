@@ -2,11 +2,12 @@
 
 FOMO Control Engine is a personal trading decision engine. It does not place trades or promise signals. It scores whether a planned entry is supported by market structure, volume, liquidity, momentum, and risk data, then turns the structured result into a plain-language report.
 
-## Current v0.2 Scope
+## Current v0.3 Scope
 
 - FastAPI backend with report, position, monitoring, exit, and review endpoints
 - Deterministic Entry Opportunity Score calculation
 - Mock and live Bitget read-only market data providers
+- Bitget private read-only position lookup and sync
 - SQLite persistence for reports, positions, monitoring logs, and trades
 - Next.js dashboard for market summary, ticker detail, open positions, and trade journal
 - pytest coverage for scoring, reports, mock provider, persistence, and position flow
@@ -39,18 +40,34 @@ Create `backend/.env` from `backend/.env.example`.
 Default local mode:
 
 ```bash
-FCE_MARKET_DATA_PROVIDER=mock
-FCE_DATABASE_URL=sqlite:///./fomo_control_engine.db
+MARKET_DATA_PROVIDER=mock
+DATABASE_URL=sqlite:///./fomo_control_engine.db
 ```
 
 Live Bitget public market data mode:
 
 ```bash
-FCE_MARKET_DATA_PROVIDER=bitget
-FCE_BITGET_PRODUCT_TYPE=usdt-futures
+MARKET_DATA_PROVIDER=bitget
+BITGET_PRODUCT_TYPE=USDT-FUTURES
+BITGET_MARGIN_COIN=USDT
+BITGET_API_KEY=
+BITGET_API_SECRET=
+BITGET_API_PASSPHRASE=
 ```
 
-The current Bitget integration uses public read-only futures market endpoints for candles, ticker, current funding rate, and open interest. No order endpoint is implemented.
+The current Bitget integration uses public read-only futures market endpoints for candles, ticker, current funding rate, and open interest. Private API usage is limited to read-only futures positions. No order endpoint is implemented.
+
+Useful checks:
+
+```bash
+curl http://127.0.0.1:8875/api/system/status
+curl -X POST http://127.0.0.1:8875/api/system/bitget/test-connection
+curl -X POST http://127.0.0.1:8875/api/reports \
+  -H "Content-Type: application/json" \
+  -d '{"symbol":"BTCUSDT","timeframe":"4h"}'
+curl http://127.0.0.1:8875/api/account/bitget/positions
+curl -X POST http://127.0.0.1:8875/api/account/bitget/sync-positions
+```
 
 ## Tests
 
@@ -65,7 +82,7 @@ npm run build
 
 ## Safety Principles
 
-- V0.2 is read-only for exchange integrations.
+- V0.3 is read-only for exchange integrations.
 - Bitget API keys must be read-only and provided through environment variables.
 - No automatic buy or sell execution is included.
 - Scores are deterministic. LLM usage, when added later, must only transform computed JSON into natural language.

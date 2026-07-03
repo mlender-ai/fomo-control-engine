@@ -17,6 +17,7 @@ class Direction(str, Enum):
 class PositionStatus(str, Enum):
     open = "open"
     closed = "closed"
+    missing_from_exchange = "missing_from_exchange"
 
 
 class ScoreBreakdown(BaseModel):
@@ -35,6 +36,17 @@ class MarketCandle(BaseModel):
     low: float
     close: float
     volume: float
+    quote_volume: float | None = None
+
+
+class DataQuality(BaseModel):
+    ohlcv_ok: bool = True
+    funding_ok: bool = True
+    open_interest_ok: bool = True
+    min_candles_met: bool = True
+    fallback_used: bool = False
+    candles: int = 0
+    last_candle_at: datetime | None = None
 
 
 class MarketSnapshot(BaseModel):
@@ -45,6 +57,8 @@ class MarketSnapshot(BaseModel):
     funding_rate: float
     open_interest_change: float
     candles: list[MarketCandle]
+    provider: str = "mock"
+    data_quality: DataQuality = Field(default_factory=DataQuality)
 
 
 class Report(BaseModel):
@@ -58,6 +72,8 @@ class Report(BaseModel):
     state_label: str
     raw_json: dict
     report: str
+    provider: str = "mock"
+    data_quality: DataQuality = Field(default_factory=DataQuality)
     created_at: datetime = Field(default_factory=utc_now)
 
 
@@ -88,7 +104,16 @@ class Position(BaseModel):
     entry_score: int | None = None
     current_score: int | None = None
     current_price: float | None = None
+    mark_price: float | None = None
     pnl_percent: float = 0
+    unrealized_pl: float | None = None
+    liquidation_price: float | None = None
+    margin_mode: str | None = None
+    position_mode: str | None = None
+    margin_ratio: float | None = None
+    break_even_price: float | None = None
+    source: str = "manual"
+    synced_at: datetime | None = None
     memo: str = ""
     opened_at: datetime = Field(default_factory=utc_now)
     closed_at: datetime | None = None
@@ -128,4 +153,3 @@ class Trade(BaseModel):
     exit_reason: str
     review_text: str
     created_at: datetime = Field(default_factory=utc_now)
-

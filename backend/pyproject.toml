@@ -1,6 +1,6 @@
 [project]
 name = "fomo-control-engine-backend"
-version = "0.2.0"
+version = "0.3.0"
 description = "FastAPI backend for the FOMO Control Engine"
 requires-python = ">=3.11"
 dependencies = [
@@ -16,3 +16,6 @@ dependencies = [
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+markers = [
+  "live: tests that call live Bitget APIs",
+]

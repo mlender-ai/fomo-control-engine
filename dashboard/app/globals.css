@@ -188,6 +188,52 @@ h3 {
   margin-bottom: 14px;
 }
 
+.actionGroup {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.statusGrid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.statusItem {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  background: #fbfcfd;
+}
+
+.statusItem span {
+  display: block;
+  color: var(--muted);
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.statusItem strong {
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+
+.statusItem.ok {
+  border-color: rgba(33, 134, 90, 0.28);
+  background: rgba(33, 134, 90, 0.08);
+}
+
+.statusItem.warn {
+  border-color: rgba(183, 121, 31, 0.32);
+  background: rgba(183, 121, 31, 0.1);
+}
+
+.statusItem.error {
+  border-color: rgba(216, 79, 63, 0.32);
+  background: rgba(216, 79, 63, 0.1);
+}
+
 .table {
   width: 100%;
   border-collapse: collapse;
@@ -404,6 +450,7 @@ h3 {
   .grid.two,
   .grid.three,
   .metricGrid,
+  .statusGrid,
   .formGrid,
   .scoreRow {
     grid-template-columns: 1fr;

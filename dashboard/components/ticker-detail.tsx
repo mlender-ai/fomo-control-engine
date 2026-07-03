@@ -62,6 +62,38 @@ export function TickerDetail({ symbol }: { symbol: string }) {
             </div>
             <ScoreBreakdownView scores={report.scores} />
           </section>
+          <section className="panel">
+            <div className="panelHeader">
+              <h2>Data Quality</h2>
+              <span className="subtle">Data Source: {report.provider === "bitget" ? "Bitget Live" : report.provider}</span>
+            </div>
+            <div className="statusGrid">
+              <div className={`statusItem ${report.data_quality.ohlcv_ok ? "ok" : "error"}`}>
+                <span>OHLCV</span>
+                <strong>{report.data_quality.ohlcv_ok ? "OK" : "Error"}</strong>
+              </div>
+              <div className={`statusItem ${report.data_quality.funding_ok ? "ok" : "warn"}`}>
+                <span>Funding</span>
+                <strong>{report.data_quality.funding_ok ? "OK" : "Missing"}</strong>
+              </div>
+              <div className={`statusItem ${report.data_quality.open_interest_ok ? "ok" : "warn"}`}>
+                <span>Open Interest</span>
+                <strong>{report.data_quality.open_interest_ok ? "OK" : "Missing"}</strong>
+              </div>
+              <div className="statusItem muted">
+                <span>Candles</span>
+                <strong>{report.data_quality.candles}</strong>
+              </div>
+              <div className="statusItem muted">
+                <span>Timeframe</span>
+                <strong>{report.timeframe.toUpperCase()}</strong>
+              </div>
+              <div className="statusItem muted">
+                <span>Last Candle</span>
+                <strong>{report.data_quality.last_candle_at ? new Date(report.data_quality.last_candle_at).toLocaleString() : "-"}</strong>
+              </div>
+            </div>
+          </section>
           <section className="grid two">
             <div className="panel">
               <div className="panelHeader">
@@ -83,4 +115,3 @@ export function TickerDetail({ symbol }: { symbol: string }) {
     </div>
   );
 }
-

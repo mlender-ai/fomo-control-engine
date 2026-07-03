@@ -1,163 +1,105 @@
-from datetime import datetime, timezone
-from typing import Any
+from __future__ import annotations
+
+import asyncio
+from urllib.parse import urlencode
 
 import httpx
 
-from app.db.models import MarketCandle, MarketSnapshot
-from app.exchange.base import MarketDataProvider
-from app.exchange.errors import MarketDataError
+from app.exchange.bitget.errors import BitgetAPIError, BitgetNotConfiguredError, BitgetPermissionError
+from app.exchange.bitget.signer import get_timestamp_ms, sign_bitget_request
 
 
-GRANULARITY_BY_TIMEFRAME = {
-    "1m": "1m",
-    "3m": "3m",
-    "5m": "5m",
-    "15m": "15m",
-    "30m": "30m",
-    "1h": "1H",
-    "2h": "2H",
-    "4h": "4H",
-    "6h": "6H",
-    "12h": "12H",
-    "1d": "1D",
-    "1w": "1W",
-}
+PRIVATE_PERMISSION_CODES = {"40037", "40038", "40039", "40040", "40041", "40043", "40044", "40045", "40046", "40047"}
 
 
-class BitgetReadOnlyClient(MarketDataProvider):
-    """Read-only Bitget public market data provider."""
-
+class BitgetClient:
     def __init__(
         self,
         base_url: str = "https://api.bitget.com",
-        product_type: str = "usdt-futures",
         api_key: str = "",
         api_secret: str = "",
         passphrase: str = "",
+        locale: str = "en-US",
         timeout: float = 10.0,
+        retries: int = 1,
     ) -> None:
         self.base_url = base_url.rstrip("/")
-        self.product_type = product_type
         self.api_key = api_key
         self.api_secret = api_secret
         self.passphrase = passphrase
+        self.locale = locale
         self.timeout = timeout
+        self.retries = retries
 
-    def get_snapshot(self, symbol: str, timeframe: str = "4h") -> MarketSnapshot:
-        normalized = symbol.upper().replace("/", "")
-        granularity = GRANULARITY_BY_TIMEFRAME.get(timeframe.lower())
-        if granularity is None:
-            raise MarketDataError(f"Unsupported Bitget timeframe: {timeframe}")
+    @property
+    def private_configured(self) -> bool:
+        return bool(self.api_key and self.api_secret and self.passphrase)
 
-        candles_payload = self._get(
-            "/api/v2/mix/market/candles",
-            {
-                "symbol": normalized,
-                "granularity": granularity,
-                "limit": "100",
-                "productType": self.product_type,
-            },
-        )
-        ticker_payload = self._get(
-            "/api/v2/mix/market/ticker",
-            {
-                "symbol": normalized,
-                "productType": self.product_type,
-            },
-        )
-        funding_payload = self._get(
-            "/api/v2/mix/market/current-fund-rate",
-            {
-                "symbol": normalized,
-                "productType": self.product_type,
-            },
-        )
-        open_interest_payload = self._get(
-            "/api/v2/mix/market/open-interest",
-            {
-                "symbol": normalized,
-                "productType": self.product_type,
-            },
-        )
+    async def public_get(self, path: str, params: dict | None = None) -> dict:
+        return await self._request("GET", path, params=params, private=False)
 
-        candles = self._parse_candles(candles_payload)
-        if len(candles) < 30:
-            raise MarketDataError(f"Bitget returned too few candles for {normalized}: {len(candles)}")
+    async def private_get(self, path: str, params: dict | None = None) -> dict:
+        if not self.private_configured:
+            raise BitgetNotConfiguredError()
+        return await self._request("GET", path, params=params, private=True)
 
-        ticker = self._first_list_item(ticker_payload.get("data"), "ticker")
-        funding = self._first_list_item(funding_payload.get("data"), "funding")
-        open_interest_change = self._estimate_open_interest_change(open_interest_payload, ticker)
-        price = _float(ticker.get("lastPr"), candles[-1].close)
-        change_24h = _float(ticker.get("change24h"), 0.0) * 100
-
-        return MarketSnapshot(
-            symbol=normalized,
-            timeframe=timeframe,
-            price=round(price, 8),
-            change_24h=round(change_24h, 2),
-            funding_rate=_float(funding.get("fundingRate"), 0.0),
-            open_interest_change=open_interest_change,
-            candles=candles,
-        )
-
-    def _get(self, path: str, params: dict[str, str]) -> dict[str, Any]:
-        try:
-            with httpx.Client(base_url=self.base_url, timeout=self.timeout) as client:
-                response = client.get(path, params=params)
-                response.raise_for_status()
-        except httpx.HTTPError as exc:
-            raise MarketDataError(f"Bitget request failed: {exc}") from exc
-
-        payload = response.json()
-        if payload.get("code") != "00000":
-            message = payload.get("msg", "unknown Bitget error")
-            raise MarketDataError(f"Bitget returned {payload.get('code')}: {message}")
-        return payload
-
-    def _parse_candles(self, payload: dict[str, Any]) -> list[MarketCandle]:
-        rows = payload.get("data")
-        if not isinstance(rows, list):
-            raise MarketDataError("Bitget candle response is missing data")
-
-        candles = []
-        for row in rows:
-            if not isinstance(row, list) or len(row) < 6:
-                continue
-            candles.append(
-                MarketCandle(
-                    timestamp=datetime.fromtimestamp(int(row[0]) / 1000, tz=timezone.utc),
-                    open=float(row[1]),
-                    high=float(row[2]),
-                    low=float(row[3]),
-                    close=float(row[4]),
-                    volume=float(row[5]),
-                )
+    async def _request(self, method: str, path: str, params: dict | None = None, private: bool = False) -> dict:
+        params = {key: value for key, value in (params or {}).items() if value is not None}
+        headers = {"locale": self.locale, "Content-Type": "application/json"}
+        if private:
+            query_string = urlencode(params)
+            timestamp = get_timestamp_ms()
+            headers.update(
+                {
+                    "ACCESS-KEY": self.api_key,
+                    "ACCESS-TIMESTAMP": timestamp,
+                    "ACCESS-PASSPHRASE": self.passphrase,
+                    "ACCESS-SIGN": sign_bitget_request(
+                        self.api_secret,
+                        timestamp,
+                        method,
+                        path,
+                        query_string=query_string or None,
+                    ),
+                }
             )
-        return sorted(candles, key=lambda candle: candle.timestamp)
 
-    def _first_list_item(self, value: Any, label: str) -> dict[str, Any]:
-        if not isinstance(value, list) or not value or not isinstance(value[0], dict):
-            raise MarketDataError(f"Bitget {label} response is missing data")
-        return value[0]
+        last_error: Exception | None = None
+        for attempt in range(self.retries + 1):
+            try:
+                async with httpx.AsyncClient(base_url=self.base_url, timeout=self.timeout) as client:
+                    response = await client.request(method, path, params=params, headers=headers)
+                    response.raise_for_status()
+                payload = response.json()
+                code = str(payload.get("code", ""))
+                if code != "00000":
+                    message = str(payload.get("msg", "unknown Bitget error"))
+                    if private and code in PRIVATE_PERMISSION_CODES:
+                        raise BitgetPermissionError(code, _safe_message(message), payload=_safe_payload(payload))
+                    raise BitgetAPIError(code or "unknown", _safe_message(message), payload=_safe_payload(payload))
+                return payload
+            except (httpx.TimeoutException, httpx.NetworkError) as exc:
+                last_error = exc
+                if attempt < self.retries:
+                    await asyncio.sleep(0.25)
+                    continue
+                raise BitgetAPIError("network_error", "Bitget API temporarily unavailable.") from exc
+            except httpx.HTTPStatusError as exc:
+                raise BitgetAPIError(str(exc.response.status_code), "Bitget HTTP request failed.") from exc
 
-    def _estimate_open_interest_change(self, payload: dict[str, Any], ticker: dict[str, Any]) -> float:
-        current = None
-        data = payload.get("data")
-        if isinstance(data, dict):
-            entries = data.get("openInterestList")
-            if isinstance(entries, list) and entries and isinstance(entries[0], dict):
-                current = _float(entries[0].get("size"), 0.0)
-
-        holding_amount = _float(ticker.get("holdingAmount"), current or 0.0)
-        if not current or current <= 0:
-            return 0.0
-        return round(((current - holding_amount) / current) * 100, 2)
+        raise BitgetAPIError("unknown", "Bitget request failed.") from last_error
 
 
-def _float(value: Any, default: float) -> float:
-    try:
-        if value is None:
-            return default
-        return float(value)
-    except (TypeError, ValueError):
-        return default
+def _safe_message(message: str) -> str:
+    lowered = message.lower()
+    if "passphrase" in lowered:
+        return "Bitget authentication failed. Check API key, secret, and passphrase."
+    if "signature" in lowered or "sign" in lowered:
+        return "Bitget authentication failed. Check API key, secret, and passphrase."
+    return message
+
+
+def _safe_payload(payload: dict | None) -> dict | None:
+    if payload is None:
+        return None
+    return {key: value for key, value in payload.items() if key.lower() not in {"access-key", "access-sign", "access-passphrase"}}

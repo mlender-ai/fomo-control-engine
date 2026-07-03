@@ -16,7 +16,9 @@ MarketDataProvider
 
 - `app/exchange/base.py`: exchange data boundary
 - `app/exchange/mock.py`: local mock provider
-- `app/exchange/bitget/client.py`: live Bitget public read-only provider
+- `app/exchange/bitget/signer.py`: HMAC SHA256 request signing
+- `app/exchange/bitget/client.py`: async public/private GET client
+- `app/exchange/bitget/provider.py`: live Bitget market data and read-only positions provider
 - `app/exchange/factory.py`: `mock` / `bitget` provider switch
 - `app/db/repository.py`: memory and SQLite repositories
 - `app/indicators`: RSI, MACD, Bollinger Bands, ATR, RVOL
@@ -47,6 +49,7 @@ Bitget endpoints used in v0.2:
 - `GET /api/v2/mix/market/ticker`
 - `GET /api/v2/mix/market/current-fund-rate`
 - `GET /api/v2/mix/market/open-interest`
+- `GET /api/v2/mix/position/all-position`
 
 Order placement is intentionally absent.
 

@@ -27,6 +27,8 @@ def generate_report(snapshot) -> Report:
         "indicators": indicators,
         "structure": structure,
         "liquidity": liquidity,
+        "provider": snapshot.provider,
+        "data_quality": snapshot.data_quality.model_dump(mode="json"),
     }
     report_text = _render_korean_report(snapshot.symbol, label, entry_score, scores, raw_json)
     return Report(
@@ -39,6 +41,8 @@ def generate_report(snapshot) -> Report:
         state_label=label,
         raw_json=raw_json,
         report=report_text,
+        provider=snapshot.provider,
+        data_quality=snapshot.data_quality,
     )
 
 
@@ -69,4 +73,3 @@ def _render_korean_report(symbol: str, label: str, entry_score: int, scores, raw
         f"제 의견:\n"
         f"지금의 판단은 매수 지시가 아니라 진입 근거의 강도 점검입니다. 점수가 높더라도 손절 기준과 분할 진입 계획이 없다면 대기하는 편이 낫습니다."
     )
-
