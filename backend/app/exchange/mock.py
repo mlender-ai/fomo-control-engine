@@ -27,7 +27,8 @@ class MockMarketDataProvider(MarketDataProvider):
 
         profile = (seed % 5) - 2
 
-        for index in range(80):
+        candle_count = 160
+        for index in range(candle_count):
             wave = math.sin((index + seed % 13) / 7) * 0.006
             drift = profile * 0.0009
             mean_reversion = (base_price - close) / base_price * 0.0018
@@ -39,7 +40,7 @@ class MockMarketDataProvider(MarketDataProvider):
             volume = 1000 + abs(shock) * 90000 + index * 10 + rng.uniform(0, 1200)
             candles.append(
                 MarketCandle(
-                    timestamp=now - timedelta(hours=4 * (79 - index)),
+                    timestamp=now - timedelta(hours=4 * (candle_count - 1 - index)),
                     open=round(open_price, 4),
                     high=round(high, 4),
                     low=round(low, 4),

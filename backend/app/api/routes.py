@@ -34,6 +34,7 @@ from app.exchange.factory import create_market_data_provider
 from app.liquidity.liquidation_clusters import analyze_liquidation
 from app.memory.engine import memory_from_shadow, memory_from_trade, memory_from_validation
 from app.monitoring.engine import build_monitoring_log, calculate_pnl
+from app.positions.chart_analysis import build_chart_analysis
 from app.positions.engine import build_events, build_position_state, make_insight, make_snapshot
 from app.report.engine import generate_report
 from app.review.engine import render_review
@@ -508,6 +509,20 @@ def get_live_position(position_id: UUID) -> dict:
     if position is None:
         raise HTTPException(status_code=404, detail="Position not found")
     return _live_position_detail(position)
+
+
+@router.get("/api/live/positions/{position_id}/chart-analysis")
+def get_position_chart_analysis(position_id: UUID, timeframe: str = "4h") -> dict:
+    position = repository.get_position(position_id)
+    if position is None:
+        raise HTTPException(status_code=404, detail="Position not found")
+    try:
+        snapshot = market_provider.get_snapshot(position.symbol, timeframe)
+        return build_chart_analysis(position, snapshot)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except MarketDataError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.get("/api/live/positions/{position_id}/snapshots")

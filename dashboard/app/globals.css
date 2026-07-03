@@ -1334,6 +1334,429 @@ h3 {
   gap: 8px;
 }
 
+.positionDetailPage {
+  gap: 10px;
+}
+
+.positionDetailToolbar .timeframeSelect {
+  display: grid;
+  gap: 3px;
+}
+
+.timeframeSelect span {
+  color: var(--terminal-muted);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.timeframeSelect select {
+  min-height: 32px;
+  border: 1px solid var(--terminal-line-strong);
+  border-radius: 5px;
+  background: #0b0e14;
+  color: var(--terminal-text);
+  padding: 0 9px;
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+}
+
+.positionDetailMain {
+  display: grid;
+  grid-template-columns: minmax(0, 1.65fr) minmax(320px, 0.75fr);
+  gap: 10px;
+  align-items: stretch;
+}
+
+.positionChartPanel,
+.positionInsightRail,
+.analysisPanel {
+  border: 1px solid var(--terminal-line);
+  border-radius: 6px;
+  background: rgba(17, 21, 29, 0.88);
+}
+
+.positionChartPanel {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+}
+
+.positionChartHeader,
+.analysisPanelHeader,
+.railSectionHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.positionChartHeader p,
+.analysisPanelHeader p,
+.railSectionHeader small {
+  margin-top: 4px;
+  color: var(--terminal-muted);
+  font-size: 11px;
+}
+
+.positionChartHeader > span,
+.analysisPanelHeader > span {
+  border: 1px solid var(--terminal-line);
+  border-radius: 4px;
+  color: var(--terminal-muted);
+  padding: 4px 7px;
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 11px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.positionChartCanvas {
+  min-height: 520px;
+  overflow: hidden;
+  border: 1px solid var(--terminal-line);
+  border-radius: 5px;
+  background: #0b0f15;
+}
+
+.priceLevelLegend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.priceLevelChip {
+  border: 1px solid var(--terminal-line);
+  border-radius: 4px;
+  padding: 4px 7px;
+  color: var(--terminal-muted);
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.priceLevelChip.level-entry,
+.priceLevelChip.level-mark {
+  border-color: rgba(98, 207, 232, 0.34);
+  color: var(--terminal-cyan);
+}
+
+.priceLevelChip.level-liquidation,
+.priceLevelChip.level-invalidation {
+  border-color: rgba(238, 123, 128, 0.42);
+  color: var(--terminal-negative);
+}
+
+.priceLevelChip.level-support {
+  border-color: rgba(110, 210, 143, 0.38);
+  color: var(--terminal-positive);
+}
+
+.priceLevelChip.level-resistance {
+  border-color: rgba(240, 184, 64, 0.38);
+  color: var(--terminal-warning);
+}
+
+.chartVolumeSummary,
+.wyckoffMarkerRail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--terminal-line);
+  border-radius: 5px;
+  background: rgba(8, 11, 16, 0.36);
+  padding: 8px;
+}
+
+.chartVolumeSummary span,
+.chartVolumeSummary em,
+.wyckoffMarkerRail {
+  color: var(--terminal-muted);
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 11px;
+  font-style: normal;
+}
+
+.chartVolumeSummary strong {
+  color: var(--terminal-text);
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  text-transform: uppercase;
+}
+
+.chartVolumeSummary i {
+  border: 1px solid rgba(240, 184, 64, 0.36);
+  border-radius: 4px;
+  color: var(--terminal-warning);
+  padding: 3px 6px;
+  font-style: normal;
+}
+
+.wyckoffMarkerRail span {
+  border: 1px solid rgba(240, 184, 64, 0.32);
+  border-radius: 4px;
+  color: var(--terminal-warning);
+  padding: 3px 6px;
+}
+
+.wyckoffMarkerRail.muted {
+  color: var(--terminal-muted);
+}
+
+.chartLoadingState,
+.chartErrorState {
+  display: grid;
+  place-items: center;
+  gap: 10px;
+  min-height: 520px;
+  border: 1px dashed var(--terminal-line-strong);
+  border-radius: 5px;
+  color: var(--terminal-muted);
+  text-align: center;
+}
+
+.chartLoadingState i {
+  width: 28px;
+  height: 28px;
+  border: 2px solid var(--terminal-line-strong);
+  border-top-color: var(--terminal-amber);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+.chartErrorState strong {
+  color: var(--terminal-text);
+  font-size: 16px;
+}
+
+.chartErrorState small {
+  max-width: 560px;
+  color: var(--terminal-negative);
+}
+
+.positionInsightRail {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  padding: 12px;
+}
+
+.railJudgement {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--terminal-line);
+  border-left: 3px solid var(--terminal-cyan);
+  border-radius: 5px;
+  background: rgba(8, 11, 16, 0.42);
+  padding: 12px;
+}
+
+.railJudgement.status-watch {
+  border-left-color: var(--terminal-warning);
+}
+
+.railJudgement.status-risk_rising,
+.railJudgement.status-thesis_weakening,
+.railJudgement.status-critical {
+  border-left-color: var(--terminal-negative);
+}
+
+.railJudgement span,
+.railPrice span {
+  color: var(--terminal-muted);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.railJudgement strong {
+  color: var(--terminal-amber);
+  font-size: 24px;
+  line-height: 1.1;
+}
+
+.railJudgement p,
+.railInsightText,
+.technicalSummaryText {
+  color: #d8dee8;
+  line-height: 1.5;
+}
+
+.railSection {
+  display: grid;
+  gap: 8px;
+  border: 1px solid var(--terminal-line);
+  border-radius: 5px;
+  background: rgba(8, 11, 16, 0.32);
+  padding: 10px;
+}
+
+.railPrice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.railPrice strong {
+  overflow: hidden;
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.railPrice.tone-positive strong,
+.railPrice.tone-info strong,
+.railPrice.tone-agent strong {
+  color: var(--terminal-cyan);
+}
+
+.railPrice.tone-warning strong {
+  color: var(--terminal-warning);
+}
+
+.railPrice.tone-negative strong,
+.railPrice.tone-danger strong {
+  color: var(--terminal-negative);
+}
+
+.railInsightText.muted {
+  color: var(--terminal-muted);
+}
+
+.positionBottomAnalysis {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.85fr) minmax(300px, 0.9fr);
+  gap: 10px;
+  align-items: stretch;
+}
+
+.analysisPanel {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+}
+
+.volumeProfileMeta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.volumeProfileMeta span {
+  border: 1px solid var(--terminal-line);
+  border-radius: 4px;
+  color: var(--terminal-muted);
+  padding: 4px 7px;
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 10px;
+}
+
+.volumeProfileRows {
+  display: grid;
+  gap: 3px;
+}
+
+.volumeProfileRow {
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+}
+
+.volumeProfileRow span {
+  color: var(--terminal-muted);
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 10px;
+}
+
+.volumeProfileRow div {
+  display: flex;
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.volumeProfileRow i,
+.volumeProfileRow b {
+  display: block;
+  height: 100%;
+}
+
+.volumeProfileRow i {
+  background: rgba(98, 207, 232, 0.62);
+}
+
+.volumeProfileRow b {
+  background: rgba(238, 123, 128, 0.58);
+}
+
+.xrayGrid,
+.technicalSummaryGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.xrayItem {
+  border: 1px solid var(--terminal-line);
+  border-radius: 5px;
+  background: rgba(8, 11, 16, 0.34);
+  padding: 8px;
+}
+
+.xrayItem span {
+  color: var(--terminal-muted);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.xrayItem strong {
+  display: block;
+  overflow-wrap: anywhere;
+  margin-top: 5px;
+  color: var(--terminal-text);
+}
+
+.xrayItem.tone-positive strong {
+  color: var(--terminal-positive);
+}
+
+.xrayItem.tone-warning strong {
+  color: var(--terminal-warning);
+}
+
+.xrayItem.tone-danger strong {
+  color: var(--terminal-negative);
+}
+
+.xrayNotes {
+  display: grid;
+  gap: 6px;
+}
+
+.xrayNotes p {
+  border-left: 2px solid var(--terminal-line-strong);
+  color: #d8dee8;
+  line-height: 1.45;
+  padding-left: 8px;
+}
+
+.analysisUnavailable .terminalEmpty {
+  min-height: 140px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .cockpitHeader h1 {
   max-width: 980px;
 }
@@ -1822,6 +2245,8 @@ h3 {
   .grid.four,
   .cockpitLayout,
   .cockpitMainGrid,
+  .positionDetailMain,
+  .positionBottomAnalysis,
   .metricGrid,
   .terminalMetricGrid,
   .statusGrid,
@@ -1832,6 +2257,8 @@ h3 {
 
   .cockpitLayout,
   .cockpitMainGrid,
+  .positionDetailMain,
+  .positionBottomAnalysis,
   .selectedPositionHeader {
     grid-template-columns: 1fr;
   }
@@ -1921,6 +2348,8 @@ h3 {
     .tabContentGrid,
     .tabRiskGrid,
     .snapshotSummary,
+    .xrayGrid,
+    .technicalSummaryGrid,
     .healthBarRow,
     .levelRow,
     .memoPriceGrid {
@@ -1935,8 +2364,21 @@ h3 {
     min-height: 320px;
   }
 
+  .positionChartCanvas,
+  .chartLoadingState,
+  .chartErrorState {
+    min-height: 360px;
+  }
+
   .mockCandleLayer {
     inset: 36px 52px 104px 14px;
+  }
+
+  .positionChartHeader,
+  .analysisPanelHeader,
+  .railSectionHeader {
+    align-items: flex-start;
+    flex-direction: column;
   }
 
   .tabLevelsList div {

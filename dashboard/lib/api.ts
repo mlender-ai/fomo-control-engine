@@ -208,6 +208,88 @@ export type LivePositionDetail = LivePositionPayload & {
   monitoring_logs: Array<Record<string, unknown>>;
 };
 
+export type ChartCandle = {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+};
+
+export type ChartPriceLevel = {
+  price: number;
+  strength?: "weak" | "medium" | "strong" | string;
+  label: string;
+};
+
+export type VolumeProfileBin = {
+  price_low: number;
+  price_high: number;
+  volume: number;
+  buy_volume_proxy: number;
+  sell_volume_proxy: number;
+};
+
+export type WyckoffMarker = {
+  time: number;
+  price: number;
+  type: string;
+  label: string;
+  confidence: number;
+};
+
+export type PositionChartAnalysis = {
+  position_id: string;
+  symbol: string;
+  timeframe: string;
+  direction: "long" | "short";
+  entry_price: number;
+  mark_price: number;
+  liquidation_price: number | null;
+  candles: ChartCandle[];
+  price_levels: {
+    entry: number;
+    mark: number;
+    liquidation: number | null;
+    support: ChartPriceLevel[];
+    resistance: ChartPriceLevel[];
+    invalidation: Array<{ price: number; label: string }>;
+  };
+  indicators: {
+    rsi: Array<{ time: number; value: number }>;
+    macd: Array<{ time: number; macd: number; signal: number; histogram: number }>;
+    bollinger: {
+      upper: Array<{ time: number; value: number }>;
+      middle: Array<{ time: number; value: number }>;
+      lower: Array<{ time: number; value: number }>;
+    };
+  };
+  volume_profile: {
+    bins: VolumeProfileBin[];
+    poc_price: number;
+    value_area_high: number;
+    value_area_low: number;
+    method: string;
+  };
+  volume_xray: {
+    relative_volume: number;
+    volume_state: string;
+    spike_detected: boolean;
+    climax_candidate: boolean;
+    absorption_candidate: boolean;
+    rebound_with_volume: boolean;
+    notes: string[];
+  };
+  wyckoff_markers: WyckoffMarker[];
+  data_quality: {
+    candles: number;
+    source: string;
+    estimated_volume_profile: boolean;
+    last_candle_at: string;
+  };
+};
+
 export type Trade = {
   id: string;
   position_id: string;
@@ -376,6 +458,8 @@ export const api = {
       method: "POST"
     }),
   livePosition: (positionId: string) => request<LivePositionDetail>(`/api/live/positions/${positionId}`),
+  positionChartAnalysis: (positionId: string, timeframe = "4h") =>
+    request<PositionChartAnalysis>(`/api/live/positions/${positionId}/chart-analysis?timeframe=${encodeURIComponent(timeframe)}`),
   analyzeLivePosition: (positionId: string) =>
     request<LivePositionPayload>(`/api/live/positions/${positionId}/analyze`, {
       method: "POST"

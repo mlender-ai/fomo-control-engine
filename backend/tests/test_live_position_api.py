@@ -80,3 +80,38 @@ def test_live_position_analysis_insight_memo_and_exit_flow(client) -> None:
     assert timeline["trade"]["id"] == trade["id"]
     assert len(timeline["snapshots"]) >= 1
     assert any(event["event_type"] == "exit_recorded" for event in timeline["events"])
+
+
+def test_live_position_chart_analysis_contract(client) -> None:
+    report = client.post("/api/reports", json={"symbol": "BTCUSDT", "timeframe": "4h"}).json()
+    position_response = client.post(
+        "/api/positions",
+        json={
+            "symbol": "BTCUSDT",
+            "direction": "long",
+            "entry_price": report["price"],
+            "quantity": 0.02,
+            "leverage": 3,
+            "planned_stop_price": report["price"] * 0.96,
+        },
+    )
+    assert position_response.status_code == 200
+    position = position_response.json()
+
+    response = client.get(f"/api/live/positions/{position['id']}/chart-analysis")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["position_id"] == position["id"]
+    assert payload["timeframe"] == "4h"
+    assert len(payload["candles"]) >= 100
+    assert payload["candles"] == sorted(payload["candles"], key=lambda candle: candle["time"])
+    assert payload["price_levels"]["entry"] == position["entry_price"]
+    assert payload["price_levels"]["mark"] > 0
+    assert isinstance(payload["price_levels"]["support"], list)
+    assert isinstance(payload["price_levels"]["resistance"], list)
+    assert payload["volume_profile"]["method"] == "estimated_ohlcv_proxy"
+    assert len(payload["volume_profile"]["bins"]) > 0
+    assert payload["volume_profile"]["poc_price"] > 0
+    assert payload["volume_xray"]["relative_volume"] > 0
+    assert isinstance(payload["volume_xray"]["notes"], list)
+    assert isinstance(payload["wyckoff_markers"], list)

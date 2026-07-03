@@ -14,12 +14,16 @@ import {
 } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
 import { TerminalMetric, TerminalPanel, TerminalTable, TerminalWarning } from "@/components/terminal";
+import { PositionChart } from "@/components/position/PositionChart";
+import { VolumeProfilePanel } from "@/components/position/VolumeProfilePanel";
+import { VolumeXrayPanel } from "@/components/position/VolumeXrayPanel";
 import {
   api,
   type BitgetConnectionTest,
   type LivePositionDetail,
   type LivePositionPayload,
   type LivePositionsResponse,
+  type PositionChartAnalysis,
   type PositionEvent,
   type PositionState
 } from "@/lib/api";
@@ -490,7 +494,12 @@ function PositionHeaderMetric({
 
 export function PositionDetailShell({ positionId }: { positionId: string }) {
   const [detail, setDetail] = useState<LivePositionDetail | null>(null);
+  const [chartAnalysis, setChartAnalysis] = useState<PositionChartAnalysis | null>(null);
   const [loading, setLoading] = useState(true);
+  const [chartLoading, setChartLoading] = useState(true);
+  const [chartError, setChartError] = useState("");
+  const [timeframe, setTimeframe] = useState("4h");
+  const [detailTab, setDetailTab] = useState<DetailTab>("risk");
   const [busy, setBusy] = useState("");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -506,9 +515,26 @@ export function PositionDetailShell({ positionId }: { positionId: string }) {
     }
   }
 
+  async function loadChart(nextTimeframe = timeframe) {
+    setChartError("");
+    setChartLoading(true);
+    try {
+      setChartAnalysis(await api.positionChartAnalysis(positionId, nextTimeframe));
+    } catch (err) {
+      setChartAnalysis(null);
+      setChartError(err instanceof Error ? err.message : "Chart analysis load failed");
+    } finally {
+      setChartLoading(false);
+    }
+  }
+
   useEffect(() => {
     void load();
   }, [positionId]);
+
+  useEffect(() => {
+    void loadChart(timeframe);
+  }, [positionId, timeframe]);
 
   async function analyze() {
     setBusy("analyze");
@@ -517,6 +543,7 @@ export function PositionDetailShell({ positionId }: { positionId: string }) {
     try {
       await api.analyzeLivePosition(positionId);
       await load();
+      await loadChart(timeframe);
       setNotice("새 포지션 스냅샷을 저장했습니다.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Analyze failed");
@@ -556,6 +583,7 @@ export function PositionDetailShell({ positionId }: { positionId: string }) {
         planned_take_profit_price: numberOrNull(form.get("planned_take_profit_price"))
       });
       await load();
+      await loadChart(timeframe);
       setNotice("포지션 메모와 계획 가격을 저장했습니다.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Memo save failed");
@@ -584,6 +612,7 @@ export function PositionDetailShell({ positionId }: { positionId: string }) {
       });
       setNotice(`청산 기록을 저장했습니다. Trade ${trade.symbol} ${signedPercent(trade.pnl_percent)}`);
       await load();
+      await loadChart(timeframe);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Exit record failed");
     } finally {
@@ -612,14 +641,22 @@ export function PositionDetailShell({ positionId }: { positionId: string }) {
   const exitDefault = detail.state.mark_price ?? detail.position.current_price ?? detail.position.entry_price;
 
   return (
-    <div className="page">
-      <header className="pageHeader cockpitHeader">
+    <div className="page positionDetailPage">
+      <header className="cockpitToolbar positionDetailToolbar">
         <div>
-          <p className="eyebrow">Position Detail</p>
-          <h1>{detail.position.symbol} {detail.position.direction.toUpperCase()} 관제 기록</h1>
-          <p className="subtle">스냅샷, 이벤트, 메모, 내부 청산 기록을 한 포지션 단위로 관리합니다.</p>
+          <p className="eyebrow">Position Detail Chart Analysis</p>
+          <h1>{detail.position.symbol} {detail.position.direction.toUpperCase()} 차트 관제</h1>
         </div>
-        <div className="actionGroup">
+        <div className="cockpitToolbarActions">
+          <label className="timeframeSelect">
+            <span>Timeframe</span>
+            <select value={timeframe} onChange={(event) => setTimeframe(event.target.value)}>
+              <option value="15m">15m</option>
+              <option value="1h">1h</option>
+              <option value="4h">4h</option>
+              <option value="1d">1d</option>
+            </select>
+          </label>
           <Link className="button secondary" href="/">
             <Activity size={16} />
             Cockpit
@@ -638,17 +675,20 @@ export function PositionDetailShell({ positionId }: { positionId: string }) {
       {error ? <TerminalWarning tone="error">{error}</TerminalWarning> : null}
       {notice ? <TerminalWarning tone="info">{notice}</TerminalWarning> : null}
 
-      <PositionDecisionPanel payload={detail} onCreateInsight={() => createInsight()} busy={busy === "insight"} />
+      <SelectedPositionHeader payload={detail} />
 
-      <section className="grid two">
-        <PositionRiskPanel payload={detail} />
-        <PositionTechnicalPanel state={detail.state} />
+      <section className="positionDetailMain">
+        <PositionChart analysis={chartAnalysis} loading={chartLoading} error={chartError} onRetry={() => void loadChart(timeframe)} />
+        <PositionInsightRail payload={detail} chartAnalysis={chartAnalysis} onCreateInsight={() => createInsight()} busy={busy === "insight"} />
       </section>
 
-      <section className="grid two">
-        <PositionLevelsPanel payload={detail} />
-        <PositionInsightPanel payload={detail} onCreateInsight={() => createInsight()} busy={busy === "insight"} />
+      <section className="positionBottomAnalysis">
+        {chartAnalysis ? <VolumeProfilePanel analysis={chartAnalysis} /> : <AnalysisUnavailable title="Estimated Volume Profile" />}
+        {chartAnalysis ? <VolumeXrayPanel analysis={chartAnalysis} /> : <AnalysisUnavailable title="Volume X-Ray" />}
+        <TechnicalSummaryCard payload={detail} chartAnalysis={chartAnalysis} />
       </section>
+
+      <PositionDetailTabs payload={detail} activeTab={detailTab} onTabChange={setDetailTab} onCreateInsight={() => createInsight()} busy={busy === "insight"} />
 
       <section className="grid two">
         <TerminalPanel title="Entry Thesis Memo" subtitle="진입 논리와 무효화/익절 기준은 AI가 점수를 계산하지 않고 비교 설명에만 사용합니다" status="accent">
@@ -703,27 +743,131 @@ export function PositionDetailShell({ positionId }: { positionId: string }) {
           </form>
         </TerminalPanel>
       </section>
-
-      <section className="grid two">
-        <TerminalPanel title="Event Timeline" subtitle="포지션 상태 변화 로그" status={detail.events.length ? "warning" : "neutral"}>
-          <EventList events={detail.events} />
-        </TerminalPanel>
-        <TerminalPanel title="Snapshot History" subtitle="Health/Risk/PnL 재현 가능한 상태 기록" status={detail.snapshots.length ? "ok" : "neutral"}>
-          <TerminalTable
-            data={detail.snapshots}
-            idKey="id"
-            emptyLabel="No snapshots yet"
-            columns={[
-              { key: "created_at", header: "Time", render: (snapshot) => new Date(snapshot.created_at).toLocaleString() },
-              { key: "health_score", header: "Health", align: "end", render: (snapshot) => `${snapshot.health_score}/100` },
-              { key: "risk_score", header: "Risk", align: "end", render: (snapshot) => `${snapshot.risk_score}/100` },
-              { key: "pnl_percent", header: "PnL", align: "end", render: (snapshot) => signedPercent(snapshot.pnl_percent) },
-              { key: "status_label", header: "Status", render: (snapshot) => snapshot.status_label }
-            ]}
-          />
-        </TerminalPanel>
-      </section>
     </div>
+  );
+}
+
+function PositionInsightRail({
+  payload,
+  chartAnalysis,
+  onCreateInsight,
+  busy
+}: {
+  payload: LivePositionPayload;
+  chartAnalysis: PositionChartAnalysis | null;
+  onCreateInsight: () => Promise<void> | void;
+  busy: boolean;
+}) {
+  const { position, state, latest_insight: insight } = payload;
+  const support = chartAnalysis?.price_levels.support[0];
+  const resistance = chartAnalysis?.price_levels.resistance[0];
+  const invalidation = chartAnalysis?.price_levels.invalidation[0];
+  return (
+    <aside className="positionInsightRail">
+      <div className={`railJudgement status-${state.status}`}>
+        <span>현재 판단</span>
+        <strong>{state.status_label}</strong>
+        <p>{directionalChartVerdict(payload, chartAnalysis)}</p>
+      </div>
+      <div className="railSection">
+        <div className="railSectionHeader">
+          <strong>주요 가격대</strong>
+          <small>{chartAnalysis?.timeframe ?? "4h"}</small>
+        </div>
+        <RailPrice label="Entry" value={formatPrice(position.entry_price)} />
+        <RailPrice label="Mark" value={formatNullablePrice(state.mark_price)} tone="info" />
+        <RailPrice label="Liq" value={formatNullablePrice(position.liquidation_price)} tone="danger" />
+        <RailPrice label="Support" value={support ? formatPrice(support.price) : "-"} />
+        <RailPrice label="Resistance" value={resistance ? formatPrice(resistance.price) : "-"} tone="warning" />
+        <RailPrice label="Invalidation" value={invalidation ? formatPrice(invalidation.price) : formatNullablePrice(position.planned_stop_price)} tone="danger" />
+      </div>
+      <div className="railSection">
+        <div className="railSectionHeader">
+          <strong>Risk Summary</strong>
+          <small>no order execution</small>
+        </div>
+        <RailPrice label="Health" value={`${state.health_score}/100`} tone={healthTone(state.health_score)} />
+        <RailPrice label="Risk" value={`${state.risk_score}/100`} tone={state.risk_score >= 70 ? "negative" : state.risk_score >= 55 ? "warning" : "neutral"} />
+        <RailPrice label="Liq Dist" value={formatDistance(state.liquidation_distance_pct)} tone={liquidationTone(state.liquidation_distance_pct)} />
+        <RailPrice label="Giveback" value={formatDistance(state.analysis.risk.profit_giveback_pct)} />
+      </div>
+      <div className="railSection">
+        <div className="railSectionHeader">
+          <strong>AI Insight</strong>
+          <button className="button secondary" onClick={onCreateInsight} disabled={busy}>
+            <BrainCircuit size={16} />
+            {busy ? "Generating" : "Generate"}
+          </button>
+        </div>
+        {insight ? (
+          <p className="railInsightText">{firstInsightParagraph(insight.insight_text)}</p>
+        ) : (
+          <p className="railInsightText muted">아직 인사이트가 없습니다. 차트와 가격 라인을 확인한 뒤 필요하면 생성하세요.</p>
+        )}
+      </div>
+    </aside>
+  );
+}
+
+function RailPrice({
+  label,
+  value,
+  tone = "neutral"
+}: {
+  label: string;
+  value: string;
+  tone?: MetricTone | "danger";
+}) {
+  return (
+    <div className={`railPrice tone-${tone}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function TechnicalSummaryCard({
+  payload,
+  chartAnalysis
+}: {
+  payload: LivePositionPayload;
+  chartAnalysis: PositionChartAnalysis | null;
+}) {
+  const technical = payload.state.analysis.technical;
+  const wyckoff = payload.state.analysis.wyckoff;
+  return (
+    <section className="analysisPanel technicalSummaryPanel">
+      <div className="analysisPanelHeader">
+        <div>
+          <h2>Technical Summary</h2>
+          <p>차트 아래 보조 요약</p>
+        </div>
+        <span>{payload.state.status_label}</span>
+      </div>
+      <div className="technicalSummaryGrid">
+        <RailPrice label="Trend" value={humanizeToken(technical.trend)} tone={technical.trend_alignment.includes("against") ? "negative" : "positive"} />
+        <RailPrice label="RSI" value={humanizeToken(technical.rsi_state)} />
+        <RailPrice label="MACD" value={humanizeToken(technical.macd_state)} tone={technical.macd_state.includes("bearish") ? "negative" : "positive"} />
+        <RailPrice label="Volume" value={humanizeToken(chartAnalysis?.volume_xray.volume_state ?? technical.volume_state)} tone={chartAnalysis?.volume_xray.spike_detected ? "warning" : "neutral"} />
+        <RailPrice label="Wyckoff" value={humanizeToken(wyckoff.phase_hint)} />
+        <RailPrice label="Markers" value={String(chartAnalysis?.wyckoff_markers.length ?? 0)} />
+      </div>
+      <p className="technicalSummaryText">{wyckoff.structure_comment}</p>
+    </section>
+  );
+}
+
+function AnalysisUnavailable({ title }: { title: string }) {
+  return (
+    <section className="analysisPanel analysisUnavailable">
+      <div className="analysisPanelHeader">
+        <div>
+          <h2>{title}</h2>
+          <p>차트 분석 데이터를 기다리는 중입니다.</p>
+        </div>
+      </div>
+      <div className="terminalEmpty">차트 데이터가 준비되면 표시됩니다.</div>
+    </section>
   );
 }
 
@@ -975,6 +1119,22 @@ function verdictForState(state: PositionState): string {
   if (state.status === "thesis_weakening") return "진입 논리가 약해지고 있습니다. 처음 들어간 이유가 아직 유효한지 메모와 차트 구조를 비교해야 합니다.";
   if (state.status === "critical") return "긴급 점검 구간입니다. 청산가 거리와 손실 제한 기준을 즉시 확인해야 합니다.";
   return "데이터가 충분하지 않아 판단을 보류해야 합니다. 포지션/시세 동기화 상태를 먼저 확인하세요.";
+}
+
+function directionalChartVerdict(payload: LivePositionPayload, chartAnalysis: PositionChartAnalysis | null): string {
+  const direction = payload.position.direction;
+  const support = chartAnalysis?.price_levels.support[0];
+  const resistance = chartAnalysis?.price_levels.resistance[0];
+  const invalidation = chartAnalysis?.price_levels.invalidation[0];
+  if (!chartAnalysis) return verdictForState(payload.state);
+  if (direction === "long") {
+    return support
+      ? `롱 기준 핵심은 ${formatPrice(support.price)} 지지 유지입니다. 무효화 기준은 ${invalidation ? formatPrice(invalidation.price) : "미지정"}로 봅니다.`
+      : "롱 기준 지지 후보가 부족합니다. Entry와 Mark 관계를 먼저 확인해야 합니다.";
+  }
+  return resistance
+    ? `숏 기준 핵심은 ${formatPrice(resistance.price)} 저항 유지입니다. 무효화 기준은 ${invalidation ? formatPrice(invalidation.price) : "미지정"}로 봅니다.`
+    : "숏 기준 저항 후보가 부족합니다. Entry 위 반등 거래량을 먼저 확인해야 합니다.";
 }
 
 function statusPanelTone(status: PositionState["status"]): PanelStatus {
