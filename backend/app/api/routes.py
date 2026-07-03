@@ -11,10 +11,15 @@ from app.db.models import (
     LiquidityAnalyzeRequest,
     Position,
     PositionCreate,
+    PositionEvent,
+    PositionInsight,
+    PositionMemoUpdate,
+    PositionSnapshot,
     PositionStatus,
     ReportRequest,
     ResearchRunRequest,
     ShadowExtractRequest,
+    TradeMemoUpdate,
     Trade,
     ValidationRunRequest,
     utc_now,
@@ -29,6 +34,7 @@ from app.exchange.factory import create_market_data_provider
 from app.liquidity.liquidation_clusters import analyze_liquidation
 from app.memory.engine import memory_from_shadow, memory_from_trade, memory_from_validation
 from app.monitoring.engine import build_monitoring_log, calculate_pnl
+from app.positions.engine import build_events, build_position_state, make_insight, make_snapshot
 from app.report.engine import generate_report
 from app.review.engine import render_review
 from app.shadow.engine import ShadowSampleError, compare_shadow_profile, extract_shadow_profile
@@ -312,6 +318,10 @@ def list_bitget_positions() -> dict:
 
 @router.post("/api/account/bitget/sync-positions")
 def sync_bitget_positions() -> dict:
+    return _sync_bitget_positions()
+
+
+def _sync_bitget_positions() -> dict:
     if not isinstance(market_provider, BitgetMarketDataProvider):
         return {"provider": _provider_name(), "status": "not_active", "synced": 0, "created": 0, "updated": 0, "missing_from_exchange": 0}
     if not market_provider.client.private_configured:
@@ -436,6 +446,7 @@ def _position_from_bitget(exchange_position: BitgetPosition) -> Position:
         margin_ratio=exchange_position.margin_ratio,
         break_even_price=exchange_position.break_even_price,
         source="bitget",
+        detected_source="bitget",
         synced_at=utc_now(),
         opened_at=exchange_position.created_at or utc_now(),
         memo="Synced from Bitget read-only position API",
@@ -459,10 +470,156 @@ def _merge_bitget_position(position: Position, exchange_position: BitgetPosition
     position.margin_ratio = exchange_position.margin_ratio
     position.break_even_price = exchange_position.break_even_price
     position.source = "bitget"
+    position.detected_source = "bitget"
     position.synced_at = utc_now()
     if exchange_position.mark_price:
         position.pnl_percent = round(calculate_pnl(position, exchange_position.mark_price), 2)
     return position
+
+
+@router.get("/api/live/positions")
+def list_live_positions() -> dict:
+    positions = [position for position in repository.list_positions() if position.status != PositionStatus.closed]
+    return {
+        "provider": _provider_name(),
+        "positions": [_live_position_payload(position, store_snapshot=False) for position in positions],
+        "open_count": len([position for position in positions if position.status == PositionStatus.open]),
+        "needs_exit_record_count": len([position for position in positions if position.status in {PositionStatus.missing_from_exchange, PositionStatus.needs_exit_record}]),
+        "timestamp": utc_now(),
+    }
+
+
+@router.post("/api/live/positions/sync")
+def sync_live_positions() -> dict:
+    sync_result = _sync_bitget_positions()
+    positions = [position for position in repository.list_positions() if position.status != PositionStatus.closed]
+    analyzed = []
+    for position in positions:
+        try:
+            analyzed.append(_live_position_payload(position, store_snapshot=True))
+        except HTTPException:
+            continue
+    return {**sync_result, "positions": analyzed, "timestamp": utc_now()}
+
+
+@router.get("/api/live/positions/{position_id}")
+def get_live_position(position_id: UUID) -> dict:
+    position = repository.get_position(position_id)
+    if position is None:
+        raise HTTPException(status_code=404, detail="Position not found")
+    return _live_position_detail(position)
+
+
+@router.get("/api/live/positions/{position_id}/snapshots")
+def get_position_snapshots(position_id: UUID, limit: int = 50) -> dict:
+    position = repository.get_position(position_id)
+    if position is None:
+        raise HTTPException(status_code=404, detail="Position not found")
+    return {"snapshots": repository.list_position_snapshots(position_id, limit=limit)}
+
+
+@router.post("/api/live/positions/{position_id}/analyze")
+def analyze_live_position(position_id: UUID) -> dict:
+    position = repository.get_position(position_id)
+    if position is None:
+        raise HTTPException(status_code=404, detail="Position not found")
+    return _live_position_payload(position, store_snapshot=True)
+
+
+@router.post("/api/live/positions/{position_id}/insight")
+def create_position_insight(position_id: UUID) -> dict:
+    position = repository.get_position(position_id)
+    if position is None:
+        raise HTTPException(status_code=404, detail="Position not found")
+    payload = _live_position_payload(position, store_snapshot=True)
+    snapshot = PositionSnapshot.model_validate(payload["latest_snapshot"])
+    previous_insights = repository.list_position_insights(position.id, limit=1)
+    insight = make_insight(position, snapshot, previous_insights[0] if previous_insights else None)
+    saved_insight = repository.add_position_insight(insight)
+    repository.add_position_event(
+        PositionEvent(
+            position_id=position.id,
+            event_type="ai_insight",
+            severity="low",
+            title="AI Position Insight 생성",
+            description=saved_insight.status_label,
+            data={"insight_id": str(saved_insight.id), "snapshot_id": str(snapshot.id)},
+        )
+    )
+    return {**payload, "latest_insight": saved_insight}
+
+
+@router.get("/api/live/positions/{position_id}/events")
+def get_position_events(position_id: UUID, limit: int = 50) -> dict:
+    position = repository.get_position(position_id)
+    if position is None:
+        raise HTTPException(status_code=404, detail="Position not found")
+    return {"events": repository.list_position_events(position_id, limit=limit)}
+
+
+@router.patch("/api/live/positions/{position_id}/memo")
+def update_position_memo(position_id: UUID, request: PositionMemoUpdate):
+    position = repository.get_position(position_id)
+    if position is None:
+        raise HTTPException(status_code=404, detail="Position not found")
+    update = request.model_dump(exclude_unset=True)
+    for key, value in update.items():
+        setattr(position, key, value if value is not None else getattr(position, key))
+    repository.update_position(position)
+    repository.add_position_event(
+        PositionEvent(
+            position_id=position.id,
+            event_type="memo_updated",
+            severity="low",
+            title="포지션 메모 업데이트",
+            description="진입 논리 또는 계획 가격이 수정되었습니다.",
+            data=update,
+        )
+    )
+    return position
+
+
+@router.post("/api/live/positions/{position_id}/record-exit")
+def record_live_position_exit(position_id: UUID, request: ExitRequest):
+    return _record_exit(position_id, request, allow_missing=True)
+
+
+def _live_position_payload(position: Position, store_snapshot: bool = False) -> dict:
+    report = _generate_and_store_report(position.symbol)
+    previous_snapshots = repository.list_position_snapshots(position.id, limit=30)
+    state = build_position_state(position, report, previous_snapshots)
+    position.current_score = state["current_score"]
+    position.current_price = state["mark_price"]
+    position.pnl_percent = state["pnl_percent"]
+    repository.update_position(position)
+    snapshot = make_snapshot(position, state)
+    events: list[PositionEvent] = []
+    if store_snapshot:
+        previous_snapshot = previous_snapshots[0] if previous_snapshots else None
+        snapshot = repository.add_position_snapshot(snapshot)
+        for event in build_events(position, snapshot, previous_snapshot):
+            events.append(repository.add_position_event(event))
+    latest_snapshots = repository.list_position_snapshots(position.id, limit=1)
+    latest_insights = repository.list_position_insights(position.id, limit=1)
+    latest_events = repository.list_position_events(position.id, limit=5)
+    return {
+        "position": position,
+        "state": state,
+        "latest_snapshot": (latest_snapshots[0] if latest_snapshots and not store_snapshot else snapshot),
+        "latest_insight": latest_insights[0] if latest_insights else None,
+        "recent_events": latest_events if latest_events else events,
+    }
+
+
+def _live_position_detail(position: Position) -> dict:
+    payload = _live_position_payload(position, store_snapshot=False)
+    return {
+        **payload,
+        "snapshots": repository.list_position_snapshots(position.id, limit=50),
+        "insights": repository.list_position_insights(position.id, limit=20),
+        "events": repository.list_position_events(position.id, limit=50),
+        "monitoring_logs": repository.list_monitoring_logs(position.id, limit=30),
+    }
 
 
 @router.post("/api/positions")
@@ -479,6 +636,10 @@ def create_position(request: PositionCreate):
         current_score=report.entry_score if report else None,
         current_price=report.price if report else request.entry_price,
         memo=request.memo,
+        entry_memo=request.entry_memo,
+        planned_stop_price=request.planned_stop_price,
+        planned_take_profit_price=request.planned_take_profit_price,
+        thesis_text=request.thesis_text,
     )
     return repository.add_position(position)
 
@@ -502,10 +663,17 @@ def monitor_position(position_id: UUID):
 
 @router.post("/api/positions/{position_id}/exit")
 def exit_position(position_id: UUID, request: ExitRequest):
+    return _record_exit(position_id, request, allow_missing=False)
+
+
+def _record_exit(position_id: UUID, request: ExitRequest, allow_missing: bool = False):
     position = repository.get_position(position_id)
     if position is None:
         raise HTTPException(status_code=404, detail="Position not found")
-    if position.status != PositionStatus.open:
+    allowed_statuses = {PositionStatus.open}
+    if allow_missing:
+        allowed_statuses.update({PositionStatus.missing_from_exchange, PositionStatus.needs_exit_record})
+    if position.status not in allowed_statuses:
         raise HTTPException(status_code=400, detail="Position is already closed")
     report = _generate_and_store_report(position.symbol)
     pnl_percent = calculate_pnl(position, request.exit_price)
@@ -526,6 +694,7 @@ def exit_position(position_id: UUID, request: ExitRequest):
         holding_minutes=holding_minutes,
         exit_reason=request.exit_reason,
         review_text="",
+        memo=request.memo,
     )
     trade.review_text = render_review(trade)
     position.status = PositionStatus.closed
@@ -536,20 +705,60 @@ def exit_position(position_id: UUID, request: ExitRequest):
     repository.update_position(position)
     saved_trade = repository.add_trade(trade)
     repository.add_decision_memory(memory_from_trade(saved_trade))
+    repository.add_position_event(
+        PositionEvent(
+            position_id=position.id,
+            event_type="exit_recorded",
+            severity="medium",
+            title="청산 기록 완료",
+            description=request.exit_reason,
+            data={"trade_id": str(saved_trade.id), "exit_price": request.exit_price, "pnl_percent": saved_trade.pnl_percent},
+        )
+    )
     return saved_trade
 
 
 @router.post("/api/trades/{trade_id}/review")
 def review_trade(trade_id: UUID):
-    for trade in repository.list_trades():
-        if trade.id == trade_id:
-            trade.review_text = render_review(trade)
-            repository.add_trade(trade)
-            repository.add_decision_memory(memory_from_trade(trade))
-            return trade
-    raise HTTPException(status_code=404, detail="Trade not found")
+    trade = repository.get_trade(trade_id)
+    if trade is None:
+        raise HTTPException(status_code=404, detail="Trade not found")
+    trade.review_text = render_review(trade)
+    repository.add_trade(trade)
+    repository.add_decision_memory(memory_from_trade(trade))
+    return trade
 
 
 @router.get("/api/trades")
 def list_trades():
     return repository.list_trades()
+
+
+@router.get("/api/trades/{trade_id}")
+def get_trade(trade_id: UUID):
+    trade = repository.get_trade(trade_id)
+    if trade is None:
+        raise HTTPException(status_code=404, detail="Trade not found")
+    return trade
+
+
+@router.get("/api/trades/{trade_id}/timeline")
+def get_trade_timeline(trade_id: UUID) -> dict:
+    trade = repository.get_trade(trade_id)
+    if trade is None:
+        raise HTTPException(status_code=404, detail="Trade not found")
+    return {
+        "trade": trade,
+        "snapshots": repository.list_position_snapshots(trade.position_id, limit=100),
+        "events": repository.list_position_events(trade.position_id, limit=100),
+        "monitoring_logs": repository.list_monitoring_logs(trade.position_id, limit=100),
+    }
+
+
+@router.patch("/api/trades/{trade_id}/memo")
+def update_trade_memo(trade_id: UUID, request: TradeMemoUpdate):
+    trade = repository.get_trade(trade_id)
+    if trade is None:
+        raise HTTPException(status_code=404, detail="Trade not found")
+    trade.memo = request.memo
+    return repository.add_trade(trade)

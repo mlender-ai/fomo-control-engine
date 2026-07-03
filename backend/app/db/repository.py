@@ -13,6 +13,9 @@ from app.db.models import (
     MarketSnapshotRecord,
     MonitoringLog,
     Position,
+    PositionEvent,
+    PositionInsight,
+    PositionSnapshot,
     PositionStatus,
     Report,
     ResearchRun,
@@ -32,7 +35,15 @@ class Repository(Protocol):
     def get_position(self, position_id: UUID) -> Position | None: ...
     def update_position(self, position: Position) -> Position: ...
     def add_monitoring_log(self, log: MonitoringLog) -> MonitoringLog: ...
+    def list_monitoring_logs(self, position_id: UUID, limit: int = 50) -> list[MonitoringLog]: ...
+    def add_position_snapshot(self, snapshot: PositionSnapshot) -> PositionSnapshot: ...
+    def list_position_snapshots(self, position_id: UUID, limit: int = 50) -> list[PositionSnapshot]: ...
+    def add_position_insight(self, insight: PositionInsight) -> PositionInsight: ...
+    def list_position_insights(self, position_id: UUID, limit: int = 20) -> list[PositionInsight]: ...
+    def add_position_event(self, event: PositionEvent) -> PositionEvent: ...
+    def list_position_events(self, position_id: UUID, limit: int = 50) -> list[PositionEvent]: ...
     def add_trade(self, trade: Trade) -> Trade: ...
+    def get_trade(self, trade_id: UUID) -> Trade | None: ...
     def list_trades(self) -> list[Trade]: ...
     def add_market_snapshot(self, snapshot: MarketSnapshotRecord) -> MarketSnapshotRecord: ...
     def add_research_run(self, run: ResearchRun) -> ResearchRun: ...
@@ -56,6 +67,9 @@ class MemoryRepository:
         self.reports_by_symbol: dict[str, list[UUID]] = {}
         self.positions: dict[UUID, Position] = {}
         self.monitoring_logs: dict[UUID, list[MonitoringLog]] = {}
+        self.position_snapshots: dict[UUID, list[PositionSnapshot]] = {}
+        self.position_insights: dict[UUID, list[PositionInsight]] = {}
+        self.position_events: dict[UUID, list[PositionEvent]] = {}
         self.trades: dict[UUID, Trade] = {}
         self.market_snapshots: dict[UUID, MarketSnapshotRecord] = {}
         self.research_runs: dict[UUID, ResearchRun] = {}
@@ -101,9 +115,36 @@ class MemoryRepository:
         self.monitoring_logs.setdefault(log.position_id, []).insert(0, log)
         return log
 
+    def list_monitoring_logs(self, position_id: UUID, limit: int = 50) -> list[MonitoringLog]:
+        return self.monitoring_logs.get(position_id, [])[:limit]
+
+    def add_position_snapshot(self, snapshot: PositionSnapshot) -> PositionSnapshot:
+        self.position_snapshots.setdefault(snapshot.position_id, []).insert(0, snapshot)
+        return snapshot
+
+    def list_position_snapshots(self, position_id: UUID, limit: int = 50) -> list[PositionSnapshot]:
+        return self.position_snapshots.get(position_id, [])[:limit]
+
+    def add_position_insight(self, insight: PositionInsight) -> PositionInsight:
+        self.position_insights.setdefault(insight.position_id, []).insert(0, insight)
+        return insight
+
+    def list_position_insights(self, position_id: UUID, limit: int = 20) -> list[PositionInsight]:
+        return self.position_insights.get(position_id, [])[:limit]
+
+    def add_position_event(self, event: PositionEvent) -> PositionEvent:
+        self.position_events.setdefault(event.position_id, []).insert(0, event)
+        return event
+
+    def list_position_events(self, position_id: UUID, limit: int = 50) -> list[PositionEvent]:
+        return self.position_events.get(position_id, [])[:limit]
+
     def add_trade(self, trade: Trade) -> Trade:
         self.trades[trade.id] = trade
         return trade
+
+    def get_trade(self, trade_id: UUID) -> Trade | None:
+        return self.trades.get(trade_id)
 
     def list_trades(self) -> list[Trade]:
         return sorted(self.trades.values(), key=lambda item: item.created_at, reverse=True)
@@ -210,6 +251,37 @@ class SQLiteRepository:
                 );
                 CREATE INDEX IF NOT EXISTS idx_monitoring_position_created
                     ON monitoring_logs(position_id, created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS position_snapshots (
+                    id TEXT PRIMARY KEY,
+                    position_id TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_position_snapshots_position_created
+                    ON position_snapshots(position_id, created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS position_insights (
+                    id TEXT PRIMARY KEY,
+                    position_id TEXT NOT NULL,
+                    snapshot_id TEXT,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_position_insights_position_created
+                    ON position_insights(position_id, created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS position_events (
+                    id TEXT PRIMARY KEY,
+                    position_id TEXT NOT NULL,
+                    event_type TEXT NOT NULL,
+                    severity TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_position_events_position_created
+                    ON position_events(position_id, created_at DESC);
 
                 CREATE TABLE IF NOT EXISTS trades (
                     id TEXT PRIMARY KEY,
@@ -355,6 +427,93 @@ class SQLiteRepository:
             )
         return log
 
+    def list_monitoring_logs(self, position_id: UUID, limit: int = 50) -> list[MonitoringLog]:
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                "SELECT payload FROM monitoring_logs WHERE position_id = ? ORDER BY created_at DESC LIMIT ?",
+                (str(position_id), limit),
+            ).fetchall()
+        return [MonitoringLog.model_validate_json(row["payload"]) for row in rows]
+
+    def add_position_snapshot(self, snapshot: PositionSnapshot) -> PositionSnapshot:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO position_snapshots
+                    (id, position_id, symbol, created_at, payload)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    str(snapshot.id),
+                    str(snapshot.position_id),
+                    snapshot.symbol.upper(),
+                    snapshot.created_at.isoformat(),
+                    _dump_model(snapshot),
+                ),
+            )
+        return snapshot
+
+    def list_position_snapshots(self, position_id: UUID, limit: int = 50) -> list[PositionSnapshot]:
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                "SELECT payload FROM position_snapshots WHERE position_id = ? ORDER BY created_at DESC LIMIT ?",
+                (str(position_id), limit),
+            ).fetchall()
+        return [PositionSnapshot.model_validate_json(row["payload"]) for row in rows]
+
+    def add_position_insight(self, insight: PositionInsight) -> PositionInsight:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO position_insights
+                    (id, position_id, snapshot_id, created_at, payload)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    str(insight.id),
+                    str(insight.position_id),
+                    str(insight.snapshot_id) if insight.snapshot_id else None,
+                    insight.created_at.isoformat(),
+                    _dump_model(insight),
+                ),
+            )
+        return insight
+
+    def list_position_insights(self, position_id: UUID, limit: int = 20) -> list[PositionInsight]:
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                "SELECT payload FROM position_insights WHERE position_id = ? ORDER BY created_at DESC LIMIT ?",
+                (str(position_id), limit),
+            ).fetchall()
+        return [PositionInsight.model_validate_json(row["payload"]) for row in rows]
+
+    def add_position_event(self, event: PositionEvent) -> PositionEvent:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO position_events
+                    (id, position_id, event_type, severity, created_at, payload)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(event.id),
+                    str(event.position_id),
+                    event.event_type,
+                    event.severity,
+                    event.created_at.isoformat(),
+                    _dump_model(event),
+                ),
+            )
+        return event
+
+    def list_position_events(self, position_id: UUID, limit: int = 50) -> list[PositionEvent]:
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                "SELECT payload FROM position_events WHERE position_id = ? ORDER BY created_at DESC LIMIT ?",
+                (str(position_id), limit),
+            ).fetchall()
+        return [PositionEvent.model_validate_json(row["payload"]) for row in rows]
+
     def add_trade(self, trade: Trade) -> Trade:
         with self._lock, self._connect() as connection:
             connection.execute(
@@ -366,6 +525,11 @@ class SQLiteRepository:
                 (str(trade.id), str(trade.position_id), trade.symbol.upper(), trade.created_at.isoformat(), _dump_model(trade)),
             )
         return trade
+
+    def get_trade(self, trade_id: UUID) -> Trade | None:
+        with self._lock, self._connect() as connection:
+            row = connection.execute("SELECT payload FROM trades WHERE id = ?", (str(trade_id),)).fetchone()
+        return Trade.model_validate_json(row["payload"]) if row else None
 
     def list_trades(self) -> list[Trade]:
         with self._lock, self._connect() as connection:

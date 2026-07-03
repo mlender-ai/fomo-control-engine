@@ -1,20 +1,20 @@
 # FOMO Control Engine
 
-FOMO Control Engine is a personal trading decision engine. It does not place trades or promise signals. It scores whether a planned entry is supported by market structure, volume, liquidity, momentum, and risk data, then turns the structured result into a plain-language report.
+FOMO Control Engine is a personal live position intelligence cockpit. It does not place trades or promise signals. It tracks the user's real open positions, calculates deterministic position state JSON, and explains whether the original thesis, risk, chart structure, and exit review data still make sense.
 
-## Current v0.4 Scope
+## Current MVP Scope
 
-- FastAPI backend with report, position, monitoring, exit, and review endpoints
+- FastAPI backend with live position, snapshot, insight, event, memo, exit-record, and trade review endpoints
 - Deterministic Entry Opportunity Score calculation
 - Mock and live Bitget read-only market data providers
 - Bitget private read-only position lookup and sync
-- SQLite persistence for reports, positions, monitoring logs, trades, research runs, agent outputs, shadow profiles, decision memories, and validation runs
-- Agentic Research runs with deterministic market snapshots, Bull/Bear debate, Risk Guardian, and FOMO Gatekeeper outputs
-- Shadow Account extraction from completed trades
-- Liquidation Intelligence proxy analysis from score/OI/funding context
-- Validation Lab with Monte Carlo, Bootstrap Sharpe CI, and Walk Forward checks
-- Astryx-based Next.js terminal dashboard for market summary, ticker detail, research runs, positions, journal, shadow account, validation lab, and settings
-- pytest coverage for scoring, reports, mock provider, persistence, position flow, research runs, shadow extraction, liquidity analysis, validation, and memory
+- SQLite persistence for reports, positions, monitoring logs, trades, live position snapshots, insights, and events
+- Position Health Score with thesis, chart, risk, momentum/volume, liquidity/funding components
+- Position State labels: healthy, watch, risk rising, thesis weakening, critical, unknown
+- Deterministic Korean AI-style insight text generated from stored JSON only
+- Astryx-based Next.js terminal dashboard focused on Live Positions, Trade History, and Settings
+- Older market/research/shadow/validation routes remain available but are hidden from the main MVP navigation
+- pytest coverage for scoring, reports, mock provider, persistence, position flow, live position APIs, research runs, shadow extraction, liquidity analysis, validation, and memory
 
 ## Run Locally
 
@@ -73,20 +73,23 @@ Useful checks:
 ```bash
 curl http://127.0.0.1:8875/api/system/status
 curl -X POST http://127.0.0.1:8875/api/system/bitget/test-connection
+curl http://127.0.0.1:8875/api/live/positions
+curl -X POST http://127.0.0.1:8875/api/live/positions/sync
 curl -X POST http://127.0.0.1:8875/api/reports \
   -H "Content-Type: application/json" \
   -d '{"symbol":"BTCUSDT","timeframe":"4h"}'
 curl http://127.0.0.1:8875/api/account/bitget/positions
 curl -X POST http://127.0.0.1:8875/api/account/bitget/sync-positions
-curl -X POST http://127.0.0.1:8875/api/research-runs \
-  -H "Content-Type: application/json" \
-  -d '{"symbol":"BTCUSDT","timeframe":"4h","mode":"entry_review"}'
-curl -X POST http://127.0.0.1:8875/api/liquidity/analyze \
-  -H "Content-Type: application/json" \
-  -d '{"symbol":"BTCUSDT","timeframe":"4h"}'
-curl -X POST http://127.0.0.1:8875/api/validation/run \
-  -H "Content-Type: application/json" \
-  -d '{"strategy_type":"entry_score_threshold","symbol":"BTCUSDT","timeframe":"4h"}'
+```
+
+Live position detail endpoints:
+
+```bash
+curl http://127.0.0.1:8875/api/live/positions/{position_id}
+curl -X POST http://127.0.0.1:8875/api/live/positions/{position_id}/analyze
+curl -X POST http://127.0.0.1:8875/api/live/positions/{position_id}/insight
+curl http://127.0.0.1:8875/api/live/positions/{position_id}/events
+curl http://127.0.0.1:8875/api/live/positions/{position_id}/snapshots
 ```
 
 ## Tests
@@ -113,14 +116,15 @@ npm run astryx -- component --list --detail brief
 - V0.4 is read-only for exchange integrations.
 - Bitget API keys must be read-only and provided through environment variables.
 - No automatic buy or sell execution is included.
+- `record-exit` only writes an internal trade review record. It does not submit an exchange order.
 - Scores are deterministic. LLM usage, when added later, must only transform computed JSON into natural language.
-- Agent outputs explain a fixed score snapshot. They do not recalculate price, score, or order intent.
+- Position insight output explains a fixed score snapshot. It does not recalculate price, score, or order intent.
 
 ## Design Notes
 
 - Dashboard implementation uses Astryx packages for accessible shell, navigation, command palette, badges, status dots, tables, keyboard hints, and theme structure.
 - The visual direction is terminal-style information density and multi-panel scanning. It does not copy Bloomberg Terminal branding, proprietary screens, logo, colors, text, or layout.
-- Keyboard workflow: `Cmd/Ctrl+K` or `/` opens the command palette. `G` then `D/R/P/J/S/V` routes to Dashboard, Research, Positions, Journal, Shadow, and Validation.
+- Keyboard workflow: `Cmd/Ctrl+K` or `/` opens the command palette. `G` then `P` routes to Live Positions, `G` then `T` routes to Trade History, and `G` then `,` routes to Settings.
 
 See:
 

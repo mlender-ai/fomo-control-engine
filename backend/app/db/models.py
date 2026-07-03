@@ -19,6 +19,7 @@ class PositionStatus(str, Enum):
     open = "open"
     closed = "closed"
     missing_from_exchange = "missing_from_exchange"
+    needs_exit_record = "needs_exit_record"
 
 
 class ScoreBreakdown(BaseModel):
@@ -91,6 +92,10 @@ class PositionCreate(BaseModel):
     leverage: float = 1
     entry_report_id: UUID | None = None
     memo: str = ""
+    entry_memo: str = ""
+    planned_stop_price: float | None = None
+    planned_take_profit_price: float | None = None
+    thesis_text: str = ""
 
 
 class Position(BaseModel):
@@ -114,8 +119,13 @@ class Position(BaseModel):
     margin_ratio: float | None = None
     break_even_price: float | None = None
     source: str = "manual"
+    detected_source: str = "manual"
     synced_at: datetime | None = None
     memo: str = ""
+    entry_memo: str = ""
+    planned_stop_price: float | None = None
+    planned_take_profit_price: float | None = None
+    thesis_text: str = ""
     opened_at: datetime = Field(default_factory=utc_now)
     closed_at: datetime | None = None
 
@@ -130,6 +140,62 @@ class MonitoringLog(BaseModel):
     logic_status: str
     report_text: str
     created_at: datetime = Field(default_factory=utc_now)
+
+
+class PositionHealthComponents(BaseModel):
+    thesis_integrity: int
+    chart_structure: int
+    risk_safety: int
+    momentum_volume: int
+    liquidity_funding: int
+
+
+class PositionSnapshot(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    position_id: UUID
+    symbol: str
+    mark_price: float | None = None
+    pnl_percent: float = 0
+    pnl_amount: float | None = None
+    liquidation_price: float | None = None
+    liquidation_distance_pct: float | None = None
+    health_score: int
+    status_label: str
+    risk_score: int
+    score_json: dict
+    analysis_json: dict
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class PositionInsight(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    position_id: UUID
+    snapshot_id: UUID | None = None
+    insight_type: str = "position_state"
+    health_score: int
+    status_label: str
+    input_json: dict
+    insight_text: str
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class PositionEvent(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    position_id: UUID
+    event_type: str
+    severity: str
+    title: str
+    description: str = ""
+    data: dict = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class PositionMemoUpdate(BaseModel):
+    memo: str | None = None
+    entry_memo: str | None = None
+    planned_stop_price: float | None = None
+    planned_take_profit_price: float | None = None
+    thesis_text: str | None = None
 
 
 class ExitRequest(BaseModel):
@@ -153,7 +219,12 @@ class Trade(BaseModel):
     holding_minutes: int
     exit_reason: str
     review_text: str
+    memo: str = ""
     created_at: datetime = Field(default_factory=utc_now)
+
+
+class TradeMemoUpdate(BaseModel):
+    memo: str = ""
 
 
 class MarketSnapshotRecord(BaseModel):

@@ -10,12 +10,10 @@ import { TerminalTopBar } from "./TerminalTopBar";
 
 const routeShortcuts: Record<string, string> = {
   d: "/",
-  m: "/markets",
-  r: "/research",
-  p: "/positions",
-  j: "/journal",
-  s: "/shadow",
-  v: "/validation",
+  p: "/",
+  l: "/",
+  t: "/trades",
+  h: "/trades",
   ",": "/settings"
 };
 
@@ -72,7 +70,7 @@ export function TerminalShell({ children }: { children: React.ReactNode }) {
       }
       if (event.key.toLowerCase() === "g") {
         routeModeRef.current = true;
-        setNotice("Route mode: D dashboard · R research · P positions · J journal · S shadow · V validation");
+        setNotice("Route mode: P live positions · T trade history · , settings");
         return;
       }
       if (routeModeRef.current) {

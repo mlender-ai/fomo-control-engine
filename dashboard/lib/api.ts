@@ -40,7 +40,7 @@ export type Position = {
   entry_price: number;
   quantity: number;
   leverage: number;
-  status: "open" | "closed" | "missing_from_exchange";
+  status: "open" | "closed" | "missing_from_exchange" | "needs_exit_record";
   entry_score: number | null;
   current_score: number | null;
   current_price: number | null;
@@ -53,10 +53,159 @@ export type Position = {
   margin_ratio: number | null;
   break_even_price: number | null;
   source: string;
+  detected_source: string;
   synced_at: string | null;
   memo: string;
+  entry_memo: string;
+  planned_stop_price: number | null;
+  planned_take_profit_price: number | null;
+  thesis_text: string;
   opened_at: string;
   closed_at: string | null;
+};
+
+export type PositionHealthComponents = {
+  thesis_integrity: number;
+  chart_structure: number;
+  risk_safety: number;
+  momentum_volume: number;
+  liquidity_funding: number;
+};
+
+export type PositionState = {
+  position: Position;
+  mark_price: number | null;
+  pnl_percent: number;
+  pnl_amount: number | null;
+  liquidation_distance_pct: number | null;
+  health_score: number;
+  status: "healthy" | "watch" | "risk_rising" | "thesis_weakening" | "critical" | "unknown";
+  status_label: string;
+  risk_score: number;
+  score_change: number;
+  entry_score: number;
+  current_score: number;
+  analysis: {
+    position_analysis: {
+      symbol: string;
+      direction: "long" | "short";
+      health_score: number;
+      status: string;
+      status_label: string;
+      thesis_integrity: number;
+      chart_structure: number;
+      risk_safety: number;
+      momentum_volume: number;
+      liquidity_funding: number;
+      entry_score: number;
+      current_score: number;
+      score_change: number;
+    };
+    wyckoff: {
+      accumulation_score: number;
+      distribution_score: number;
+      phase_hint: string;
+      spring_candidate: boolean;
+      sos_candidate: boolean;
+      lps_candidate: boolean;
+      structure_comment: string;
+    };
+    technical: {
+      trend: string;
+      trend_alignment: string;
+      rsi_state: string;
+      macd_state: string;
+      bollinger_state: string;
+      volume_state: string;
+      support_status: string;
+      resistance_status: string;
+      open_interest: string | number;
+      funding: string | number;
+      break_of_structure: boolean;
+      higher_low: boolean;
+    };
+    risk: {
+      liquidation_distance_pct: number | null;
+      risk_score: number;
+      atr_risk: string;
+      drawdown_from_peak_pct: number;
+      profit_giveback_pct: number;
+      price_distance_from_entry_pct: number | null;
+      critical_levels: Array<{ type: string; price: number; meaning: string }>;
+    };
+    reason_codes: string[];
+  };
+  score_json: {
+    entry_score: number;
+    current_score: number;
+    score_change: number;
+    health_components: PositionHealthComponents;
+    entry_breakdown: ScoreBreakdown;
+    fomo_index: number;
+  };
+};
+
+export type PositionSnapshot = {
+  id: string;
+  position_id: string;
+  symbol: string;
+  mark_price: number | null;
+  pnl_percent: number;
+  pnl_amount: number | null;
+  liquidation_price: number | null;
+  liquidation_distance_pct: number | null;
+  health_score: number;
+  status_label: string;
+  risk_score: number;
+  score_json: PositionState["score_json"];
+  analysis_json: PositionState["analysis"];
+  created_at: string;
+};
+
+export type PositionInsight = {
+  id: string;
+  position_id: string;
+  snapshot_id: string | null;
+  insight_type: string;
+  health_score: number;
+  status_label: string;
+  input_json: PositionState["analysis"];
+  insight_text: string;
+  created_at: string;
+};
+
+export type PositionEvent = {
+  id: string;
+  position_id: string;
+  event_type: string;
+  severity: "low" | "medium" | "high" | "critical" | string;
+  title: string;
+  description: string;
+  data: Record<string, unknown>;
+  created_at: string;
+};
+
+export type LivePositionPayload = {
+  position: Position;
+  state: PositionState;
+  latest_snapshot: PositionSnapshot;
+  latest_insight: PositionInsight | null;
+  recent_events: PositionEvent[];
+};
+
+export type LivePositionsResponse = {
+  provider: string;
+  positions: LivePositionPayload[];
+  open_count: number;
+  needs_exit_record_count: number;
+  timestamp: string;
+};
+
+export type LivePositionDetail = LivePositionPayload & {
+  snapshots: PositionSnapshot[];
+  insights: PositionInsight[];
+  events: PositionEvent[];
+  monitoring_logs: Array<Record<string, unknown>>;
 };
 
 export type Trade = {
@@ -74,7 +223,15 @@ export type Trade = {
   holding_minutes: number;
   exit_reason: string;
   review_text: string;
+  memo: string;
   created_at: string;
+};
+
+export type TradeTimeline = {
+  trade: Trade;
+  snapshots: PositionSnapshot[];
+  events: PositionEvent[];
+  monitoring_logs: Array<Record<string, unknown>>;
 };
 
 export type MarketSummary = {
@@ -113,6 +270,8 @@ export type BitgetSyncResult = {
   created: number;
   updated: number;
   missing_from_exchange: number;
+  positions?: LivePositionPayload[];
+  timestamp?: string;
   error?: string;
 };
 
@@ -211,6 +370,41 @@ export const api = {
     request<BitgetSyncResult>("/api/account/bitget/sync-positions", {
       method: "POST"
     }),
+  livePositions: () => request<LivePositionsResponse>("/api/live/positions"),
+  syncLivePositions: () =>
+    request<BitgetSyncResult>("/api/live/positions/sync", {
+      method: "POST"
+    }),
+  livePosition: (positionId: string) => request<LivePositionDetail>(`/api/live/positions/${positionId}`),
+  analyzeLivePosition: (positionId: string) =>
+    request<LivePositionPayload>(`/api/live/positions/${positionId}/analyze`, {
+      method: "POST"
+    }),
+  createPositionInsight: (positionId: string) =>
+    request<LivePositionPayload>(`/api/live/positions/${positionId}/insight`, {
+      method: "POST"
+    }),
+  positionSnapshots: (positionId: string) => request<{ snapshots: PositionSnapshot[] }>(`/api/live/positions/${positionId}/snapshots`),
+  positionEvents: (positionId: string) => request<{ events: PositionEvent[] }>(`/api/live/positions/${positionId}/events`),
+  updatePositionMemo: (
+    positionId: string,
+    payload: {
+      memo?: string;
+      entry_memo?: string;
+      planned_stop_price?: number | null;
+      planned_take_profit_price?: number | null;
+      thesis_text?: string;
+    }
+  ) =>
+    request<Position>(`/api/live/positions/${positionId}/memo`, {
+      method: "PATCH",
+      body: JSON.stringify(payload)
+    }),
+  recordLiveExit: (positionId: string, payload: { exit_price: number; exit_reason: string; memo: string }) =>
+    request<Trade>(`/api/live/positions/${positionId}/record-exit`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
   summary: () => request<MarketSummary>("/api/market/summary"),
   report: (symbol: string) => request<Report>(`/api/reports/${symbol}`),
   createReport: (symbol: string) =>
@@ -241,6 +435,17 @@ export const api = {
       body: JSON.stringify(payload)
     }),
   trades: () => request<Trade[]>("/api/trades"),
+  trade: (tradeId: string) => request<Trade>(`/api/trades/${tradeId}`),
+  reviewTrade: (tradeId: string) =>
+    request<Trade>(`/api/trades/${tradeId}/review`, {
+      method: "POST"
+    }),
+  tradeTimeline: (tradeId: string) => request<TradeTimeline>(`/api/trades/${tradeId}/timeline`),
+  updateTradeMemo: (tradeId: string, memo: string) =>
+    request<Trade>(`/api/trades/${tradeId}/memo`, {
+      method: "PATCH",
+      body: JSON.stringify({ memo })
+    }),
   createResearchRun: (payload: { symbol: string; timeframe: string; mode?: string }) =>
     request<ResearchRun>("/api/research-runs", {
       method: "POST",

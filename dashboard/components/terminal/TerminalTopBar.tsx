@@ -22,6 +22,8 @@ export function TerminalTopBar({
 }) {
   const provider = status?.market_data_provider ?? "loading";
   const symbol = extractSymbol(pathname);
+  const publicOk = status?.bitget_public_api === "ok" || status?.bitget_public_api === "available";
+  const privateOk = status?.bitget_private_api === "ok" || status?.bitget_private_api === "configured";
 
   return (
     <TopNav
@@ -32,14 +34,14 @@ export function TerminalTopBar({
           <span className="terminalBrandMark">FC</span>
           <span>
             <strong>FOMO Control Engine</strong>
-            <small>Read-only research terminal</small>
+            <small>Live Position Cockpit</small>
           </span>
         </div>
       }
       centerContent={
         <button className="terminalCommandButton" type="button" onClick={onCommand}>
           <Command size={15} />
-          <span>{symbol ? `/${symbol}` : "Command / Symbol / Run"}</span>
+          <span>{symbol ? `/${symbol}` : "Command / Position / Sync"}</span>
           <Kbd keys="mod+k" />
         </button>
       }
@@ -51,11 +53,11 @@ export function TerminalTopBar({
               {provider.toUpperCase()}
             </span>
             <span>
-              <StatusDot variant={status?.bitget_public_api === "ok" ? "success" : "neutral"} label="Public market data" />
+              <StatusDot variant={publicOk ? "success" : "neutral"} label="Public market data" />
               PUB {status?.bitget_public_api ?? "..."}
             </span>
             <span>
-              <StatusDot variant={status?.bitget_private_api === "ok" ? "success" : "neutral"} label="Private read-only API" />
+              <StatusDot variant={privateOk ? "success" : "neutral"} label="Private read-only API" />
               POS {status?.bitget_private_api ?? "..."}
             </span>
             <time>{currentTime}</time>

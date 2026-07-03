@@ -4,14 +4,8 @@ import { Badge } from "@astryxdesign/core/Badge";
 import { SideNav, SideNavItem, SideNavSection } from "@astryxdesign/core/SideNav";
 import {
   Activity,
-  BarChart3,
-  BookOpen,
-  FlaskConical,
+  FileClock,
   Gauge,
-  History,
-  LayoutDashboard,
-  Microscope,
-  Orbit,
   Settings,
   ShieldCheck
 } from "lucide-react";
@@ -21,24 +15,18 @@ const sections = [
   {
     heading: "MONITOR",
     items: [
-      { href: "/", label: "Dashboard", icon: LayoutDashboard, shortcut: "G D" },
-      { href: "/markets", label: "Markets", icon: BarChart3, shortcut: "G M" },
-      { href: "/research", label: "Research Runs", icon: Microscope, shortcut: "G R" },
-      { href: "/positions", label: "Positions", icon: Activity, shortcut: "G P" }
+      { href: "/", label: "Live Positions", icon: Activity, shortcut: "G P" }
     ]
   },
   {
-    heading: "JOURNAL",
+    heading: "REVIEW",
     items: [
-      { href: "/journal", label: "Trade Journal", icon: BookOpen, shortcut: "G J" },
-      { href: "/shadow", label: "Shadow Account", icon: Orbit, shortcut: "G S" },
-      { href: "/research", label: "Decision Memory", icon: History, shortcut: "G R" }
+      { href: "/trades", label: "Trade History", icon: FileClock, shortcut: "G T" }
     ]
   },
   {
-    heading: "LAB",
+    heading: "SYSTEM",
     items: [
-      { href: "/validation", label: "Validation Lab", icon: FlaskConical, shortcut: "G V" },
       { href: "/settings", label: "Settings", icon: Settings, shortcut: "G ," }
     ]
   }
@@ -53,8 +41,8 @@ export function TerminalSideNav({ pathname, status }: { pathname: string; status
         <div className="terminalSideHeader">
           <Gauge size={18} />
           <div>
-            <strong>Decision OS</strong>
-            <small>v0.4 Agentic Research</small>
+            <strong>Position Cockpit</strong>
+            <small>MVP Reset</small>
           </div>
         </div>
       }
@@ -63,7 +51,7 @@ export function TerminalSideNav({ pathname, status }: { pathname: string; status
           <ShieldCheck size={16} />
           <div>
             <strong>No order execution</strong>
-            <span>API boundary is read-only</span>
+            <span>Read-only position intelligence</span>
           </div>
         </div>
       }
@@ -95,7 +83,6 @@ export function TerminalSideNav({ pathname, status }: { pathname: string; status
 }
 
 function isSelected(pathname: string, href: string): boolean {
-  if (href === "/") return pathname === "/";
-  if (href === "/markets") return pathname.startsWith("/markets") || pathname.startsWith("/dashboard");
+  if (href === "/") return pathname === "/" || pathname.startsWith("/positions");
   return pathname === href || pathname.startsWith(`${href}/`);
 }

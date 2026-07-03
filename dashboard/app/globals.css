@@ -92,6 +92,11 @@ h1 {
   font-size: 25px;
   line-height: 1.12;
   font-weight: 720;
+  overflow-wrap: anywhere;
+}
+
+h1 span {
+  display: block;
 }
 
 h2 {
@@ -330,6 +335,7 @@ h3 {
 .pageHeader > div {
   display: grid;
   gap: 4px;
+  min-width: 0;
 }
 
 .eyebrow {
@@ -780,6 +786,480 @@ h3 {
   background: rgba(98, 207, 232, 0.08);
 }
 
+.cockpitHeader h1 {
+  max-width: 980px;
+}
+
+.cockpitLayout {
+  display: grid;
+  grid-template-columns: minmax(330px, 0.42fr) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.cockpitDetail,
+.positionTape {
+  display: grid;
+  gap: 12px;
+}
+
+.positionCard {
+  display: grid;
+  gap: 11px;
+  width: 100%;
+  border: 1px solid var(--terminal-line);
+  border-radius: 6px;
+  background: rgba(8, 11, 16, 0.42);
+  color: var(--terminal-text);
+  cursor: pointer;
+  padding: 11px;
+  text-align: left;
+}
+
+.positionCard:hover,
+.positionCard.selected {
+  border-color: rgba(240, 184, 64, 0.58);
+  background: rgba(240, 184, 64, 0.08);
+}
+
+.positionCardTop,
+.positionCardFooter,
+.positionDecisionGrid {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.positionCardTop strong,
+.positionCardTop span,
+.positionCardFooter span {
+  display: block;
+}
+
+.positionCardTop span,
+.positionCardFooter {
+  color: var(--terminal-muted);
+  font-size: 11px;
+}
+
+.positionCardMetrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.miniMetric {
+  min-width: 0;
+  border: 1px solid var(--terminal-line);
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.16);
+  padding: 7px;
+}
+
+.miniMetric span {
+  display: block;
+  color: var(--terminal-muted);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.miniMetric strong {
+  display: block;
+  overflow: hidden;
+  margin-top: 4px;
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.statusPill {
+  display: inline-flex;
+  flex: 0 0 auto;
+  border: 1px solid var(--terminal-line-strong);
+  border-radius: 4px;
+  color: var(--terminal-muted);
+  padding: 4px 7px;
+  font-size: 11px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.statusPill.status-healthy,
+.verdictBox.status-healthy {
+  border-color: rgba(110, 210, 143, 0.44);
+  background: rgba(110, 210, 143, 0.08);
+  color: var(--terminal-positive);
+}
+
+.statusPill.status-watch,
+.verdictBox.status-watch {
+  border-color: rgba(240, 184, 64, 0.4);
+  background: rgba(240, 184, 64, 0.08);
+  color: var(--terminal-warning);
+}
+
+.statusPill.status-risk_rising,
+.statusPill.status-thesis_weakening,
+.verdictBox.status-risk_rising,
+.verdictBox.status-thesis_weakening {
+  border-color: rgba(238, 123, 128, 0.42);
+  background: rgba(238, 123, 128, 0.08);
+  color: var(--terminal-negative);
+}
+
+.statusPill.status-critical,
+.verdictBox.status-critical {
+  border-color: rgba(238, 123, 128, 0.65);
+  background: rgba(238, 123, 128, 0.14);
+  color: var(--terminal-negative);
+}
+
+.positionDecisionGrid {
+  align-items: stretch;
+}
+
+.positionDecisionGrid > .terminalMetricGrid {
+  flex: 1;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.positionDecisionGrid .terminalMetric strong {
+  overflow: visible;
+  white-space: normal;
+}
+
+.verdictBox {
+  display: grid;
+  min-width: 280px;
+  max-width: 390px;
+  border: 1px solid var(--terminal-line);
+  border-radius: 6px;
+  background: rgba(8, 11, 16, 0.42);
+  padding: 12px;
+}
+
+.verdictBox span {
+  color: var(--terminal-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.verdictBox strong {
+  margin-top: 8px;
+  font-size: 24px;
+  line-height: 1.1;
+}
+
+.verdictBox p {
+  margin-top: 10px;
+  color: #d8dee8;
+  line-height: 1.5;
+}
+
+.riskMetricGrid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin-bottom: 12px;
+}
+
+.riskMetricGrid .terminalMetric strong {
+  overflow: visible;
+  white-space: normal;
+}
+
+.healthBars {
+  display: grid;
+  gap: 8px;
+}
+
+.healthBarRow {
+  display: grid;
+  grid-template-columns: 128px minmax(120px, 1fr) 42px;
+  align-items: center;
+  gap: 10px;
+}
+
+.healthBarRow span {
+  color: var(--terminal-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.healthBarRow div {
+  height: 9px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.healthBarRow i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--terminal-cyan), var(--terminal-positive));
+}
+
+.healthBarRow strong {
+  text-align: right;
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+}
+
+.reasonCodeGrid,
+.wyckoffTags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+}
+
+.reasonCodeGrid span,
+.wyckoffTags span {
+  border: 1px solid var(--terminal-line);
+  border-radius: 4px;
+  background: rgba(0, 0, 0, 0.18);
+  color: var(--terminal-muted);
+  padding: 4px 6px;
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 10px;
+}
+
+.technicalGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.technicalItem {
+  border: 1px solid var(--terminal-line);
+  border-radius: 5px;
+  background: rgba(8, 11, 16, 0.42);
+  padding: 9px;
+}
+
+.technicalItem span,
+.wyckoffBox span {
+  display: block;
+  color: var(--terminal-muted);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.technicalItem strong,
+.wyckoffBox strong {
+  display: block;
+  overflow-wrap: anywhere;
+  margin-top: 5px;
+  color: var(--terminal-text);
+}
+
+.technicalItem.ok strong {
+  color: var(--terminal-positive);
+}
+
+.technicalItem.warn strong {
+  color: var(--terminal-warning);
+}
+
+.technicalItem.danger strong {
+  color: var(--terminal-negative);
+}
+
+.wyckoffBox {
+  margin-top: 10px;
+  border: 1px solid var(--terminal-line);
+  border-radius: 5px;
+  background: rgba(98, 207, 232, 0.06);
+  padding: 10px;
+}
+
+.wyckoffBox p {
+  margin-top: 8px;
+  color: #d8dee8;
+  line-height: 1.5;
+}
+
+.levelChart {
+  display: grid;
+  gap: 9px;
+}
+
+.levelRow {
+  display: grid;
+  grid-template-columns: 92px minmax(140px, 1fr) 96px;
+  align-items: center;
+  gap: 10px;
+}
+
+.levelRow span {
+  overflow: hidden;
+  color: var(--terminal-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.levelRow strong {
+  text-align: right;
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+}
+
+.levelTrack {
+  position: relative;
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.levelTrack i {
+  position: absolute;
+  top: 50%;
+  width: 9px;
+  height: 18px;
+  transform: translate(-50%, -50%);
+  border-radius: 3px;
+  background: var(--terminal-cyan);
+}
+
+.level-liquidation .levelTrack i,
+.level-stop .levelTrack i {
+  background: var(--terminal-negative);
+}
+
+.level-take_profit .levelTrack i,
+.level-resistance .levelTrack i {
+  background: var(--terminal-amber);
+}
+
+.level-entry .levelTrack i {
+  background: var(--terminal-blue);
+}
+
+.level-mark .levelTrack i {
+  background: var(--terminal-positive);
+}
+
+.insightText p {
+  white-space: pre-line;
+  color: #d8dee8;
+  line-height: 1.55;
+}
+
+.insightText small,
+.memoText {
+  display: block;
+  margin-top: 10px;
+  color: var(--terminal-muted);
+}
+
+.memoText {
+  border-left: 3px solid var(--terminal-cyan);
+  padding-left: 10px;
+  line-height: 1.5;
+}
+
+.eventTimeline {
+  display: grid;
+  gap: 8px;
+}
+
+.eventItem {
+  border: 1px solid var(--terminal-line);
+  border-left: 3px solid var(--terminal-muted);
+  border-radius: 5px;
+  background: rgba(8, 11, 16, 0.42);
+  padding: 9px;
+}
+
+.eventItem.severity-medium {
+  border-left-color: var(--terminal-warning);
+}
+
+.eventItem.severity-high,
+.eventItem.severity-critical {
+  border-left-color: var(--terminal-negative);
+}
+
+.eventItem div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.eventItem span {
+  color: var(--terminal-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.eventItem p {
+  margin-top: 6px;
+  color: #d8dee8;
+  line-height: 1.45;
+}
+
+.emptyStateAction {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  border: 1px dashed var(--terminal-line-strong);
+  border-radius: 6px;
+  padding: 18px;
+}
+
+.emptyStateAction svg {
+  color: var(--terminal-cyan);
+  flex: 0 0 auto;
+}
+
+.emptyStateAction strong,
+.emptyStateAction p {
+  display: block;
+}
+
+.emptyStateAction p {
+  margin-top: 5px;
+  color: var(--terminal-muted);
+}
+
+.positionMemoForm {
+  display: grid;
+  gap: 10px;
+}
+
+.positionMemoForm label {
+  display: grid;
+  gap: 5px;
+}
+
+.positionMemoForm label span {
+  color: var(--terminal-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.positionMemoForm input,
+.positionMemoForm textarea {
+  width: 100%;
+  border: 1px solid var(--terminal-line-strong);
+  border-radius: 5px;
+  background: #0b0e14;
+  color: var(--terminal-text);
+  padding: 9px;
+}
+
+.positionMemoForm textarea {
+  resize: vertical;
+}
+
+.memoPriceGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
 @media (max-width: 1100px) {
   .terminalProviderStrip {
     display: none;
@@ -792,25 +1272,67 @@ h3 {
   .grid.two,
   .grid.three,
   .grid.four,
+  .cockpitLayout,
   .metricGrid,
   .terminalMetricGrid,
-  .statusGrid {
+  .statusGrid,
+  .technicalGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .cockpitLayout {
+    grid-template-columns: 1fr;
+  }
+
+  .positionDecisionGrid {
+    display: grid;
+  }
+
+  .verdictBox {
+    max-width: none;
   }
 }
 
 @media (max-width: 760px) {
   .terminalWorkspace {
+    max-width: 100vw;
+    min-width: 0;
+    overflow-x: hidden;
     padding: 10px;
+  }
+
+  .terminalTopActions {
+    display: none;
+  }
+
+  .terminalBrand {
+    min-width: 0;
   }
 
   .terminalCommandButton {
     width: 100%;
   }
 
+  .page,
+  .pageHeader,
+  .terminalPanel {
+    max-width: 100%;
+    min-width: 0;
+  }
+
   .pageHeader {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .pageHeader > div {
+    max-width: calc(100vw - 44px);
+    width: 100%;
+  }
+
+  .cockpitHeader h1 {
+    font-size: 22px;
+    line-height: 1.22;
   }
 
   .grid.two,
@@ -819,9 +1341,27 @@ h3 {
   .metricGrid,
   .terminalMetricGrid,
   .statusGrid,
+  .technicalGrid,
   .formGrid,
-  .scoreRow {
+  .scoreRow,
+  .positionCardMetrics,
+  .healthBarRow,
+  .levelRow,
+  .memoPriceGrid {
     grid-template-columns: 1fr;
+  }
+
+  .positionCardTop,
+  .positionCardFooter,
+  .eventItem div,
+  .emptyStateAction {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .levelRow strong,
+  .healthBarRow strong {
+    text-align: left;
   }
 
   .formGrid textarea {
@@ -830,5 +1370,15 @@ h3 {
 
   .scoreValue {
     text-align: left;
+  }
+}
+
+@media (max-width: 480px) {
+  .pageHeader > div {
+    max-width: 330px;
+  }
+
+  .cockpitHeader h1 {
+    font-size: 20px;
   }
 }

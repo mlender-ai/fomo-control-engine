@@ -29,35 +29,17 @@ export function TerminalCommandPalette({
 
   const commands = useMemo<TerminalCommand[]>(
     () => [
-      command("nav-dashboard", "Open Dashboard", "Navigation", "Home workspace", ["dashboard", "home", "gd"], () => router.push("/"), "g d"),
-      command("nav-markets", "Open Markets", "Navigation", "Market report monitor", ["markets", "watch", "gm"], () => router.push("/markets"), "g m"),
-      command("nav-research", "Open Research Runs", "Navigation", "Agentic research timeline", ["research", "agents", "gr"], () => router.push("/research"), "g r"),
-      command("nav-positions", "Open Positions", "Navigation", "Read-only position monitor", ["positions", "gp"], () => router.push("/positions"), "g p"),
-      command("nav-journal", "Open Journal", "Navigation", "Closed trade review", ["journal", "trades", "gj"], () => router.push("/journal"), "g j"),
-      command("nav-shadow", "Open Shadow Account", "Navigation", "Behavior pattern extraction", ["shadow", "gs"], () => router.push("/shadow"), "g s"),
-      command("nav-validation", "Open Validation Lab", "Navigation", "Monte Carlo and walk-forward checks", ["validation", "gv"], () => router.push("/validation"), "g v"),
+      command("nav-live-positions", "Open Live Positions", "Navigation", "Live Position Intelligence Cockpit", ["positions", "live", "cockpit", "gp"], () => router.push("/"), "g p"),
+      command("nav-trades", "Open Trade History", "Navigation", "Closed trade review and replay", ["journal", "trades", "history", "gt"], () => router.push("/trades"), "g t"),
       command("nav-settings", "Open Settings", "Navigation", "API and terminal configuration", ["settings", "config"], () => router.push("/settings"), "g ,"),
-      command("report-btc", "/report BTCUSDT", "Market Data", "Open latest BTC report", ["btc", "btcusdt", "report"], () => router.push("/dashboard/BTCUSDT"), "enter"),
-      command("report-eth", "/report ETHUSDT", "Market Data", "Open latest ETH report", ["eth", "ethusdt", "report"], () => router.push("/dashboard/ETHUSDT"), "enter"),
-      command("run-research-btc", "/research BTCUSDT", "Actions", "Create a deterministic snapshot review", ["agent", "run", "btc"], async () => {
-        const result = await api.createResearchRun({ symbol: "BTCUSDT", timeframe: "4h" });
-        router.push(`/research/${result.research_run_id}`);
-        onNotice(`Research run created for ${result.symbol}`);
-      }),
-      command("sync-positions", "/sync positions", "Actions", "Read-only Bitget position sync", ["bitget", "private", "positions"], async () => {
-        const result = await api.syncBitgetPositions();
-        onNotice(`Position sync ${result.status}: created ${result.created}, updated ${result.updated}`);
+      command("sync-positions", "/sync positions", "Actions", "Read-only Bitget sync plus deterministic position analysis", ["bitget", "private", "positions", "sync"], async () => {
+        const result = await api.syncLivePositions();
+        onNotice(`Live sync ${result.status}: created ${result.created}, updated ${result.updated}, analyzed ${result.positions?.length ?? 0}`);
         router.refresh();
       }),
-      command("extract-shadow", "/extract shadow", "Actions", "Extract behavior profile from closed trades", ["shadow", "journal", "trades"], async () => {
-        const result = await api.extractShadow();
-        onNotice(`Shadow profile ${result.shadow_id} created`);
-        router.push("/shadow");
-      }),
-      command("run-validation", "/validate BTCUSDT", "Actions", "Run validation lab with deterministic seed", ["validation", "monte", "bootstrap"], async () => {
-        const result = await api.runValidation({ symbol: "BTCUSDT", timeframe: "4h" });
-        onNotice(`Validation run created for ${result.symbol}`);
-        router.push("/validation");
+      command("test-bitget", "/test bitget", "Actions", "Check public market data and private read-only position access", ["bitget", "test", "connection"], async () => {
+        const result = await api.testBitgetConnection();
+        onNotice(`Bitget public ${result.public_market_data.ok ? "OK" : "ERROR"} · private ${result.private_positions.status}`);
       })
     ],
     [onNotice, router]
