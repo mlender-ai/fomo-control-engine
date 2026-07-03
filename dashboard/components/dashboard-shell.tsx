@@ -43,7 +43,7 @@ export function DashboardShell() {
         </div>
         <button className="button secondary" onClick={load} disabled={loading}>
           <RefreshCw size={16} />
-          Refresh
+          {loading ? "Loading" : "Refresh"}
         </button>
       </header>
 
@@ -52,10 +52,10 @@ export function DashboardShell() {
       <section className="grid three">
         <div className="panel">
           <div className="panelHeader">
-            <h2>Open Positions</h2>
+            <h2>Data Source</h2>
           </div>
-          <strong>{summary?.positions.length ?? 0}</strong>
-          <p className="subtle">수동 기록된 보유 포지션</p>
+          <strong>{summary?.market_data_provider ?? "..."}</strong>
+          <p className="subtle">환경변수로 mock / bitget 전환</p>
         </div>
         <div className="panel">
           <div className="panelHeader">
@@ -78,38 +78,44 @@ export function DashboardShell() {
         <div className="panel">
           <div className="panelHeader">
             <h2>Market Watch</h2>
-            <span className="subtle">4H mock feed</span>
+            <span className="subtle">4H {summary?.market_data_provider ?? "feed"}</span>
           </div>
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Ticker</th>
-                <th>Price</th>
-                <th>24h</th>
-                <th>Entry Score</th>
-                <th>FOMO</th>
-                <th>State</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(summary?.reports ?? []).map((report) => (
-                <tr key={report.id}>
-                  <td>
-                    <Link href={`/dashboard/${report.symbol}`}>
-                      <strong>{report.symbol}</strong>
-                    </Link>
-                  </td>
-                  <td>{formatPrice(report.price)}</td>
-                  <td className={report.change_24h >= 0 ? "successText" : "dangerText"}>{signedPercent(report.change_24h)}</td>
-                  <td>
-                    <span className={`scorePill ${scoreTone(report.entry_score)}`}>{report.entry_score}</span>
-                  </td>
-                  <td>{report.scores.fomo}</td>
-                  <td>{report.state_label}</td>
+          {loading && !summary ? (
+            <div className="empty">Loading market reports...</div>
+          ) : summary?.reports.length ? (
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Ticker</th>
+                  <th>Price</th>
+                  <th>24h</th>
+                  <th>Entry Score</th>
+                  <th>FOMO</th>
+                  <th>State</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {summary.reports.map((report) => (
+                  <tr key={report.id}>
+                    <td>
+                      <Link href={`/dashboard/${report.symbol}`}>
+                        <strong>{report.symbol}</strong>
+                      </Link>
+                    </td>
+                    <td>{formatPrice(report.price)}</td>
+                    <td className={report.change_24h >= 0 ? "successText" : "dangerText"}>{signedPercent(report.change_24h)}</td>
+                    <td>
+                      <span className={`scorePill ${scoreTone(report.entry_score)}`}>{report.entry_score}</span>
+                    </td>
+                    <td>{report.scores.fomo}</td>
+                    <td>{report.state_label}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : (
+            <div className="empty">No reports available</div>
+          )}
         </div>
 
         <div className="panel">
@@ -126,4 +132,3 @@ export function DashboardShell() {
     </div>
   );
 }
-

@@ -3,15 +3,36 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException
 
+from app.core.config import get_settings
 from app.db.models import ExitRequest, Position, PositionCreate, PositionStatus, ReportRequest, Trade
-from app.db.repository import repository
-from app.exchange.mock import MockMarketDataProvider
+from app.db.repository import Repository, create_repository
+from app.exchange.base import MarketDataProvider
+from app.exchange.errors import MarketDataError
+from app.exchange.factory import create_market_data_provider
 from app.monitoring.engine import build_monitoring_log, calculate_pnl
 from app.report.engine import generate_report
 from app.review.engine import render_review
 
 router = APIRouter()
-market_provider = MockMarketDataProvider()
+settings = get_settings()
+repository: Repository = create_repository(settings.database_url)
+market_provider: MarketDataProvider = create_market_data_provider(settings)
+
+
+def configure_runtime(repo: Repository | None = None, provider: MarketDataProvider | None = None) -> None:
+    global repository, market_provider
+    if repo is not None:
+        repository = repo
+    if provider is not None:
+        market_provider = provider
+
+
+def _generate_and_store_report(symbol: str, timeframe: str = "4h"):
+    try:
+        snapshot = market_provider.get_snapshot(symbol, timeframe)
+        return repository.add_report(generate_report(snapshot))
+    except MarketDataError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @router.get("/health")
@@ -19,33 +40,44 @@ def health() -> dict:
     return {"status": "ok", "service": "fomo-control-engine"}
 
 
+@router.get("/api/system/status")
+def system_status() -> dict:
+    return {
+        "service": "fomo-control-engine",
+        "environment": settings.env,
+        "market_data_provider": settings.market_data_provider,
+        "database_url": settings.database_url,
+        "default_symbols": settings.symbol_list,
+    }
+
+
 @router.get("/api/market/summary")
 def market_summary() -> dict:
-    symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "DOGEUSDT"]
+    symbols = settings.symbol_list
     reports = []
     for symbol in symbols:
         report = repository.latest_report(symbol)
         if report is None:
-            report = repository.add_report(generate_report(market_provider.get_snapshot(symbol)))
+            report = _generate_and_store_report(symbol)
         reports.append(report)
     return {
         "reports": reports,
         "positions": repository.list_positions(PositionStatus.open),
         "trades": repository.list_trades(),
+        "market_data_provider": settings.market_data_provider,
     }
 
 
 @router.post("/api/reports")
 def create_report(request: ReportRequest):
-    snapshot = market_provider.get_snapshot(request.symbol, request.timeframe)
-    return repository.add_report(generate_report(snapshot))
+    return _generate_and_store_report(request.symbol, request.timeframe)
 
 
 @router.get("/api/reports/{symbol}")
 def get_report(symbol: str):
     report = repository.latest_report(symbol)
     if report is None:
-        report = repository.add_report(generate_report(market_provider.get_snapshot(symbol)))
+        report = _generate_and_store_report(symbol)
     return report
 
 
@@ -56,7 +88,7 @@ def list_positions():
 
 @router.post("/api/positions")
 def create_position(request: PositionCreate):
-    report = repository.reports.get(request.entry_report_id) if request.entry_report_id else repository.latest_report(request.symbol)
+    report = repository.get_report(request.entry_report_id) if request.entry_report_id else repository.latest_report(request.symbol)
     position = Position(
         symbol=request.symbol.upper(),
         direction=request.direction,
@@ -79,7 +111,7 @@ def monitor_position(position_id: UUID):
         raise HTTPException(status_code=404, detail="Position not found")
     if position.status != PositionStatus.open:
         raise HTTPException(status_code=400, detail="Position is already closed")
-    report = repository.add_report(generate_report(market_provider.get_snapshot(position.symbol)))
+    report = _generate_and_store_report(position.symbol)
     log = build_monitoring_log(position, report)
     position.current_price = report.price
     position.current_score = report.entry_score
@@ -96,7 +128,7 @@ def exit_position(position_id: UUID, request: ExitRequest):
         raise HTTPException(status_code=404, detail="Position not found")
     if position.status != PositionStatus.open:
         raise HTTPException(status_code=400, detail="Position is already closed")
-    report = repository.add_report(generate_report(market_provider.get_snapshot(position.symbol)))
+    report = _generate_and_store_report(position.symbol)
     pnl_percent = calculate_pnl(position, request.exit_price)
     side_multiplier = 1 if position.direction == "long" else -1
     pnl_amount = (request.exit_price - position.entry_price) * position.quantity * side_multiplier
@@ -129,4 +161,3 @@ def exit_position(position_id: UUID, request: ExitRequest):
 @router.get("/api/trades")
 def list_trades():
     return repository.list_trades()
-

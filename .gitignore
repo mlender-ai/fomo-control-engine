@@ -4,10 +4,11 @@
 .venv/
 __pycache__/
 .pytest_cache/
+*.egg-info/
+*.db
 node_modules/
 .next/
 dist/
 build/
 *.pyc
 *.tsbuildinfo
-

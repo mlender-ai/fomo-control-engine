@@ -7,14 +7,19 @@ import { formatPrice, signedPercent } from "@/lib/format";
 
 export function PositionsShell() {
   const [positions, setPositions] = useState<Position[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busyId, setBusyId] = useState("");
   const [error, setError] = useState("");
 
   async function load() {
     setError("");
+    setLoading(true);
     try {
       setPositions(await api.positions());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load positions");
+    } finally {
+      setLoading(false);
     }
   }
 
@@ -25,31 +30,52 @@ export function PositionsShell() {
   async function createPosition(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    await api.createPosition({
-      symbol: String(form.get("symbol") || "BTCUSDT").toUpperCase(),
-      direction: String(form.get("direction") || "long") as "long" | "short",
-      entry_price: Number(form.get("entry_price")),
-      quantity: Number(form.get("quantity")),
-      leverage: Number(form.get("leverage") || 1),
-      memo: String(form.get("memo") || "")
-    });
-    event.currentTarget.reset();
-    await load();
+    setError("");
+    try {
+      await api.createPosition({
+        symbol: String(form.get("symbol") || "BTCUSDT").toUpperCase(),
+        direction: String(form.get("direction") || "long") as "long" | "short",
+        entry_price: Number(form.get("entry_price")),
+        quantity: Number(form.get("quantity")),
+        leverage: Number(form.get("leverage") || 1),
+        memo: String(form.get("memo") || "")
+      });
+      event.currentTarget.reset();
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to create position");
+    }
   }
 
   async function monitor(positionId: string) {
-    await api.monitor(positionId);
-    await load();
+    setBusyId(positionId);
+    setError("");
+    try {
+      await api.monitor(positionId);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to monitor position");
+    } finally {
+      setBusyId("");
+    }
   }
 
   async function exit(position: Position) {
     const exitPrice = position.current_price ?? position.entry_price;
-    await api.exit(position.id, {
-      exit_price: exitPrice,
-      exit_reason: "대시보드에서 수동 청산 기록",
-      memo: ""
-    });
-    await load();
+    setBusyId(position.id);
+    setError("");
+    try {
+      await api.exit(position.id, {
+        exit_price: exitPrice,
+        exit_reason: "대시보드에서 수동 청산 기록",
+        memo: ""
+      });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to exit position");
+    } finally {
+      setBusyId("");
+    }
   }
 
   return (
@@ -89,7 +115,9 @@ export function PositionsShell() {
         <div className="panelHeader">
           <h2>Position List</h2>
         </div>
-        {positions.length ? (
+        {loading ? (
+          <div className="empty">Loading positions...</div>
+        ) : positions.length ? (
           <table className="table">
             <thead>
               <tr>
@@ -118,10 +146,10 @@ export function PositionsShell() {
                   </td>
                   <td>{position.status}</td>
                   <td>
-                    <button className="iconButton secondary" onClick={() => monitor(position.id)} disabled={position.status !== "open"} title="Monitor">
+                    <button className="iconButton secondary" onClick={() => monitor(position.id)} disabled={position.status !== "open" || busyId === position.id} title="Monitor">
                       <Activity size={16} />
                     </button>{" "}
-                    <button className="iconButton secondary" onClick={() => exit(position)} disabled={position.status !== "open"} title="Exit">
+                    <button className="iconButton secondary" onClick={() => exit(position)} disabled={position.status !== "open" || busyId === position.id} title="Exit">
                       <LogOut size={16} />
                     </button>
                   </td>
@@ -136,4 +164,3 @@ export function PositionsShell() {
     </div>
   );
 }
-

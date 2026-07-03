@@ -62,6 +62,7 @@ export type MarketSummary = {
   reports: Report[];
   positions: Position[];
   trades: Trade[];
+  market_data_provider: string;
 };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -75,7 +76,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
 
   if (!response.ok) {
-    throw new Error(`API request failed: ${response.status}`);
+    let message = `API request failed: ${response.status}`;
+    try {
+      const payload = await response.json();
+      if (typeof payload.detail === "string") {
+        message = payload.detail;
+      }
+    } catch {
+      // Keep the status-based message when the response is not JSON.
+    }
+    throw new Error(message);
   }
 
   return response.json() as Promise<T>;
@@ -113,4 +123,3 @@ export const api = {
     }),
   trades: () => request<Trade[]>("/api/trades")
 };
-

@@ -299,6 +299,49 @@ h3 {
   font-size: 22px;
 }
 
+.scoreBreakdown {
+  display: grid;
+  gap: 12px;
+}
+
+.scoreRow {
+  display: grid;
+  grid-template-columns: minmax(120px, 160px) minmax(160px, 1fr) 42px;
+  align-items: center;
+  gap: 12px;
+}
+
+.scoreRowLabel {
+  display: grid;
+  gap: 2px;
+}
+
+.scoreRowLabel span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.scoreTrack {
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e8edf2;
+}
+
+.scoreFill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.scoreFill.riskFill {
+  background: var(--warning);
+}
+
+.scoreValue {
+  text-align: right;
+}
+
 .reportText,
 .reviewText {
   white-space: pre-line;
@@ -361,8 +404,13 @@ h3 {
   .grid.two,
   .grid.three,
   .metricGrid,
-  .formGrid {
+  .formGrid,
+  .scoreRow {
     grid-template-columns: 1fr;
+  }
+
+  .scoreValue {
+    text-align: left;
   }
 
   .pageHeader {
@@ -374,4 +422,3 @@ h3 {
     grid-column: auto;
   }
 }
-
