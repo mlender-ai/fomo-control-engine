@@ -22,15 +22,47 @@ def build_action_plan(position: Position, snapshot: PositionSnapshot, chart_anal
     if invalidation is None:
         invalidation = engine_invalidation
 
+    take_profit = _take_profit_targets(position, mark_price, support, resistance, volume_profile, candles, harmonic_patterns)
+    watch_triggers = _watch_triggers(position, mark_price, volume_profile, volume_xray)
+
     return {
         "as_of": snapshot.as_of.isoformat(),
         "mark_price": mark_price,
         "invalidation": invalidation,
         "engine_invalidation": engine_invalidation if invalidation != engine_invalidation else None,
-        "take_profit": _take_profit_targets(position, mark_price, support, resistance, volume_profile, candles, harmonic_patterns),
-        "watch_triggers": _watch_triggers(position, mark_price, volume_profile, volume_xray),
+        "take_profit": take_profit,
+        "watch_triggers": watch_triggers,
         "liquidation": _liquidation(position),
+        "headline_action": _headline_action(direction, invalidation, take_profit, watch_triggers),
     }
+
+
+def _headline_action(
+    direction: str,
+    invalidation: dict[str, Any] | None,
+    take_profit: list[dict[str, Any]],
+    watch_triggers: list[dict[str, str]],
+) -> str | None:
+    """현재가에서 가장 가까운 트리거 1개를 골라 결정론적 next_action 문장을 만든다."""
+    candidates: list[tuple[float, str, dict[str, Any]]] = []
+    if invalidation and isinstance(invalidation.get("distance_pct"), (int, float)):
+        candidates.append((abs(invalidation["distance_pct"]), "invalidation", invalidation))
+    for target in take_profit:
+        if isinstance(target.get("distance_pct"), (int, float)):
+            candidates.append((abs(target["distance_pct"]), "take_profit", target))
+    if candidates:
+        _, kind, item = min(candidates, key=lambda entry: entry[0])
+        price = _format_price(item.get("price"))
+        action = item.get("action") or "조건 확인"
+        if kind == "invalidation":
+            condition = "지지 유지 여부" if direction == "long" else "저항 유지 여부"
+            return f"지금 볼 것: {price} {condition}. {action}."
+        condition = "저항 반응" if direction == "long" else "지지 반응"
+        return f"지금 볼 것: {price} {condition}. 도달 시 {action}."
+    if watch_triggers:
+        trigger = watch_triggers[0]
+        return f"지금 볼 것: {trigger['condition']}. {trigger['meaning']}."
+    return None
 
 
 def _planned_invalidation(position: Position, mark_price: float | None) -> dict[str, Any] | None:

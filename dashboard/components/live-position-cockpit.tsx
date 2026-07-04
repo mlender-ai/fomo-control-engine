@@ -3,28 +3,41 @@
 import Link from "next/link";
 import {
   Activity,
+  AlertTriangle,
   BrainCircuit,
+  Calculator,
   FileClock,
-  Focus,
+  Landmark,
   NotebookPen,
   RefreshCw,
   ShieldCheck,
   TestTube2,
   UploadCloud
 } from "lucide-react";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, ReactNode, useEffect, useState } from "react";
 import { TerminalPanel, TerminalWarning } from "@/components/terminal";
 import { HealthScoreBreakdownView } from "@/components/score-breakdown";
 import { PositionChart } from "@/components/position/PositionChart";
-import { DEFAULT_TA_LAYER, type TaLayer } from "@/components/position/taLayers";
 import { VolumeProfilePanel } from "@/components/position/VolumeProfilePanel";
 import { VolumeXrayPanel } from "@/components/position/VolumeXrayPanel";
+import {
+  DEFAULT_LAYER_STATE,
+  focusedTaLayer,
+  isTaLayer,
+  loadLayerState,
+  saveLayerState,
+  toggleLayer,
+  type ChartLayerId,
+  type ChartLayerState,
+  type TaFocusLayer
+} from "@/lib/chartLayers";
 import {
   api,
   type BitgetConnectionTest,
   type LivePositionDetail,
   type LivePositionPayload,
   type LivePositionsResponse,
+  type PositionActionPlan,
   type PositionChartAnalysis,
   type PositionEvent,
   type PositionState
@@ -50,7 +63,64 @@ import {
 
 type MetricTone = "positive" | "negative" | "warning" | "neutral" | "info" | "agent";
 
+type EvidenceModuleId = "wyckoff" | "harmonic" | "volume" | "indicators" | "risk" | "history";
+
+const MODULE_LAYER: Record<EvidenceModuleId, TaFocusLayer | null> = {
+  wyckoff: "wyckoff",
+  harmonic: "harmonic",
+  volume: "volume_profile",
+  indicators: "indicators",
+  risk: null,
+  history: null
+};
+
+function moduleForLayer(layer: TaFocusLayer): EvidenceModuleId | null {
+  const entry = (Object.entries(MODULE_LAYER) as Array<[EvidenceModuleId, TaFocusLayer | null]>).find(([, value]) => value === layer);
+  return entry ? entry[0] : null;
+}
+
 const LIVE_POSITION_SYNC_INTERVAL_SECONDS = 30;
+
+function usePositionWorkspace() {
+  const [layers, setLayers] = useState<ChartLayerState>(DEFAULT_LAYER_STATE);
+  const [highlightPrice, setHighlightPrice] = useState<number | null>(null);
+  const [openModule, setOpenModule] = useState<EvidenceModuleId | null>(null);
+
+  useEffect(() => {
+    setLayers(loadLayerState());
+  }, []);
+
+  useEffect(() => {
+    saveLayerState(layers);
+  }, [layers]);
+
+  function handleToggleLayer(id: ChartLayerId, additive: boolean) {
+    const next = toggleLayer(layers, id, additive);
+    setLayers(next);
+    if (isTaLayer(id) && next.ta.includes(id) && focusedTaLayer(next) === id) {
+      const moduleId = moduleForLayer(id);
+      if (moduleId) {
+        setOpenModule(moduleId);
+        window.setTimeout(() => {
+          document.getElementById(`evidence-${moduleId}`)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        }, 0);
+      }
+    }
+  }
+
+  function handleModuleToggle(id: EvidenceModuleId) {
+    const layer = MODULE_LAYER[id];
+    if (openModule === id) {
+      setOpenModule(null);
+      if (layer) setLayers((current) => ({ ...current, ta: current.ta.filter((item) => item !== layer) }));
+      return;
+    }
+    setOpenModule(id);
+    if (layer) setLayers((current) => ({ ...current, ta: [layer] }));
+  }
+
+  return { layers, highlightPrice, setHighlightPrice, openModule, handleToggleLayer, handleModuleToggle };
+}
 
 export function LivePositionCockpit() {
   const [data, setData] = useState<LivePositionsResponse | null>(null);
@@ -60,25 +130,24 @@ export function LivePositionCockpit() {
   const [actionLoading, setActionLoading] = useState("");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
-  const [activeTaLayer, setActiveTaLayer] = useState<TaLayer>(DEFAULT_TA_LAYER);
   const [selectedChartAnalysis, setSelectedChartAnalysis] = useState<PositionChartAnalysis | null>(null);
   const [selectedChartLoading, setSelectedChartLoading] = useState(false);
   const [selectedChartError, setSelectedChartError] = useState("");
   const [selectedDetail, setSelectedDetail] = useState<LivePositionDetail | null>(null);
+  const workspace = usePositionWorkspace();
 
   async function load(sync = false) {
     setError("");
     try {
       const next = sync ? await api.syncLivePositions() : await api.livePositions();
-      const normalized = "positions" in next && "open_count" in next
-        ? next
-        : {
-            provider: next.provider,
-            positions: next.positions ?? [],
-            open_count: next.positions?.filter((item) => item.position.status === "open").length ?? 0,
-            needs_exit_record_count: next.positions?.filter((item) => item.position.status !== "open").length ?? 0,
-            timestamp: next.timestamp ?? new Date().toISOString()
-          };
+      const positions = next.positions ?? [];
+      const normalized: LivePositionsResponse = {
+        provider: next.provider,
+        positions,
+        open_count: next.open_count ?? positions.filter((item) => item.position.status === "open").length,
+        needs_exit_record_count: next.needs_exit_record_count ?? positions.filter((item) => item.position.status !== "open").length,
+        timestamp: next.timestamp ?? new Date().toISOString()
+      };
       setData(normalized);
       setSelectedId((current) => current || normalized.positions[0]?.position.id || "");
     } catch (err) {
@@ -135,6 +204,21 @@ export function LivePositionCockpit() {
       setNotice("포지션 인사이트가 생성되었습니다.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "AI 인사이트 생성에 실패했습니다. 데이터 상태 또는 OpenAI API 설정을 확인해주세요.");
+    } finally {
+      setActionLoading("");
+    }
+  }
+
+  async function refreshSelected(positionId: string) {
+    setActionLoading(`refresh:${positionId}`);
+    setError("");
+    setNotice("");
+    try {
+      await api.analyzeLivePosition(positionId);
+      await Promise.all([loadSelectedDetail(positionId), loadSelectedChart(positionId), load(false)]);
+      setNotice("포지션 상태와 액션 플랜을 갱신했습니다.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "상태 갱신에 실패했습니다.");
     } finally {
       setActionLoading("");
     }
@@ -212,7 +296,11 @@ export function LivePositionCockpit() {
           <PositionStrip positions={positions} selectedId={selected?.position.id ?? ""} onSelect={setSelectedId} />
           {selectedPayload ? (
             <>
-              <PositionVerdictBar payload={selectedPayload} chartAnalysis={selectedChartAnalysis} />
+              <PositionVerdictBar
+                payload={selectedPayload}
+                onRefresh={() => void refreshSelected(selectedPayload.position.id)}
+                refreshing={actionLoading === `refresh:${selectedPayload.position.id}`}
+              />
               <section className="cockpitMainGrid">
                 <PositionChart
                   analysis={selectedChartAnalysis}
@@ -220,17 +308,24 @@ export function LivePositionCockpit() {
                   error={selectedChartError}
                   onRetry={() => void loadSelectedChart(selectedPayload.position.id)}
                   trendSummary={trendLabel(selectedPayload.state.analysis.technical.trend)}
-                  activeLayer={activeTaLayer}
-                  onLayerChange={setActiveTaLayer}
+                  plan={actionPlanForPayload(selectedPayload)}
+                  layers={workspace.layers}
+                  onToggleLayer={workspace.handleToggleLayer}
+                  highlightPrice={workspace.highlightPrice}
                 />
-                <ActionPlanPanel payload={selectedPayload} />
+                <ActionPlanPanel
+                  payload={selectedPayload}
+                  highlightPrice={workspace.highlightPrice}
+                  onSelectPrice={workspace.setHighlightPrice}
+                  onCreateInsight={() => createInsight(selectedPayload.position.id)}
+                  busy={actionLoading === `insight:${selectedPayload.position.id}`}
+                />
               </section>
               <EvidenceAccordion
                 payload={selectedPayload}
                 chartAnalysis={selectedChartAnalysis}
-                onCreateInsight={() => createInsight(selectedPayload.position.id)}
-                busy={actionLoading === `insight:${selectedPayload.position.id}`}
-                onFocusLayer={focusTaLayer(setActiveTaLayer)}
+                openModule={workspace.openModule}
+                onModuleToggle={workspace.handleModuleToggle}
               />
             </>
           ) : null}
@@ -251,11 +346,7 @@ function PositionStrip({
   selectedId: string;
   onSelect: (positionId: string) => void;
 }) {
-  const sortedPositions = [...positions].sort((left, right) => {
-    const severityDelta = right.state.severity_rank - left.state.severity_rank;
-    if (severityDelta !== 0) return severityDelta;
-    return Math.abs(right.state.pnl_percent) - Math.abs(left.state.pnl_percent);
-  });
+  const sortedPositions = [...positions].sort((left, right) => right.state.severity_rank - left.state.severity_rank);
   return (
     <section className="positionStrip" aria-label="보유 포지션">
       {sortedPositions.map((item) => (
@@ -265,53 +356,79 @@ function PositionStrip({
           onClick={() => onSelect(item.position.id)}
           type="button"
         >
-          <strong>{item.position.symbol}</strong>
+          <strong>
+            {item.position.symbol}
+            {liquidationMissing(item) ? <AlertTriangle className="liqMissingIcon" size={12} aria-label="청산가 미수신" /> : null}
+          </strong>
           <span>{directionLabel(item.position.direction)} · {item.position.leverage}x</span>
           <em className={item.state.pnl_percent >= 0 ? "successText" : "dangerText"}>{signedPercent(item.state.pnl_percent)}</em>
           <small>건강도 {item.state.health_score}</small>
-          {liquidationMissing(item) ? <span className="missingLiqBadge">청산가 미수신</span> : null}
           <StatusPill status={item.state.status} label={item.state.status_label} />
+          <span className="stripHeadline">{headlineForPayload(item)}</span>
         </button>
       ))}
     </section>
   );
 }
 
-function PositionVerdictBar({ payload, chartAnalysis }: { payload: LivePositionPayload; chartAnalysis: PositionChartAnalysis | null }) {
+function PositionVerdictBar({
+  payload,
+  onRefresh,
+  refreshing
+}: {
+  payload: LivePositionPayload;
+  onRefresh: () => void;
+  refreshing: boolean;
+}) {
   const { position, state } = payload;
+  const plan = actionPlanForPayload(payload);
+  const asOf = plan?.as_of ? new Date(plan.as_of) : null;
+  // 벽시계 대신 최신 분석 시각(state.as_of) 대비 나이로 신선도를 판정 (렌더 순수성 유지)
+  const ageMinutes = asOf ? (new Date(payload.state.as_of).getTime() - asOf.getTime()) / 60000 : null;
+  const freshness = ageMinutes === null ? "기준 데이터 없음" : ageMinutes <= 30 ? "신선" : "오래됨 · 갱신 권장";
   return (
     <section className={`verdictBar status-${state.status}`}>
-      <div className="verdictBarMain">
-        <div className="verdictIdentity">
-          <span>선택 포지션</span>
-          <strong>{position.symbol} · {directionLabel(position.direction)} {position.leverage}x</strong>
-          <StatusPill status={state.status} label={state.status_label} />
-        </div>
-        <div className="verdictStatement">
-          <span>현재 판단</span>
-          <p>{directionalChartVerdict(payload, chartAnalysis)}</p>
-        </div>
-        <div className={`verdictHealth tone-${healthTone(state.health_score)}`}>
-          <span>건강도</span>
-          <strong>{state.health_score}</strong>
-          <small>/100</small>
-        </div>
+      <div className="verdictTopRow">
+        <strong className="verdictSymbol">{position.symbol} {directionLabel(position.direction)} {position.leverage}x</strong>
+        <em
+          className={`verdictPnl ${state.pnl_percent >= 0 ? "successText" : "dangerText"}`}
+          title={`손익률 출처: ${pnlSourceLabel(state.pnl_source)}`}
+        >
+          {signedPercent(state.pnl_percent)}
+          {state.pnl_source === "exchange" ? <Landmark size={12} /> : <Calculator size={12} />}
+        </em>
+        <StatusPill status={state.status} label={`${state.status_label} (${state.health_score}/100)`} />
       </div>
-      <div className="verdictMetrics">
-        <PositionHeaderMetric label={`손익률 (${pnlSourceLabel(state.pnl_source)})`} value={signedPercent(state.pnl_percent)} tone={state.pnl_percent >= 0 ? "positive" : "negative"} />
-        <PositionHeaderMetric label="진입가" value={formatPrice(position.entry_price)} />
-        <PositionHeaderMetric label="현재가" value={formatNullablePrice(state.mark_price)} tone="info" />
-        <PositionHeaderMetric label="청산가" value={liquidationMissing(payload) ? "청산가 미수신" : formatNullablePrice(position.liquidation_price)} tone={liquidationMissing(payload) ? "warning" : "neutral"} />
-        <PositionHeaderMetric label="청산가 거리" value={formatDistance(state.liquidation_distance_pct)} tone={liquidationTone(state.liquidation_distance_pct)} />
+      <p className="verdictAction">→ {headlineForPayload(payload)}</p>
+      <div className="verdictMeta">
+        <span>{asOf ? `기준 ${asOf.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}` : "기준 -"} · {freshness}</span>
+        {liquidationMissing(payload) ? (
+          <span className="verdictLiqWarning">
+            <AlertTriangle size={12} /> 청산가 미수신 — {position.leverage}x 포지션은 청산가·증거금을 수동 확인하세요
+          </span>
+        ) : null}
+        <button className="button secondary" onClick={onRefresh} disabled={refreshing} type="button">
+          <RefreshCw size={14} />
+          {refreshing ? "갱신 중" : "갱신"}
+        </button>
       </div>
-      {liquidationMissing(payload) ? (
-        <div className="selectedPositionWarning">청산가가 거래소에서 수신되지 않았습니다. {position.leverage}x 포지션은 수동으로 청산가와 증거금 상태를 확인하세요.</div>
-      ) : null}
     </section>
   );
 }
 
-function ActionPlanPanel({ payload }: { payload: LivePositionPayload }) {
+function ActionPlanPanel({
+  payload,
+  highlightPrice,
+  onSelectPrice,
+  onCreateInsight,
+  busy
+}: {
+  payload: LivePositionPayload;
+  highlightPrice: number | null;
+  onSelectPrice: (price: number | null) => void;
+  onCreateInsight: () => Promise<void> | void;
+  busy: boolean;
+}) {
   const plan = actionPlanForPayload(payload);
   const rows = actionPlanRows(plan);
   const liquidationWarning = typeof plan?.liquidation?.warning === "string" ? plan.liquidation.warning : "";
@@ -320,25 +437,35 @@ function ActionPlanPanel({ payload }: { payload: LivePositionPayload }) {
       <div className="focusPanelHeader">
         <div>
           <h2>액션 플랜</h2>
-          <p>지금 볼 가격과 발생 시 행동</p>
+          <p>지금 볼 가격과 발생 시 행동 · 행 클릭 시 차트 강조</p>
         </div>
         <span>{plan?.as_of ? `기준 ${new Date(plan.as_of).toLocaleString()}` : "데이터 부족"}</span>
       </div>
       {rows.length ? (
         <div className="actionPlanRows">
           {rows.map((row) => (
-            <div className={`actionPlanRow tone-${row.tone}`} key={`${row.kind}-${row.price}-${row.condition}`}>
+            <button
+              className={`actionPlanRow tone-${row.tone} ${row.priceValue !== null && row.priceValue === highlightPrice ? "selected" : ""}`}
+              disabled={row.priceValue === null}
+              key={`${row.kind}-${row.price}-${row.condition}`}
+              onClick={() => onSelectPrice(row.priceValue === highlightPrice ? null : row.priceValue)}
+              type="button"
+            >
               <span>{row.kind}</span>
               <strong>{row.price ?? row.condition}</strong>
               <em>{row.action}</em>
               <small>{row.basis}</small>
-            </div>
+            </button>
           ))}
         </div>
       ) : (
         <div className="terminalEmpty">액션 플랜을 만들 가격 근거가 부족합니다.</div>
       )}
       {liquidationWarning ? <div className="actionPlanWarning">{liquidationWarning}</div> : null}
+      <details className="planInsightDetails">
+        <summary>해설 보기 · {insightSummaryHint(payload)}</summary>
+        <InsightEvidence payload={payload} onCreateInsight={onCreateInsight} busy={busy} />
+      </details>
     </section>
   );
 }
@@ -346,97 +473,85 @@ function ActionPlanPanel({ payload }: { payload: LivePositionPayload }) {
 function EvidenceAccordion({
   payload,
   chartAnalysis,
-  onCreateInsight,
-  busy,
-  onFocusLayer
+  openModule,
+  onModuleToggle,
+  historyExtras
 }: {
   payload: LivePositionPayload;
   chartAnalysis: PositionChartAnalysis | null;
-  onCreateInsight: () => Promise<void> | void;
-  busy: boolean;
-  onFocusLayer: (layer: TaLayer) => void;
+  openModule: EvidenceModuleId | null;
+  onModuleToggle: (id: EvidenceModuleId) => void;
+  historyExtras?: ReactNode;
 }) {
+  const wyckoff = payload.state.analysis.wyckoff;
+  const modules: Array<{ id: EvidenceModuleId; title: string; badge: string; content: ReactNode }> = [
+    {
+      id: "wyckoff",
+      title: "와이코프",
+      badge: `${phaseHintLabel(wyckoff.phase ?? wyckoff.phase_hint)} · 유효 이벤트 ${chartAnalysis?.wyckoff_markers.length ?? 0}개`,
+      content: <WyckoffEvidence state={payload.state} chartAnalysis={chartAnalysis} />
+    },
+    {
+      id: "harmonic",
+      title: "하모닉",
+      badge: chartAnalysis?.harmonic_patterns.length
+        ? `패턴 ${chartAnalysis.harmonic_patterns.length}개 · 최고 신뢰도 ${Math.max(...chartAnalysis.harmonic_patterns.map((item) => item.confidence))}`
+        : "후보 없음",
+      content: <HarmonicEvidence chartAnalysis={chartAnalysis} />
+    },
+    {
+      id: "volume",
+      title: "볼륨",
+      badge: chartAnalysis ? volumeStateLabel(chartAnalysis.volume_xray.volume_state) : "차트 데이터 대기",
+      content: chartAnalysis ? (
+        <div className="evidenceVolumeGrid">
+          <VolumeProfilePanel analysis={chartAnalysis} />
+          <VolumeXrayPanel analysis={chartAnalysis} />
+        </div>
+      ) : (
+        <div className="terminalEmpty">차트 데이터가 준비되면 표시됩니다.</div>
+      )
+    },
+    {
+      id: "indicators",
+      title: "지표",
+      badge: trendLabel(payload.state.analysis.technical.trend),
+      content: <TechnicalEvidence state={payload.state} />
+    },
+    {
+      id: "risk",
+      title: "리스크",
+      badge: `리스크 ${payload.state.risk_score}/100`,
+      content: <RiskEvidence payload={payload} />
+    },
+    {
+      id: "history",
+      title: "기록",
+      badge: payload.recent_events.length ? `이벤트 ${payload.recent_events.length}건` : "이벤트 없음",
+      content: <TimelineEvidence payload={payload} extras={historyExtras} />
+    }
+  ];
   return (
     <section className="evidenceAccordion" aria-label="판단 근거">
       <div className="evidenceAccordionHeader">
         <strong>판단 근거</strong>
-        <span>필요할 때만 펼쳐 보세요. 위 판단과 액션 플랜은 아래 데이터에서 계산됩니다.</span>
+        <span>펼치면 차트가 해당 분석 레이어로 전환됩니다.</span>
       </div>
-      <details className="evidenceSection">
-        <summary>
-          <strong>AI 해설</strong>
-          <small>{insightSummaryHint(payload)}</small>
-        </summary>
-        <div className="evidenceBody">
-          <InsightEvidence payload={payload} onCreateInsight={onCreateInsight} busy={busy} />
-        </div>
-      </details>
-      <details className="evidenceSection">
-        <summary>
-          <strong>와이코프 근거</strong>
-          <small>{phaseHintLabel(payload.state.analysis.wyckoff.phase ?? payload.state.analysis.wyckoff.phase_hint)}</small>
-        </summary>
-        <div className="evidenceBody">
-          <ChartFocusButton layer="wyckoff" onFocusLayer={onFocusLayer} />
-          <WyckoffEvidence state={payload.state} />
-        </div>
-      </details>
-      <details className="evidenceSection">
-        <summary>
-          <strong>기술지표 근거</strong>
-          <small>{trendLabel(payload.state.analysis.technical.trend)}</small>
-        </summary>
-        <div className="evidenceBody">
-          <ChartFocusButton layer="structure" onFocusLayer={onFocusLayer} />
-          <TechnicalEvidence state={payload.state} />
-        </div>
-      </details>
-      <details className="evidenceSection">
-        <summary>
-          <strong>수급 근거</strong>
-          <small>{chartAnalysis ? volumeStateLabel(chartAnalysis.volume_xray.volume_state) : "차트 데이터 대기 중"}</small>
-        </summary>
-        <div className="evidenceBody">
-          <ChartFocusButton layer="flow" onFocusLayer={onFocusLayer} />
-          {chartAnalysis ? (
-            <div className="evidenceVolumeGrid">
-              <VolumeProfilePanel analysis={chartAnalysis} />
-              <VolumeXrayPanel analysis={chartAnalysis} />
-            </div>
-          ) : (
-            <div className="terminalEmpty">차트 데이터가 준비되면 표시됩니다.</div>
-          )}
-        </div>
-      </details>
-      <details className="evidenceSection">
-        <summary>
-          <strong>리스크 분해</strong>
-          <small>리스크 점수 {payload.state.risk_score}/100</small>
-        </summary>
-        <div className="evidenceBody">
-          <RiskEvidence payload={payload} />
-        </div>
-      </details>
-      <details className="evidenceSection">
-        <summary>
-          <strong>기록</strong>
-          <small>{payload.recent_events.length ? `이벤트 ${payload.recent_events.length}건` : "이벤트 없음"}</small>
-        </summary>
-        <div className="evidenceBody">
-          <TimelineEvidence payload={payload} />
-        </div>
-      </details>
+      {modules.map((module) => (
+        <details className="evidenceSection" id={`evidence-${module.id}`} key={module.id} open={openModule === module.id}>
+          <summary
+            onClick={(event) => {
+              event.preventDefault();
+              onModuleToggle(module.id);
+            }}
+          >
+            <strong>{module.title}</strong>
+            <small>{module.badge}</small>
+          </summary>
+          <div className="evidenceBody">{openModule === module.id ? module.content : null}</div>
+        </details>
+      ))}
     </section>
-  );
-}
-
-function ChartFocusButton({ layer, onFocusLayer }: { layer: TaLayer; onFocusLayer: (layer: TaLayer) => void }) {
-  const label = layer === "wyckoff" ? "와이코프" : layer === "harmonic" ? "하모닉" : layer === "flow" ? "수급" : "지지·저항";
-  return (
-    <button className="chartFocusButton" onClick={() => onFocusLayer(layer)} type="button">
-      <Focus size={14} />
-      차트에서 {label} 단독으로 보기
-    </button>
   );
 }
 
@@ -470,19 +585,20 @@ function InsightEvidence({
   }
   return (
     <div className="insightEmpty">
-      <strong>아직 인사이트가 없습니다.</strong>
-      <span>판단과 액션 플랜은 현재 데이터로 이미 표시되어 있습니다. 해설이 필요하면 인사이트 생성을 누르세요.</span>
+      <strong>아직 해설이 없습니다.</strong>
+      <span>판단과 액션 플랜은 현재 데이터로 이미 표시되어 있습니다. 배경 해설이 필요하면 생성하세요.</span>
       <button className="button" onClick={onCreateInsight} disabled={busy}>
         <BrainCircuit size={16} />
-        {busy ? "생성 중" : "인사이트 생성"}
+        {busy ? "생성 중" : "해설 생성"}
       </button>
     </div>
   );
 }
 
-function WyckoffEvidence({ state }: { state: PositionState }) {
+function WyckoffEvidence({ state, chartAnalysis }: { state: PositionState; chartAnalysis: PositionChartAnalysis | null }) {
   const wyckoff = state.analysis.wyckoff;
   const mtf = wyckoff.mtf;
+  const markers = chartAnalysis?.wyckoff_markers ?? [];
   return (
     <div className="tabMetricLayout">
       <PositionHeaderMetric label="매집 점수" value={wyckoff.accumulation_score} tone="info" />
@@ -496,6 +612,36 @@ function WyckoffEvidence({ state }: { state: PositionState }) {
       <PositionHeaderMetric label="SOW 후보" value={yesNoLabel(Boolean(wyckoff.sow_candidate))} tone={wyckoff.sow_candidate ? "warning" : "neutral"} />
       <PositionHeaderMetric label="LPSY 후보" value={yesNoLabel(Boolean(wyckoff.lpsy_candidate))} tone={wyckoff.lpsy_candidate ? "warning" : "neutral"} />
       <p className="tabExplanation">{wyckoff.structure_comment}</p>
+      {markers.length ? (
+        <div className="wyckoffEventList">
+          {markers.map((marker) => (
+            <span key={`${marker.type}-${marker.time}`}>{localizeMarketCodes(marker.label)} · 신뢰도 {marker.confidence}</span>
+          ))}
+        </div>
+      ) : (
+        <p className="tabExplanation">레인지 기반 이벤트가 아직 없습니다.</p>
+      )}
+    </div>
+  );
+}
+
+function HarmonicEvidence({ chartAnalysis }: { chartAnalysis: PositionChartAnalysis | null }) {
+  const patterns = chartAnalysis?.harmonic_patterns ?? [];
+  if (!patterns.length) {
+    return <div className="terminalEmpty">유효한 하모닉 패턴 후보가 아직 없습니다.</div>;
+  }
+  return (
+    <div className="harmonicEvidenceList">
+      {patterns.map((pattern) => (
+        <div className="harmonicEvidenceItem" key={pattern.id}>
+          <div>
+            <strong>{pattern.label}</strong>
+            <span>{pattern.direction === "bearish" ? "하락 반전 후보 구간(PRZ)" : "상승 반전 후보 구간(PRZ)"} · {pattern.status === "forming" ? "형성 중" : "완성"} · 신뢰도 {pattern.confidence}</span>
+          </div>
+          <em>PRZ {formatPrice(pattern.prz.low)} ~ {formatPrice(pattern.prz.high)}</em>
+          <p>{pattern.basis}</p>
+        </div>
+      ))}
     </div>
   );
 }
@@ -531,6 +677,7 @@ function RiskEvidence({ payload }: { payload: LivePositionPayload }) {
         <HealthScoreBreakdownView components={state.score_json.health_components} />
         <div className="tabMetricLayout compact">
           <PositionHeaderMetric label="리스크 점수" value={`${state.risk_score}/100`} tone={state.risk_score >= 70 ? "negative" : state.risk_score >= 55 ? "warning" : "neutral"} />
+          <PositionHeaderMetric label="청산가 거리" value={formatDistance(state.liquidation_distance_pct)} tone={state.liquidation_distance_pct !== null && state.liquidation_distance_pct < 5 ? "negative" : state.liquidation_distance_pct !== null && state.liquidation_distance_pct < 10 ? "warning" : "neutral"} />
           <PositionHeaderMetric label="방향 논리" value={`${state.thesis_delta > 0 ? "+" : ""}${state.thesis_delta}`} tone={state.thesis_delta < -20 ? "negative" : state.thesis_delta < -10 ? "warning" : "neutral"} />
           <PositionHeaderMetric label="수익 반납" value={formatDistance(state.analysis.risk.profit_giveback_pct)} />
           <PositionHeaderMetric label="손절 기준" value={formatNullablePrice(position.planned_stop_price)} tone="warning" />
@@ -556,13 +703,14 @@ function RiskEvidence({ payload }: { payload: LivePositionPayload }) {
   );
 }
 
-function TimelineEvidence({ payload }: { payload: LivePositionPayload }) {
+function TimelineEvidence({ payload, extras }: { payload: LivePositionPayload; extras?: ReactNode }) {
   return (
     <div className="timelineTab">
       <div className="snapshotSummary">
         <PositionHeaderMetric label="마지막 스냅샷" value={new Date(payload.latest_snapshot.created_at).toLocaleString()} />
       </div>
       <EventList events={payload.recent_events} />
+      {extras}
     </div>
   );
 }
@@ -591,10 +739,10 @@ export function PositionDetailShell({ positionId }: { positionId: string }) {
   const [chartLoading, setChartLoading] = useState(true);
   const [chartError, setChartError] = useState("");
   const [timeframe, setTimeframe] = useState("4h");
-  const [activeTaLayer, setActiveTaLayer] = useState<TaLayer>(DEFAULT_TA_LAYER);
   const [busy, setBusy] = useState("");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const workspace = usePositionWorkspace();
 
   async function load() {
     setError("");
@@ -732,6 +880,62 @@ export function PositionDetailShell({ positionId }: { positionId: string }) {
 
   const exitDefault = detail.state.mark_price ?? detail.position.current_price ?? detail.position.entry_price;
 
+  const recordForms = (
+    <section className="grid two">
+      <TerminalPanel title="진입 논리 메모" subtitle="진입 논리와 무효화/익절 기준은 AI가 점수를 계산하지 않고 비교 설명에만 사용합니다" status="accent">
+        <form className="positionMemoForm" onSubmit={saveMemo}>
+          <label>
+            <span>진입 당시 논리</span>
+            <textarea name="entry_memo" defaultValue={detail.position.entry_memo || detail.position.memo} rows={4} />
+          </label>
+          <label>
+            <span>현재 유지해야 하는 핵심 가설</span>
+            <textarea name="thesis_text" defaultValue={detail.position.thesis_text} rows={4} />
+          </label>
+          <div className="memoPriceGrid">
+            <label>
+              <span>손절/무효화 기준</span>
+              <input name="planned_stop_price" type="number" step="0.0001" defaultValue={detail.position.planned_stop_price ?? ""} />
+            </label>
+            <label>
+              <span>익절/분할 기준</span>
+              <input name="planned_take_profit_price" type="number" step="0.0001" defaultValue={detail.position.planned_take_profit_price ?? ""} />
+            </label>
+          </div>
+          <label>
+            <span>메모</span>
+            <textarea name="memo" defaultValue={detail.position.memo} rows={3} />
+          </label>
+          <button className="button" type="submit" disabled={busy === "memo"}>
+            <NotebookPen size={16} />
+            메모 저장
+          </button>
+        </form>
+      </TerminalPanel>
+
+      <TerminalPanel title="이탈 기록" subtitle="거래소 주문이 아니라 내부 복기용 청산 기록만 생성합니다" status={detail.position.status === "closed" ? "neutral" : "warning"}>
+        <form className="positionMemoForm" onSubmit={recordExit}>
+          <label>
+            <span>청산 기록 가격</span>
+            <input name="exit_price" type="number" step="0.0001" defaultValue={exitDefault} disabled={detail.position.status === "closed"} />
+          </label>
+          <label>
+            <span>이탈 이유</span>
+            <textarea name="exit_reason" rows={4} defaultValue="포지션 관제 후 사용자가 수동으로 이탈 기록" disabled={detail.position.status === "closed"} />
+          </label>
+          <label>
+            <span>복기 메모</span>
+            <textarea name="exit_memo" rows={4} placeholder="왜 나갔는지, 진입 논리가 언제 약해졌는지 기록" disabled={detail.position.status === "closed"} />
+          </label>
+          <button className="button" type="submit" disabled={detail.position.status === "closed" || busy === "exit"}>
+            <FileClock size={16} />
+            내부 이탈 기록
+          </button>
+        </form>
+      </TerminalPanel>
+    </section>
+  );
+
   return (
     <div className="page positionDetailPage">
       <header className="cockpitToolbar positionDetailToolbar">
@@ -753,17 +957,13 @@ export function PositionDetailShell({ positionId }: { positionId: string }) {
             <Activity size={16} />
             관제 화면
           </Link>
-          <button className="button secondary" onClick={analyze} disabled={busy === "analyze"}>
-            <RefreshCw size={16} />
-            상태 갱신
-          </button>
         </div>
       </header>
 
       {error ? <TerminalWarning tone="error">{error}</TerminalWarning> : null}
       {notice ? <TerminalWarning tone="info">{notice}</TerminalWarning> : null}
 
-      <PositionVerdictBar payload={detail} chartAnalysis={chartAnalysis} />
+      <PositionVerdictBar payload={detail} onRefresh={() => void analyze()} refreshing={busy === "analyze"} />
 
       <section className="positionDetailMain">
         <PositionChart
@@ -772,73 +972,27 @@ export function PositionDetailShell({ positionId }: { positionId: string }) {
           error={chartError}
           onRetry={() => void loadChart(timeframe)}
           trendSummary={trendLabel(detail.state.analysis.technical.trend)}
-          activeLayer={activeTaLayer}
-          onLayerChange={setActiveTaLayer}
+          plan={actionPlanForPayload(detail)}
+          layers={workspace.layers}
+          onToggleLayer={workspace.handleToggleLayer}
+          highlightPrice={workspace.highlightPrice}
         />
-        <ActionPlanPanel payload={detail} />
+        <ActionPlanPanel
+          payload={detail}
+          highlightPrice={workspace.highlightPrice}
+          onSelectPrice={workspace.setHighlightPrice}
+          onCreateInsight={() => createInsight()}
+          busy={busy === "insight"}
+        />
       </section>
 
       <EvidenceAccordion
         payload={detail}
         chartAnalysis={chartAnalysis}
-        onCreateInsight={() => createInsight()}
-        busy={busy === "insight"}
-        onFocusLayer={focusTaLayer(setActiveTaLayer)}
+        openModule={workspace.openModule}
+        onModuleToggle={workspace.handleModuleToggle}
+        historyExtras={recordForms}
       />
-
-      <section className="grid two">
-        <TerminalPanel title="진입 논리 메모" subtitle="진입 논리와 무효화/익절 기준은 AI가 점수를 계산하지 않고 비교 설명에만 사용합니다" status="accent">
-          <form className="positionMemoForm" onSubmit={saveMemo}>
-            <label>
-              <span>진입 당시 논리</span>
-              <textarea name="entry_memo" defaultValue={detail.position.entry_memo || detail.position.memo} rows={4} />
-            </label>
-            <label>
-              <span>현재 유지해야 하는 핵심 가설</span>
-              <textarea name="thesis_text" defaultValue={detail.position.thesis_text} rows={4} />
-            </label>
-            <div className="memoPriceGrid">
-              <label>
-                <span>손절/무효화 기준</span>
-                <input name="planned_stop_price" type="number" step="0.0001" defaultValue={detail.position.planned_stop_price ?? ""} />
-              </label>
-              <label>
-                <span>익절/분할 기준</span>
-                <input name="planned_take_profit_price" type="number" step="0.0001" defaultValue={detail.position.planned_take_profit_price ?? ""} />
-              </label>
-            </div>
-            <label>
-              <span>메모</span>
-              <textarea name="memo" defaultValue={detail.position.memo} rows={3} />
-            </label>
-            <button className="button" type="submit" disabled={busy === "memo"}>
-              <NotebookPen size={16} />
-              메모 저장
-            </button>
-          </form>
-        </TerminalPanel>
-
-        <TerminalPanel title="이탈 기록" subtitle="거래소 주문이 아니라 내부 복기용 청산 기록만 생성합니다" status={detail.position.status === "closed" ? "neutral" : "warning"}>
-          <form className="positionMemoForm" onSubmit={recordExit}>
-            <label>
-              <span>청산 기록 가격</span>
-              <input name="exit_price" type="number" step="0.0001" defaultValue={exitDefault} disabled={detail.position.status === "closed"} />
-            </label>
-            <label>
-              <span>이탈 이유</span>
-              <textarea name="exit_reason" rows={4} defaultValue="포지션 관제 후 사용자가 수동으로 이탈 기록" disabled={detail.position.status === "closed"} />
-            </label>
-            <label>
-              <span>복기 메모</span>
-              <textarea name="exit_memo" rows={4} placeholder="왜 나갔는지, 진입 논리가 언제 약해졌는지 기록" disabled={detail.position.status === "closed"} />
-            </label>
-            <button className="button" type="submit" disabled={detail.position.status === "closed" || busy === "exit"}>
-              <FileClock size={16} />
-              내부 이탈 기록
-            </button>
-          </form>
-        </TerminalPanel>
-      </section>
     </div>
   );
 }
@@ -950,27 +1104,55 @@ function StatusPill({ status, label }: { status: string; label: string }) {
   return <span className={`statusPill status-${status}`}>{label}</span>;
 }
 
-function focusTaLayer(setActiveTaLayer: (layer: TaLayer) => void) {
-  return (layer: TaLayer) => {
-    setActiveTaLayer(layer);
-    document.querySelector(".positionChartPanel")?.scrollIntoView({ behavior: "smooth", block: "start" });
-  };
-}
-
-function actionPlanForPayload(payload: LivePositionPayload) {
+function actionPlanForPayload(payload: LivePositionPayload): PositionActionPlan | null {
   return payload.action_plan ?? payload.latest_insight?.action_plan ?? null;
 }
 
-function actionPlanRows(plan: LivePositionPayload["action_plan"]) {
+function headlineForPayload(payload: LivePositionPayload): string {
+  const plan = actionPlanForPayload(payload);
+  return (
+    plan?.headline_action ??
+    deriveHeadlineAction(plan, payload.position.direction) ??
+    "지금 볼 것: 액션 플랜 근거 부족. 갱신 후 다시 확인."
+  );
+}
+
+/** 백엔드 headline_action과 동일 규칙의 클라이언트 폴백: 현재가에서 가장 가까운 트리거 1개. */
+function deriveHeadlineAction(plan: PositionActionPlan | null, direction: "long" | "short"): string | null {
+  if (!plan) return null;
+  const candidates: Array<{ distance: number; kind: "invalidation" | "take_profit"; price: number | null; action: string }> = [];
+  if (plan.invalidation && typeof plan.invalidation.distance_pct === "number") {
+    candidates.push({ distance: Math.abs(plan.invalidation.distance_pct), kind: "invalidation", price: plan.invalidation.price, action: plan.invalidation.action ?? "조건 확인" });
+  }
+  for (const target of plan.take_profit ?? []) {
+    if (typeof target.distance_pct === "number") {
+      candidates.push({ distance: Math.abs(target.distance_pct), kind: "take_profit", price: target.price, action: target.action ?? "부분 익절 검토" });
+    }
+  }
+  if (candidates.length) {
+    const nearest = candidates.reduce((left, right) => (right.distance < left.distance ? right : left));
+    const price = nearest.price === null ? "-" : formatPrice(nearest.price);
+    if (nearest.kind === "invalidation") {
+      return `지금 볼 것: ${price} ${direction === "long" ? "지지 유지 여부" : "저항 유지 여부"}. ${nearest.action}.`;
+    }
+    return `지금 볼 것: ${price} ${direction === "long" ? "저항 반응" : "지지 반응"}. 도달 시 ${nearest.action}.`;
+  }
+  const trigger = plan.watch_triggers?.[0];
+  if (trigger) return `지금 볼 것: ${trigger.condition}. ${trigger.meaning}.`;
+  return null;
+}
+
+function actionPlanRows(plan: PositionActionPlan | null) {
   if (!plan) return [];
-  const rows: Array<{ kind: string; price?: string; condition?: string; action: string; basis: string; tone: "danger" | "positive" | "warning" | "neutral" }> = [];
+  const rows: Array<{ kind: string; price?: string; condition?: string; action: string; basis: string; tone: "danger" | "positive" | "warning" | "neutral"; priceValue: number | null }> = [];
   if (plan.invalidation) {
     rows.push({
       kind: "무효화",
       price: `${formatNullablePrice(plan.invalidation.price)} · ${formatDistance(plan.invalidation.distance_pct)}`,
       action: plan.invalidation.action ?? "조건 확인",
       basis: plan.invalidation.basis ?? "무효화 기준",
-      tone: "danger"
+      tone: "danger",
+      priceValue: plan.invalidation.price
     });
   }
   const takeProfitTargets = Array.isArray(plan.take_profit) ? plan.take_profit : [];
@@ -981,7 +1163,8 @@ function actionPlanRows(plan: LivePositionPayload["action_plan"]) {
       price: `${formatNullablePrice(target.price)} · ${formatDistance(target.distance_pct)}`,
       action: target.action ?? "부분 익절 검토",
       basis: target.basis ?? "익절 후보",
-      tone: "positive"
+      tone: "positive",
+      priceValue: target.price
     });
   }
   for (const trigger of watchTriggers.slice(0, 3)) {
@@ -990,7 +1173,8 @@ function actionPlanRows(plan: LivePositionPayload["action_plan"]) {
       condition: trigger.condition ?? "조건 확인",
       action: "조건 확인",
       basis: trigger.meaning ?? "추가 확인 필요",
-      tone: "warning"
+      tone: "warning",
+      priceValue: null
     });
   }
   if (typeof plan.liquidation?.price === "number") {
@@ -999,7 +1183,8 @@ function actionPlanRows(plan: LivePositionPayload["action_plan"]) {
       price: formatNullablePrice(plan.liquidation.price),
       action: "거리 확인",
       basis: "거래소 수신 청산가",
-      tone: "neutral"
+      tone: "neutral",
+      priceValue: plan.liquidation.price
     });
   }
   return rows.slice(0, 6);
@@ -1016,46 +1201,6 @@ function insightSummaryHint(payload: LivePositionPayload): string {
   if (!insight) return "아직 생성 안 됨";
   if (payload.insight_status.is_stale) return "과거 판단 · 재생성 필요";
   return `갱신 ${new Date(insight.created_at).toLocaleTimeString()}`;
-}
-
-function verdictForState(state: PositionState): string {
-  if (state.status === "healthy") return "데이터상 진입 논리는 유지 중입니다. 다만 계획한 손절/익절 기준과 수익 반납 기준을 계속 확인해야 합니다.";
-  if (state.status === "watch") return "유지 근거가 완전히 깨진 상태는 아니지만, 다음 지지/저항 반응과 점수 변화를 확인해야 합니다.";
-  if (state.status === "risk_rising") return "리스크가 상승했습니다. 청산가 거리, 변동성, 수익 반납폭을 우선 점검해야 합니다.";
-  if (state.status === "thesis_weakening") return "진입 논리가 약해지고 있습니다. 처음 들어간 이유가 아직 유효한지 메모와 차트 구조를 비교해야 합니다.";
-  if (state.status === "critical") return "긴급 점검 구간입니다. 청산가 거리와 손실 제한 기준을 즉시 확인해야 합니다.";
-  return "데이터가 충분하지 않아 판단을 보류해야 합니다. 포지션/시세 동기화 상태를 먼저 확인하세요.";
-}
-
-function directionalChartVerdict(payload: LivePositionPayload, chartAnalysis: PositionChartAnalysis | null): string {
-  const direction = payload.position.direction;
-  const support = chartAnalysis?.price_levels.support[0];
-  const resistance = chartAnalysis?.price_levels.resistance[0];
-  const invalidation = chartAnalysis?.price_levels.invalidation[0];
-  const invalidationLabel = invalidation && typeof invalidation.price === "number" ? formatPrice(invalidation.price) : "사용자 기준 필요";
-  if (!chartAnalysis) return verdictForState(payload.state);
-  if (direction === "long") {
-    return support
-      ? `롱 기준 핵심은 ${formatPrice(support.price)} 지지 유지입니다. 무효화 기준은 ${invalidationLabel}로 봅니다.`
-      : "롱 기준 지지 후보가 부족합니다. 진입가와 현재가 관계를 먼저 확인해야 합니다.";
-  }
-  return resistance
-    ? `숏 기준 핵심은 ${formatPrice(resistance.price)} 저항 유지입니다. 무효화 기준은 ${invalidationLabel}로 봅니다.`
-    : "숏 기준 저항 후보가 부족합니다. 진입가 위 반등 거래량을 먼저 확인해야 합니다.";
-}
-
-function healthTone(score: number): MetricTone {
-  if (score >= 80) return "positive";
-  if (score >= 65) return "warning";
-  if (score >= 50) return "agent";
-  return "negative";
-}
-
-function liquidationTone(value: number | null): MetricTone {
-  if (value === null) return "neutral";
-  if (value < 5) return "negative";
-  if (value < 10) return "warning";
-  return "positive";
 }
 
 function formatNullablePrice(value: number | null): string {

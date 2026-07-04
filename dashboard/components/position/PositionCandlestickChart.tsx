@@ -13,46 +13,56 @@ import {
   type Time
 } from "lightweight-charts";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ChartCandle, PositionChartAnalysis } from "@/lib/api";
+import type { ChartCandle, PositionActionPlan, PositionChartAnalysis } from "@/lib/api";
+import { CHART_LAYER_DEFS, layerActive, type ChartLayerId, type ChartLayerState } from "@/lib/chartLayers";
 import { formatPrice } from "@/lib/format";
 import { localizeMarketCodes, phaseHintLabel, sourceLabel, timeframeLabel } from "@/lib/labels/marketStateLabels";
-import { hasHiddenStructureLevels, hiddenPriceLinesForAnalysis, priceLineColor, priceLinesForAnalysis, PriceLevelLegend } from "./PriceLevelOverlay";
-import { DEFAULT_TA_LAYER, TA_LAYERS, type TaLayer } from "./taLayers";
+import { priceLineColor, priceLinesForAnalysis, type ChartPriceLine } from "./PriceLevelOverlay";
 import { VolumePanel } from "./VolumePanel";
+
+const LABEL_MERGE_PX = 8;
 
 export function PositionCandlestickChart({
   analysis,
   trendSummary,
-  activeLayer: controlledLayer,
-  onLayerChange
+  plan,
+  layers,
+  onToggleLayer,
+  highlightPrice = null
 }: {
   analysis: PositionChartAnalysis;
   trendSummary: string;
-  activeLayer?: TaLayer;
-  onLayerChange?: (layer: TaLayer) => void;
+  plan: PositionActionPlan | null;
+  layers: ChartLayerState;
+  onToggleLayer: (id: ChartLayerId, additive: boolean) => void;
+  highlightPrice?: number | null;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const profileOverlayRef = useRef<SVGSVGElement | null>(null);
+  const overlayRef = useRef<SVGSVGElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
-  const [internalLayer, setInternalLayer] = useState<TaLayer>(DEFAULT_TA_LAYER);
-  const activeLayer = controlledLayer ?? internalLayer;
-  const setActiveLayer = onLayerChange ?? setInternalLayer;
-  const [showAllStructureLevels, setShowAllStructureLevels] = useState(false);
-  const [showAllHarmonics, setShowAllHarmonics] = useState(false);
+  const [harmonicIndex, setHarmonicIndex] = useState(0);
   const validation = useMemo(() => validateCandles(analysis.candles), [analysis.candles]);
   const priceLines = useMemo(
-    () => (validation.valid ? priceLinesForAnalysis(analysis, activeLayer, showAllStructureLevels) : []),
-    [analysis, activeLayer, showAllStructureLevels, validation.valid]
+    () => (validation.valid ? priceLinesForAnalysis(analysis, plan, layers) : []),
+    [analysis, plan, layers, validation.valid]
   );
-  const hiddenPriceLines = useMemo(() => (validation.valid ? hiddenPriceLinesForAnalysis(analysis) : []), [analysis, validation.valid]);
-  const hasAdditionalLevels = useMemo(() => hasHiddenStructureLevels(analysis), [analysis]);
   const lastCandle = validation.candles.at(-1);
   const averageVolume = validation.valid ? average(validation.candles.map((candle) => candle.volume)) : 0;
+  const harmonicFocused = layers.ta.includes("harmonic");
+  const harmonicPatterns = useMemo(
+    () => [...analysis.harmonic_patterns].sort((left, right) => right.confidence - left.confidence),
+    [analysis.harmonic_patterns]
+  );
+  const activeHarmonic = harmonicPatterns.length ? harmonicPatterns[((harmonicIndex % harmonicPatterns.length) + harmonicPatterns.length) % harmonicPatterns.length] : null;
+
+  useEffect(() => {
+    setHarmonicIndex(0);
+  }, [analysis.position_id, analysis.timeframe]);
 
   useEffect(() => {
     if (!validation.valid || !containerRef.current || !validation.candles.length) return;
     const container = containerRef.current;
-    const profileOverlay = profileOverlayRef.current;
+    const overlay = overlayRef.current;
     const chart = createChart(container, {
       autoSize: true,
       layout: {
@@ -142,11 +152,11 @@ export function PositionCandlestickChart({
     const volumeData: HistogramData[] = validation.candles.map((candle) => ({
       time: candle.time as Time,
       value: candle.volume,
-      color: activeLayer === "flow" ? volumeColorForCandle(analysis, candle) : simpleVolumeColor(candle)
+      color: layers.flow ? volumeColorForCandle(analysis, candle) : simpleVolumeColor(candle)
     }));
     volumeSeries.setData(volumeData);
 
-    if (activeLayer === "flow") {
+    if (layers.flow) {
       const averageVolumeSeries = chart.addSeries(LineSeries, {
         priceScaleId: "volume",
         color: "rgba(174, 210, 164, 0.64)",
@@ -162,40 +172,62 @@ export function PositionCandlestickChart({
           value: averageVolume
         }))
       );
+      if (analysis.trade_flow.cvd.length) {
+        const cvdSeries = chart.addSeries(LineSeries, {
+          priceScaleId: "cvd",
+          color: "rgba(98, 207, 232, 0.72)",
+          lineWidth: 1,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false
+        });
+        cvdSeries.priceScale().applyOptions({
+          scaleMargins: { top: 0.86, bottom: 0 }
+        });
+        cvdSeries.setData(
+          analysis.trade_flow.cvd.map((point) => ({
+            time: point.time as Time,
+            value: point.value
+          }))
+        );
+      }
     }
 
-    if (activeLayer === "flow" && analysis.trade_flow.cvd.length) {
-      const cvdSeries = chart.addSeries(LineSeries, {
-        priceScaleId: "cvd",
-        color: "rgba(98, 207, 232, 0.72)",
-        lineWidth: 1,
-        priceLineVisible: false,
-        lastValueVisible: false,
-        crosshairMarkerVisible: false
-      });
-      cvdSeries.priceScale().applyOptions({
-        scaleMargins: { top: 0.86, bottom: 0 }
-      });
-      cvdSeries.setData(
-        analysis.trade_flow.cvd.map((point) => ({
-          time: point.time as Time,
-          value: point.value
-        }))
-      );
+    if (layers.ta.includes("indicators")) {
+      const bands: Array<{ key: "upper" | "middle" | "lower"; style: LineStyle }> = [
+        { key: "upper", style: LineStyle.Dashed },
+        { key: "middle", style: LineStyle.Solid },
+        { key: "lower", style: LineStyle.Dashed }
+      ];
+      for (const band of bands) {
+        const points = analysis.indicators.bollinger[band.key];
+        if (!points?.length) continue;
+        const bandSeries = chart.addSeries(LineSeries, {
+          color: band.key === "middle" ? "rgba(174, 210, 164, 0.6)" : "rgba(98, 207, 232, 0.45)",
+          lineWidth: 1,
+          lineStyle: band.style,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false
+        });
+        bandSeries.setData(points.map((point) => ({ time: point.time as Time, value: point.value })));
+      }
     }
 
-    priceLines.forEach((line) => {
+    const labeled = mergeLineLabels(priceLines, container.clientHeight, validation.candles);
+    labeled.forEach((line) => {
+      const highlighted = highlightPrice !== null && Math.abs(line.price - highlightPrice) <= Math.abs(highlightPrice) * 1e-9 + 1e-12;
       candleSeries.createPriceLine({
         price: line.price,
-        color: priceLineColor(line.kind, line.opacity),
-        lineWidth: line.lineWidth,
+        color: priceLineColor(line.kind, highlighted ? 1 : line.opacity),
+        lineWidth: (highlighted ? Math.min(4, line.lineWidth * 2) : line.lineWidth) as 1 | 2 | 3 | 4,
         lineStyle: line.kind === "mark" ? LineStyle.Solid : LineStyle.Dashed,
-        axisLabelVisible: false,
-        title: ""
+        axisLabelVisible: highlighted,
+        title: line.title
       });
     });
 
-    const spikeMarkers = activeLayer === "flow"
+    const spikeMarkers = layers.flow
       ? validation.candles
           .filter((candle) => candle.volume >= averageVolume * 1.8)
           .slice(-3)
@@ -207,7 +239,7 @@ export function PositionCandlestickChart({
             text: ""
           }))
       : [];
-    const wyckoffMarkers = activeLayer === "wyckoff"
+    const wyckoffMarkers = layers.ta.includes("wyckoff")
       ? analysis.wyckoff_markers.slice(-6).map((marker) => ({
           time: marker.time as Time,
           position: marker.side === "distribution" || marker.type.includes("utad") || marker.type.includes("sow") ? "aboveBar" as const : "belowBar" as const,
@@ -244,7 +276,7 @@ export function PositionCandlestickChart({
 
     chart.timeScale().fitContent();
     chart.timeScale().applyOptions({ rightOffset: 18 });
-    const drawOverlay = () => renderTaOverlay(profileOverlay, container, candleSeries, chart, analysis, activeLayer, showAllHarmonics);
+    const drawOverlay = () => renderTaOverlay(overlay, container, candleSeries, chart, analysis, layers, activeHarmonic);
     window.setTimeout(drawOverlay, 0);
     chart.timeScale().subscribeVisibleLogicalRangeChange(drawOverlay);
     const resizeObserver = new ResizeObserver(drawOverlay);
@@ -254,7 +286,7 @@ export function PositionCandlestickChart({
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(drawOverlay);
       chart.remove();
     };
-  }, [analysis, averageVolume, priceLines, activeLayer, showAllHarmonics, validation]);
+  }, [analysis, averageVolume, priceLines, layers, highlightPrice, activeHarmonic, validation]);
 
   if (!validation.valid) {
     return (
@@ -266,8 +298,6 @@ export function PositionCandlestickChart({
     );
   }
 
-  const activeLayerMeta = TA_LAYERS.find((item) => item.id === activeLayer);
-
   return (
     <>
       <div className="positionChartHeader">
@@ -277,32 +307,35 @@ export function PositionCandlestickChart({
         </div>
         <span>{trendSummary}</span>
       </div>
-      <div className="taLayerToggle" role="group" aria-label="차트 분석 레이어 선택">
-        {TA_LAYERS.map((layer) => (
+      <div className="taLayerToggle" role="group" aria-label="차트 레이어 선택">
+        {CHART_LAYER_DEFS.map((layer) => (
           <button
-            aria-pressed={activeLayer === layer.id}
-            className={activeLayer === layer.id ? "active" : ""}
+            aria-pressed={layerActive(layers, layer.id)}
+            className={layerActive(layers, layer.id) ? "active" : ""}
             key={layer.id}
-            onClick={() => setActiveLayer(layer.id)}
-            title={layer.description}
+            onClick={(event) => onToggleLayer(layer.id, event.shiftKey)}
+            title={`${layer.description} (shift-클릭: 비교 모드)`}
             type="button"
           >
             {layer.label}
           </button>
         ))}
-        {activeLayerMeta ? <small>{activeLayerMeta.description}</small> : null}
+        <small>shift-클릭으로 TA 레이어 비교</small>
       </div>
-      <PriceLevelLegend
-        lines={priceLines}
-        showAll={showAllStructureLevels}
-        hasHiddenLevels={activeLayer === "structure" && hasAdditionalLevels}
-        onToggleAll={() => setShowAllStructureLevels((value) => !value)}
-      />
-      {hiddenPriceLines.length ? (
-        <div className="chartOutOfRangeNotice">
-          {hiddenPriceLines.map((line) => (
-            <span key={`${line.kind}-${line.price}`}>{line.label}: {formatPrice(line.price)} · 현재 차트 범위 밖</span>
-          ))}
+      {harmonicFocused ? (
+        <div className="harmonicNav">
+          {activeHarmonic ? (
+            <>
+              <button onClick={() => setHarmonicIndex((value) => value - 1)} type="button" aria-label="이전 패턴">◀</button>
+              <span title={harmonicPatternTitle(activeHarmonic)}>
+                {activeHarmonic.label} · {activeHarmonic.direction === "bearish" ? "하락 반전 후보 구간(PRZ)" : "상승 반전 후보 구간(PRZ)"} · 신뢰도 {activeHarmonic.confidence}
+                {harmonicPatterns.length > 1 ? ` · ${(((harmonicIndex % harmonicPatterns.length) + harmonicPatterns.length) % harmonicPatterns.length) + 1}/${harmonicPatterns.length}` : ""}
+              </span>
+              <button onClick={() => setHarmonicIndex((value) => value + 1)} type="button" aria-label="다음 패턴">▶</button>
+            </>
+          ) : (
+            <span className="muted">유효한 하모닉 패턴이 아직 없습니다.</span>
+          )}
         </div>
       ) : null}
       <div className="chartHoverReadout" ref={tooltipRef}>
@@ -311,42 +344,46 @@ export function PositionCandlestickChart({
       </div>
       <div className="positionChartCanvasFrame">
         <div className="positionChartCanvas" ref={containerRef} />
-        <svg className="volumeProfileOverlay" ref={profileOverlayRef} aria-hidden="true" />
+        <svg className="volumeProfileOverlay" ref={overlayRef} aria-hidden="true" />
       </div>
-      {activeLayer === "flow" ? <VolumePanel analysis={analysis} averageVolume={averageVolume} /> : null}
-      {activeLayer === "wyckoff" ? (
-        analysis.wyckoff_markers.length ? (
-          <div className="wyckoffMarkerRail">
-            {analysis.wyckoff_markers.map((marker) => (
-              <span key={`${marker.type}-${marker.time}`} title={wyckoffMarkerTitle(marker)}>
-                {localizeMarketCodes(marker.label)} · 신뢰도 {marker.confidence}
-              </span>
-            ))}
-          </div>
-        ) : (
-          <div className="wyckoffMarkerRail muted">와이코프 마커 후보가 아직 없습니다.</div>
-        )
-      ) : null}
-      {activeLayer === "harmonic" ? (
-        analysis.harmonic_patterns.length ? (
-          <div className="harmonicPatternRail">
-            {analysis.harmonic_patterns.slice(0, showAllHarmonics ? analysis.harmonic_patterns.length : 2).map((pattern) => (
-              <span key={pattern.id} title={harmonicPatternTitle(pattern)}>
-                {pattern.label} · {pattern.direction === "bearish" ? "하락 반전 후보 구간(PRZ)" : "상승 반전 후보 구간(PRZ)"} · 신뢰도 {pattern.confidence}
-              </span>
-            ))}
-            {analysis.harmonic_patterns.length > 2 ? (
-              <button className="priceLevelToggle" type="button" onClick={() => setShowAllHarmonics((value) => !value)}>
-                {showAllHarmonics ? "핵심 패턴만" : "전체 패턴"}
-              </button>
-            ) : null}
-          </div>
-        ) : (
-          <div className="harmonicPatternRail muted">하모닉 반전 후보 구간(PRZ)이 아직 없습니다.</div>
-        )
-      ) : null}
+      {layers.flow ? <VolumePanel analysis={analysis} averageVolume={averageVolume} /> : null}
     </>
   );
+}
+
+type LabeledPriceLine = ChartPriceLine & { title: string };
+
+/** 같은 y좌표 ±8px 내 가격선 라벨을 병합한다 ("S1 · POC 260.4"). */
+function mergeLineLabels(lines: ChartPriceLine[], containerHeight: number, candles: ChartCandle[]): LabeledPriceLine[] {
+  if (!lines.length) return [];
+  const prices = candles.flatMap((candle) => [candle.high, candle.low]).concat(lines.map((line) => line.price));
+  const min = Math.min(...prices);
+  const max = Math.max(...prices);
+  const priceRange = Math.max(max - min, 1e-12);
+  // rightPriceScale margins(top 0.08 / bottom 0.26)을 뺀 실제 가격 영역 높이 근사
+  const plotHeight = Math.max(containerHeight * (1 - 0.08 - 0.26), 1);
+  const mergeThreshold = (LABEL_MERGE_PX / plotHeight) * priceRange;
+
+  const sorted = [...lines].sort((left, right) => left.price - right.price);
+  const result: LabeledPriceLine[] = [];
+  let group: ChartPriceLine[] = [];
+  const flush = () => {
+    if (!group.length) return;
+    const anchor = [...group].sort((left, right) => left.priority - right.priority)[0];
+    for (const line of group) {
+      result.push({
+        ...line,
+        title: line === anchor ? `${group.map((item) => item.label).join(" · ")} ${formatPrice(anchor.price)}` : ""
+      });
+    }
+    group = [];
+  };
+  for (const line of sorted) {
+    if (group.length && Math.abs(line.price - group[group.length - 1].price) > mergeThreshold) flush();
+    group.push(line);
+  }
+  flush();
+  return result;
 }
 
 type CandleValidation =
@@ -404,24 +441,24 @@ function renderTaOverlay(
   series: { priceToCoordinate(price: number): number | null },
   chart: { timeScale(): { timeToCoordinate(time: Time): number | null } },
   analysis: PositionChartAnalysis,
-  activeLayer: TaLayer,
-  showAllHarmonics: boolean
+  layers: ChartLayerState,
+  activeHarmonic: PositionChartAnalysis["harmonic_patterns"][number] | null
 ) {
   if (!svg) return;
   const width = container.clientWidth;
   const height = container.clientHeight;
   if (!width || !height) return;
   const nodes: string[] = [];
-  if (activeLayer === "wyckoff") {
+  if (layers.ta.includes("wyckoff")) {
     nodes.push(...wyckoffRangeNodes(series, chart, analysis));
   }
-  if (activeLayer === "structure") {
+  if (layers.ta.includes("volume_profile")) {
     nodes.push(...volumeProfileNodes(series, analysis, width));
   }
-  if (activeLayer === "harmonic") {
+  if (layers.ta.includes("harmonic") && activeHarmonic) {
     const axisGutter = 78;
     const right = Math.max(24, width - axisGutter);
-    nodes.push(...harmonicPatternNodes(series, chart, analysis, showAllHarmonics, right));
+    nodes.push(...harmonicPatternNodes(series, chart, activeHarmonic, right));
   }
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
   svg.innerHTML = nodes.join("");
@@ -475,41 +512,38 @@ function volumeProfileNodes(
 function harmonicPatternNodes(
   series: { priceToCoordinate(price: number): number | null },
   chart: { timeScale(): { timeToCoordinate(time: Time): number | null } },
-  analysis: PositionChartAnalysis,
-  showAllHarmonics: boolean,
+  pattern: PositionChartAnalysis["harmonic_patterns"][number],
   rightEdge: number
 ): string[] {
-  const patterns = (showAllHarmonics ? analysis.harmonic_patterns : analysis.harmonic_patterns.slice(0, 2)).filter((pattern) => pattern.points.length >= 4);
+  if (pattern.points.length < 4) return [];
   const nodes: string[] = [];
-  for (const pattern of patterns) {
-    const stroke = pattern.direction === "bearish" ? "rgba(238,123,128,0.78)" : "rgba(127,238,100,0.74)";
-    const fill = pattern.direction === "bearish" ? "rgba(238,123,128,0.11)" : "rgba(127,238,100,0.1)";
-    const dash = pattern.status === "forming" ? `stroke-dasharray="6 6"` : "";
-    const coordinates = pattern.points
-      .map((point) => {
-        const x = chart.timeScale().timeToCoordinate(point.time as Time);
-        const y = series.priceToCoordinate(point.price);
-        return x === null || y === null ? null : { x, y, point };
-      })
-      .filter((item): item is { x: number; y: number; point: PositionChartAnalysis["harmonic_patterns"][number]["points"][number] } => item !== null);
-    if (coordinates.length < 4) continue;
-    const przTop = series.priceToCoordinate(pattern.prz.high);
-    const przBottom = series.priceToCoordinate(pattern.prz.low);
-    if (przTop !== null && przBottom !== null) {
-      const y = Math.min(przTop, przBottom);
-      const height = Math.max(4, Math.abs(przBottom - przTop));
-      const x = Math.min(coordinates.at(-2)?.x ?? coordinates[0].x, rightEdge);
-      const width = Math.max(18, rightEdge - x);
-      nodes.push(`<rect x="${x}" y="${y}" width="${width}" height="${height}" fill="${fill}" stroke="${stroke}" stroke-width="1" stroke-dasharray="3 4" />`);
-      nodes.push(`<text x="${x + 6}" y="${Math.max(14, y - 5)}" fill="${stroke}" font-size="11" font-family="SF Mono, Monaco, Consolas, monospace">${escapeSvgText(pattern.label)} PRZ ${pattern.confidence}</text>`);
-    }
-    nodes.push(`<polyline points="${coordinates.map((item) => `${item.x},${item.y}`).join(" ")}" fill="none" stroke="${stroke}" stroke-width="1.6" ${dash} />`);
-    for (const item of coordinates) {
-      nodes.push(`<circle cx="${item.x}" cy="${item.y}" r="3" fill="${stroke}" />`);
-      nodes.push(`<text x="${item.x + 5}" y="${item.y - 6}" fill="rgba(238,242,247,0.82)" font-size="10" font-family="SF Mono, Monaco, Consolas, monospace">${escapeSvgText(item.point.label)}</text>`);
-    }
-    nodes.push(...harmonicRatioLabels(pattern, coordinates));
+  const stroke = pattern.direction === "bearish" ? "rgba(238,123,128,0.78)" : "rgba(127,238,100,0.74)";
+  const fill = pattern.direction === "bearish" ? "rgba(238,123,128,0.11)" : "rgba(127,238,100,0.1)";
+  const dash = pattern.status === "forming" ? `stroke-dasharray="6 6"` : "";
+  const coordinates = pattern.points
+    .map((point) => {
+      const x = chart.timeScale().timeToCoordinate(point.time as Time);
+      const y = series.priceToCoordinate(point.price);
+      return x === null || y === null ? null : { x, y, point };
+    })
+    .filter((item): item is { x: number; y: number; point: PositionChartAnalysis["harmonic_patterns"][number]["points"][number] } => item !== null);
+  if (coordinates.length < 4) return [];
+  const przTop = series.priceToCoordinate(pattern.prz.high);
+  const przBottom = series.priceToCoordinate(pattern.prz.low);
+  if (przTop !== null && przBottom !== null) {
+    const y = Math.min(przTop, przBottom);
+    const height = Math.max(4, Math.abs(przBottom - przTop));
+    const x = Math.min(coordinates.at(-2)?.x ?? coordinates[0].x, rightEdge);
+    const width = Math.max(18, rightEdge - x);
+    nodes.push(`<rect x="${x}" y="${y}" width="${width}" height="${height}" fill="${fill}" stroke="${stroke}" stroke-width="1" stroke-dasharray="3 4" />`);
+    nodes.push(`<text x="${x + 6}" y="${Math.max(14, y - 5)}" fill="${stroke}" font-size="11" font-family="SF Mono, Monaco, Consolas, monospace">${escapeSvgText(pattern.label)} PRZ ${pattern.confidence}</text>`);
   }
+  nodes.push(`<polyline points="${coordinates.map((item) => `${item.x},${item.y}`).join(" ")}" fill="none" stroke="${stroke}" stroke-width="1.6" ${dash} />`);
+  for (const item of coordinates) {
+    nodes.push(`<circle cx="${item.x}" cy="${item.y}" r="3" fill="${stroke}" />`);
+    nodes.push(`<text x="${item.x + 5}" y="${item.y - 6}" fill="rgba(238,242,247,0.82)" font-size="10" font-family="SF Mono, Monaco, Consolas, monospace">${escapeSvgText(item.point.label)}</text>`);
+  }
+  nodes.push(...harmonicRatioLabels(pattern, coordinates));
   return nodes;
 }
 
@@ -584,18 +618,6 @@ function compactMarkerText(label: string, confidence: number): string {
     .replace("클라이맥스 후보", "클라이맥스")
     .replace("스프링 후보", "스프링");
   return `${localized} ${confidence}`;
-}
-
-function wyckoffMarkerTitle(marker: PositionChartAnalysis["wyckoff_markers"][number]): string {
-  const components = marker.components;
-  if (!components) return `${localizeMarketCodes(marker.label)} 신뢰도 ${marker.confidence}`;
-  return [
-    `${localizeMarketCodes(marker.label)} 신뢰도 ${marker.confidence}`,
-    `이탈/돌파 깊이 ${components.depth_significance}`,
-    `복귀 속도 ${components.return_speed}`,
-    `거래량 확인 ${components.volume_confirmation}`,
-    `레벨 강도 ${components.level_strength}`
-  ].join("\n");
 }
 
 function harmonicPatternTitle(pattern: PositionChartAnalysis["harmonic_patterns"][number]): string {

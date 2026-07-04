@@ -1,8 +1,8 @@
 "use client";
 
-import type { PositionChartAnalysis } from "@/lib/api";
+import type { PositionActionPlan, PositionChartAnalysis } from "@/lib/api";
+import type { ChartLayerId, ChartLayerState } from "@/lib/chartLayers";
 import { PositionCandlestickChart } from "./PositionCandlestickChart";
-import type { TaLayer } from "./taLayers";
 
 export function PositionChart({
   analysis,
@@ -10,16 +10,20 @@ export function PositionChart({
   error,
   onRetry,
   trendSummary = "구조 확인 중",
-  activeLayer,
-  onLayerChange
+  plan,
+  layers,
+  onToggleLayer,
+  highlightPrice
 }: {
   analysis: PositionChartAnalysis | null;
   loading: boolean;
   error: string;
   onRetry: () => void;
   trendSummary?: string;
-  activeLayer?: TaLayer;
-  onLayerChange?: (layer: TaLayer) => void;
+  plan: PositionActionPlan | null;
+  layers: ChartLayerState;
+  onToggleLayer: (id: ChartLayerId, additive: boolean) => void;
+  highlightPrice?: number | null;
 }) {
   if (loading) {
     return (
@@ -59,7 +63,14 @@ export function PositionChart({
 
   return (
     <section className="positionChartPanel">
-      <PositionCandlestickChart analysis={analysis} trendSummary={trendSummary} activeLayer={activeLayer} onLayerChange={onLayerChange} />
+      <PositionCandlestickChart
+        analysis={analysis}
+        trendSummary={trendSummary}
+        plan={plan}
+        layers={layers}
+        onToggleLayer={onToggleLayer}
+        highlightPrice={highlightPrice}
+      />
     </section>
   );
 }

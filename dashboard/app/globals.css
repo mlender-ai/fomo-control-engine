@@ -2665,86 +2665,68 @@ h3 {
   border-left-color: var(--terminal-negative);
 }
 
-.verdictBarMain {
-  display: grid;
-  grid-template-columns: minmax(200px, 0.62fr) minmax(0, 2fr) minmax(120px, 0.36fr);
-  align-items: stretch;
-  gap: 10px;
+.verdictTopRow {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
 }
 
-.verdictIdentity,
-.verdictStatement,
-.verdictHealth {
-  display: grid;
-  align-content: center;
-  gap: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.06);
-  border-radius: 5px;
-  background: rgba(8, 11, 16, 0.34);
-  padding: 10px;
-}
-
-.verdictIdentity span,
-.verdictStatement span,
-.verdictHealth span {
-  color: var(--terminal-muted);
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-}
-
-.verdictIdentity strong {
+.verdictSymbol {
   font-family: "SF Mono", Monaco, Consolas, monospace;
-  font-size: 17px;
-  line-height: 1.18;
+  font-size: 19px;
+  line-height: 1.15;
 }
 
-.verdictIdentity .statusPill {
-  width: fit-content;
+.verdictPnl {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 21px;
+  font-style: normal;
+  font-weight: 800;
 }
 
-.verdictStatement p {
+.verdictPnl svg {
+  opacity: 0.6;
+}
+
+.verdictAction {
   color: #eef2f7;
   font-size: 16px;
-  font-weight: 700;
-  line-height: 1.44;
+  font-weight: 750;
+  line-height: 1.45;
 }
 
-.verdictHealth {
-  justify-items: start;
+.verdictMeta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
-.verdictHealth strong {
-  font-family: "SF Mono", Monaco, Consolas, monospace;
-  font-size: 30px;
-  line-height: 1;
-}
-
-.verdictHealth small {
+.verdictMeta > span:first-child {
   color: var(--terminal-muted);
   font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 11px;
 }
 
-.verdictHealth.tone-positive strong {
-  color: var(--terminal-positive);
+.verdictMeta .button {
+  margin-left: auto;
 }
 
-.verdictHealth.tone-warning strong {
+.verdictLiqWarning {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid rgba(240, 184, 64, 0.36);
+  border-radius: 4px;
+  background: rgba(240, 184, 64, 0.07);
   color: var(--terminal-warning);
-}
-
-.verdictHealth.tone-agent strong {
-  color: var(--terminal-cyan);
-}
-
-.verdictHealth.tone-negative strong {
-  color: var(--terminal-negative);
-}
-
-.verdictMetrics {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 8px;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 750;
 }
 
 .taLayerToggle {
@@ -2794,6 +2776,149 @@ h3 {
 .actionPlanPanel .actionPlanRow em,
 .actionPlanPanel .actionPlanRow small {
   grid-column: 2;
+}
+
+button.actionPlanRow {
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+button.actionPlanRow:disabled {
+  cursor: default;
+}
+
+button.actionPlanRow:not(:disabled):hover {
+  border-color: rgba(240, 184, 64, 0.42);
+}
+
+.actionPlanRow.selected {
+  border-color: rgba(240, 184, 64, 0.72);
+  background: rgba(240, 184, 64, 0.09);
+  box-shadow: inset 0 0 0 1px rgba(240, 184, 64, 0.38);
+}
+
+.planInsightDetails {
+  border: 1px solid var(--terminal-line);
+  border-radius: 5px;
+  background: rgba(8, 11, 16, 0.34);
+  padding: 10px 12px;
+}
+
+.planInsightDetails summary {
+  cursor: pointer;
+  color: var(--terminal-muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.planInsightDetails[open] summary {
+  margin-bottom: 10px;
+  color: var(--terminal-text);
+}
+
+.harmonicNav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.harmonicNav button {
+  border: 1px solid var(--terminal-line);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--terminal-muted);
+  cursor: pointer;
+  padding: 3px 9px;
+  font-size: 11px;
+}
+
+.harmonicNav button:hover {
+  border-color: rgba(240, 184, 64, 0.5);
+  color: var(--terminal-text);
+}
+
+.harmonicNav span {
+  color: var(--terminal-text);
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 11px;
+}
+
+.harmonicNav .muted {
+  color: var(--terminal-muted);
+}
+
+.stripHeadline {
+  overflow: hidden;
+  color: var(--terminal-muted);
+  font-size: 10px;
+  line-height: 1.35;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.liqMissingIcon {
+  margin-left: 5px;
+  color: var(--terminal-warning);
+  vertical-align: -1px;
+}
+
+.wyckoffEventList {
+  grid-column: 1 / -1;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.wyckoffEventList span {
+  border: 1px solid var(--terminal-line);
+  border-radius: 4px;
+  background: rgba(8, 11, 16, 0.4);
+  color: var(--terminal-muted);
+  padding: 4px 8px;
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 11px;
+}
+
+.harmonicEvidenceList {
+  display: grid;
+  gap: 8px;
+}
+
+.harmonicEvidenceItem {
+  display: grid;
+  gap: 5px;
+  border: 1px solid var(--terminal-line);
+  border-radius: 5px;
+  background: rgba(8, 11, 16, 0.4);
+  padding: 10px;
+}
+
+.harmonicEvidenceItem div {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.harmonicEvidenceItem span,
+.harmonicEvidenceItem em {
+  color: var(--terminal-muted);
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 11px;
+  font-style: normal;
+}
+
+.harmonicEvidenceItem em {
+  color: var(--terminal-text);
+}
+
+.harmonicEvidenceItem p {
+  color: #d8dee8;
+  font-size: 12px;
+  line-height: 1.45;
 }
 
 .evidenceAccordion {
@@ -2955,14 +3080,12 @@ h3 {
   .positionDetailMain,
   .positionBottomAnalysis,
   .selectedPositionHeader,
-  .verdictBarMain,
   .evidenceVolumeGrid {
     grid-template-columns: 1fr;
   }
 
   .selectedPositionMetrics,
-  .tabMetricLayout,
-  .verdictMetrics {
+  .tabMetricLayout {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
@@ -3051,7 +3174,6 @@ h3 {
     .scoreRow,
     .positionCardMetrics,
     .selectedPositionMetrics,
-    .verdictMetrics,
     .tabMetricLayout,
     .tabContentGrid,
     .tabRiskGrid,
