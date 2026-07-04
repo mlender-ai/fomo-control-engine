@@ -148,6 +148,10 @@ class PositionHealthComponents(BaseModel):
     risk_safety: int
     momentum_volume: int
     liquidity_funding: int
+    pnl_protection: int = 50
+    liquidation_buffer: int = 50
+    direction_alignment: int = 50
+    formula_version: str = "health_v2"
 
 
 class PositionSnapshot(BaseModel):

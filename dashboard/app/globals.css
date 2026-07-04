@@ -1687,6 +1687,58 @@ h3 {
   white-space: pre-line;
 }
 
+.insightStaleNotice {
+  display: grid;
+  gap: 9px;
+  border: 1px solid rgba(240, 184, 64, 0.36);
+  border-left: 3px solid var(--terminal-warning);
+  border-radius: 8px;
+  background: rgba(240, 184, 64, 0.07);
+  padding: 11px;
+}
+
+.insightStaleNotice.compact {
+  gap: 6px;
+}
+
+.insightStaleNotice strong {
+  color: var(--terminal-warning);
+  font-size: 13px;
+}
+
+.insightStaleNotice p {
+  color: #def0dd;
+  line-height: 1.45;
+}
+
+.insightStaleMeta,
+.insightStaleReasons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.insightStaleMeta span,
+.insightStaleReasons span {
+  border: 1px solid rgba(72, 83, 70, 0.78);
+  border-radius: 999px;
+  color: var(--terminal-muted);
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 10px;
+  padding: 4px 7px;
+}
+
+.insightStaleReasons span {
+  border-color: rgba(240, 184, 64, 0.34);
+  color: var(--terminal-warning);
+}
+
+.insightStaleGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
 .railInsightEmpty {
   display: grid;
   gap: 6px;

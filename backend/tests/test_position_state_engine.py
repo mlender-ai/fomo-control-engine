@@ -94,6 +94,30 @@ def test_position_state_marks_critical_when_liquidation_distance_is_tight() -> N
     assert state["risk_score"] >= 90
 
 
+def test_position_health_v2_directly_penalizes_large_unrealized_loss() -> None:
+    position = Position(
+        symbol="BTCUSDT",
+        direction=Direction.short,
+        entry_price=100.0,
+        quantity=0.5,
+        leverage=10,
+        current_price=109.7,
+        liquidation_price=None,
+        entry_score=84,
+    )
+
+    state = build_position_state(position, _report(), [])
+    components = state["score_json"]["health_components"]
+
+    assert state["pnl_percent"] == -97.0
+    assert state["status"] == "critical"
+    assert state["health_score"] < 50
+    assert components["formula_version"] == "health_v2"
+    assert components["pnl_protection"] <= 5
+    assert components["liquidation_buffer"] <= 45
+    assert components["direction_alignment"] < 50
+
+
 def test_position_insight_explains_snapshot_without_recalculating_scores() -> None:
     position = Position(
         symbol="BTCUSDT",

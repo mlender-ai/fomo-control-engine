@@ -1,3 +1,8 @@
+from uuid import UUID
+
+from app.api import routes
+
+
 def test_position_insight_api_generates_structured_saved_insight(client) -> None:
     report = client.post("/api/reports", json={"symbol": "BTCUSDT", "timeframe": "4h"}).json()
     position_response = client.post(
@@ -22,6 +27,8 @@ def test_position_insight_api_generates_structured_saved_insight(client) -> None
     insight = payload["latest_insight"]
 
     assert insight["position_id"] == position["id"]
+    assert payload["insight_status"]["has_insight"] is True
+    assert payload["insight_status"]["is_stale"] is False
     assert insight["insight_type"] == "position_status"
     assert insight["input_json"]["position"]["symbol"] == "BTCUSDT"
     assert "chart" in insight["input_json"]
@@ -37,3 +44,32 @@ def test_position_insight_api_generates_structured_saved_insight(client) -> None
     latest_response = client.get(f"/api/live/positions/{position['id']}")
     assert latest_response.status_code == 200
     assert latest_response.json()["latest_insight"]["id"] == insight["id"]
+
+
+def test_position_insight_status_marks_drifted_insight_stale(client) -> None:
+    report = client.post("/api/reports", json={"symbol": "BTCUSDT", "timeframe": "4h"}).json()
+    position = client.post(
+        "/api/positions",
+        json={
+            "symbol": "BTCUSDT",
+            "direction": "long",
+            "entry_price": report["price"],
+            "quantity": 0.02,
+            "leverage": 5,
+            "entry_report_id": report["id"],
+        },
+    ).json()
+    insight_payload = client.post(f"/api/live/positions/{position['id']}/insight").json()
+    assert insight_payload["insight_status"]["is_stale"] is False
+
+    stored_position = routes.repository.get_position(UUID(position["id"]))
+    assert stored_position is not None
+    stored_position.mark_price = stored_position.entry_price * 0.96
+    stored_position.current_price = stored_position.mark_price
+    routes.repository.update_position(stored_position)
+
+    latest_payload = client.get(f"/api/live/positions/{position['id']}").json()
+
+    assert latest_payload["insight_status"]["is_stale"] is True
+    assert "PNL_CHANGED" in latest_payload["insight_status"]["reasons"]
+    assert latest_payload["latest_insight"]["id"] == insight_payload["latest_insight"]["id"]

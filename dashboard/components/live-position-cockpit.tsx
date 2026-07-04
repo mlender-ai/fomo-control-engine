@@ -290,7 +290,8 @@ function InsightSummaryPanel({
   onCreateInsight: (positionId: string) => Promise<void> | void;
   busy: boolean;
 }) {
-  const { position, state, latest_insight: insight } = payload;
+  const { position, state, latest_insight: insight, insight_status: insightStatus } = payload;
+  const insightIsFresh = Boolean(insight && !insightStatus.is_stale);
   return (
     <section className="focusPanel insightFocusPanel">
       <div className="focusPanelHeader">
@@ -308,11 +309,13 @@ function InsightSummaryPanel({
         <strong>{state.status_label}</strong>
         <p>{verdictForState(state)}</p>
       </div>
-      {insight ? (
+      {insightIsFresh && insight ? (
         <div className="insightPreview">
           <p>{localizeMarketCodes(firstInsightParagraph(insight.insight_text))}</p>
-          <small>{new Date(insight.created_at).toLocaleString()} · 건강도 {insight.health_score}/100</small>
+          <small>{insightTimestampLabel(payload)} · 건강도 {insight.health_score}/100</small>
         </div>
+      ) : insight ? (
+        <InsightStaleNotice payload={payload} compact />
       ) : (
         <div className="insightEmpty">
           <strong>아직 인사이트가 없습니다.</strong>
@@ -373,6 +376,7 @@ function InsightTab({
   busy: boolean;
 }) {
   const insight = payload.latest_insight;
+  const insightIsFresh = Boolean(insight && !payload.insight_status.is_stale);
   return (
     <div className="tabContentGrid">
       <div className={`tabJudgement status-${payload.state.status}`}>
@@ -381,11 +385,13 @@ function InsightTab({
         <p>{verdictForState(payload.state)}</p>
       </div>
       <div className="tabTextBlock">
-        {insight ? (
+        {insightIsFresh && insight ? (
           <>
             <p>{localizeMarketCodes(insight.insight_text)}</p>
-            <small>{new Date(insight.created_at).toLocaleString()} · 건강도 {insight.health_score}/100</small>
+            <small>{insightTimestampLabel(payload)} · 건강도 {insight.health_score}/100</small>
           </>
+        ) : insight ? (
+          <InsightStaleNotice payload={payload} />
         ) : (
           <div className="insightEmpty">
             <strong>아직 인사이트가 없습니다.</strong>
@@ -763,7 +769,8 @@ function PositionInsightRail({
   onCreateInsight: () => Promise<void> | void;
   busy: boolean;
 }) {
-  const { position, state, latest_insight: insight } = payload;
+  const { position, state, latest_insight: insight, insight_status: insightStatus } = payload;
+  const insightIsFresh = Boolean(insight && !insightStatus.is_stale);
   const [showInputJson, setShowInputJson] = useState(false);
   const [copied, setCopied] = useState(false);
   const support = chartAnalysis?.price_levels.support[0];
@@ -771,7 +778,7 @@ function PositionInsightRail({
   const invalidation = chartAnalysis?.price_levels.invalidation[0];
   const liquidationOutOfRange = chartAnalysis ? hiddenPriceLinesForAnalysis(chartAnalysis).length > 0 : false;
   async function copyInsight() {
-    if (!insight) return;
+    if (!insight || insightStatus.is_stale) return;
     try {
       await navigator.clipboard.writeText(localizeMarketCodes(insight.insight_text));
       setCopied(true);
@@ -814,14 +821,14 @@ function PositionInsightRail({
         <div className="railSectionHeader aiInsightHeader">
           <div>
             <strong>AI 포지션 인사이트</strong>
-            {insight ? <small>갱신 {new Date(insight.created_at).toLocaleTimeString()}</small> : null}
+            {insight ? <small>{insightStatus.is_stale ? "재생성 필요" : `갱신 ${new Date(insight.created_at).toLocaleTimeString()}`}</small> : null}
           </div>
           <button className="button secondary" onClick={onCreateInsight} disabled={busy}>
             <BrainCircuit size={16} />
             {busy ? "인사이트 생성 중" : insight ? "다시 생성" : "인사이트 생성"}
           </button>
         </div>
-        {insight ? (
+        {insightIsFresh && insight ? (
           <>
             <div className="railInsightText full">{localizeMarketCodes(insight.insight_text)}</div>
             <div className="insightActionRow">
@@ -834,6 +841,8 @@ function PositionInsightRail({
               <pre className="insightInputJson">{JSON.stringify(insight.input_json, null, 2)}</pre>
             ) : null}
           </>
+        ) : insight ? (
+          <InsightStaleNotice payload={payload} />
         ) : (
           <div className="railInsightEmpty">
             <strong>아직 생성된 포지션 인사이트가 없습니다.</strong>
@@ -858,6 +867,37 @@ function RailPrice({
     <div className={`railPrice tone-${tone}`}>
       <span>{label}</span>
       <strong>{value}</strong>
+    </div>
+  );
+}
+
+function InsightStaleNotice({ payload, compact = false }: { payload: LivePositionPayload; compact?: boolean }) {
+  const status = payload.insight_status;
+  const generated = status.generated_for;
+  return (
+    <div className={`insightStaleNotice ${compact ? "compact" : ""}`}>
+      <strong>인사이트 재생성이 필요합니다.</strong>
+      <p>{status.message}</p>
+      <div className="insightStaleMeta">
+        <span>생성 {status.insight_created_at ? new Date(status.insight_created_at).toLocaleString() : "-"}</span>
+        <span>현재 기준 {new Date(status.current_snapshot_created_at).toLocaleString()}</span>
+        {status.age_minutes !== null ? <span>경과 {status.age_minutes.toFixed(1)}분</span> : null}
+      </div>
+      {!compact ? (
+        <>
+          <div className="insightStaleGrid">
+            <RailPrice label="생성 당시 손익률" value={generated?.pnl_percent === null || generated?.pnl_percent === undefined ? "-" : signedPercent(generated.pnl_percent)} />
+            <RailPrice label="현재 손익률" value={signedPercent(status.current.pnl_percent)} tone={status.current.pnl_percent >= 0 ? "positive" : "negative"} />
+            <RailPrice label="손익률 변화" value={status.current.pnl_delta_points === null || status.current.pnl_delta_points === undefined ? "-" : signedPercent(status.current.pnl_delta_points)} />
+            <RailPrice label="건강도 변화" value={status.current.health_delta === null || status.current.health_delta === undefined ? "-" : `${status.current.health_delta > 0 ? "+" : ""}${status.current.health_delta}`} />
+          </div>
+          <div className="insightStaleReasons">
+            {status.reasons.map((reason) => (
+              <span key={reason}>{insightStaleReasonLabel(reason)}</span>
+            ))}
+          </div>
+        </>
+      ) : null}
     </div>
   );
 }
@@ -1003,4 +1043,20 @@ function numberOrNull(value: FormDataEntryValue | null): number | null {
 function firstInsightParagraph(text: string): string {
   const paragraph = text.split("\n\n").find((part) => part.trim().length > 0)?.trim() ?? text.trim();
   return paragraph.length > 260 ? `${paragraph.slice(0, 257)}...` : paragraph;
+}
+
+function insightTimestampLabel(payload: LivePositionPayload): string {
+  const generatedAt = payload.insight_status.insight_created_at ?? payload.latest_insight?.created_at;
+  const currentAt = payload.insight_status.current_snapshot_created_at;
+  return `생성 ${generatedAt ? new Date(generatedAt).toLocaleString() : "-"} · 기준 ${new Date(currentAt).toLocaleString()}`;
+}
+
+function insightStaleReasonLabel(reason: string): string {
+  if (reason === "NO_INSIGHT") return "인사이트 없음";
+  if (reason === "INSIGHT_OLDER_THAN_30M") return "30분 초과";
+  if (reason === "PNL_CHANGED") return "손익률 변화";
+  if (reason === "MARK_PRICE_CHANGED") return "현재가 변화";
+  if (reason === "HEALTH_CHANGED") return "건강도 변화";
+  if (reason === "STATUS_CHANGED") return "상태 변경";
+  return reason;
 }

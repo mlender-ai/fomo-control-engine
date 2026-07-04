@@ -70,6 +70,10 @@ export type PositionHealthComponents = {
   risk_safety: number;
   momentum_volume: number;
   liquidity_funding: number;
+  pnl_protection: number;
+  liquidation_buffer: number;
+  direction_alignment: number;
+  formula_version: string;
 };
 
 export type PositionState = {
@@ -97,6 +101,10 @@ export type PositionState = {
       risk_safety: number;
       momentum_volume: number;
       liquidity_funding: number;
+      pnl_protection: number;
+      liquidation_buffer: number;
+      direction_alignment: number;
+      health_formula_version: string;
       entry_score: number;
       current_score: number;
       score_change: number;
@@ -174,6 +182,33 @@ export type PositionInsight = {
   created_at: string;
 };
 
+export type InsightStatus = {
+  has_insight: boolean;
+  is_stale: boolean;
+  age_minutes: number | null;
+  reasons: string[];
+  message: string;
+  insight_created_at: string | null;
+  current_snapshot_created_at: string;
+  generated_for: {
+    snapshot_id: string | null;
+    mark_price: number | null;
+    pnl_percent: number | null;
+    health_score: number;
+    status_label: string;
+  } | null;
+  current: {
+    snapshot_id: string;
+    mark_price: number | null;
+    pnl_percent: number;
+    health_score: number;
+    status_label: string;
+    mark_delta_pct?: number | null;
+    pnl_delta_points?: number | null;
+    health_delta?: number | null;
+  };
+};
+
 export type PositionEvent = {
   id: string;
   position_id: string;
@@ -190,6 +225,7 @@ export type LivePositionPayload = {
   state: PositionState;
   latest_snapshot: PositionSnapshot;
   latest_insight: PositionInsight | null;
+  insight_status: InsightStatus;
   recent_events: PositionEvent[];
 };
 

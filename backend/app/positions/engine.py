@@ -68,7 +68,14 @@ def build_position_state(position: Position, report: Report, previous_snapshots:
     indicators = report.raw_json.get("indicators", {})
     structure = report.raw_json.get("structure", {})
     liquidity = report.raw_json.get("liquidity", {})
-    components = _health_components(report, score_change, liquidation_distance)
+    components = _health_components(
+        position=position,
+        report=report,
+        score_change=score_change,
+        liquidation_distance=liquidation_distance,
+        pnl_percent=pnl_percent,
+        structure=structure,
+    )
     health_score = calculate_health_score(components)
     risk_score = calculate_position_risk_score(report.scores.risk, liquidation_distance, drawdown_pct)
     status = classify_status(
@@ -94,6 +101,10 @@ def build_position_state(position: Position, report: Report, previous_snapshots:
             "risk_safety": components.risk_safety,
             "momentum_volume": components.momentum_volume,
             "liquidity_funding": components.liquidity_funding,
+            "pnl_protection": components.pnl_protection,
+            "liquidation_buffer": components.liquidation_buffer,
+            "direction_alignment": components.direction_alignment,
+            "health_formula_version": components.formula_version,
             "entry_score": entry_score,
             "current_score": current_score,
             "score_change": score_change,
@@ -138,11 +149,13 @@ def build_position_state(position: Position, report: Report, previous_snapshots:
 
 def calculate_health_score(components: PositionHealthComponents) -> int:
     return clamp_score(
-        components.thesis_integrity * 0.30
-        + components.chart_structure * 0.25
-        + components.risk_safety * 0.20
-        + components.momentum_volume * 0.15
-        + components.liquidity_funding * 0.10
+        components.pnl_protection * 0.24
+        + components.liquidation_buffer * 0.22
+        + components.direction_alignment * 0.18
+        + components.thesis_integrity * 0.14
+        + components.chart_structure * 0.10
+        + components.momentum_volume * 0.07
+        + components.liquidity_funding * 0.05
     )
 
 
@@ -306,18 +319,25 @@ def _calculate_pnl_percent(position: Position, current_price: float) -> float:
     return ((position.entry_price - current_price) / position.entry_price) * 100 * position.leverage
 
 
-def _health_components(report: Report, score_change: int, liquidation_distance: float | None) -> PositionHealthComponents:
-    thesis = clamp_score(82 + min(10, score_change) - max(0, -score_change * 1.4))
-    chart = clamp_score(report.scores.structure)
+def _health_components(
+    *,
+    position: Position,
+    report: Report,
+    score_change: int,
+    liquidation_distance: float | None,
+    pnl_percent: float,
+    structure: dict,
+) -> PositionHealthComponents:
+    pnl_protection = _pnl_protection_score(pnl_percent)
+    liquidation_buffer = _liquidation_buffer_score(liquidation_distance)
+    direction_alignment = _direction_alignment_score(position, structure)
+    score_integrity = clamp_score(72 + min(8, score_change) - max(0, -score_change * 1.2))
+    thesis = clamp_score(direction_alignment * 0.50 + pnl_protection * 0.30 + score_integrity * 0.20)
+    chart = clamp_score(report.scores.structure * 0.45 + direction_alignment * 0.55)
     risk_safety = clamp_score(100 - report.scores.risk)
-    if liquidation_distance is None:
-        risk_safety = min(risk_safety, 55)
-    elif liquidation_distance < 5:
-        risk_safety = min(risk_safety, 10)
-    elif liquidation_distance < 10:
-        risk_safety = min(risk_safety, 38)
-    elif liquidation_distance < 15:
-        risk_safety = min(risk_safety, 58)
+    risk_safety = min(risk_safety, liquidation_buffer)
+    if pnl_percent < 0:
+        risk_safety = min(risk_safety, pnl_protection)
     momentum_volume = clamp_score((report.scores.momentum + report.scores.volume) / 2)
     return PositionHealthComponents(
         thesis_integrity=thesis,
@@ -325,7 +345,76 @@ def _health_components(report: Report, score_change: int, liquidation_distance: 
         risk_safety=risk_safety,
         momentum_volume=momentum_volume,
         liquidity_funding=clamp_score(report.scores.liquidity),
+        pnl_protection=pnl_protection,
+        liquidation_buffer=liquidation_buffer,
+        direction_alignment=direction_alignment,
     )
+
+
+def _pnl_protection_score(pnl_percent: float) -> int:
+    if pnl_percent <= -75:
+        return 5
+    if pnl_percent <= -50:
+        return 15
+    if pnl_percent <= -30:
+        return 30
+    if pnl_percent <= -15:
+        return 45
+    if pnl_percent < 0:
+        return clamp_score(58 + pnl_percent * 0.8)
+    if pnl_percent < 10:
+        return clamp_score(70 + pnl_percent * 1.5)
+    if pnl_percent < 30:
+        return clamp_score(85 + (pnl_percent - 10) * 0.45)
+    return 95
+
+
+def _liquidation_buffer_score(liquidation_distance: float | None) -> int:
+    if liquidation_distance is None:
+        return 45
+    if liquidation_distance < 3:
+        return 5
+    if liquidation_distance < 5:
+        return 12
+    if liquidation_distance < 10:
+        return 30
+    if liquidation_distance < 15:
+        return 50
+    if liquidation_distance < 25:
+        return 70
+    return 86
+
+
+def _direction_alignment_score(position: Position, structure: dict) -> int:
+    trend = structure.get("trend", {})
+    direction = trend.get("direction", "unknown")
+    break_of_structure = bool(trend.get("break_of_structure", False))
+    higher_low = bool(trend.get("higher_low", False))
+    if position.direction == "long":
+        base = {
+            "bullish": 88,
+            "neutral_to_bullish": 78,
+            "neutral": 58,
+            "bearish_to_neutral": 42,
+            "bearish": 18,
+        }.get(direction, 50)
+        if higher_low:
+            base += 6
+        if break_of_structure:
+            base += 6
+    else:
+        base = {
+            "bearish": 88,
+            "bearish_to_neutral": 74,
+            "neutral": 58,
+            "neutral_to_bullish": 32,
+            "bullish": 16,
+        }.get(direction, 50)
+        if higher_low:
+            base -= 8
+        if break_of_structure and direction in {"neutral_to_bullish", "bullish"}:
+            base -= 8
+    return clamp_score(base)
 
 
 def _data_missing(report: Report, position: Position) -> bool:
