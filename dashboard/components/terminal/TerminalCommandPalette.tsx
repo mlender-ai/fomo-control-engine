@@ -6,6 +6,7 @@ import { CommandPalette, CommandPaletteFooter } from "@astryxdesign/core/Command
 import { Kbd } from "@astryxdesign/core/Kbd";
 import { createStaticSource, type SearchableItem } from "@astryxdesign/core/Typeahead";
 import { api } from "@/lib/api";
+import { connectionStatusLabel } from "@/lib/labels/marketStateLabels";
 
 type TerminalCommand = SearchableItem & {
   action: () => Promise<void> | void;
@@ -29,17 +30,17 @@ export function TerminalCommandPalette({
 
   const commands = useMemo<TerminalCommand[]>(
     () => [
-      command("nav-live-positions", "Open Live Positions", "Navigation", "Live Position Intelligence Cockpit", ["positions", "live", "cockpit", "gp"], () => router.push("/"), "g p"),
-      command("nav-trades", "Open Trade History", "Navigation", "Closed trade review and replay", ["journal", "trades", "history", "gt"], () => router.push("/trades"), "g t"),
-      command("nav-settings", "Open Settings", "Navigation", "API and terminal configuration", ["settings", "config"], () => router.push("/settings"), "g ,"),
-      command("sync-positions", "/sync positions", "Actions", "Read-only Bitget sync plus deterministic position analysis", ["bitget", "private", "positions", "sync"], async () => {
+      command("nav-live-positions", "라이브 포지션 열기", "이동", "실시간 포지션 관제 화면", ["positions", "live", "cockpit", "gp", "포지션", "관제"], () => router.push("/"), "g p"),
+      command("nav-trades", "거래 복기 열기", "이동", "종료 거래 기록과 복기", ["journal", "trades", "history", "gt", "거래", "복기"], () => router.push("/trades"), "g t"),
+      command("nav-settings", "설정 열기", "이동", "API와 터미널 설정", ["settings", "config", "설정"], () => router.push("/settings"), "g ,"),
+      command("sync-positions", "/포지션 동기화", "실행", "Bitget read-only 포지션 동기화와 결정론적 분석", ["bitget", "private", "positions", "sync", "동기화"], async () => {
         const result = await api.syncLivePositions();
-        onNotice(`Live sync ${result.status}: created ${result.created}, updated ${result.updated}, analyzed ${result.positions?.length ?? 0}`);
+        onNotice(`라이브 동기화 ${connectionStatusLabel(result.status)}: 생성 ${result.created}, 갱신 ${result.updated}, 분석 ${result.positions?.length ?? 0}`);
         router.refresh();
       }),
-      command("test-bitget", "/test bitget", "Actions", "Check public market data and private read-only position access", ["bitget", "test", "connection"], async () => {
+      command("test-bitget", "/Bitget 테스트", "실행", "공개 시세와 read-only 포지션 접근 확인", ["bitget", "test", "connection", "테스트"], async () => {
         const result = await api.testBitgetConnection();
-        onNotice(`Bitget public ${result.public_market_data.ok ? "OK" : "ERROR"} · private ${result.private_positions.status}`);
+        onNotice(`Bitget 공개 시세 ${result.public_market_data.ok ? "OK" : "ERROR"} · 포지션 권한 ${connectionStatusLabel(result.private_positions.status)}`);
       })
     ],
     [onNotice, router]
@@ -58,7 +59,7 @@ export function TerminalCommandPalette({
     try {
       await selected.action();
     } catch (err) {
-      onNotice(err instanceof Error ? err.message : "Command failed");
+      onNotice(err instanceof Error ? err.message : "명령 실행에 실패했습니다.");
     } finally {
       setValue("");
     }
@@ -71,11 +72,11 @@ export function TerminalCommandPalette({
       searchSource={searchSource}
       value={value}
       onValueChange={selectCommand}
-      label="FOMO Control command palette"
+      label="FOMO Control 명령 팔레트"
       width={720}
       maxHeight={560}
-      emptyBootstrapText="Type a route, symbol, or slash command"
-      emptySearchText="No matching command"
+      emptyBootstrapText="이동 경로, 심볼, 명령어를 입력하세요"
+      emptySearchText="일치하는 명령이 없습니다"
       renderItem={(item) => (
         <div className="terminalCommandItem">
           <div>
@@ -87,9 +88,9 @@ export function TerminalCommandPalette({
       )}
       footer={
         <CommandPaletteFooter>
-          <span><Kbd keys="up" /> <Kbd keys="down" /> Navigate</span>
-          <span><Kbd keys="enter" /> Run</span>
-          <span><Kbd keys="escape" /> Close</span>
+          <span><Kbd keys="up" /> <Kbd keys="down" /> 이동</span>
+          <span><Kbd keys="enter" /> 실행</span>
+          <span><Kbd keys="escape" /> 닫기</span>
         </CommandPaletteFooter>
       }
     />

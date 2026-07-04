@@ -70,7 +70,7 @@ export function TerminalShell({ children }: { children: React.ReactNode }) {
       }
       if (event.key.toLowerCase() === "g") {
         routeModeRef.current = true;
-        setNotice("Route mode: P live positions · T trade history · , settings");
+        setNotice("이동 모드: P 포지션 관제 · T 거래 복기 · , 설정");
         return;
       }
       if (routeModeRef.current) {

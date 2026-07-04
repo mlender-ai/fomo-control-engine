@@ -8,13 +8,13 @@ import {
   NotebookPen,
   RefreshCw,
   ShieldCheck,
-  Target,
   TestTube2,
   UploadCloud
 } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
-import { TerminalMetric, TerminalPanel, TerminalTable, TerminalWarning } from "@/components/terminal";
+import { TerminalPanel, TerminalWarning } from "@/components/terminal";
 import { PositionChart } from "@/components/position/PositionChart";
+import { hiddenPriceLinesForAnalysis } from "@/components/position/PriceLevelOverlay";
 import { VolumeProfilePanel } from "@/components/position/VolumeProfilePanel";
 import { VolumeXrayPanel } from "@/components/position/VolumeXrayPanel";
 import {
@@ -28,17 +28,34 @@ import {
   type PositionState
 } from "@/lib/api";
 import { formatPrice, signedPercent } from "@/lib/format";
+import {
+  atrRiskLabel,
+  bollingerLabel,
+  connectionStatusLabel,
+  criticalLevelTypeLabel,
+  directionLabel,
+  genericMarketStateLabel,
+  localizeMarketCodes,
+  macdLabel,
+  phaseHintLabel,
+  resistanceStatusLabel,
+  rsiLabel,
+  supportStatusLabel,
+  timeframeLabel,
+  trendLabel,
+  volumeStateLabel,
+  yesNoLabel
+} from "@/lib/labels/marketStateLabels";
 
-type PanelStatus = "ok" | "warning" | "error" | "neutral" | "accent";
 type MetricTone = "positive" | "negative" | "warning" | "neutral" | "info" | "agent";
 type DetailTab = "insight" | "wyckoff" | "technical" | "risk" | "timeline";
 
 const detailTabs: Array<{ id: DetailTab; label: string }> = [
-  { id: "insight", label: "Insight" },
-  { id: "wyckoff", label: "Wyckoff" },
-  { id: "technical", label: "Technical" },
-  { id: "risk", label: "Risk" },
-  { id: "timeline", label: "Timeline" }
+  { id: "insight", label: "요약" },
+  { id: "wyckoff", label: "와이코프" },
+  { id: "technical", label: "기술분석" },
+  { id: "risk", label: "리스크" },
+  { id: "timeline", label: "기록" }
 ];
 
 export function LivePositionCockpit() {
@@ -50,6 +67,9 @@ export function LivePositionCockpit() {
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [activeTab, setActiveTab] = useState<DetailTab>("insight");
+  const [selectedChartAnalysis, setSelectedChartAnalysis] = useState<PositionChartAnalysis | null>(null);
+  const [selectedChartLoading, setSelectedChartLoading] = useState(false);
+  const [selectedChartError, setSelectedChartError] = useState("");
 
   async function load(sync = false) {
     setError("");
@@ -67,7 +87,7 @@ export function LivePositionCockpit() {
       setData(normalized);
       setSelectedId((current) => current || normalized.positions[0]?.position.id || "");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Live position data load failed");
+      setError(err instanceof Error ? err.message : "라이브 포지션 데이터를 불러오지 못했습니다.");
     } finally {
       setLoading(false);
     }
@@ -96,9 +116,9 @@ export function LivePositionCockpit() {
     try {
       const result = await api.testBitgetConnection();
       setConnectionTest(result);
-      setNotice(`Bitget public ${result.public_market_data.ok ? "OK" : "ERROR"} · private ${result.private_positions.status}`);
+      setNotice(`Bitget 공개 시세 ${result.public_market_data.ok ? "OK" : "ERROR"} · 포지션 권한 ${connectionStatusLabel(result.private_positions.status)}`);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Bitget connection test failed");
+      setError(err instanceof Error ? err.message : "Bitget 연결 테스트에 실패했습니다.");
     } finally {
       setActionLoading("");
     }
@@ -128,23 +148,41 @@ export function LivePositionCockpit() {
   const positions = data?.positions ?? [];
   const selected = positions.find((item) => item.position.id === selectedId) ?? positions[0];
 
+  async function loadSelectedChart(positionId: string) {
+    setSelectedChartLoading(true);
+    setSelectedChartError("");
+    try {
+      setSelectedChartAnalysis(await api.positionChartAnalysis(positionId, "4h"));
+    } catch (err) {
+      setSelectedChartAnalysis(null);
+      setSelectedChartError(err instanceof Error ? err.message : "차트 분석 데이터를 불러오지 못했습니다.");
+    } finally {
+      setSelectedChartLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    if (!selected?.position.id) return;
+    void loadSelectedChart(selected.position.id);
+  }, [selected?.position.id, data?.timestamp]);
+
   return (
     <div className="page cockpitPage">
       <header className="cockpitToolbar">
         <div>
-          <p className="eyebrow">Live Position Cockpit</p>
+          <p className="eyebrow">라이브 포지션 관제</p>
           <h1>내 포지션 관제</h1>
         </div>
         <div className="cockpitToolbarActions">
-          <span className="lastSyncText">{data?.timestamp ? `Last Sync ${new Date(data.timestamp).toLocaleTimeString()}` : "Last Sync -"}</span>
+          <span className="lastSyncText">{data?.timestamp ? `마지막 동기화 ${new Date(data.timestamp).toLocaleTimeString()}` : "마지막 동기화 -"}</span>
           <button className="button" onClick={syncPositions} disabled={actionLoading === "sync"}>
             <UploadCloud size={16} />
-            {actionLoading === "sync" ? "Syncing" : "Sync Live"}
+            {actionLoading === "sync" ? "동기화 중" : "실시간 동기화"}
           </button>
-          <button className="iconButton secondary" onClick={() => void load(false)} disabled={loading} title="Refresh local view">
+          <button className="iconButton secondary" onClick={() => void load(false)} disabled={loading} title="화면 새로고침">
             <RefreshCw size={16} />
           </button>
-          <button className="iconButton secondary" onClick={testConnection} disabled={actionLoading === "test"} title="Test Bitget connection">
+          <button className="iconButton secondary" onClick={testConnection} disabled={actionLoading === "test"} title="Bitget 연결 테스트">
             <TestTube2 size={16} />
           </button>
         </div>
@@ -155,13 +193,13 @@ export function LivePositionCockpit() {
 
       {connectionTest ? (
         <div className={`connectionNotice ${connectionTest.private_positions.ok ? "ok" : "warn"}`}>
-          Bitget public {connectionTest.public_market_data.ok ? "OK" : "ERROR"} · private {connectionTest.private_positions.status} · positions {connectionTest.private_positions.count}
+          Bitget 공개 시세 {connectionTest.public_market_data.ok ? "OK" : "ERROR"} · 포지션 권한 {connectionStatusLabel(connectionTest.private_positions.status)} · 포지션 {connectionTest.private_positions.count}
         </div>
       ) : null}
 
       {loading && !data ? (
-        <TerminalPanel title="Loading Live Positions" subtitle="Bitget sync and deterministic analysis are starting" status="neutral">
-          <div className="terminalEmpty">Loading live position cockpit...</div>
+        <TerminalPanel title="라이브 포지션 로딩" subtitle="Bitget 동기화와 결정론적 분석을 시작합니다" status="neutral">
+          <div className="terminalEmpty">라이브 포지션 관제 화면을 불러오는 중입니다.</div>
         </TerminalPanel>
       ) : positions.length ? (
         <>
@@ -170,7 +208,13 @@ export function LivePositionCockpit() {
             <>
               <SelectedPositionHeader payload={selected} />
               <section className="cockpitMainGrid">
-                <ChartPanel payload={selected} />
+                <PositionChart
+                  analysis={selectedChartAnalysis}
+                  loading={selectedChartLoading}
+                  error={selectedChartError}
+                  onRetry={() => void loadSelectedChart(selected.position.id)}
+                  trendSummary={trendLabel(selected.state.analysis.technical.trend)}
+                />
                 <InsightSummaryPanel payload={selected} onCreateInsight={createInsight} busy={actionLoading === `insight:${selected.position.id}`} />
               </section>
               <PositionDetailTabs payload={selected} activeTab={activeTab} onTabChange={setActiveTab} onCreateInsight={createInsight} busy={actionLoading === `insight:${selected.position.id}`} />
@@ -194,7 +238,7 @@ function PositionStrip({
   onSelect: (positionId: string) => void;
 }) {
   return (
-    <section className="positionStrip" aria-label="Open positions">
+    <section className="positionStrip" aria-label="보유 포지션">
       {positions.map((item) => (
         <button
           className={`positionStripCard ${item.position.id === selectedId ? "selected" : ""}`}
@@ -203,9 +247,9 @@ function PositionStrip({
           type="button"
         >
           <strong>{item.position.symbol}</strong>
-          <span>{item.position.direction.toUpperCase()} · {item.position.leverage}x</span>
+          <span>{directionLabel(item.position.direction)} · {item.position.leverage}x</span>
           <em className={item.state.pnl_percent >= 0 ? "successText" : "dangerText"}>{signedPercent(item.state.pnl_percent)}</em>
-          <small>Health {item.state.health_score}</small>
+          <small>건강도 {item.state.health_score}</small>
           <StatusPill status={item.state.status} label={item.state.status_label} />
         </button>
       ))}
@@ -218,65 +262,20 @@ function SelectedPositionHeader({ payload }: { payload: LivePositionPayload }) {
   return (
     <section className={`selectedPositionHeader status-${state.status}`}>
       <div className="selectedPositionTitle">
-        <span>Selected Position</span>
-        <strong>{position.symbol} · {position.direction.toUpperCase()} {position.leverage}x</strong>
+        <span>선택 포지션</span>
+        <strong>{position.symbol} · {directionLabel(position.direction)} {position.leverage}x</strong>
       </div>
       <div className="selectedPositionMetrics">
-        <PositionHeaderMetric label="PnL" value={signedPercent(state.pnl_percent)} tone={state.pnl_percent >= 0 ? "positive" : "negative"} />
-        <PositionHeaderMetric label="Entry" value={formatPrice(position.entry_price)} />
-        <PositionHeaderMetric label="Mark" value={formatNullablePrice(state.mark_price)} tone="info" />
-        <PositionHeaderMetric label="Liq" value={formatNullablePrice(position.liquidation_price)} tone="warning" />
-        <PositionHeaderMetric label="Liq Dist" value={formatDistance(state.liquidation_distance_pct)} tone={liquidationTone(state.liquidation_distance_pct)} />
-        <PositionHeaderMetric label="Health" value={`${state.health_score}/100`} tone={healthTone(state.health_score)} />
+        <PositionHeaderMetric label="손익률" value={signedPercent(state.pnl_percent)} tone={state.pnl_percent >= 0 ? "positive" : "negative"} />
+        <PositionHeaderMetric label="진입가" value={formatPrice(position.entry_price)} />
+        <PositionHeaderMetric label="현재가" value={formatNullablePrice(state.mark_price)} tone="info" />
+        <PositionHeaderMetric label="청산가" value={formatNullablePrice(position.liquidation_price)} tone="warning" />
+        <PositionHeaderMetric label="청산가 거리" value={formatDistance(state.liquidation_distance_pct)} tone={liquidationTone(state.liquidation_distance_pct)} />
+        <PositionHeaderMetric label="건강도" value={`${state.health_score}/100`} tone={healthTone(state.health_score)} />
       </div>
       <div className="selectedPositionState">
         <span>상태</span>
         <strong>{state.status_label}</strong>
-      </div>
-    </section>
-  );
-}
-
-function ChartPanel({ payload }: { payload: LivePositionPayload }) {
-  const { position, state } = payload;
-  const technical = state.analysis.technical;
-  const levels = chartLevels(payload);
-  const prices = levels.map((level) => level.price).filter((price) => Number.isFinite(price));
-  const min = Math.min(...prices);
-  const max = Math.max(...prices);
-  const candles = [44, 58, 46, 64, 52, 72, 68, 61, 49, 56, 42, 48, 54, 51];
-  return (
-    <section className="focusPanel chartFocusPanel">
-      <div className="focusPanelHeader">
-        <div>
-          <h2>{position.symbol} Chart</h2>
-          <p>Entry / Mark / Liquidation / Support / Resistance</p>
-        </div>
-        <span>{technical.trend.replaceAll("_", " ")}</span>
-      </div>
-      <div className="chartMock" aria-label="Position chart placeholder">
-        <div className="chartGridLayer" />
-        <div className="mockCandleLayer">
-          {candles.map((height, index) => (
-            <i
-              className={index % 3 === 0 ? "down" : "up"}
-              key={index}
-              style={{ height: `${height}%`, left: `${7 + index * 6.5}%` }}
-            />
-          ))}
-        </div>
-        {levels.map((level) => (
-          <div className={`chartLevel chartLevel-${level.className}`} key={`${level.type}-${level.price}`} style={{ top: `${priceToTop(level.price, min, max)}%` }}>
-            <span>{level.label}</span>
-            <strong>{formatPrice(level.price)}</strong>
-          </div>
-        ))}
-        <div className="volumePlaceholder">
-          <span>Volume</span>
-          {candles.slice(0, 12).map((height, index) => (
-            <i key={index} style={{ height: `${Math.max(18, height / 1.8)}%` }} />
-          ))}
-        </div>
       </div>
     </section>
   );
@@ -296,12 +295,12 @@ function InsightSummaryPanel({
     <section className="focusPanel insightFocusPanel">
       <div className="focusPanelHeader">
         <div>
-          <h2>AI Position Insight</h2>
+          <h2>AI 포지션 인사이트</h2>
           <p>현재 판단과 다음 확인 지점</p>
         </div>
         <button className="button secondary" onClick={() => onCreateInsight(position.id)} disabled={busy}>
           <BrainCircuit size={16} />
-          {busy ? "Generating" : "Generate"}
+          {busy ? "생성 중" : "인사이트 생성"}
         </button>
       </div>
       <div className={`insightJudgement status-${state.status}`}>
@@ -311,13 +310,13 @@ function InsightSummaryPanel({
       </div>
       {insight ? (
         <div className="insightPreview">
-          <p>{firstInsightParagraph(insight.insight_text)}</p>
-          <small>{new Date(insight.created_at).toLocaleString()} · Health {insight.health_score}/100</small>
+          <p>{localizeMarketCodes(firstInsightParagraph(insight.insight_text))}</p>
+          <small>{new Date(insight.created_at).toLocaleString()} · 건강도 {insight.health_score}/100</small>
         </div>
       ) : (
         <div className="insightEmpty">
           <strong>아직 인사이트가 없습니다.</strong>
-          <span>Generate Insight 버튼을 눌러 현재 포지션 상태를 분석하세요.</span>
+          <span>인사이트 생성 버튼을 눌러 현재 포지션 상태를 분석하세요.</span>
         </div>
       )}
     </section>
@@ -339,7 +338,7 @@ function PositionDetailTabs({
 }) {
   return (
     <section className="detailTabsPanel">
-      <div className="detailTabList" role="tablist" aria-label="Position detail tabs">
+      <div className="detailTabList" role="tablist" aria-label="포지션 상세 탭">
         {detailTabs.map((tab) => (
           <button
             aria-selected={activeTab === tab.id}
@@ -384,16 +383,16 @@ function InsightTab({
       <div className="tabTextBlock">
         {insight ? (
           <>
-            <p>{insight.insight_text}</p>
-            <small>{new Date(insight.created_at).toLocaleString()} · Health {insight.health_score}/100</small>
+            <p>{localizeMarketCodes(insight.insight_text)}</p>
+            <small>{new Date(insight.created_at).toLocaleString()} · 건강도 {insight.health_score}/100</small>
           </>
         ) : (
           <div className="insightEmpty">
             <strong>아직 인사이트가 없습니다.</strong>
-            <span>Generate Insight 버튼을 눌러 현재 포지션 상태를 분석하세요.</span>
+            <span>인사이트 생성 버튼을 눌러 현재 포지션 상태를 분석하세요.</span>
             <button className="button" onClick={() => onCreateInsight(payload.position.id)} disabled={busy}>
               <BrainCircuit size={16} />
-              {busy ? "Generating" : "Generate Insight"}
+              {busy ? "생성 중" : "인사이트 생성"}
             </button>
           </div>
         )}
@@ -406,12 +405,12 @@ function WyckoffTab({ state }: { state: PositionState }) {
   const wyckoff = state.analysis.wyckoff;
   return (
     <div className="tabMetricLayout">
-      <PositionHeaderMetric label="Accumulation" value={wyckoff.accumulation_score} tone="info" />
-      <PositionHeaderMetric label="Distribution" value={wyckoff.distribution_score} tone="warning" />
-      <PositionHeaderMetric label="Phase" value={humanizeToken(wyckoff.phase_hint)} />
-      <PositionHeaderMetric label="Spring" value={wyckoff.spring_candidate ? "Yes" : "No"} />
-      <PositionHeaderMetric label="SOS" value={wyckoff.sos_candidate ? "Yes" : "No"} />
-      <PositionHeaderMetric label="LPS" value={wyckoff.lps_candidate ? "Yes" : "No"} />
+      <PositionHeaderMetric label="매집 점수" value={wyckoff.accumulation_score} tone="info" />
+      <PositionHeaderMetric label="분산 점수" value={wyckoff.distribution_score} tone="warning" />
+      <PositionHeaderMetric label="국면 힌트" value={phaseHintLabel(wyckoff.phase_hint)} />
+      <PositionHeaderMetric label="Spring 후보" value={yesNoLabel(wyckoff.spring_candidate)} />
+      <PositionHeaderMetric label="SOS 후보" value={yesNoLabel(wyckoff.sos_candidate)} />
+      <PositionHeaderMetric label="LPS 후보" value={yesNoLabel(wyckoff.lps_candidate)} />
       <p className="tabExplanation">{wyckoff.structure_comment}</p>
     </div>
   );
@@ -421,13 +420,13 @@ function TechnicalTab({ state }: { state: PositionState }) {
   const technical = state.analysis.technical;
   return (
     <div className="tabMetricLayout">
-      <PositionHeaderMetric label="Trend" value={humanizeToken(technical.trend)} tone={technical.trend_alignment.includes("against") ? "negative" : "positive"} />
-      <PositionHeaderMetric label="RSI" value={humanizeToken(technical.rsi_state)} />
-      <PositionHeaderMetric label="MACD" value={humanizeToken(technical.macd_state)} tone={technical.macd_state.includes("bearish") ? "negative" : "positive"} />
-      <PositionHeaderMetric label="Bollinger" value={humanizeToken(technical.bollinger_state)} />
-      <PositionHeaderMetric label="Volume" value={humanizeToken(technical.volume_state)} tone={technical.volume_state.includes("declining") ? "warning" : "positive"} />
-      <PositionHeaderMetric label="Support" value={humanizeToken(technical.support_status)} tone={technical.support_status === "at_risk" ? "negative" : "positive"} />
-      <PositionHeaderMetric label="Resistance" value={humanizeToken(technical.resistance_status)} />
+      <PositionHeaderMetric label="추세" value={trendLabel(technical.trend)} tone={technical.trend_alignment.includes("against") ? "negative" : "positive"} />
+      <PositionHeaderMetric label="RSI" value={rsiLabel(technical.rsi_state)} />
+      <PositionHeaderMetric label="MACD" value={macdLabel(technical.macd_state)} tone={technical.macd_state.includes("bearish") ? "negative" : "positive"} />
+      <PositionHeaderMetric label="볼린저" value={bollingerLabel(technical.bollinger_state)} />
+      <PositionHeaderMetric label="거래량" value={volumeStateLabel(technical.volume_state)} tone={technical.volume_state.includes("declining") ? "warning" : "positive"} />
+      <PositionHeaderMetric label="지지" value={supportStatusLabel(technical.support_status)} tone={technical.support_status === "at_risk" ? "negative" : "positive"} />
+      <PositionHeaderMetric label="저항" value={resistanceStatusLabel(technical.resistance_status)} />
     </div>
   );
 }
@@ -437,19 +436,19 @@ function RiskTab({ payload }: { payload: LivePositionPayload }) {
   return (
     <div className="tabRiskGrid">
       <div className="tabMetricLayout">
-        <PositionHeaderMetric label="Liq Distance" value={formatDistance(state.liquidation_distance_pct)} tone={liquidationTone(state.liquidation_distance_pct)} />
-        <PositionHeaderMetric label="Risk Score" value={`${state.risk_score}/100`} tone={state.risk_score >= 70 ? "negative" : state.risk_score >= 55 ? "warning" : "neutral"} />
-        <PositionHeaderMetric label="PnL" value={signedPercent(state.pnl_percent)} tone={state.pnl_percent >= 0 ? "positive" : "negative"} />
-        <PositionHeaderMetric label="Giveback" value={formatDistance(state.analysis.risk.profit_giveback_pct)} />
-        <PositionHeaderMetric label="Stop" value={formatNullablePrice(position.planned_stop_price)} tone="warning" />
-        <PositionHeaderMetric label="ATR Risk" value={state.analysis.risk.atr_risk} />
+        <PositionHeaderMetric label="청산가 거리" value={formatDistance(state.liquidation_distance_pct)} tone={liquidationTone(state.liquidation_distance_pct)} />
+        <PositionHeaderMetric label="리스크 점수" value={`${state.risk_score}/100`} tone={state.risk_score >= 70 ? "negative" : state.risk_score >= 55 ? "warning" : "neutral"} />
+        <PositionHeaderMetric label="손익률" value={signedPercent(state.pnl_percent)} tone={state.pnl_percent >= 0 ? "positive" : "negative"} />
+        <PositionHeaderMetric label="수익 반납" value={formatDistance(state.analysis.risk.profit_giveback_pct)} />
+        <PositionHeaderMetric label="손절 기준" value={formatNullablePrice(position.planned_stop_price)} tone="warning" />
+        <PositionHeaderMetric label="ATR 리스크" value={atrRiskLabel(state.analysis.risk.atr_risk)} />
       </div>
       <div className="tabLevelsList">
         <strong>주의할 가격</strong>
         {state.analysis.risk.critical_levels.length ? (
           state.analysis.risk.critical_levels.map((level) => (
             <div key={`${level.type}-${level.price}`}>
-              <span>{level.type}</span>
+              <span>{criticalLevelTypeLabel(level.type)}</span>
               <em>{formatPrice(level.price)}</em>
               <p>{level.meaning}</p>
             </div>
@@ -466,9 +465,9 @@ function TimelineTab({ payload }: { payload: LivePositionPayload }) {
   return (
     <div className="timelineTab">
       <div className="snapshotSummary">
-        <PositionHeaderMetric label="Latest Health" value={`${payload.latest_snapshot.health_score}/100`} tone={healthTone(payload.latest_snapshot.health_score)} />
-        <PositionHeaderMetric label="Risk" value={`${payload.latest_snapshot.risk_score}/100`} />
-        <PositionHeaderMetric label="Snapshot" value={new Date(payload.latest_snapshot.created_at).toLocaleTimeString()} />
+        <PositionHeaderMetric label="최근 건강도" value={`${payload.latest_snapshot.health_score}/100`} tone={healthTone(payload.latest_snapshot.health_score)} />
+        <PositionHeaderMetric label="리스크" value={`${payload.latest_snapshot.risk_score}/100`} />
+        <PositionHeaderMetric label="스냅샷" value={new Date(payload.latest_snapshot.created_at).toLocaleTimeString()} />
       </div>
       <EventList events={payload.recent_events} />
     </div>
@@ -509,7 +508,7 @@ export function PositionDetailShell({ positionId }: { positionId: string }) {
     try {
       setDetail(await api.livePosition(positionId));
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Position detail load failed");
+      setError(err instanceof Error ? err.message : "포지션 상세 데이터를 불러오지 못했습니다.");
     } finally {
       setLoading(false);
     }
@@ -522,7 +521,7 @@ export function PositionDetailShell({ positionId }: { positionId: string }) {
       setChartAnalysis(await api.positionChartAnalysis(positionId, nextTimeframe));
     } catch (err) {
       setChartAnalysis(null);
-      setChartError(err instanceof Error ? err.message : "Chart analysis load failed");
+      setChartError(err instanceof Error ? err.message : "차트 분석 데이터를 불러오지 못했습니다.");
     } finally {
       setChartLoading(false);
     }
@@ -546,7 +545,7 @@ export function PositionDetailShell({ positionId }: { positionId: string }) {
       await loadChart(timeframe);
       setNotice("새 포지션 스냅샷을 저장했습니다.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Analyze failed");
+      setError(err instanceof Error ? err.message : "상태 갱신에 실패했습니다.");
     } finally {
       setBusy("");
     }
@@ -586,7 +585,7 @@ export function PositionDetailShell({ positionId }: { positionId: string }) {
       await loadChart(timeframe);
       setNotice("포지션 메모와 계획 가격을 저장했습니다.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Memo save failed");
+      setError(err instanceof Error ? err.message : "메모 저장에 실패했습니다.");
     } finally {
       setBusy("");
     }
@@ -610,11 +609,11 @@ export function PositionDetailShell({ positionId }: { positionId: string }) {
         exit_reason: String(form.get("exit_reason") || "사용자 내부 청산 기록"),
         memo: String(form.get("exit_memo") || "")
       });
-      setNotice(`청산 기록을 저장했습니다. Trade ${trade.symbol} ${signedPercent(trade.pnl_percent)}`);
+      setNotice(`청산 기록을 저장했습니다. 거래 ${trade.symbol} ${signedPercent(trade.pnl_percent)}`);
       await load();
       await loadChart(timeframe);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Exit record failed");
+      setError(err instanceof Error ? err.message : "청산 기록 저장에 실패했습니다.");
     } finally {
       setBusy("");
     }
@@ -623,8 +622,8 @@ export function PositionDetailShell({ positionId }: { positionId: string }) {
   if (loading && !detail) {
     return (
       <div className="page">
-        <TerminalPanel title="Loading Position" subtitle={positionId} status="neutral">
-          <div className="terminalEmpty">Loading position detail...</div>
+        <TerminalPanel title="포지션 로딩" subtitle={positionId} status="neutral">
+          <div className="terminalEmpty">포지션 상세 화면을 불러오는 중입니다.</div>
         </TerminalPanel>
       </div>
     );
@@ -633,7 +632,7 @@ export function PositionDetailShell({ positionId }: { positionId: string }) {
   if (!detail) {
     return (
       <div className="page">
-        {error ? <TerminalWarning tone="error">{error}</TerminalWarning> : <TerminalWarning tone="error">Position not found</TerminalWarning>}
+        {error ? <TerminalWarning tone="error">{error}</TerminalWarning> : <TerminalWarning tone="error">포지션을 찾을 수 없습니다.</TerminalWarning>}
       </div>
     );
   }
@@ -644,30 +643,30 @@ export function PositionDetailShell({ positionId }: { positionId: string }) {
     <div className="page positionDetailPage">
       <header className="cockpitToolbar positionDetailToolbar">
         <div>
-          <p className="eyebrow">Position Detail Chart Analysis</p>
-          <h1>{detail.position.symbol} {detail.position.direction.toUpperCase()} 차트 관제</h1>
+          <p className="eyebrow">포지션 상세 차트 분석</p>
+          <h1>{detail.position.symbol} {directionLabel(detail.position.direction)} 차트 관제</h1>
         </div>
         <div className="cockpitToolbarActions">
           <label className="timeframeSelect">
-            <span>Timeframe</span>
+            <span>봉 주기</span>
             <select value={timeframe} onChange={(event) => setTimeframe(event.target.value)}>
-              <option value="15m">15m</option>
-              <option value="1h">1h</option>
-              <option value="4h">4h</option>
-              <option value="1d">1d</option>
+              <option value="15m">15분봉</option>
+              <option value="1h">1시간봉</option>
+              <option value="4h">4시간봉</option>
+              <option value="1d">1일봉</option>
             </select>
           </label>
           <Link className="button secondary" href="/">
             <Activity size={16} />
-            Cockpit
+            관제 화면
           </Link>
           <button className="button secondary" onClick={analyze} disabled={busy === "analyze"}>
             <RefreshCw size={16} />
-            Analyze
+            상태 갱신
           </button>
           <button className="button" onClick={createInsight} disabled={busy === "insight"}>
             <BrainCircuit size={16} />
-            Insight
+            인사이트
           </button>
         </div>
       </header>
@@ -678,20 +677,26 @@ export function PositionDetailShell({ positionId }: { positionId: string }) {
       <SelectedPositionHeader payload={detail} />
 
       <section className="positionDetailMain">
-        <PositionChart analysis={chartAnalysis} loading={chartLoading} error={chartError} onRetry={() => void loadChart(timeframe)} />
+        <PositionChart
+          analysis={chartAnalysis}
+          loading={chartLoading}
+          error={chartError}
+          onRetry={() => void loadChart(timeframe)}
+          trendSummary={trendLabel(detail.state.analysis.technical.trend)}
+        />
         <PositionInsightRail payload={detail} chartAnalysis={chartAnalysis} onCreateInsight={() => createInsight()} busy={busy === "insight"} />
       </section>
 
       <section className="positionBottomAnalysis">
-        {chartAnalysis ? <VolumeProfilePanel analysis={chartAnalysis} /> : <AnalysisUnavailable title="Estimated Volume Profile" />}
-        {chartAnalysis ? <VolumeXrayPanel analysis={chartAnalysis} /> : <AnalysisUnavailable title="Volume X-Ray" />}
+        {chartAnalysis ? <VolumeProfilePanel analysis={chartAnalysis} /> : <AnalysisUnavailable title="추정 볼륨 프로파일" />}
+        {chartAnalysis ? <VolumeXrayPanel analysis={chartAnalysis} /> : <AnalysisUnavailable title="거래량 엑스레이" />}
         <TechnicalSummaryCard payload={detail} chartAnalysis={chartAnalysis} />
       </section>
 
       <PositionDetailTabs payload={detail} activeTab={detailTab} onTabChange={setDetailTab} onCreateInsight={() => createInsight()} busy={busy === "insight"} />
 
       <section className="grid two">
-        <TerminalPanel title="Entry Thesis Memo" subtitle="진입 논리와 무효화/익절 기준은 AI가 점수를 계산하지 않고 비교 설명에만 사용합니다" status="accent">
+        <TerminalPanel title="진입 논리 메모" subtitle="진입 논리와 무효화/익절 기준은 AI가 점수를 계산하지 않고 비교 설명에만 사용합니다" status="accent">
           <form className="positionMemoForm" onSubmit={saveMemo}>
             <label>
               <span>진입 당시 논리</span>
@@ -717,12 +722,12 @@ export function PositionDetailShell({ positionId }: { positionId: string }) {
             </label>
             <button className="button" type="submit" disabled={busy === "memo"}>
               <NotebookPen size={16} />
-              Save Memo
+              메모 저장
             </button>
           </form>
         </TerminalPanel>
 
-        <TerminalPanel title="Record Exit" subtitle="거래소 주문이 아니라 내부 복기용 청산 기록만 생성합니다" status={detail.position.status === "closed" ? "neutral" : "warning"}>
+        <TerminalPanel title="이탈 기록" subtitle="거래소 주문이 아니라 내부 복기용 청산 기록만 생성합니다" status={detail.position.status === "closed" ? "neutral" : "warning"}>
           <form className="positionMemoForm" onSubmit={recordExit}>
             <label>
               <span>청산 기록 가격</span>
@@ -738,7 +743,7 @@ export function PositionDetailShell({ positionId }: { positionId: string }) {
             </label>
             <button className="button" type="submit" disabled={detail.position.status === "closed" || busy === "exit"}>
               <FileClock size={16} />
-              Record Internal Exit
+              내부 이탈 기록
             </button>
           </form>
         </TerminalPanel>
@@ -764,10 +769,11 @@ function PositionInsightRail({
   const support = chartAnalysis?.price_levels.support[0];
   const resistance = chartAnalysis?.price_levels.resistance[0];
   const invalidation = chartAnalysis?.price_levels.invalidation[0];
+  const liquidationOutOfRange = chartAnalysis ? hiddenPriceLinesForAnalysis(chartAnalysis).length > 0 : false;
   async function copyInsight() {
     if (!insight) return;
     try {
-      await navigator.clipboard.writeText(insight.insight_text);
+      await navigator.clipboard.writeText(localizeMarketCodes(insight.insight_text));
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1800);
     } catch {
@@ -784,43 +790,44 @@ function PositionInsightRail({
       <div className="railSection">
         <div className="railSectionHeader">
           <strong>주요 가격대</strong>
-          <small>{chartAnalysis?.timeframe ?? "4h"}</small>
+          <small>{timeframeLabel(chartAnalysis?.timeframe ?? "4h")}</small>
         </div>
-        <RailPrice label="Entry" value={formatPrice(position.entry_price)} />
-        <RailPrice label="Mark" value={formatNullablePrice(state.mark_price)} tone="info" />
-        <RailPrice label="Liq" value={formatNullablePrice(position.liquidation_price)} tone="danger" />
-        <RailPrice label="Support" value={support ? formatPrice(support.price) : "-"} />
-        <RailPrice label="Resistance" value={resistance ? formatPrice(resistance.price) : "-"} tone="warning" />
-        <RailPrice label="Invalidation" value={invalidation ? formatPrice(invalidation.price) : formatNullablePrice(position.planned_stop_price)} tone="danger" />
+        <RailPrice label="진입가" value={formatPrice(position.entry_price)} />
+        <RailPrice label="현재가" value={formatNullablePrice(state.mark_price)} tone="info" />
+        <RailPrice label="청산가" value={formatNullablePrice(position.liquidation_price)} tone="danger" />
+        {liquidationOutOfRange ? <div className="railPriceNotice">청산가가 현재 차트 범위 밖에 있습니다.</div> : null}
+        <RailPrice label="지지선" value={support ? formatPrice(support.price) : "-"} />
+        <RailPrice label="저항선" value={resistance ? formatPrice(resistance.price) : "-"} tone="warning" />
+        <RailPrice label="무효화 가격" value={invalidation ? formatPrice(invalidation.price) : formatNullablePrice(position.planned_stop_price)} tone="danger" />
       </div>
       <div className="railSection">
         <div className="railSectionHeader">
-          <strong>Risk Summary</strong>
-          <small>no order execution</small>
+          <strong>리스크 요약</strong>
+          <small>주문 실행 없음</small>
         </div>
-        <RailPrice label="Health" value={`${state.health_score}/100`} tone={healthTone(state.health_score)} />
-        <RailPrice label="Risk" value={`${state.risk_score}/100`} tone={state.risk_score >= 70 ? "negative" : state.risk_score >= 55 ? "warning" : "neutral"} />
-        <RailPrice label="Liq Dist" value={formatDistance(state.liquidation_distance_pct)} tone={liquidationTone(state.liquidation_distance_pct)} />
-        <RailPrice label="Giveback" value={formatDistance(state.analysis.risk.profit_giveback_pct)} />
+        <RailPrice label="건강도" value={`${state.health_score}/100`} tone={healthTone(state.health_score)} />
+        <RailPrice label="리스크" value={`${state.risk_score}/100`} tone={state.risk_score >= 70 ? "negative" : state.risk_score >= 55 ? "warning" : "neutral"} />
+        <RailPrice label="청산가 거리" value={formatDistance(state.liquidation_distance_pct)} tone={liquidationTone(state.liquidation_distance_pct)} />
+        <RailPrice label="수익 반납" value={formatDistance(state.analysis.risk.profit_giveback_pct)} />
       </div>
       <div className="railSection aiInsightRailSection">
         <div className="railSectionHeader aiInsightHeader">
           <div>
-            <strong>AI Position Insight</strong>
-            {insight ? <small>Updated {new Date(insight.created_at).toLocaleTimeString()}</small> : null}
+            <strong>AI 포지션 인사이트</strong>
+            {insight ? <small>갱신 {new Date(insight.created_at).toLocaleTimeString()}</small> : null}
           </div>
           <button className="button secondary" onClick={onCreateInsight} disabled={busy}>
             <BrainCircuit size={16} />
-            {busy ? "Generating insight..." : insight ? "Regenerate" : "Generate Insight"}
+            {busy ? "인사이트 생성 중" : insight ? "다시 생성" : "인사이트 생성"}
           </button>
         </div>
         {insight ? (
           <>
-            <div className="railInsightText full">{insight.insight_text}</div>
+            <div className="railInsightText full">{localizeMarketCodes(insight.insight_text)}</div>
             <div className="insightActionRow">
-              <button className="button secondary" onClick={copyInsight} type="button">{copied ? "Copied" : "Copy"}</button>
+              <button className="button secondary" onClick={copyInsight} type="button">{copied ? "복사됨" : "복사"}</button>
               <button className="button secondary" onClick={() => setShowInputJson((value) => !value)} type="button">
-                {showInputJson ? "Hide Input JSON" : "View Input JSON"}
+                {showInputJson ? "입력 JSON 숨기기" : "입력 JSON 보기"}
               </button>
             </div>
             {showInputJson ? (
@@ -830,7 +837,7 @@ function PositionInsightRail({
         ) : (
           <div className="railInsightEmpty">
             <strong>아직 생성된 포지션 인사이트가 없습니다.</strong>
-            <p>현재 포지션 상태를 분석하려면 Generate Insight를 눌러주세요.</p>
+            <p>현재 포지션 상태를 분석하려면 인사이트 생성을 눌러주세요.</p>
           </div>
         )}
       </div>
@@ -868,18 +875,18 @@ function TechnicalSummaryCard({
     <section className="analysisPanel technicalSummaryPanel">
       <div className="analysisPanelHeader">
         <div>
-          <h2>Technical Summary</h2>
+          <h2>기술분석 요약</h2>
           <p>차트 아래 보조 요약</p>
         </div>
         <span>{payload.state.status_label}</span>
       </div>
       <div className="technicalSummaryGrid">
-        <RailPrice label="Trend" value={humanizeToken(technical.trend)} tone={technical.trend_alignment.includes("against") ? "negative" : "positive"} />
-        <RailPrice label="RSI" value={humanizeToken(technical.rsi_state)} />
-        <RailPrice label="MACD" value={humanizeToken(technical.macd_state)} tone={technical.macd_state.includes("bearish") ? "negative" : "positive"} />
-        <RailPrice label="Volume" value={humanizeToken(chartAnalysis?.volume_xray.volume_state ?? technical.volume_state)} tone={chartAnalysis?.volume_xray.spike_detected ? "warning" : "neutral"} />
-        <RailPrice label="Wyckoff" value={humanizeToken(wyckoff.phase_hint)} />
-        <RailPrice label="Markers" value={String(chartAnalysis?.wyckoff_markers.length ?? 0)} />
+        <RailPrice label="추세" value={trendLabel(technical.trend)} tone={technical.trend_alignment.includes("against") ? "negative" : "positive"} />
+        <RailPrice label="RSI" value={rsiLabel(technical.rsi_state)} />
+        <RailPrice label="MACD" value={macdLabel(technical.macd_state)} tone={technical.macd_state.includes("bearish") ? "negative" : "positive"} />
+        <RailPrice label="거래량" value={volumeStateLabel(chartAnalysis?.volume_xray.volume_state ?? technical.volume_state)} tone={chartAnalysis?.volume_xray.spike_detected ? "warning" : "neutral"} />
+        <RailPrice label="와이코프" value={phaseHintLabel(wyckoff.phase_hint)} />
+        <RailPrice label="마커 수" value={String(chartAnalysis?.wyckoff_markers.length ?? 0)} />
       </div>
       <p className="technicalSummaryText">{wyckoff.structure_comment}</p>
     </section>
@@ -900,179 +907,9 @@ function AnalysisUnavailable({ title }: { title: string }) {
   );
 }
 
-function PositionDecisionPanel({
-  payload,
-  onCreateInsight,
-  busy
-}: {
-  payload: LivePositionPayload;
-  onCreateInsight: (positionId: string) => Promise<void> | void;
-  busy: boolean;
-}) {
-  const { position, state } = payload;
-  const verdict = verdictForState(state);
-  return (
-    <TerminalPanel
-      title="Position State"
-      subtitle="자동 주문 없이, 현재 포지션 유지 논리가 살아있는지만 점검합니다"
-      status={statusPanelTone(state.status)}
-      actions={
-        <>
-          <Link className="button secondary" href={`/positions/${position.id}`}>
-            <Target size={16} />
-            Detail
-          </Link>
-          <button className="button" onClick={() => onCreateInsight(position.id)} disabled={busy}>
-            <BrainCircuit size={16} />
-            {busy ? "Generating" : "AI Insight"}
-          </button>
-        </>
-      }
-    >
-      <div className="positionDecisionGrid">
-        <div className={`verdictBox status-${state.status}`}>
-          <span>현재 판단</span>
-          <strong>{state.status_label}</strong>
-          <p>{verdict}</p>
-        </div>
-        <div className="terminalMetricGrid">
-          <TerminalMetric label="Symbol" value={position.symbol} delta={`${position.direction.toUpperCase()} · ${position.leverage}x`} tone="info" />
-          <TerminalMetric label="Health" value={`${state.health_score}/100`} delta={state.status_label} tone={healthTone(state.health_score)} />
-          <TerminalMetric label="Risk" value={`${state.risk_score}/100`} delta="position risk" tone={state.risk_score >= 70 ? "negative" : state.risk_score >= 55 ? "warning" : "neutral"} />
-          <TerminalMetric label="PnL" value={signedPercent(state.pnl_percent)} delta={state.pnl_amount === null ? "amount n/a" : `${state.pnl_amount.toFixed(2)} USDT`} tone={state.pnl_percent >= 0 ? "positive" : "negative"} />
-          <TerminalMetric label="Score Δ" value={`${state.score_change >= 0 ? "+" : ""}${state.score_change}`} delta={`${state.entry_score} -> ${state.current_score}`} tone={state.score_change >= 0 ? "positive" : state.score_change <= -15 ? "negative" : "warning"} />
-        </div>
-      </div>
-    </TerminalPanel>
-  );
-}
-
-function PositionRiskPanel({ payload }: { payload: LivePositionPayload }) {
-  const { position, state } = payload;
-  return (
-    <TerminalPanel title="Risk Console" subtitle="청산가, 손익, 스코어 하락, 수익 반납을 같이 봅니다" status={state.risk_score >= 70 ? "warning" : "ok"}>
-      <div className="terminalMetricGrid riskMetricGrid">
-        <TerminalMetric label="Entry" value={formatPrice(position.entry_price)} tone="neutral" />
-        <TerminalMetric label="Mark" value={formatNullablePrice(state.mark_price)} tone="info" />
-        <TerminalMetric label="Liq" value={formatNullablePrice(position.liquidation_price)} tone="warning" />
-        <TerminalMetric label="Liq Dist" value={formatDistance(state.liquidation_distance_pct)} tone={liquidationTone(state.liquidation_distance_pct)} />
-        <TerminalMetric label="Entry Delta" value={formatDistance(state.analysis.risk.price_distance_from_entry_pct)} tone={state.analysis.risk.price_distance_from_entry_pct === null || state.analysis.risk.price_distance_from_entry_pct >= 0 ? "positive" : "negative"} />
-      </div>
-      <HealthBars components={state.score_json.health_components} />
-      <div className="reasonCodeGrid">
-        {state.analysis.reason_codes.map((code) => (
-          <span key={code}>{code}</span>
-        ))}
-      </div>
-    </TerminalPanel>
-  );
-}
-
-function PositionTechnicalPanel({ state }: { state: PositionState }) {
-  const technical = state.analysis.technical;
-  const wyckoff = state.analysis.wyckoff;
-  return (
-    <TerminalPanel title="Chart Structure" subtitle="와이코프/기술적 상태는 포지션 논리 유지 여부를 설명합니다" status={technical.break_of_structure ? "warning" : "ok"}>
-      <div className="technicalGrid">
-        <TechnicalItem label="Trend" value={technical.trend} tone={technical.trend_alignment.includes("against") ? "danger" : "ok"} />
-        <TechnicalItem label="RSI" value={technical.rsi_state} />
-        <TechnicalItem label="MACD" value={technical.macd_state} tone={technical.macd_state.includes("bearish") ? "danger" : "ok"} />
-        <TechnicalItem label="Volume" value={technical.volume_state} tone={technical.volume_state.includes("declining") ? "warn" : "ok"} />
-        <TechnicalItem label="Support" value={technical.support_status} tone={technical.support_status === "at_risk" ? "danger" : "ok"} />
-        <TechnicalItem label="Resistance" value={technical.resistance_status} />
-      </div>
-      <div className="wyckoffBox">
-        <div>
-          <span>Wyckoff Phase</span>
-          <strong>{humanizeToken(wyckoff.phase_hint)}</strong>
-        </div>
-        <p>{wyckoff.structure_comment}</p>
-        <div className="wyckoffTags">
-          <span>ACC {wyckoff.accumulation_score}</span>
-          <span>DIST {wyckoff.distribution_score}</span>
-          {wyckoff.spring_candidate ? <span>SPRING</span> : null}
-          {wyckoff.sos_candidate ? <span>SOS</span> : null}
-          {wyckoff.lps_candidate ? <span>LPS</span> : null}
-        </div>
-      </div>
-    </TerminalPanel>
-  );
-}
-
-function PositionLevelsPanel({ payload }: { payload: LivePositionPayload }) {
-  const { position, state } = payload;
-  const levels = [
-    { label: "Entry", price: position.entry_price, type: "entry" },
-    { label: "Mark", price: state.mark_price, type: "mark" },
-    { label: "Liquidation", price: position.liquidation_price, type: "liquidation" },
-    { label: "Stop", price: position.planned_stop_price, type: "stop" },
-    { label: "Take Profit", price: position.planned_take_profit_price, type: "take_profit" },
-    ...state.analysis.risk.critical_levels.map((level) => ({ label: level.type, price: level.price, type: level.type }))
-  ].filter((level): level is { label: string; price: number; type: string } => Number.isFinite(level.price));
-  const prices = levels.map((level) => level.price);
-  const min = Math.min(...prices);
-  const max = Math.max(...prices);
-
-  return (
-    <TerminalPanel title="Critical Price Map" subtitle="손절/익절/지지/저항/청산가를 한 축에서 확인합니다" status={state.analysis.risk.critical_levels.length ? "accent" : "neutral"}>
-      {levels.length ? (
-        <div className="levelChart">
-          {levels
-            .sort((a, b) => b.price - a.price)
-            .map((level) => (
-              <div className={`levelRow level-${level.type}`} key={`${level.type}-${level.price}`}>
-                <span>{level.label}</span>
-                <div className="levelTrack">
-                  <i style={{ left: `${levelPosition(level.price, min, max)}%` }} />
-                </div>
-                <strong>{formatPrice(level.price)}</strong>
-              </div>
-            ))}
-        </div>
-      ) : (
-        <div className="terminalEmpty">중요 가격대 데이터가 아직 충분하지 않습니다.</div>
-      )}
-    </TerminalPanel>
-  );
-}
-
-function PositionInsightPanel({
-  payload,
-  onCreateInsight,
-  busy
-}: {
-  payload: LivePositionPayload;
-  onCreateInsight: (positionId: string) => Promise<void> | void;
-  busy: boolean;
-}) {
-  const insight = payload.latest_insight;
-  return (
-    <TerminalPanel
-      title="AI Position Insight"
-      subtitle="LLM이 점수를 계산하지 않고 deterministic JSON을 자연어로 설명합니다"
-      status={insight ? "ok" : "neutral"}
-      actions={
-        <button className="button secondary" onClick={() => onCreateInsight(payload.position.id)} disabled={busy}>
-          <BrainCircuit size={16} />
-          {busy ? "Generating" : "Generate"}
-        </button>
-      }
-    >
-      {insight ? (
-        <div className="insightText">
-          <p>{insight.insight_text}</p>
-          <small>{new Date(insight.created_at).toLocaleString()} · {insight.status_label} · Health {insight.health_score}/100</small>
-        </div>
-      ) : (
-        <div className="terminalEmpty">아직 생성된 포지션 인사이트가 없습니다.</div>
-      )}
-    </TerminalPanel>
-  );
-}
-
 function EventList({ events }: { events: PositionEvent[] }) {
   if (!events.length) {
-    return <div className="terminalEmpty">No position events yet</div>;
+    return <div className="terminalEmpty">아직 포지션 이벤트가 없습니다.</div>;
   }
   return (
     <div className="eventTimeline">
@@ -1080,7 +917,7 @@ function EventList({ events }: { events: PositionEvent[] }) {
         <div className={`eventItem severity-${event.severity}`} key={event.id}>
           <div>
             <strong>{event.title}</strong>
-            <span>{new Date(event.created_at).toLocaleString()} · {event.event_type}</span>
+            <span>{new Date(event.created_at).toLocaleString()} · {genericMarketStateLabel(event.event_type)}</span>
           </div>
           <p>{event.description}</p>
         </div>
@@ -1091,7 +928,7 @@ function EventList({ events }: { events: PositionEvent[] }) {
 
 function NoPositionsState({ onSync, syncing }: { onSync: () => void; syncing: boolean }) {
   return (
-    <TerminalPanel title="No Live Positions" subtitle="현재 열린 포지션이 없거나 Bitget private read-only sync가 아직 연결되지 않았습니다" status="neutral">
+    <TerminalPanel title="라이브 포지션 없음" subtitle="현재 열린 포지션이 없거나 Bitget read-only 동기화가 아직 연결되지 않았습니다" status="neutral">
       <div className="emptyStateAction">
         <ShieldCheck size={28} />
         <div>
@@ -1100,45 +937,15 @@ function NoPositionsState({ onSync, syncing }: { onSync: () => void; syncing: bo
         </div>
         <button className="button" onClick={onSync} disabled={syncing}>
           <UploadCloud size={16} />
-          {syncing ? "Syncing" : "Sync Bitget Positions"}
+          {syncing ? "동기화 중" : "Bitget 포지션 동기화"}
         </button>
       </div>
     </TerminalPanel>
   );
 }
 
-function HealthBars({ components }: { components: PositionState["score_json"]["health_components"] }) {
-  const rows = [
-    ["Thesis", components.thesis_integrity],
-    ["Chart", components.chart_structure],
-    ["Risk Safety", components.risk_safety],
-    ["Momentum/Volume", components.momentum_volume],
-    ["Liquidity/Funding", components.liquidity_funding]
-  ] as const;
-  return (
-    <div className="healthBars">
-      {rows.map(([label, value]) => (
-        <div className="healthBarRow" key={label}>
-          <span>{label}</span>
-          <div><i style={{ width: `${value}%` }} /></div>
-          <strong>{value}</strong>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function StatusPill({ status, label }: { status: string; label: string }) {
   return <span className={`statusPill status-${status}`}>{label}</span>;
-}
-
-function TechnicalItem({ label, value, tone = "neutral" }: { label: string; value: string; tone?: "ok" | "warn" | "danger" | "neutral" }) {
-  return (
-    <div className={`technicalItem ${tone}`}>
-      <span>{label}</span>
-      <strong>{humanizeToken(value)}</strong>
-    </div>
-  );
 }
 
 function verdictForState(state: PositionState): string {
@@ -1159,18 +966,11 @@ function directionalChartVerdict(payload: LivePositionPayload, chartAnalysis: Po
   if (direction === "long") {
     return support
       ? `롱 기준 핵심은 ${formatPrice(support.price)} 지지 유지입니다. 무효화 기준은 ${invalidation ? formatPrice(invalidation.price) : "미지정"}로 봅니다.`
-      : "롱 기준 지지 후보가 부족합니다. Entry와 Mark 관계를 먼저 확인해야 합니다.";
+      : "롱 기준 지지 후보가 부족합니다. 진입가와 현재가 관계를 먼저 확인해야 합니다.";
   }
   return resistance
     ? `숏 기준 핵심은 ${formatPrice(resistance.price)} 저항 유지입니다. 무효화 기준은 ${invalidation ? formatPrice(invalidation.price) : "미지정"}로 봅니다.`
-    : "숏 기준 저항 후보가 부족합니다. Entry 위 반등 거래량을 먼저 확인해야 합니다.";
-}
-
-function statusPanelTone(status: PositionState["status"]): PanelStatus {
-  if (status === "healthy") return "ok";
-  if (status === "critical") return "error";
-  if (status === "risk_rising" || status === "thesis_weakening" || status === "watch") return "warning";
-  return "neutral";
+    : "숏 기준 저항 후보가 부족합니다. 진입가 위 반등 거래량을 먼저 확인해야 합니다.";
 }
 
 function healthTone(score: number): MetricTone {
@@ -1195,45 +995,9 @@ function formatDistance(value: number | null): string {
   return value === null ? "-" : signedPercent(value);
 }
 
-function chartLevels(payload: LivePositionPayload): Array<{ label: string; price: number; type: string; className: string }> {
-  const { position, state } = payload;
-  const base = [
-    { label: "Entry", price: position.entry_price, type: "entry" },
-    { label: "Mark", price: state.mark_price, type: "mark" },
-    { label: "Liq", price: position.liquidation_price, type: "liquidation" },
-    ...state.analysis.risk.critical_levels.map((level) => ({
-      label: level.type,
-      price: level.price,
-      type: level.type
-    }))
-  ];
-  const valid = base
-    .filter((level): level is { label: string; price: number; type: string } => Number.isFinite(level.price))
-    .map((level) => ({
-      ...level,
-      className: level.type.replace(/[^a-z0-9_-]/gi, "_").toLowerCase()
-    }));
-  if (valid.length) return valid;
-  return [{ label: "Mark", price: state.mark_price ?? position.entry_price, type: "mark", className: "mark" }];
-}
-
-function priceToTop(price: number, min: number, max: number): number {
-  if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) return 50;
-  return Math.max(8, Math.min(92, 100 - ((price - min) / (max - min)) * 100));
-}
-
-function levelPosition(price: number, min: number, max: number): number {
-  if (max <= min) return 50;
-  return Math.max(2, Math.min(98, ((price - min) / (max - min)) * 100));
-}
-
 function numberOrNull(value: FormDataEntryValue | null): number | null {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-}
-
-function humanizeToken(value: string): string {
-  return value.replaceAll("_", " ");
 }
 
 function firstInsightParagraph(text: string): string {
