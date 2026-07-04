@@ -2643,6 +2643,289 @@ h3 {
   gap: 8px;
 }
 
+/* ---- WO-FCE-09/10: Verdict-First + TA 레이어 ---- */
+
+.verdictBar {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--terminal-line);
+  border-left: 4px solid var(--terminal-cyan);
+  border-radius: 6px;
+  background: rgba(17, 21, 29, 0.92);
+  padding: 12px;
+}
+
+.verdictBar.status-watch {
+  border-left-color: var(--terminal-warning);
+}
+
+.verdictBar.status-risk_rising,
+.verdictBar.status-thesis_weakening,
+.verdictBar.status-critical {
+  border-left-color: var(--terminal-negative);
+}
+
+.verdictBarMain {
+  display: grid;
+  grid-template-columns: minmax(200px, 0.62fr) minmax(0, 2fr) minmax(120px, 0.36fr);
+  align-items: stretch;
+  gap: 10px;
+}
+
+.verdictIdentity,
+.verdictStatement,
+.verdictHealth {
+  display: grid;
+  align-content: center;
+  gap: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 5px;
+  background: rgba(8, 11, 16, 0.34);
+  padding: 10px;
+}
+
+.verdictIdentity span,
+.verdictStatement span,
+.verdictHealth span {
+  color: var(--terminal-muted);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.verdictIdentity strong {
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 17px;
+  line-height: 1.18;
+}
+
+.verdictIdentity .statusPill {
+  width: fit-content;
+}
+
+.verdictStatement p {
+  color: #eef2f7;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1.44;
+}
+
+.verdictHealth {
+  justify-items: start;
+}
+
+.verdictHealth strong {
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 30px;
+  line-height: 1;
+}
+
+.verdictHealth small {
+  color: var(--terminal-muted);
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+}
+
+.verdictHealth.tone-positive strong {
+  color: var(--terminal-positive);
+}
+
+.verdictHealth.tone-warning strong {
+  color: var(--terminal-warning);
+}
+
+.verdictHealth.tone-agent strong {
+  color: var(--terminal-cyan);
+}
+
+.verdictHealth.tone-negative strong {
+  color: var(--terminal-negative);
+}
+
+.verdictMetrics {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.taLayerToggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.taLayerToggle button {
+  border: 1px solid var(--terminal-line);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--terminal-muted);
+  cursor: pointer;
+  padding: 5px 10px;
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.taLayerToggle button:hover {
+  border-color: rgba(240, 184, 64, 0.5);
+  color: var(--terminal-text);
+}
+
+.taLayerToggle button.active {
+  border-color: rgba(240, 184, 64, 0.72);
+  background: rgba(240, 184, 64, 0.1);
+  color: var(--terminal-amber);
+}
+
+.taLayerToggle small {
+  margin-left: 6px;
+  color: var(--terminal-muted);
+  font-size: 11px;
+}
+
+.actionPlanPanel {
+  align-content: start;
+}
+
+.actionPlanPanel .actionPlanRow {
+  grid-template-columns: 60px minmax(0, 1fr);
+}
+
+.actionPlanPanel .actionPlanRow em,
+.actionPlanPanel .actionPlanRow small {
+  grid-column: 2;
+}
+
+.evidenceAccordion {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--terminal-line);
+  border-radius: 6px;
+  background: rgba(17, 21, 29, 0.86);
+  padding: 10px;
+}
+
+.evidenceAccordionHeader {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 2px 4px 6px;
+}
+
+.evidenceAccordionHeader strong {
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.evidenceAccordionHeader span {
+  color: var(--terminal-muted);
+  font-size: 11px;
+}
+
+.evidenceSection {
+  border: 1px solid var(--terminal-line);
+  border-radius: 5px;
+  background: rgba(8, 11, 16, 0.34);
+}
+
+.evidenceSection summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  cursor: pointer;
+  padding: 10px 12px;
+  list-style: none;
+}
+
+.evidenceSection summary::-webkit-details-marker {
+  display: none;
+}
+
+.evidenceSection summary::after {
+  content: "+";
+  color: var(--terminal-muted);
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 14px;
+}
+
+.evidenceSection[open] summary::after {
+  content: "−";
+}
+
+.evidenceSection summary strong {
+  color: var(--terminal-text);
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.evidenceSection summary small {
+  flex: 1;
+  color: var(--terminal-muted);
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 11px;
+  text-align: right;
+}
+
+.evidenceSection[open] summary {
+  border-bottom: 1px solid var(--terminal-line);
+}
+
+.evidenceBody {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.evidenceVolumeGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.chartFocusButton {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  border: 1px solid rgba(240, 184, 64, 0.42);
+  border-radius: 4px;
+  background: rgba(240, 184, 64, 0.07);
+  color: var(--terminal-amber);
+  cursor: pointer;
+  padding: 6px 10px;
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.chartFocusButton:hover {
+  background: rgba(240, 184, 64, 0.14);
+}
+
+.insightEvidence {
+  display: grid;
+  gap: 10px;
+}
+
+.insightEvidenceHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.insightEvidenceHeader small {
+  color: var(--terminal-muted);
+  font-size: 11px;
+}
+
+.insightEvidence p {
+  color: #d8dee8;
+  line-height: 1.52;
+  white-space: pre-line;
+}
+
 @media (max-width: 1100px) {
   .terminalProviderStrip {
     display: none;
@@ -2671,12 +2954,15 @@ h3 {
   .cockpitMainGrid,
   .positionDetailMain,
   .positionBottomAnalysis,
-  .selectedPositionHeader {
+  .selectedPositionHeader,
+  .verdictBarMain,
+  .evidenceVolumeGrid {
     grid-template-columns: 1fr;
   }
 
   .selectedPositionMetrics,
-  .tabMetricLayout {
+  .tabMetricLayout,
+  .verdictMetrics {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
@@ -2765,6 +3051,7 @@ h3 {
     .scoreRow,
     .positionCardMetrics,
     .selectedPositionMetrics,
+    .verdictMetrics,
     .tabMetricLayout,
     .tabContentGrid,
     .tabRiskGrid,

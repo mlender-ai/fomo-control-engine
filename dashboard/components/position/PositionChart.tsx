@@ -2,19 +2,24 @@
 
 import type { PositionChartAnalysis } from "@/lib/api";
 import { PositionCandlestickChart } from "./PositionCandlestickChart";
+import type { TaLayer } from "./taLayers";
 
 export function PositionChart({
   analysis,
   loading,
   error,
   onRetry,
-  trendSummary = "구조 확인 중"
+  trendSummary = "구조 확인 중",
+  activeLayer,
+  onLayerChange
 }: {
   analysis: PositionChartAnalysis | null;
   loading: boolean;
   error: string;
   onRetry: () => void;
   trendSummary?: string;
+  activeLayer?: TaLayer;
+  onLayerChange?: (layer: TaLayer) => void;
 }) {
   if (loading) {
     return (
@@ -54,7 +59,7 @@ export function PositionChart({
 
   return (
     <section className="positionChartPanel">
-      <PositionCandlestickChart analysis={analysis} trendSummary={trendSummary} />
+      <PositionCandlestickChart analysis={analysis} trendSummary={trendSummary} activeLayer={activeLayer} onLayerChange={onLayerChange} />
     </section>
   );
 }

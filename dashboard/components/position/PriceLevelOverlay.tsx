@@ -1,5 +1,6 @@
 import type { ChartPriceLevel, PositionChartAnalysis } from "@/lib/api";
 import { formatPrice } from "@/lib/format";
+import type { TaLayer } from "./taLayers";
 
 export type ChartPriceLine = {
   label: string;
@@ -13,9 +14,9 @@ export type ChartPriceLine = {
   opacity: number;
 };
 
-export function priceLinesForAnalysis(analysis: PositionChartAnalysis, showAllStructureLevels = false): ChartPriceLine[] {
+export function priceLinesForAnalysis(analysis: PositionChartAnalysis, layer: TaLayer = "minimal", showAllStructureLevels = false): ChartPriceLine[] {
   const range = chartDisplayRange(analysis);
-  return allPriceLinesForAnalysis(analysis, showAllStructureLevels).filter((line) => {
+  return allPriceLinesForAnalysis(analysis, layer, showAllStructureLevels).filter((line) => {
     if (line.kind !== "liquidation") return true;
     return priceWithinRange(line.price, range);
   });
@@ -23,25 +24,30 @@ export function priceLinesForAnalysis(analysis: PositionChartAnalysis, showAllSt
 
 export function hiddenPriceLinesForAnalysis(analysis: PositionChartAnalysis): ChartPriceLine[] {
   const range = chartDisplayRange(analysis);
-  return allPriceLinesForAnalysis(analysis, true).filter((line) => line.kind === "liquidation" && !priceWithinRange(line.price, range));
+  return allPriceLinesForAnalysis(analysis, "structure", true).filter((line) => line.kind === "liquidation" && !priceWithinRange(line.price, range));
 }
 
 export function hasHiddenStructureLevels(analysis: PositionChartAnalysis): boolean {
   return analysis.price_levels.support.length > 3 || analysis.price_levels.resistance.length > 3;
 }
 
-function allPriceLinesForAnalysis(analysis: PositionChartAnalysis, showAllStructureLevels: boolean): ChartPriceLine[] {
-  const support = showAllStructureLevels ? analysis.price_levels.support : analysis.price_levels.support.slice(0, 3);
-  const resistance = showAllStructureLevels ? analysis.price_levels.resistance : analysis.price_levels.resistance.slice(0, 3);
+function allPriceLinesForAnalysis(analysis: PositionChartAnalysis, layer: TaLayer, showAllStructureLevels: boolean): ChartPriceLine[] {
+  const structureCount = layer === "structure" ? (showAllStructureLevels ? Infinity : 3) : layer === "minimal" ? 1 : 0;
+  const support = analysis.price_levels.support.slice(0, structureCount === Infinity ? undefined : structureCount);
+  const resistance = analysis.price_levels.resistance.slice(0, structureCount === Infinity ? undefined : structureCount);
   const lines: ChartPriceLine[] = [
     baseLine("진입가", analysis.price_levels.entry, "entry", 1),
     baseLine("현재가", analysis.price_levels.mark, "mark", 0, 2),
     ...numberLine("청산가", analysis.price_levels.liquidation, "liquidation", 2),
     ...support.map((level, index) => structureLine(level, index, "support")),
     ...resistance.map((level, index) => structureLine(level, index, "resistance")),
-    baseLine("POC", analysis.volume_profile.poc_price, "poc", 11, 2),
-    baseLine("VAH", analysis.volume_profile.value_area_high, "value_area", 12),
-    baseLine("VAL", analysis.volume_profile.value_area_low, "value_area", 13),
+    ...(layer === "structure"
+      ? [
+          baseLine("최다 거래 가격(POC)", analysis.volume_profile.poc_price, "poc", 11, 2),
+          baseLine("매물대 상단(VAH)", analysis.volume_profile.value_area_high, "value_area", 12),
+          baseLine("매물대 하단(VAL)", analysis.volume_profile.value_area_low, "value_area", 13)
+        ]
+      : []),
     ...analysis.price_levels.invalidation.slice(0, 1).flatMap((level) =>
       typeof level.price === "number" ? [baseLine(level.label || "무효화", level.price, "invalidation", 5, 2)] : []
     )

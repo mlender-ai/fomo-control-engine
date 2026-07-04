@@ -5,6 +5,7 @@ import {
   Activity,
   BrainCircuit,
   FileClock,
+  Focus,
   NotebookPen,
   RefreshCw,
   ShieldCheck,
@@ -15,7 +16,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { TerminalPanel, TerminalWarning } from "@/components/terminal";
 import { HealthScoreBreakdownView } from "@/components/score-breakdown";
 import { PositionChart } from "@/components/position/PositionChart";
-import { hiddenPriceLinesForAnalysis } from "@/components/position/PriceLevelOverlay";
+import { DEFAULT_TA_LAYER, type TaLayer } from "@/components/position/taLayers";
 import { VolumeProfilePanel } from "@/components/position/VolumeProfilePanel";
 import { VolumeXrayPanel } from "@/components/position/VolumeXrayPanel";
 import {
@@ -42,22 +43,12 @@ import {
   resistanceStatusLabel,
   rsiLabel,
   supportStatusLabel,
-  timeframeLabel,
   trendLabel,
   volumeStateLabel,
   yesNoLabel
 } from "@/lib/labels/marketStateLabels";
 
 type MetricTone = "positive" | "negative" | "warning" | "neutral" | "info" | "agent";
-type DetailTab = "insight" | "wyckoff" | "technical" | "risk" | "timeline";
-
-const detailTabs: Array<{ id: DetailTab; label: string }> = [
-  { id: "insight", label: "요약" },
-  { id: "wyckoff", label: "와이코프" },
-  { id: "technical", label: "기술분석" },
-  { id: "risk", label: "리스크" },
-  { id: "timeline", label: "기록" }
-];
 
 const LIVE_POSITION_SYNC_INTERVAL_SECONDS = 30;
 
@@ -69,7 +60,7 @@ export function LivePositionCockpit() {
   const [actionLoading, setActionLoading] = useState("");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
-  const [activeTab, setActiveTab] = useState<DetailTab>("insight");
+  const [activeTaLayer, setActiveTaLayer] = useState<TaLayer>(DEFAULT_TA_LAYER);
   const [selectedChartAnalysis, setSelectedChartAnalysis] = useState<PositionChartAnalysis | null>(null);
   const [selectedChartLoading, setSelectedChartLoading] = useState(false);
   const [selectedChartError, setSelectedChartError] = useState("");
@@ -221,7 +212,7 @@ export function LivePositionCockpit() {
           <PositionStrip positions={positions} selectedId={selected?.position.id ?? ""} onSelect={setSelectedId} />
           {selectedPayload ? (
             <>
-              <SelectedPositionHeader payload={selectedPayload} />
+              <PositionVerdictBar payload={selectedPayload} chartAnalysis={selectedChartAnalysis} />
               <section className="cockpitMainGrid">
                 <PositionChart
                   analysis={selectedChartAnalysis}
@@ -229,10 +220,18 @@ export function LivePositionCockpit() {
                   error={selectedChartError}
                   onRetry={() => void loadSelectedChart(selectedPayload.position.id)}
                   trendSummary={trendLabel(selectedPayload.state.analysis.technical.trend)}
+                  activeLayer={activeTaLayer}
+                  onLayerChange={setActiveTaLayer}
                 />
-                <InsightSummaryPanel payload={selectedPayload} onCreateInsight={createInsight} busy={actionLoading === `insight:${selectedPayload.position.id}`} />
+                <ActionPlanPanel payload={selectedPayload} />
               </section>
-              <PositionDetailTabs payload={selectedPayload} activeTab={activeTab} onTabChange={setActiveTab} onCreateInsight={createInsight} busy={actionLoading === `insight:${selectedPayload.position.id}`} />
+              <EvidenceAccordion
+                payload={selectedPayload}
+                chartAnalysis={selectedChartAnalysis}
+                onCreateInsight={() => createInsight(selectedPayload.position.id)}
+                busy={actionLoading === `insight:${selectedPayload.position.id}`}
+                onFocusLayer={focusTaLayer(setActiveTaLayer)}
+              />
             </>
           ) : null}
         </>
@@ -278,26 +277,32 @@ function PositionStrip({
   );
 }
 
-function SelectedPositionHeader({ payload }: { payload: LivePositionPayload }) {
+function PositionVerdictBar({ payload, chartAnalysis }: { payload: LivePositionPayload; chartAnalysis: PositionChartAnalysis | null }) {
   const { position, state } = payload;
   return (
-    <section className={`selectedPositionHeader status-${state.status}`}>
-      <div className="selectedPositionTitle">
-        <span>선택 포지션</span>
-        <strong>{position.symbol} · {directionLabel(position.direction)} {position.leverage}x</strong>
+    <section className={`verdictBar status-${state.status}`}>
+      <div className="verdictBarMain">
+        <div className="verdictIdentity">
+          <span>선택 포지션</span>
+          <strong>{position.symbol} · {directionLabel(position.direction)} {position.leverage}x</strong>
+          <StatusPill status={state.status} label={state.status_label} />
+        </div>
+        <div className="verdictStatement">
+          <span>현재 판단</span>
+          <p>{directionalChartVerdict(payload, chartAnalysis)}</p>
+        </div>
+        <div className={`verdictHealth tone-${healthTone(state.health_score)}`}>
+          <span>건강도</span>
+          <strong>{state.health_score}</strong>
+          <small>/100</small>
+        </div>
       </div>
-      <div className="selectedPositionMetrics">
-        <PositionHeaderMetric label="손익률" value={signedPercent(state.pnl_percent)} tone={state.pnl_percent >= 0 ? "positive" : "negative"} />
-        <PositionHeaderMetric label="손익률 출처" value={pnlSourceLabel(state.pnl_source)} />
+      <div className="verdictMetrics">
+        <PositionHeaderMetric label={`손익률 (${pnlSourceLabel(state.pnl_source)})`} value={signedPercent(state.pnl_percent)} tone={state.pnl_percent >= 0 ? "positive" : "negative"} />
         <PositionHeaderMetric label="진입가" value={formatPrice(position.entry_price)} />
         <PositionHeaderMetric label="현재가" value={formatNullablePrice(state.mark_price)} tone="info" />
         <PositionHeaderMetric label="청산가" value={liquidationMissing(payload) ? "청산가 미수신" : formatNullablePrice(position.liquidation_price)} tone={liquidationMissing(payload) ? "warning" : "neutral"} />
         <PositionHeaderMetric label="청산가 거리" value={formatDistance(state.liquidation_distance_pct)} tone={liquidationTone(state.liquidation_distance_pct)} />
-        <PositionHeaderMetric label="건강도" value={`${state.health_score}/100`} tone={healthTone(state.health_score)} />
-      </div>
-      <div className="selectedPositionState">
-        <span>상태</span>
-        <strong>{state.status_label}</strong>
       </div>
       {liquidationMissing(payload) ? (
         <div className="selectedPositionWarning">청산가가 거래소에서 수신되지 않았습니다. {position.leverage}x 포지션은 수동으로 청산가와 증거금 상태를 확인하세요.</div>
@@ -306,149 +311,18 @@ function SelectedPositionHeader({ payload }: { payload: LivePositionPayload }) {
   );
 }
 
-function InsightSummaryPanel({
-  payload,
-  onCreateInsight,
-  busy
-}: {
-  payload: LivePositionPayload;
-  onCreateInsight: (positionId: string) => Promise<void> | void;
-  busy: boolean;
-}) {
-  const { position, state, latest_insight: insight, insight_status: insightStatus } = payload;
-  const insightIsFresh = Boolean(insight && !insightStatus.is_stale);
-  const staleLabel = insight && insightStatus.is_stale ? "과거 판단 (재생성 필요)" : "현재 판단";
-  return (
-    <section className="focusPanel insightFocusPanel">
-      <div className="focusPanelHeader">
-        <div>
-          <h2>AI 포지션 인사이트</h2>
-          <p>현재 판단과 다음 확인 지점</p>
-        </div>
-        <button className="button secondary" onClick={() => onCreateInsight(position.id)} disabled={busy}>
-          <BrainCircuit size={16} />
-          {busy ? "생성 중" : "인사이트 생성"}
-        </button>
-      </div>
-      <div className={`insightJudgement status-${state.status}`}>
-        <span>{staleLabel}</span>
-        <strong>{state.status_label}</strong>
-        <p>{verdictForState(state)}</p>
-      </div>
-      {insightIsFresh && insight ? (
-        <div className="insightPreview">
-          <p>{localizeMarketCodes(firstInsightParagraph(insight.insight_text))}</p>
-          <small>{insightTimestampLabel(payload)} · 건강도 {insight.health_score}/100</small>
-        </div>
-      ) : insight ? (
-        <InsightStaleNotice payload={payload} onCreateInsight={() => onCreateInsight(position.id)} busy={busy} compact />
-      ) : (
-        <div className="insightEmpty">
-          <strong>아직 인사이트가 없습니다.</strong>
-          <span>인사이트 생성 버튼을 눌러 현재 포지션 상태를 분석하세요.</span>
-        </div>
-      )}
-    </section>
-  );
-}
-
-function PositionDetailTabs({
-  payload,
-  activeTab,
-  onTabChange,
-  onCreateInsight,
-  busy
-}: {
-  payload: LivePositionPayload;
-  activeTab: DetailTab;
-  onTabChange: (tab: DetailTab) => void;
-  onCreateInsight: (positionId: string) => Promise<void> | void;
-  busy: boolean;
-}) {
-  return (
-    <section className="detailTabsPanel">
-      <div className="detailTabList" role="tablist" aria-label="포지션 상세 탭">
-        {detailTabs.map((tab) => (
-          <button
-            aria-selected={activeTab === tab.id}
-            className={activeTab === tab.id ? "active" : ""}
-            key={tab.id}
-            onClick={() => onTabChange(tab.id)}
-            role="tab"
-            type="button"
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-      <div className="detailTabBody">
-        {activeTab === "insight" ? <InsightTab payload={payload} onCreateInsight={onCreateInsight} busy={busy} /> : null}
-        {activeTab === "wyckoff" ? <WyckoffTab state={payload.state} /> : null}
-        {activeTab === "technical" ? <TechnicalTab state={payload.state} /> : null}
-        {activeTab === "risk" ? <RiskTab payload={payload} /> : null}
-        {activeTab === "timeline" ? <TimelineTab payload={payload} /> : null}
-      </div>
-    </section>
-  );
-}
-
-function InsightTab({
-  payload,
-  onCreateInsight,
-  busy
-}: {
-  payload: LivePositionPayload;
-  onCreateInsight: (positionId: string) => Promise<void> | void;
-  busy: boolean;
-}) {
-  const insight = payload.latest_insight;
-  const insightIsFresh = Boolean(insight && !payload.insight_status.is_stale);
-  const staleLabel = insight && payload.insight_status.is_stale ? "과거 판단 (재생성 필요)" : "현재 판단";
-  const actionPlan = actionPlanForPayload(payload);
-  return (
-    <div className="tabContentGrid">
-      <div className="tabActionPlanBlock">
-        <ActionPlanTable plan={actionPlan} />
-      </div>
-      <div className="tabInsightStack">
-        <div className={`tabJudgement status-${payload.state.status}`}>
-          <span>{staleLabel}</span>
-          <strong>{payload.state.status_label}</strong>
-          <p>{verdictForState(payload.state)}</p>
-        </div>
-        <div className="tabTextBlock">
-          {insightIsFresh && insight ? (
-            <details>
-              <summary>인사이트 해설 보기 · {insightSourceLabel(insight.insight_source)}</summary>
-              <p>{localizeMarketCodes(insight.insight_text)}</p>
-              <small>{insightTimestampLabel(payload)} · 건강도 {insight.health_score}/100</small>
-            </details>
-          ) : insight ? (
-            <InsightStaleNotice payload={payload} onCreateInsight={() => onCreateInsight(payload.position.id)} busy={busy} />
-          ) : (
-            <div className="insightEmpty">
-              <strong>아직 인사이트가 없습니다.</strong>
-              <span>액션 플랜은 현재 데이터로 표시됩니다. 해설이 필요하면 인사이트 생성을 누르세요.</span>
-              <button className="button" onClick={() => onCreateInsight(payload.position.id)} disabled={busy}>
-                <BrainCircuit size={16} />
-                {busy ? "생성 중" : "인사이트 생성"}
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ActionPlanTable({ plan }: { plan?: LivePositionPayload["action_plan"] }) {
+function ActionPlanPanel({ payload }: { payload: LivePositionPayload }) {
+  const plan = actionPlanForPayload(payload);
   const rows = actionPlanRows(plan);
   const liquidationWarning = typeof plan?.liquidation?.warning === "string" ? plan.liquidation.warning : "";
   return (
-    <div className="actionPlanTable">
-      <div className="actionPlanHeader">
-        <strong>액션 플랜</strong>
-        <span>{plan?.as_of ? `기준 ${new Date(plan.as_of).toLocaleString()}` : "현재 기준 데이터 부족"}</span>
+    <section className="focusPanel actionPlanPanel">
+      <div className="focusPanelHeader">
+        <div>
+          <h2>액션 플랜</h2>
+          <p>지금 볼 가격과 발생 시 행동</p>
+        </div>
+        <span>{plan?.as_of ? `기준 ${new Date(plan.as_of).toLocaleString()}` : "데이터 부족"}</span>
       </div>
       {rows.length ? (
         <div className="actionPlanRows">
@@ -465,11 +339,148 @@ function ActionPlanTable({ plan }: { plan?: LivePositionPayload["action_plan"] }
         <div className="terminalEmpty">액션 플랜을 만들 가격 근거가 부족합니다.</div>
       )}
       {liquidationWarning ? <div className="actionPlanWarning">{liquidationWarning}</div> : null}
+    </section>
+  );
+}
+
+function EvidenceAccordion({
+  payload,
+  chartAnalysis,
+  onCreateInsight,
+  busy,
+  onFocusLayer
+}: {
+  payload: LivePositionPayload;
+  chartAnalysis: PositionChartAnalysis | null;
+  onCreateInsight: () => Promise<void> | void;
+  busy: boolean;
+  onFocusLayer: (layer: TaLayer) => void;
+}) {
+  return (
+    <section className="evidenceAccordion" aria-label="판단 근거">
+      <div className="evidenceAccordionHeader">
+        <strong>판단 근거</strong>
+        <span>필요할 때만 펼쳐 보세요. 위 판단과 액션 플랜은 아래 데이터에서 계산됩니다.</span>
+      </div>
+      <details className="evidenceSection">
+        <summary>
+          <strong>AI 해설</strong>
+          <small>{insightSummaryHint(payload)}</small>
+        </summary>
+        <div className="evidenceBody">
+          <InsightEvidence payload={payload} onCreateInsight={onCreateInsight} busy={busy} />
+        </div>
+      </details>
+      <details className="evidenceSection">
+        <summary>
+          <strong>와이코프 근거</strong>
+          <small>{phaseHintLabel(payload.state.analysis.wyckoff.phase ?? payload.state.analysis.wyckoff.phase_hint)}</small>
+        </summary>
+        <div className="evidenceBody">
+          <ChartFocusButton layer="wyckoff" onFocusLayer={onFocusLayer} />
+          <WyckoffEvidence state={payload.state} />
+        </div>
+      </details>
+      <details className="evidenceSection">
+        <summary>
+          <strong>기술지표 근거</strong>
+          <small>{trendLabel(payload.state.analysis.technical.trend)}</small>
+        </summary>
+        <div className="evidenceBody">
+          <ChartFocusButton layer="structure" onFocusLayer={onFocusLayer} />
+          <TechnicalEvidence state={payload.state} />
+        </div>
+      </details>
+      <details className="evidenceSection">
+        <summary>
+          <strong>수급 근거</strong>
+          <small>{chartAnalysis ? volumeStateLabel(chartAnalysis.volume_xray.volume_state) : "차트 데이터 대기 중"}</small>
+        </summary>
+        <div className="evidenceBody">
+          <ChartFocusButton layer="flow" onFocusLayer={onFocusLayer} />
+          {chartAnalysis ? (
+            <div className="evidenceVolumeGrid">
+              <VolumeProfilePanel analysis={chartAnalysis} />
+              <VolumeXrayPanel analysis={chartAnalysis} />
+            </div>
+          ) : (
+            <div className="terminalEmpty">차트 데이터가 준비되면 표시됩니다.</div>
+          )}
+        </div>
+      </details>
+      <details className="evidenceSection">
+        <summary>
+          <strong>리스크 분해</strong>
+          <small>리스크 점수 {payload.state.risk_score}/100</small>
+        </summary>
+        <div className="evidenceBody">
+          <RiskEvidence payload={payload} />
+        </div>
+      </details>
+      <details className="evidenceSection">
+        <summary>
+          <strong>기록</strong>
+          <small>{payload.recent_events.length ? `이벤트 ${payload.recent_events.length}건` : "이벤트 없음"}</small>
+        </summary>
+        <div className="evidenceBody">
+          <TimelineEvidence payload={payload} />
+        </div>
+      </details>
+    </section>
+  );
+}
+
+function ChartFocusButton({ layer, onFocusLayer }: { layer: TaLayer; onFocusLayer: (layer: TaLayer) => void }) {
+  const label = layer === "wyckoff" ? "와이코프" : layer === "harmonic" ? "하모닉" : layer === "flow" ? "수급" : "지지·저항";
+  return (
+    <button className="chartFocusButton" onClick={() => onFocusLayer(layer)} type="button">
+      <Focus size={14} />
+      차트에서 {label} 단독으로 보기
+    </button>
+  );
+}
+
+function InsightEvidence({
+  payload,
+  onCreateInsight,
+  busy
+}: {
+  payload: LivePositionPayload;
+  onCreateInsight: () => Promise<void> | void;
+  busy: boolean;
+}) {
+  const insight = payload.latest_insight;
+  const insightIsFresh = Boolean(insight && !payload.insight_status.is_stale);
+  if (insightIsFresh && insight) {
+    return (
+      <div className="insightEvidence">
+        <div className="insightEvidenceHeader">
+          <small>{insightTimestampLabel(payload)} · {insightSourceLabel(insight.insight_source)}</small>
+          <button className="button secondary" onClick={onCreateInsight} disabled={busy} type="button">
+            <BrainCircuit size={16} />
+            {busy ? "생성 중" : "다시 생성"}
+          </button>
+        </div>
+        <p>{localizeMarketCodes(insight.insight_text)}</p>
+      </div>
+    );
+  }
+  if (insight) {
+    return <InsightStaleNotice payload={payload} onCreateInsight={onCreateInsight} busy={busy} />;
+  }
+  return (
+    <div className="insightEmpty">
+      <strong>아직 인사이트가 없습니다.</strong>
+      <span>판단과 액션 플랜은 현재 데이터로 이미 표시되어 있습니다. 해설이 필요하면 인사이트 생성을 누르세요.</span>
+      <button className="button" onClick={onCreateInsight} disabled={busy}>
+        <BrainCircuit size={16} />
+        {busy ? "생성 중" : "인사이트 생성"}
+      </button>
     </div>
   );
 }
 
-function WyckoffTab({ state }: { state: PositionState }) {
+function WyckoffEvidence({ state }: { state: PositionState }) {
   const wyckoff = state.analysis.wyckoff;
   const mtf = wyckoff.mtf;
   return (
@@ -489,7 +500,7 @@ function WyckoffTab({ state }: { state: PositionState }) {
   );
 }
 
-function TechnicalTab({ state }: { state: PositionState }) {
+function TechnicalEvidence({ state }: { state: PositionState }) {
   const technical = state.analysis.technical;
   return (
     <div className="tabMetricLayout">
@@ -512,16 +523,14 @@ function TechnicalTab({ state }: { state: PositionState }) {
   );
 }
 
-function RiskTab({ payload }: { payload: LivePositionPayload }) {
+function RiskEvidence({ payload }: { payload: LivePositionPayload }) {
   const { position, state } = payload;
   return (
     <div className="tabRiskGrid">
       <div className="tabRiskStack">
         <HealthScoreBreakdownView components={state.score_json.health_components} />
         <div className="tabMetricLayout compact">
-          <PositionHeaderMetric label="청산가 거리" value={formatDistance(state.liquidation_distance_pct)} tone={liquidationTone(state.liquidation_distance_pct)} />
           <PositionHeaderMetric label="리스크 점수" value={`${state.risk_score}/100`} tone={state.risk_score >= 70 ? "negative" : state.risk_score >= 55 ? "warning" : "neutral"} />
-          <PositionHeaderMetric label="손익률" value={signedPercent(state.pnl_percent)} tone={state.pnl_percent >= 0 ? "positive" : "negative"} />
           <PositionHeaderMetric label="방향 논리" value={`${state.thesis_delta > 0 ? "+" : ""}${state.thesis_delta}`} tone={state.thesis_delta < -20 ? "negative" : state.thesis_delta < -10 ? "warning" : "neutral"} />
           <PositionHeaderMetric label="수익 반납" value={formatDistance(state.analysis.risk.profit_giveback_pct)} />
           <PositionHeaderMetric label="손절 기준" value={formatNullablePrice(position.planned_stop_price)} tone="warning" />
@@ -547,13 +556,11 @@ function RiskTab({ payload }: { payload: LivePositionPayload }) {
   );
 }
 
-function TimelineTab({ payload }: { payload: LivePositionPayload }) {
+function TimelineEvidence({ payload }: { payload: LivePositionPayload }) {
   return (
     <div className="timelineTab">
       <div className="snapshotSummary">
-        <PositionHeaderMetric label="최근 건강도" value={`${payload.latest_snapshot.health_score}/100`} tone={healthTone(payload.latest_snapshot.health_score)} />
-        <PositionHeaderMetric label="리스크" value={`${payload.latest_snapshot.risk_score}/100`} />
-        <PositionHeaderMetric label="스냅샷" value={new Date(payload.latest_snapshot.created_at).toLocaleTimeString()} />
+        <PositionHeaderMetric label="마지막 스냅샷" value={new Date(payload.latest_snapshot.created_at).toLocaleString()} />
       </div>
       <EventList events={payload.recent_events} />
     </div>
@@ -584,7 +591,7 @@ export function PositionDetailShell({ positionId }: { positionId: string }) {
   const [chartLoading, setChartLoading] = useState(true);
   const [chartError, setChartError] = useState("");
   const [timeframe, setTimeframe] = useState("4h");
-  const [detailTab, setDetailTab] = useState<DetailTab>("risk");
+  const [activeTaLayer, setActiveTaLayer] = useState<TaLayer>(DEFAULT_TA_LAYER);
   const [busy, setBusy] = useState("");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
@@ -750,17 +757,13 @@ export function PositionDetailShell({ positionId }: { positionId: string }) {
             <RefreshCw size={16} />
             상태 갱신
           </button>
-          <button className="button" onClick={createInsight} disabled={busy === "insight"}>
-            <BrainCircuit size={16} />
-            인사이트
-          </button>
         </div>
       </header>
 
       {error ? <TerminalWarning tone="error">{error}</TerminalWarning> : null}
       {notice ? <TerminalWarning tone="info">{notice}</TerminalWarning> : null}
 
-      <SelectedPositionHeader payload={detail} />
+      <PositionVerdictBar payload={detail} chartAnalysis={chartAnalysis} />
 
       <section className="positionDetailMain">
         <PositionChart
@@ -769,17 +772,19 @@ export function PositionDetailShell({ positionId }: { positionId: string }) {
           error={chartError}
           onRetry={() => void loadChart(timeframe)}
           trendSummary={trendLabel(detail.state.analysis.technical.trend)}
+          activeLayer={activeTaLayer}
+          onLayerChange={setActiveTaLayer}
         />
-        <PositionInsightRail payload={detail} chartAnalysis={chartAnalysis} onCreateInsight={() => createInsight()} busy={busy === "insight"} />
+        <ActionPlanPanel payload={detail} />
       </section>
 
-      <section className="positionBottomAnalysis">
-        {chartAnalysis ? <VolumeProfilePanel analysis={chartAnalysis} /> : <AnalysisUnavailable title="추정 볼륨 프로파일" />}
-        {chartAnalysis ? <VolumeXrayPanel analysis={chartAnalysis} /> : <AnalysisUnavailable title="거래량 엑스레이" />}
-        <TechnicalSummaryCard payload={detail} chartAnalysis={chartAnalysis} />
-      </section>
-
-      <PositionDetailTabs payload={detail} activeTab={detailTab} onTabChange={setDetailTab} onCreateInsight={() => createInsight()} busy={busy === "insight"} />
+      <EvidenceAccordion
+        payload={detail}
+        chartAnalysis={chartAnalysis}
+        onCreateInsight={() => createInsight()}
+        busy={busy === "insight"}
+        onFocusLayer={focusTaLayer(setActiveTaLayer)}
+      />
 
       <section className="grid two">
         <TerminalPanel title="진입 논리 메모" subtitle="진입 논리와 무효화/익절 기준은 AI가 점수를 계산하지 않고 비교 설명에만 사용합니다" status="accent">
@@ -838,124 +843,6 @@ export function PositionDetailShell({ positionId }: { positionId: string }) {
   );
 }
 
-function PositionInsightRail({
-  payload,
-  chartAnalysis,
-  onCreateInsight,
-  busy
-}: {
-  payload: LivePositionPayload;
-  chartAnalysis: PositionChartAnalysis | null;
-  onCreateInsight: () => Promise<void> | void;
-  busy: boolean;
-}) {
-  const { position, state, latest_insight: insight, insight_status: insightStatus } = payload;
-  const insightIsFresh = Boolean(insight && !insightStatus.is_stale);
-  const [showInputJson, setShowInputJson] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const support = chartAnalysis?.price_levels.support[0];
-  const resistance = chartAnalysis?.price_levels.resistance[0];
-  const invalidation = chartAnalysis?.price_levels.invalidation[0];
-  const liquidationOutOfRange = chartAnalysis ? hiddenPriceLinesForAnalysis(chartAnalysis).length > 0 : false;
-  async function copyInsight() {
-    if (!insight || insightStatus.is_stale) return;
-    try {
-      await navigator.clipboard.writeText(localizeMarketCodes(insight.insight_text));
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1800);
-    } catch {
-      setCopied(false);
-    }
-  }
-  return (
-    <aside className="positionInsightRail">
-      <div className={`railJudgement status-${state.status}`}>
-        <span>현재 판단</span>
-        <strong>{state.status_label}</strong>
-        <p>{directionalChartVerdict(payload, chartAnalysis)}</p>
-      </div>
-      <div className="railSection">
-        <div className="railSectionHeader">
-          <strong>주요 가격대</strong>
-          <small>{timeframeLabel(chartAnalysis?.timeframe ?? "4h")}</small>
-        </div>
-        <RailPrice label="진입가" value={formatPrice(position.entry_price)} />
-        <RailPrice label="현재가" value={formatNullablePrice(state.mark_price)} tone="info" />
-        <RailPrice label="청산가" value={liquidationMissing(payload) ? "청산가 미수신" : formatNullablePrice(position.liquidation_price)} tone={liquidationMissing(payload) ? "warning" : "danger"} />
-        {liquidationOutOfRange ? <div className="railPriceNotice">청산가가 현재 차트 범위 밖에 있습니다.</div> : null}
-        <RailPrice label="지지선" value={support ? formatPrice(support.price) : "-"} />
-        <RailPrice label="저항선" value={resistance ? formatPrice(resistance.price) : "-"} tone="warning" />
-        <RailPrice
-          label="무효화 가격"
-          value={invalidation && typeof invalidation.price === "number" ? formatPrice(invalidation.price) : invalidation?.label ?? formatNullablePrice(position.planned_stop_price)}
-          tone="danger"
-        />
-      </div>
-      <div className="railSection">
-        <div className="railSectionHeader">
-          <strong>리스크 요약</strong>
-          <small>주문 실행 없음</small>
-        </div>
-        <RailPrice label="건강도" value={`${state.health_score}/100`} tone={healthTone(state.health_score)} />
-        <RailPrice label="리스크" value={`${state.risk_score}/100`} tone={state.risk_score >= 70 ? "negative" : state.risk_score >= 55 ? "warning" : "neutral"} />
-        <RailPrice label="청산가 거리" value={formatDistance(state.liquidation_distance_pct)} tone={liquidationTone(state.liquidation_distance_pct)} />
-        <RailPrice label="수익 반납" value={formatDistance(state.analysis.risk.profit_giveback_pct)} />
-      </div>
-      <div className="railSection aiInsightRailSection">
-        <div className="railSectionHeader aiInsightHeader">
-          <div>
-            <strong>AI 포지션 인사이트</strong>
-            {insight ? <small>{insightStatus.is_stale ? "재생성 필요" : `갱신 ${new Date(insight.created_at).toLocaleTimeString()}`}</small> : null}
-          </div>
-          <button className="button secondary" onClick={onCreateInsight} disabled={busy}>
-            <BrainCircuit size={16} />
-            {busy ? "인사이트 생성 중" : insight ? "다시 생성" : "인사이트 생성"}
-          </button>
-        </div>
-        {insightIsFresh && insight ? (
-          <>
-            <div className="insightBasisLine">{insightTimestampLabel(payload)}</div>
-            <div className="railInsightText full">{localizeMarketCodes(insight.insight_text)}</div>
-            <div className="insightActionRow">
-              <button className="button secondary" onClick={copyInsight} type="button">{copied ? "복사됨" : "복사"}</button>
-              <button className="button secondary" onClick={() => setShowInputJson((value) => !value)} type="button">
-                {showInputJson ? "입력 JSON 숨기기" : "입력 JSON 보기"}
-              </button>
-            </div>
-            {showInputJson ? (
-              <pre className="insightInputJson">{JSON.stringify(insight.input_json, null, 2)}</pre>
-            ) : null}
-          </>
-        ) : insight ? (
-          <InsightStaleNotice payload={payload} onCreateInsight={onCreateInsight} busy={busy} />
-        ) : (
-          <div className="railInsightEmpty">
-            <strong>아직 생성된 포지션 인사이트가 없습니다.</strong>
-            <p>현재 포지션 상태를 분석하려면 인사이트 생성을 눌러주세요.</p>
-          </div>
-        )}
-      </div>
-    </aside>
-  );
-}
-
-function RailPrice({
-  label,
-  value,
-  tone = "neutral"
-}: {
-  label: string;
-  value: string;
-  tone?: MetricTone | "danger";
-}) {
-  return (
-    <div className={`railPrice tone-${tone}`}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
-}
-
 function InsightStaleNotice({
   payload,
   onCreateInsight,
@@ -1005,49 +892,20 @@ function InsightStaleNotice({
   );
 }
 
-function TechnicalSummaryCard({
-  payload,
-  chartAnalysis
+function RailPrice({
+  label,
+  value,
+  tone = "neutral"
 }: {
-  payload: LivePositionPayload;
-  chartAnalysis: PositionChartAnalysis | null;
+  label: string;
+  value: string;
+  tone?: MetricTone | "danger";
 }) {
-  const technical = payload.state.analysis.technical;
-  const wyckoff = payload.state.analysis.wyckoff;
   return (
-    <section className="analysisPanel technicalSummaryPanel">
-      <div className="analysisPanelHeader">
-        <div>
-          <h2>기술분석 요약</h2>
-          <p>차트 아래 보조 요약</p>
-        </div>
-        <span>{payload.state.status_label}</span>
-      </div>
-      <div className="technicalSummaryGrid">
-        <RailPrice label="추세" value={trendLabel(technical.trend)} tone={technical.trend_alignment.includes("against") ? "negative" : "positive"} />
-        <RailPrice label="RSI" value={rsiLabel(technical.rsi_state)} />
-        <RailPrice label="MACD" value={macdLabel(technical.macd_state)} tone={technical.macd_state.includes("bearish") ? "negative" : "positive"} />
-        <RailPrice label="거래량" value={volumeStateLabel(chartAnalysis?.volume_xray.volume_state ?? technical.volume_state)} tone={chartAnalysis?.volume_xray.spike_detected ? "warning" : "neutral"} />
-        <RailPrice label="와이코프" value={phaseHintLabel(wyckoff.phase ?? wyckoff.phase_hint)} />
-        <RailPrice label="마커 수" value={String(chartAnalysis?.wyckoff_markers.length ?? 0)} />
-        <RailPrice label="상위 정합" value={phaseHintLabel(wyckoff.mtf?.alignment)} tone={wyckoff.mtf?.alignment === "conflicting" ? "negative" : "neutral"} />
-      </div>
-      <p className="technicalSummaryText">{wyckoff.structure_comment}</p>
-    </section>
-  );
-}
-
-function AnalysisUnavailable({ title }: { title: string }) {
-  return (
-    <section className="analysisPanel analysisUnavailable">
-      <div className="analysisPanelHeader">
-        <div>
-          <h2>{title}</h2>
-          <p>차트 분석 데이터를 기다리는 중입니다.</p>
-        </div>
-      </div>
-      <div className="terminalEmpty">차트 데이터가 준비되면 표시됩니다.</div>
-    </section>
+    <div className={`railPrice tone-${tone}`}>
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
   );
 }
 
@@ -1090,6 +948,13 @@ function NoPositionsState({ onSync, syncing }: { onSync: () => void; syncing: bo
 
 function StatusPill({ status, label }: { status: string; label: string }) {
   return <span className={`statusPill status-${status}`}>{label}</span>;
+}
+
+function focusTaLayer(setActiveTaLayer: (layer: TaLayer) => void) {
+  return (layer: TaLayer) => {
+    setActiveTaLayer(layer);
+    document.querySelector(".positionChartPanel")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 }
 
 function actionPlanForPayload(payload: LivePositionPayload) {
@@ -1144,6 +1009,13 @@ function insightSourceLabel(source: string): string {
   if (source === "llm") return "LLM 해설";
   if (source === "fallback_template") return "템플릿 폴백";
   return "템플릿 해설";
+}
+
+function insightSummaryHint(payload: LivePositionPayload): string {
+  const insight = payload.latest_insight;
+  if (!insight) return "아직 생성 안 됨";
+  if (payload.insight_status.is_stale) return "과거 판단 · 재생성 필요";
+  return `갱신 ${new Date(insight.created_at).toLocaleTimeString()}`;
 }
 
 function verdictForState(state: PositionState): string {
@@ -1205,11 +1077,6 @@ function liquidationMissing(payload: LivePositionPayload): boolean {
 function numberOrNull(value: FormDataEntryValue | null): number | null {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
-}
-
-function firstInsightParagraph(text: string): string {
-  const paragraph = text.split("\n\n").find((part) => part.trim().length > 0)?.trim() ?? text.trim();
-  return paragraph.length > 260 ? `${paragraph.slice(0, 257)}...` : paragraph;
 }
 
 function insightTimestampLabel(payload: LivePositionPayload): string {

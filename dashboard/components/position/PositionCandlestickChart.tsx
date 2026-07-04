@@ -17,16 +17,33 @@ import type { ChartCandle, PositionChartAnalysis } from "@/lib/api";
 import { formatPrice } from "@/lib/format";
 import { localizeMarketCodes, phaseHintLabel, sourceLabel, timeframeLabel } from "@/lib/labels/marketStateLabels";
 import { hasHiddenStructureLevels, hiddenPriceLinesForAnalysis, priceLineColor, priceLinesForAnalysis, PriceLevelLegend } from "./PriceLevelOverlay";
+import { DEFAULT_TA_LAYER, TA_LAYERS, type TaLayer } from "./taLayers";
 import { VolumePanel } from "./VolumePanel";
 
-export function PositionCandlestickChart({ analysis, trendSummary }: { analysis: PositionChartAnalysis; trendSummary: string }) {
+export function PositionCandlestickChart({
+  analysis,
+  trendSummary,
+  activeLayer: controlledLayer,
+  onLayerChange
+}: {
+  analysis: PositionChartAnalysis;
+  trendSummary: string;
+  activeLayer?: TaLayer;
+  onLayerChange?: (layer: TaLayer) => void;
+}) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const profileOverlayRef = useRef<SVGSVGElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
+  const [internalLayer, setInternalLayer] = useState<TaLayer>(DEFAULT_TA_LAYER);
+  const activeLayer = controlledLayer ?? internalLayer;
+  const setActiveLayer = onLayerChange ?? setInternalLayer;
   const [showAllStructureLevels, setShowAllStructureLevels] = useState(false);
   const [showAllHarmonics, setShowAllHarmonics] = useState(false);
   const validation = useMemo(() => validateCandles(analysis.candles), [analysis.candles]);
-  const priceLines = useMemo(() => (validation.valid ? priceLinesForAnalysis(analysis, showAllStructureLevels) : []), [analysis, showAllStructureLevels, validation.valid]);
+  const priceLines = useMemo(
+    () => (validation.valid ? priceLinesForAnalysis(analysis, activeLayer, showAllStructureLevels) : []),
+    [analysis, activeLayer, showAllStructureLevels, validation.valid]
+  );
   const hiddenPriceLines = useMemo(() => (validation.valid ? hiddenPriceLinesForAnalysis(analysis) : []), [analysis, validation.valid]);
   const hasAdditionalLevels = useMemo(() => hasHiddenStructureLevels(analysis), [analysis]);
   const lastCandle = validation.candles.at(-1);
@@ -125,27 +142,29 @@ export function PositionCandlestickChart({ analysis, trendSummary }: { analysis:
     const volumeData: HistogramData[] = validation.candles.map((candle) => ({
       time: candle.time as Time,
       value: candle.volume,
-      color: volumeColorForCandle(analysis, candle)
+      color: activeLayer === "flow" ? volumeColorForCandle(analysis, candle) : simpleVolumeColor(candle)
     }));
     volumeSeries.setData(volumeData);
 
-    const averageVolumeSeries = chart.addSeries(LineSeries, {
-      priceScaleId: "volume",
-      color: "rgba(174, 210, 164, 0.64)",
-      lineWidth: 1,
-      lineStyle: LineStyle.Dashed,
-      priceLineVisible: false,
-      lastValueVisible: false,
-      crosshairMarkerVisible: false
-    });
-    averageVolumeSeries.setData(
-      validation.candles.map((candle) => ({
-        time: candle.time as Time,
-        value: averageVolume
-      }))
-    );
+    if (activeLayer === "flow") {
+      const averageVolumeSeries = chart.addSeries(LineSeries, {
+        priceScaleId: "volume",
+        color: "rgba(174, 210, 164, 0.64)",
+        lineWidth: 1,
+        lineStyle: LineStyle.Dashed,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false
+      });
+      averageVolumeSeries.setData(
+        validation.candles.map((candle) => ({
+          time: candle.time as Time,
+          value: averageVolume
+        }))
+      );
+    }
 
-    if (analysis.trade_flow.cvd.length) {
+    if (activeLayer === "flow" && analysis.trade_flow.cvd.length) {
       const cvdSeries = chart.addSeries(LineSeries, {
         priceScaleId: "cvd",
         color: "rgba(98, 207, 232, 0.72)",
@@ -176,23 +195,27 @@ export function PositionCandlestickChart({ analysis, trendSummary }: { analysis:
       });
     });
 
-    const spikeMarkers = validation.candles
-      .filter((candle) => candle.volume >= averageVolume * 1.8)
-      .slice(-3)
-      .map((candle) => ({
-        time: candle.time as Time,
-        position: "belowBar" as const,
-        color: "#aed2a4",
-        shape: "circle" as const,
-        text: ""
-      }));
-    const wyckoffMarkers = analysis.wyckoff_markers.slice(-6).map((marker) => ({
-      time: marker.time as Time,
-      position: marker.side === "distribution" || marker.type.includes("utad") || marker.type.includes("sow") ? "aboveBar" as const : "belowBar" as const,
-      color: marker.side === "distribution" || marker.type.includes("utad") || marker.type.includes("sow") ? "#ee7b80" : "#7fee64",
-      shape: marker.side === "distribution" || marker.type.includes("utad") || marker.type.includes("sow") ? "arrowDown" as const : "arrowUp" as const,
-      text: compactMarkerText(marker.label, marker.confidence)
-    }));
+    const spikeMarkers = activeLayer === "flow"
+      ? validation.candles
+          .filter((candle) => candle.volume >= averageVolume * 1.8)
+          .slice(-3)
+          .map((candle) => ({
+            time: candle.time as Time,
+            position: "belowBar" as const,
+            color: "#aed2a4",
+            shape: "circle" as const,
+            text: ""
+          }))
+      : [];
+    const wyckoffMarkers = activeLayer === "wyckoff"
+      ? analysis.wyckoff_markers.slice(-6).map((marker) => ({
+          time: marker.time as Time,
+          position: marker.side === "distribution" || marker.type.includes("utad") || marker.type.includes("sow") ? "aboveBar" as const : "belowBar" as const,
+          color: marker.side === "distribution" || marker.type.includes("utad") || marker.type.includes("sow") ? "#ee7b80" : "#7fee64",
+          shape: marker.side === "distribution" || marker.type.includes("utad") || marker.type.includes("sow") ? "arrowDown" as const : "arrowUp" as const,
+          text: compactMarkerText(marker.label, marker.confidence)
+        }))
+      : [];
     if (spikeMarkers.length || wyckoffMarkers.length) {
       createSeriesMarkers(candleSeries, [...wyckoffMarkers, ...spikeMarkers].sort((left, right) => Number(left.time) - Number(right.time)));
     }
@@ -221,7 +244,7 @@ export function PositionCandlestickChart({ analysis, trendSummary }: { analysis:
 
     chart.timeScale().fitContent();
     chart.timeScale().applyOptions({ rightOffset: 18 });
-    const drawOverlay = () => renderVolumeProfileOverlay(profileOverlay, container, candleSeries, chart, analysis, showAllHarmonics);
+    const drawOverlay = () => renderTaOverlay(profileOverlay, container, candleSeries, chart, analysis, activeLayer, showAllHarmonics);
     window.setTimeout(drawOverlay, 0);
     chart.timeScale().subscribeVisibleLogicalRangeChange(drawOverlay);
     const resizeObserver = new ResizeObserver(drawOverlay);
@@ -231,7 +254,7 @@ export function PositionCandlestickChart({ analysis, trendSummary }: { analysis:
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(drawOverlay);
       chart.remove();
     };
-  }, [analysis, averageVolume, priceLines, showAllHarmonics, validation]);
+  }, [analysis, averageVolume, priceLines, activeLayer, showAllHarmonics, validation]);
 
   if (!validation.valid) {
     return (
@@ -243,6 +266,8 @@ export function PositionCandlestickChart({ analysis, trendSummary }: { analysis:
     );
   }
 
+  const activeLayerMeta = TA_LAYERS.find((item) => item.id === activeLayer);
+
   return (
     <>
       <div className="positionChartHeader">
@@ -252,10 +277,25 @@ export function PositionCandlestickChart({ analysis, trendSummary }: { analysis:
         </div>
         <span>{trendSummary}</span>
       </div>
+      <div className="taLayerToggle" role="group" aria-label="차트 분석 레이어 선택">
+        {TA_LAYERS.map((layer) => (
+          <button
+            aria-pressed={activeLayer === layer.id}
+            className={activeLayer === layer.id ? "active" : ""}
+            key={layer.id}
+            onClick={() => setActiveLayer(layer.id)}
+            title={layer.description}
+            type="button"
+          >
+            {layer.label}
+          </button>
+        ))}
+        {activeLayerMeta ? <small>{activeLayerMeta.description}</small> : null}
+      </div>
       <PriceLevelLegend
         lines={priceLines}
         showAll={showAllStructureLevels}
-        hasHiddenLevels={hasAdditionalLevels}
+        hasHiddenLevels={activeLayer === "structure" && hasAdditionalLevels}
         onToggleAll={() => setShowAllStructureLevels((value) => !value)}
       />
       {hiddenPriceLines.length ? (
@@ -273,34 +313,38 @@ export function PositionCandlestickChart({ analysis, trendSummary }: { analysis:
         <div className="positionChartCanvas" ref={containerRef} />
         <svg className="volumeProfileOverlay" ref={profileOverlayRef} aria-hidden="true" />
       </div>
-      <VolumePanel analysis={analysis} averageVolume={averageVolume} />
-      {analysis.wyckoff_markers.length ? (
-        <div className="wyckoffMarkerRail">
-          {analysis.wyckoff_markers.map((marker) => (
-            <span key={`${marker.type}-${marker.time}`} title={wyckoffMarkerTitle(marker)}>
-              {localizeMarketCodes(marker.label)} · 신뢰도 {marker.confidence}
-            </span>
-          ))}
-        </div>
-      ) : (
-        <div className="wyckoffMarkerRail muted">와이코프 마커 후보가 아직 없습니다.</div>
-      )}
-      {analysis.harmonic_patterns.length ? (
-        <div className="harmonicPatternRail">
-          {analysis.harmonic_patterns.slice(0, showAllHarmonics ? analysis.harmonic_patterns.length : 2).map((pattern) => (
-            <span key={pattern.id} title={harmonicPatternTitle(pattern)}>
-              {pattern.label} · {pattern.direction === "bearish" ? "하락 반전 PRZ" : "상승 반전 PRZ"} · 신뢰도 {pattern.confidence}
-            </span>
-          ))}
-          {analysis.harmonic_patterns.length > 2 ? (
-            <button className="priceLevelToggle" type="button" onClick={() => setShowAllHarmonics((value) => !value)}>
-              {showAllHarmonics ? "핵심 패턴만" : "전체 패턴"}
-            </button>
-          ) : null}
-        </div>
-      ) : (
-        <div className="harmonicPatternRail muted">하모닉 PRZ 후보가 아직 없습니다.</div>
-      )}
+      {activeLayer === "flow" ? <VolumePanel analysis={analysis} averageVolume={averageVolume} /> : null}
+      {activeLayer === "wyckoff" ? (
+        analysis.wyckoff_markers.length ? (
+          <div className="wyckoffMarkerRail">
+            {analysis.wyckoff_markers.map((marker) => (
+              <span key={`${marker.type}-${marker.time}`} title={wyckoffMarkerTitle(marker)}>
+                {localizeMarketCodes(marker.label)} · 신뢰도 {marker.confidence}
+              </span>
+            ))}
+          </div>
+        ) : (
+          <div className="wyckoffMarkerRail muted">와이코프 마커 후보가 아직 없습니다.</div>
+        )
+      ) : null}
+      {activeLayer === "harmonic" ? (
+        analysis.harmonic_patterns.length ? (
+          <div className="harmonicPatternRail">
+            {analysis.harmonic_patterns.slice(0, showAllHarmonics ? analysis.harmonic_patterns.length : 2).map((pattern) => (
+              <span key={pattern.id} title={harmonicPatternTitle(pattern)}>
+                {pattern.label} · {pattern.direction === "bearish" ? "하락 반전 후보 구간(PRZ)" : "상승 반전 후보 구간(PRZ)"} · 신뢰도 {pattern.confidence}
+              </span>
+            ))}
+            {analysis.harmonic_patterns.length > 2 ? (
+              <button className="priceLevelToggle" type="button" onClick={() => setShowAllHarmonics((value) => !value)}>
+                {showAllHarmonics ? "핵심 패턴만" : "전체 패턴"}
+              </button>
+            ) : null}
+          </div>
+        ) : (
+          <div className="harmonicPatternRail muted">하모닉 반전 후보 구간(PRZ)이 아직 없습니다.</div>
+        )
+      ) : null}
     </>
   );
 }
@@ -340,6 +384,10 @@ function volumeAtTime(candles: ChartCandle[], time: number): number {
   return candles.find((candle) => candle.time === time)?.volume ?? 0;
 }
 
+function simpleVolumeColor(candle: ChartCandle): string {
+  return candle.close >= candle.open ? "rgba(127, 238, 100, 0.22)" : "rgba(238, 123, 128, 0.24)";
+}
+
 function volumeColorForCandle(analysis: PositionChartAnalysis, candle: ChartCandle): string {
   const bucket = analysis.trade_flow.buckets.find((item) => item.time === candle.time);
   if (bucket) {
@@ -347,21 +395,43 @@ function volumeColorForCandle(analysis: PositionChartAnalysis, candle: ChartCand
     if (bucket.delta < 0) return "rgba(238, 123, 128, 0.38)";
     return "rgba(174, 210, 164, 0.28)";
   }
-  return candle.close >= candle.open ? "rgba(127, 238, 100, 0.22)" : "rgba(238, 123, 128, 0.24)";
+  return simpleVolumeColor(candle);
 }
 
-function renderVolumeProfileOverlay(
+function renderTaOverlay(
   svg: SVGSVGElement | null,
   container: HTMLDivElement,
   series: { priceToCoordinate(price: number): number | null },
   chart: { timeScale(): { timeToCoordinate(time: Time): number | null } },
   analysis: PositionChartAnalysis,
+  activeLayer: TaLayer,
   showAllHarmonics: boolean
 ) {
   if (!svg) return;
   const width = container.clientWidth;
   const height = container.clientHeight;
   if (!width || !height) return;
+  const nodes: string[] = [];
+  if (activeLayer === "wyckoff") {
+    nodes.push(...wyckoffRangeNodes(series, chart, analysis));
+  }
+  if (activeLayer === "structure") {
+    nodes.push(...volumeProfileNodes(series, analysis, width));
+  }
+  if (activeLayer === "harmonic") {
+    const axisGutter = 78;
+    const right = Math.max(24, width - axisGutter);
+    nodes.push(...harmonicPatternNodes(series, chart, analysis, showAllHarmonics, right));
+  }
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.innerHTML = nodes.join("");
+}
+
+function volumeProfileNodes(
+  series: { priceToCoordinate(price: number): number | null },
+  analysis: PositionChartAnalysis,
+  width: number
+): string[] {
   const bins = analysis.volume_profile.bins.filter((bin) => bin.volume > 0);
   const maxVolume = Math.max(...bins.map((bin) => bin.volume), 1);
   const axisGutter = 78;
@@ -371,9 +441,6 @@ function renderVolumeProfileOverlay(
   const valueLow = series.priceToCoordinate(analysis.volume_profile.value_area_low);
   const poc = series.priceToCoordinate(analysis.volume_profile.poc_price);
   const nodes: string[] = [];
-  const rangeNodes = wyckoffRangeNodes(series, chart, analysis);
-  nodes.push(...rangeNodes);
-  nodes.push(...harmonicPatternNodes(series, chart, analysis, showAllHarmonics, Math.max(24, right - profileWidth - 10)));
   if (valueHigh !== null && valueLow !== null) {
     const y = Math.min(valueHigh, valueLow);
     const bandHeight = Math.max(2, Math.abs(valueLow - valueHigh));
@@ -402,8 +469,7 @@ function renderVolumeProfileOverlay(
   if (poc !== null) {
     nodes.push(`<line x1="${right - profileWidth}" x2="${right}" y1="${poc}" y2="${poc}" stroke="rgba(174,210,164,0.72)" stroke-width="2" />`);
   }
-  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
-  svg.innerHTML = nodes.join("");
+  return nodes;
 }
 
 function harmonicPatternNodes(
