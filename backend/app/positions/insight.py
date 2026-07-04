@@ -99,7 +99,7 @@ def build_position_insight_input(
             "value_area_high": volume_profile.get("value_area_high"),
             "value_area_low": volume_profile.get("value_area_low"),
             "current_position_vs_poc": _position_vs_poc(mark_price, poc_price),
-            "method": volume_profile.get("method", "estimated_ohlcv_proxy"),
+            "method": volume_profile.get("method", "ohlcv_estimated"),
         },
         "entry_context": {
             "entry_memo": position.entry_memo or position.memo,

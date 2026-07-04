@@ -111,9 +111,12 @@ def test_live_position_chart_analysis_contract(client) -> None:
     assert payload["price_levels"]["mark"] > 0
     assert isinstance(payload["price_levels"]["support"], list)
     assert isinstance(payload["price_levels"]["resistance"], list)
-    assert payload["volume_profile"]["method"] == "estimated_ohlcv_proxy"
+    assert payload["volume_profile"]["method"] == "ohlcv_estimated"
     assert len(payload["volume_profile"]["bins"]) > 0
     assert payload["volume_profile"]["poc_price"] > 0
+    assert all("buy_volume" not in item and "sell_volume" not in item for item in payload["volume_profile"]["bins"] if item["method"] == "ohlcv_estimated")
+    assert payload["trade_flow"]["method"] == "data_unavailable"
     assert payload["volume_xray"]["relative_volume"] > 0
+    assert payload["volume_xray"]["method"] == "data_unavailable"
     assert isinstance(payload["volume_xray"]["notes"], list)
     assert isinstance(payload["wyckoff_markers"], list)

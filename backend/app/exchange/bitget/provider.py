@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.db.models import DataQuality, MarketCandle, MarketSnapshot
@@ -9,6 +9,8 @@ from app.exchange.base import MarketDataProvider
 from app.exchange.bitget.client import BitgetClient
 from app.exchange.bitget.errors import BitgetAPIError
 from app.exchange.bitget.schemas import BitgetPosition, Candle, FundingRate, OpenInterest
+from app.exchange.bitget.trade_cache import BitgetTradeFillCache
+from app.exchange.bitget.trades import BitgetTradeFill, aggregate_trade_buckets, cvd_series_from_buckets, parse_trade_fill, timeframe_seconds
 
 
 TIMEFRAME_MAP = {
@@ -30,16 +32,30 @@ TIMEFRAME_MAP = {
 class BitgetMarketDataProvider(MarketDataProvider):
     name = "bitget"
 
-    def __init__(self, client: BitgetClient, product_type: str = "USDT-FUTURES", margin_coin: str = "USDT") -> None:
+    def __init__(
+        self,
+        client: BitgetClient,
+        product_type: str = "USDT-FUTURES",
+        margin_coin: str = "USDT",
+        trade_cache: BitgetTradeFillCache | None = None,
+        trade_fill_lookback_hours: int = 48,
+        trade_fill_cache_ttl_seconds: int = 60,
+    ) -> None:
         self.client = client
         self.product_type = product_type.upper()
         self.margin_coin = margin_coin.upper()
+        self.trade_cache = trade_cache
+        self.trade_fill_lookback_hours = trade_fill_lookback_hours
+        self.trade_fill_cache_ttl_seconds = trade_fill_cache_ttl_seconds
 
     def get_snapshot(self, symbol: str, timeframe: str = "4h") -> MarketSnapshot:
         return _run(self.get_market_snapshot(symbol, timeframe))
 
     def get_positions(self) -> list[BitgetPosition]:
         return _run(self.get_account_positions())
+
+    def get_trade_flow(self, symbol: str, timeframe: str, candles: list[MarketCandle]) -> dict:
+        return _run(self.get_trade_flow_async(symbol, timeframe, candles))
 
     async def get_ohlcv(self, symbol: str, timeframe: str, limit: int = 200) -> list[Candle]:
         granularity = TIMEFRAME_MAP.get(timeframe.lower())
@@ -113,6 +129,89 @@ class BitgetMarketDataProvider(MarketDataProvider):
             size=_required_float(item.get("size"), "size"),
             timestamp=_optional_timestamp_ms(data.get("ts")),
         )
+
+    async def get_trade_fills(self, symbol: str, start_time: datetime, end_time: datetime, limit: int = 1000, max_pages: int = 8) -> list[BitgetTradeFill]:
+        normalized = normalize_symbol(symbol)
+        fills: list[BitgetTradeFill] = []
+        seen: set[str] = set()
+        id_less_than: str | None = None
+        page_limit = min(max(limit, 1), 1000)
+        for page in range(max_pages):
+            params = {
+                "symbol": normalized,
+                "productType": self.product_type,
+                "startTime": str(int(start_time.timestamp() * 1000)),
+                "endTime": str(int(end_time.timestamp() * 1000)),
+                "limit": str(page_limit),
+                "idLessThan": id_less_than,
+            }
+            payload = await self.client.public_get("/api/v2/mix/market/fills-history", params)
+            rows = payload.get("data")
+            if not isinstance(rows, list):
+                raise BitgetAPIError("invalid_response", "Bitget trade fills response is missing data.")
+            page_fills = [parse_trade_fill(row, normalized) for row in rows if isinstance(row, dict)]
+            for fill in page_fills:
+                if fill.trade_id not in seen:
+                    seen.add(fill.trade_id)
+                    fills.append(fill)
+            if len(rows) < page_limit or not page_fills:
+                break
+            oldest = min(page_fills, key=lambda item: item.timestamp)
+            if oldest.timestamp <= start_time:
+                break
+            id_less_than = oldest.trade_id
+            if page < max_pages - 1:
+                await asyncio.sleep(0.25)
+        return sorted(fills, key=lambda fill: fill.timestamp)
+
+    async def get_trade_flow_async(self, symbol: str, timeframe: str, candles: list[MarketCandle]) -> dict:
+        if not candles:
+            return _empty_trade_flow("no_candles", "캔들 데이터가 없어 실체결 집계를 만들 수 없습니다.")
+        normalized = normalize_symbol(symbol)
+        ordered = sorted(candles, key=lambda candle: candle.timestamp)
+        end_time = datetime.now(timezone.utc)
+        candle_end = ordered[-1].timestamp + timedelta(seconds=timeframe_seconds(timeframe))
+        if candle_end > end_time:
+            end_time = candle_end
+        start_time = max(ordered[0].timestamp, end_time - timedelta(hours=self.trade_fill_lookback_hours))
+        fills = self.trade_cache.fresh_fills(normalized, timeframe, start_time, end_time, self.trade_fill_cache_ttl_seconds) if self.trade_cache else None
+        source = "bitget_fills_history_cache" if fills is not None else "bitget_fills_history"
+        error_note = None
+        if fills is None:
+            try:
+                fills = await self.get_trade_fills(normalized, start_time, end_time)
+                if self.trade_cache is not None:
+                    self.trade_cache.store_fills(normalized, timeframe, start_time, end_time, fills)
+            except BitgetAPIError as exc:
+                stale = self.trade_cache.stale_fills(normalized, start_time, end_time) if self.trade_cache else []
+                if not stale:
+                    return _empty_trade_flow("fills_unavailable", "Bitget 실체결 데이터를 가져오지 못해 체결 델타 판정을 보류합니다.")
+                fills = stale
+                source = "bitget_fills_history_stale_cache"
+                error_note = str(exc)
+
+        buckets = aggregate_trade_buckets(fills, ordered, timeframe)
+        notes = []
+        if not fills:
+            notes.append("조회 범위 내 Bitget 실체결 데이터가 없습니다.")
+        if error_note:
+            notes.append("Bitget 실체결 API 오류로 캐시된 체결 데이터를 사용했습니다.")
+        return {
+            "method": "trade_fills" if fills else "data_unavailable",
+            "source": source,
+            "data_available": bool(fills),
+            "coverage": {
+                "from": start_time.isoformat(),
+                "to": end_time.isoformat(),
+                "lookback_hours": self.trade_fill_lookback_hours,
+                "fills": len(fills),
+                "buckets": len(buckets),
+            },
+            "fills": [fill.model_dump() for fill in fills],
+            "buckets": [bucket.model_dump(mode="json") for bucket in buckets],
+            "cvd": cvd_series_from_buckets(buckets),
+            "notes": notes,
+        }
 
     async def get_market_snapshot(self, symbol: str, timeframe: str) -> MarketSnapshot:
         normalized = normalize_symbol(symbol)
@@ -252,6 +351,20 @@ def _optional_string(value: Any) -> str | None:
     if value in (None, ""):
         return None
     return str(value)
+
+
+def _empty_trade_flow(reason: str, note: str) -> dict:
+    return {
+        "method": "data_unavailable",
+        "source": "bitget_fills_history",
+        "data_available": False,
+        "coverage": {"from": None, "to": None, "lookback_hours": None, "fills": 0, "buckets": 0},
+        "fills": [],
+        "buckets": [],
+        "cvd": [],
+        "notes": [note],
+        "reason": reason,
+    }
 
 
 def _estimate_open_interest_change(open_interest: OpenInterest | None, ticker: dict[str, Any]) -> float:

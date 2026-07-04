@@ -21,6 +21,7 @@ import { VolumePanel } from "./VolumePanel";
 
 export function PositionCandlestickChart({ analysis, trendSummary }: { analysis: PositionChartAnalysis; trendSummary: string }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const profileOverlayRef = useRef<SVGSVGElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
   const [showAllStructureLevels, setShowAllStructureLevels] = useState(false);
   const validation = useMemo(() => validateCandles(analysis.candles), [analysis.candles]);
@@ -33,6 +34,7 @@ export function PositionCandlestickChart({ analysis, trendSummary }: { analysis:
   useEffect(() => {
     if (!validation.valid || !containerRef.current || !validation.candles.length) return;
     const container = containerRef.current;
+    const profileOverlay = profileOverlayRef.current;
     const chart = createChart(container, {
       autoSize: true,
       layout: {
@@ -122,7 +124,7 @@ export function PositionCandlestickChart({ analysis, trendSummary }: { analysis:
     const volumeData: HistogramData[] = validation.candles.map((candle) => ({
       time: candle.time as Time,
       value: candle.volume,
-      color: candle.close >= candle.open ? "rgba(127, 238, 100, 0.32)" : "rgba(238, 123, 128, 0.34)"
+      color: volumeColorForCandle(analysis, candle)
     }));
     volumeSeries.setData(volumeData);
 
@@ -141,6 +143,26 @@ export function PositionCandlestickChart({ analysis, trendSummary }: { analysis:
         value: averageVolume
       }))
     );
+
+    if (analysis.trade_flow.cvd.length) {
+      const cvdSeries = chart.addSeries(LineSeries, {
+        priceScaleId: "cvd",
+        color: "rgba(98, 207, 232, 0.72)",
+        lineWidth: 1,
+        priceLineVisible: false,
+        lastValueVisible: false,
+        crosshairMarkerVisible: false
+      });
+      cvdSeries.priceScale().applyOptions({
+        scaleMargins: { top: 0.86, bottom: 0 }
+      });
+      cvdSeries.setData(
+        analysis.trade_flow.cvd.map((point) => ({
+          time: point.time as Time,
+          value: point.value
+        }))
+      );
+    }
 
     priceLines.forEach((line) => {
       candleSeries.createPriceLine({
@@ -198,7 +220,16 @@ export function PositionCandlestickChart({ analysis, trendSummary }: { analysis:
 
     chart.timeScale().fitContent();
     chart.timeScale().applyOptions({ rightOffset: 18 });
-    return () => chart.remove();
+    const drawOverlay = () => renderVolumeProfileOverlay(profileOverlay, container, candleSeries, analysis);
+    window.setTimeout(drawOverlay, 0);
+    chart.timeScale().subscribeVisibleLogicalRangeChange(drawOverlay);
+    const resizeObserver = new ResizeObserver(drawOverlay);
+    resizeObserver.observe(container);
+    return () => {
+      resizeObserver.disconnect();
+      chart.timeScale().unsubscribeVisibleLogicalRangeChange(drawOverlay);
+      chart.remove();
+    };
   }, [analysis, averageVolume, priceLines, validation]);
 
   if (!validation.valid) {
@@ -237,7 +268,10 @@ export function PositionCandlestickChart({ analysis, trendSummary }: { analysis:
         <strong>캔들 정보</strong>
         <span>시가·고가·저가·종가·거래량</span>
       </div>
-      <div className="positionChartCanvas" ref={containerRef} />
+      <div className="positionChartCanvasFrame">
+        <div className="positionChartCanvas" ref={containerRef} />
+        <svg className="volumeProfileOverlay" ref={profileOverlayRef} aria-hidden="true" />
+      </div>
       <VolumePanel analysis={analysis} averageVolume={averageVolume} />
       {analysis.wyckoff_markers.length ? (
         <div className="wyckoffMarkerRail">
@@ -285,6 +319,67 @@ function average(values: number[]): number {
 
 function volumeAtTime(candles: ChartCandle[], time: number): number {
   return candles.find((candle) => candle.time === time)?.volume ?? 0;
+}
+
+function volumeColorForCandle(analysis: PositionChartAnalysis, candle: ChartCandle): string {
+  const bucket = analysis.trade_flow.buckets.find((item) => item.time === candle.time);
+  if (bucket) {
+    if (bucket.delta > 0) return "rgba(98, 207, 232, 0.38)";
+    if (bucket.delta < 0) return "rgba(238, 123, 128, 0.38)";
+    return "rgba(174, 210, 164, 0.28)";
+  }
+  return candle.close >= candle.open ? "rgba(127, 238, 100, 0.22)" : "rgba(238, 123, 128, 0.24)";
+}
+
+function renderVolumeProfileOverlay(
+  svg: SVGSVGElement | null,
+  container: HTMLDivElement,
+  series: { priceToCoordinate(price: number): number | null },
+  analysis: PositionChartAnalysis
+) {
+  if (!svg) return;
+  const width = container.clientWidth;
+  const height = container.clientHeight;
+  if (!width || !height) return;
+  const bins = analysis.volume_profile.bins.filter((bin) => bin.volume > 0);
+  const maxVolume = Math.max(...bins.map((bin) => bin.volume), 1);
+  const axisGutter = 78;
+  const profileWidth = Math.min(180, Math.max(92, width * 0.18));
+  const right = Math.max(24, width - axisGutter);
+  const valueHigh = series.priceToCoordinate(analysis.volume_profile.value_area_high);
+  const valueLow = series.priceToCoordinate(analysis.volume_profile.value_area_low);
+  const poc = series.priceToCoordinate(analysis.volume_profile.poc_price);
+  const nodes: string[] = [];
+  if (valueHigh !== null && valueLow !== null) {
+    const y = Math.min(valueHigh, valueLow);
+    const bandHeight = Math.max(2, Math.abs(valueLow - valueHigh));
+    nodes.push(`<rect x="${right - profileWidth}" y="${y}" width="${profileWidth}" height="${bandHeight}" fill="rgba(174,210,164,0.07)" />`);
+  }
+  for (const bin of bins) {
+    const top = series.priceToCoordinate(bin.price_high);
+    const bottom = series.priceToCoordinate(bin.price_low);
+    if (top === null || bottom === null) continue;
+    const y = Math.min(top, bottom);
+    const rowHeight = Math.max(2, Math.abs(bottom - top) - 1);
+    const barWidth = Math.max(2, (bin.volume / maxVolume) * profileWidth);
+    const x = right - barWidth;
+    if (bin.buy_volume !== undefined || bin.sell_volume !== undefined) {
+      const buy = Math.max(0, bin.buy_volume ?? 0);
+      const sell = Math.max(0, bin.sell_volume ?? 0);
+      const total = Math.max(buy + sell, 1);
+      const buyWidth = barWidth * (buy / total);
+      const sellWidth = barWidth - buyWidth;
+      nodes.push(`<rect x="${x}" y="${y}" width="${sellWidth}" height="${rowHeight}" fill="rgba(238,123,128,0.28)" />`);
+      nodes.push(`<rect x="${x + sellWidth}" y="${y}" width="${buyWidth}" height="${rowHeight}" fill="rgba(98,207,232,0.34)" />`);
+    } else {
+      nodes.push(`<rect x="${x}" y="${y}" width="${barWidth}" height="${rowHeight}" fill="rgba(147,166,142,0.2)" />`);
+    }
+  }
+  if (poc !== null) {
+    nodes.push(`<line x1="${right - profileWidth}" x2="${right}" y1="${poc}" y2="${poc}" stroke="rgba(174,210,164,0.72)" stroke-width="2" />`);
+  }
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.innerHTML = nodes.join("");
 }
 
 function formatKoreanDateTime(time: number): string {

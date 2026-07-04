@@ -344,8 +344,26 @@ export type VolumeProfileBin = {
   price_low: number;
   price_high: number;
   volume: number;
-  buy_volume_proxy: number;
-  sell_volume_proxy: number;
+  method: "trade_fills" | "ohlcv_estimated" | "mixed" | string;
+  buy_volume?: number;
+  sell_volume?: number;
+  delta?: number;
+};
+
+export type TradeFlowBucket = {
+  time: number;
+  buy_volume: number;
+  sell_volume: number;
+  delta: number;
+  trades: number;
+  method: "trade_fills" | string;
+};
+
+export type CvdPoint = {
+  time: number;
+  value: number;
+  delta: number;
+  method: "trade_fills" | string;
 };
 
 export type WyckoffMarker = {
@@ -388,14 +406,31 @@ export type PositionChartAnalysis = {
     value_area_high: number;
     value_area_low: number;
     method: string;
+    source_methods: string[];
+    has_trade_fills: boolean;
+    coverage: Record<string, unknown> | null;
   };
   volume_xray: {
     relative_volume: number;
+    relative_volume_method: string;
     volume_state: string;
+    method: string;
+    data_available: boolean;
     spike_detected: boolean;
     climax_candidate: boolean;
     absorption_candidate: boolean;
     rebound_with_volume: boolean;
+    delta_ratio: number | null;
+    cvd_change: number | null;
+    notes: string[];
+  };
+  trade_flow: {
+    method: string;
+    source: string | null;
+    data_available: boolean;
+    coverage: Record<string, unknown> | null;
+    buckets: TradeFlowBucket[];
+    cvd: CvdPoint[];
     notes: string[];
   };
   wyckoff_markers: WyckoffMarker[];
@@ -403,6 +438,7 @@ export type PositionChartAnalysis = {
     candles: number;
     source: string;
     estimated_volume_profile: boolean;
+    volume_profile_method: string;
     last_candle_at: string;
   };
 };

@@ -81,7 +81,7 @@ class BitgetClient:
             except (httpx.TimeoutException, httpx.NetworkError) as exc:
                 last_error = exc
                 if attempt < self.retries:
-                    await asyncio.sleep(0.25)
+                    await asyncio.sleep(0.25 * (2**attempt))
                     continue
                 raise BitgetAPIError("network_error", "Bitget API temporarily unavailable.") from exc
             except httpx.HTTPStatusError as exc:

@@ -1,6 +1,7 @@
 from app.core.config import Settings
 from app.exchange.base import MarketDataProvider
 from app.exchange.bitget.client import BitgetClient
+from app.exchange.bitget.trade_cache import BitgetTradeFillCache
 from app.exchange.bitget.provider import BitgetMarketDataProvider
 from app.exchange.mock import MockMarketDataProvider
 
@@ -20,5 +21,8 @@ def create_market_data_provider(settings: Settings) -> MarketDataProvider:
             ),
             product_type=settings.bitget_product_type,
             margin_coin=settings.bitget_margin_coin,
+            trade_cache=BitgetTradeFillCache.from_database_url(settings.database_url),
+            trade_fill_lookback_hours=settings.bitget_trade_fill_lookback_hours,
+            trade_fill_cache_ttl_seconds=settings.bitget_trade_fill_cache_ttl_seconds,
         )
     raise ValueError(f"Unsupported market data provider: {settings.market_data_provider}")

@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     bitget_api_key: str = Field("", validation_alias=AliasChoices("FCE_BITGET_API_KEY", "BITGET_API_KEY"))
     bitget_api_secret: str = Field("", validation_alias=AliasChoices("FCE_BITGET_API_SECRET", "BITGET_API_SECRET"))
     bitget_api_passphrase: str = Field("", validation_alias=AliasChoices("FCE_BITGET_API_PASSPHRASE", "BITGET_API_PASSPHRASE"))
+    bitget_trade_fill_lookback_hours: int = Field(48, validation_alias=AliasChoices("FCE_BITGET_TRADE_FILL_LOOKBACK_HOURS", "BITGET_TRADE_FILL_LOOKBACK_HOURS"))
+    bitget_trade_fill_cache_ttl_seconds: int = Field(60, validation_alias=AliasChoices("FCE_BITGET_TRADE_FILL_CACHE_TTL_SECONDS", "BITGET_TRADE_FILL_CACHE_TTL_SECONDS"))
     run_live_bitget_tests: bool = Field(False, validation_alias=AliasChoices("FCE_RUN_LIVE_BITGET_TESTS", "RUN_LIVE_BITGET_TESTS"))
     openai_api_key: str = Field("", validation_alias=AliasChoices("FCE_OPENAI_API_KEY", "OPENAI_API_KEY"))
     insight_model: str = Field("gpt-4.1-mini", validation_alias=AliasChoices("FCE_INSIGHT_MODEL", "INSIGHT_MODEL"))

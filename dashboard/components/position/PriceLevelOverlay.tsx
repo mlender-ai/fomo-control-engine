@@ -4,7 +4,7 @@ import { formatPrice } from "@/lib/format";
 export type ChartPriceLine = {
   label: string;
   price: number;
-  kind: "entry" | "mark" | "liquidation" | "support" | "resistance" | "invalidation";
+  kind: "entry" | "mark" | "liquidation" | "support" | "resistance" | "invalidation" | "poc" | "value_area";
   priority: number;
   score?: number;
   touches?: number;
@@ -39,6 +39,9 @@ function allPriceLinesForAnalysis(analysis: PositionChartAnalysis, showAllStruct
     ...numberLine("청산가", analysis.price_levels.liquidation, "liquidation", 2),
     ...support.map((level, index) => structureLine(level, index, "support")),
     ...resistance.map((level, index) => structureLine(level, index, "resistance")),
+    baseLine("POC", analysis.volume_profile.poc_price, "poc", 11, 2),
+    baseLine("VAH", analysis.volume_profile.value_area_high, "value_area", 12),
+    baseLine("VAL", analysis.volume_profile.value_area_low, "value_area", 13),
     ...analysis.price_levels.invalidation.slice(0, 1).flatMap((level) =>
       typeof level.price === "number" ? [baseLine(level.label || "무효화", level.price, "invalidation", 5, 2)] : []
     )
@@ -53,6 +56,8 @@ export function priceLineColor(kind: ChartPriceLine["kind"], opacity = 1): strin
   if (kind === "liquidation") return rgba(238, 123, 128, alpha);
   if (kind === "support") return rgba(110, 210, 143, alpha);
   if (kind === "resistance") return rgba(240, 184, 64, alpha);
+  if (kind === "poc") return rgba(174, 210, 164, alpha);
+  if (kind === "value_area") return rgba(147, 166, 142, alpha);
   return rgba(242, 139, 84, alpha);
 }
 

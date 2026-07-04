@@ -42,7 +42,7 @@ def test_position_insight_input_json_includes_chart_and_volume_context() -> None
             "poc_price": 106.0,
             "value_area_high": 110.0,
             "value_area_low": 102.0,
-            "method": "estimated_ohlcv_proxy",
+            "method": "ohlcv_estimated",
         },
         "volume_xray": {
             "relative_volume": 1.8,

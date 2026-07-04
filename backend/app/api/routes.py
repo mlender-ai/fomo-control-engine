@@ -109,6 +109,8 @@ def system_status() -> dict:
             "insight_auto_refresh_enabled": settings.insight_auto_refresh_enabled,
             "insight_model": settings.insight_model,
             "insight_min_regeneration_interval_minutes": settings.insight_min_regeneration_interval_minutes,
+            "bitget_trade_fill_lookback_hours": settings.bitget_trade_fill_lookback_hours,
+            "bitget_trade_fill_cache_ttl_seconds": settings.bitget_trade_fill_cache_ttl_seconds,
         },
         "timestamp": utc_now(),
     }
@@ -584,7 +586,7 @@ def get_position_chart_analysis(position_id: UUID, timeframe: str = "4h") -> dic
         raise HTTPException(status_code=404, detail="Position not found")
     try:
         snapshot = market_provider.get_snapshot(position.symbol, timeframe)
-        return build_chart_analysis(position, snapshot)
+        return build_chart_analysis(position, snapshot, _trade_flow_for_snapshot(position.symbol, timeframe, snapshot.candles))
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except MarketDataError as exc:
@@ -744,11 +746,18 @@ def _create_and_store_position_insight(position: Position, snapshot: PositionSna
 
 def _chart_analysis_for_position(position: Position) -> dict:
     try:
-        return build_chart_analysis(position, market_provider.get_snapshot(position.symbol, "4h"))
+        snapshot = market_provider.get_snapshot(position.symbol, "4h")
+        return build_chart_analysis(position, snapshot, _trade_flow_for_snapshot(position.symbol, "4h", snapshot.candles))
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except MarketDataError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+def _trade_flow_for_snapshot(symbol: str, timeframe: str, candles: list) -> dict | None:
+    if isinstance(market_provider, BitgetMarketDataProvider):
+        return market_provider.get_trade_flow(symbol, timeframe, candles)
+    return None
 
 
 def _maybe_auto_regenerate_insight(position: Position, snapshot: PositionSnapshot, status: dict) -> PositionInsight | None:

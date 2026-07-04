@@ -1550,7 +1550,7 @@ h3 {
   text-transform: none;
 }
 
-.positionChartCanvas {
+.positionChartCanvasFrame {
   position: relative;
   min-height: 560px;
   overflow: hidden;
@@ -1560,12 +1560,24 @@ h3 {
   touch-action: none;
 }
 
-.positionChartCanvas:hover {
+.positionChartCanvas {
+  position: absolute;
+  inset: 0;
+}
+
+.positionChartCanvasFrame:hover {
   cursor: grab;
 }
 
-.positionChartCanvas:active {
+.positionChartCanvasFrame:active {
   cursor: grabbing;
+}
+
+.volumeProfileOverlay {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  pointer-events: none;
 }
 
 .chartHoverReadout {
@@ -1665,6 +1677,16 @@ h3 {
 .priceLevelChip.level-invalidation {
   border-color: rgba(242, 139, 84, 0.44);
   color: #f28b54;
+}
+
+.priceLevelChip.level-poc {
+  border-color: rgba(174, 210, 164, 0.44);
+  color: #aed2a4;
+}
+
+.priceLevelChip.level-value_area {
+  border-color: rgba(147, 166, 142, 0.34);
+  color: var(--terminal-muted);
 }
 
 .priceLevelToggle {
@@ -2042,7 +2064,7 @@ h3 {
   font-size: 10px;
 }
 
-.volumeProfileRow div {
+.volumeProfileBar {
   display: flex;
   height: 10px;
   overflow: hidden;
@@ -2051,7 +2073,8 @@ h3 {
 }
 
 .volumeProfileRow i,
-.volumeProfileRow b {
+.volumeProfileRow b,
+.volumeProfileRow em {
   display: block;
   height: 100%;
 }
@@ -2062,6 +2085,10 @@ h3 {
 
 .volumeProfileRow b {
   background: rgba(238, 123, 128, 0.58);
+}
+
+.volumeProfileRow em {
+  background: rgba(147, 166, 142, 0.32);
 }
 
 .xrayGrid,
@@ -2741,7 +2768,7 @@ h3 {
     min-height: 320px;
   }
 
-  .positionChartCanvas,
+  .positionChartCanvasFrame,
   .chartLoadingState,
   .chartErrorState {
     min-height: 360px;

@@ -46,6 +46,10 @@ const volumeLabels: Record<string, string> = {
   rebound_with_volume: "거래량 동반 반등",
   weak_rebound: "약한 반등",
   climax_candidate: "클라이맥스 후보",
+  absorption_candidate: "흡수 후보",
+  delta_imbalanced: "체결 델타 불균형",
+  balanced_flow: "균형 체결",
+  data_unavailable: "체결 데이터 부족",
   normal: "보통",
   neutral: "중립",
   unknown: "확인 필요"

@@ -9,6 +9,7 @@ export function VolumePanel({ analysis, averageVolume }: { analysis: PositionCha
       <strong>{volumeStateLabel(xray.volume_state)}</strong>
       <em>상대 거래량 {xray.relative_volume.toFixed(2)}배</em>
       <em>평균 거래량 {formatCompactNumber(averageVolume)}</em>
+      <em>{xray.method === "trade_fills" ? "실체결 기준" : "체결 데이터 부족"}</em>
       {xray.spike_detected ? <i>거래량 급증</i> : <i>거래량 둔화</i>}
     </div>
   );
