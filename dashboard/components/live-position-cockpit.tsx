@@ -73,6 +73,7 @@ export function LivePositionCockpit() {
   const [selectedChartAnalysis, setSelectedChartAnalysis] = useState<PositionChartAnalysis | null>(null);
   const [selectedChartLoading, setSelectedChartLoading] = useState(false);
   const [selectedChartError, setSelectedChartError] = useState("");
+  const [selectedDetail, setSelectedDetail] = useState<LivePositionDetail | null>(null);
 
   async function load(sync = false) {
     setError("");
@@ -150,6 +151,16 @@ export function LivePositionCockpit() {
 
   const positions = data?.positions ?? [];
   const selected = positions.find((item) => item.position.id === selectedId) ?? positions[0];
+  const selectedDetailPayload = selectedDetail?.position.id === selected?.position.id ? selectedDetail : null;
+  const selectedPayload = selectedDetailPayload ?? selected;
+
+  async function loadSelectedDetail(positionId: string) {
+    try {
+      setSelectedDetail(await api.livePosition(positionId));
+    } catch {
+      setSelectedDetail(null);
+    }
+  }
 
   async function loadSelectedChart(positionId: string) {
     setSelectedChartLoading(true);
@@ -166,6 +177,7 @@ export function LivePositionCockpit() {
 
   useEffect(() => {
     if (!selected?.position.id) return;
+    void loadSelectedDetail(selected.position.id);
     void loadSelectedChart(selected.position.id);
   }, [selected?.position.id, data?.timestamp]);
 
@@ -207,20 +219,20 @@ export function LivePositionCockpit() {
       ) : positions.length ? (
         <>
           <PositionStrip positions={positions} selectedId={selected?.position.id ?? ""} onSelect={setSelectedId} />
-          {selected ? (
+          {selectedPayload ? (
             <>
-              <SelectedPositionHeader payload={selected} />
+              <SelectedPositionHeader payload={selectedPayload} />
               <section className="cockpitMainGrid">
                 <PositionChart
                   analysis={selectedChartAnalysis}
                   loading={selectedChartLoading}
                   error={selectedChartError}
-                  onRetry={() => void loadSelectedChart(selected.position.id)}
-                  trendSummary={trendLabel(selected.state.analysis.technical.trend)}
+                  onRetry={() => void loadSelectedChart(selectedPayload.position.id)}
+                  trendSummary={trendLabel(selectedPayload.state.analysis.technical.trend)}
                 />
-                <InsightSummaryPanel payload={selected} onCreateInsight={createInsight} busy={actionLoading === `insight:${selected.position.id}`} />
+                <InsightSummaryPanel payload={selectedPayload} onCreateInsight={createInsight} busy={actionLoading === `insight:${selectedPayload.position.id}`} />
               </section>
-              <PositionDetailTabs payload={selected} activeTab={activeTab} onTabChange={setActiveTab} onCreateInsight={createInsight} busy={actionLoading === `insight:${selected.position.id}`} />
+              <PositionDetailTabs payload={selectedPayload} activeTab={activeTab} onTabChange={setActiveTab} onCreateInsight={createInsight} busy={actionLoading === `insight:${selectedPayload.position.id}`} />
             </>
           ) : null}
         </>
@@ -431,6 +443,7 @@ function InsightTab({
 
 function ActionPlanTable({ plan }: { plan?: LivePositionPayload["action_plan"] }) {
   const rows = actionPlanRows(plan);
+  const liquidationWarning = typeof plan?.liquidation?.warning === "string" ? plan.liquidation.warning : "";
   return (
     <div className="actionPlanTable">
       <div className="actionPlanHeader">
@@ -451,7 +464,7 @@ function ActionPlanTable({ plan }: { plan?: LivePositionPayload["action_plan"] }
       ) : (
         <div className="terminalEmpty">액션 플랜을 만들 가격 근거가 부족합니다.</div>
       )}
-      {plan?.liquidation?.warning ? <div className="actionPlanWarning">{plan.liquidation.warning}</div> : null}
+      {liquidationWarning ? <div className="actionPlanWarning">{liquidationWarning}</div> : null}
     </div>
   );
 }
@@ -1090,30 +1103,32 @@ function actionPlanRows(plan: LivePositionPayload["action_plan"]) {
     rows.push({
       kind: "무효화",
       price: `${formatNullablePrice(plan.invalidation.price)} · ${formatDistance(plan.invalidation.distance_pct)}`,
-      action: plan.invalidation.action,
-      basis: plan.invalidation.basis,
+      action: plan.invalidation.action ?? "조건 확인",
+      basis: plan.invalidation.basis ?? "무효화 기준",
       tone: "danger"
     });
   }
-  for (const target of plan.take_profit.slice(0, 3)) {
+  const takeProfitTargets = Array.isArray(plan.take_profit) ? plan.take_profit : [];
+  const watchTriggers = Array.isArray(plan.watch_triggers) ? plan.watch_triggers : [];
+  for (const target of takeProfitTargets.slice(0, 3)) {
     rows.push({
       kind: "익절",
       price: `${formatNullablePrice(target.price)} · ${formatDistance(target.distance_pct)}`,
-      action: target.action,
-      basis: target.basis,
+      action: target.action ?? "부분 익절 검토",
+      basis: target.basis ?? "익절 후보",
       tone: "positive"
     });
   }
-  for (const trigger of plan.watch_triggers.slice(0, 3)) {
+  for (const trigger of watchTriggers.slice(0, 3)) {
     rows.push({
       kind: "감시",
-      condition: trigger.condition,
+      condition: trigger.condition ?? "조건 확인",
       action: "조건 확인",
-      basis: trigger.meaning,
+      basis: trigger.meaning ?? "추가 확인 필요",
       tone: "warning"
     });
   }
-  if (plan.liquidation.price !== null) {
+  if (typeof plan.liquidation?.price === "number") {
     rows.push({
       kind: "청산가",
       price: formatNullablePrice(plan.liquidation.price),
