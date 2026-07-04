@@ -249,6 +249,7 @@ export type PositionActionPlan = {
     price: number | null;
     warning: string | null;
   };
+  headline_action?: string | null;
 };
 
 export type InsightStatus = {
