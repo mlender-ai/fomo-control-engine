@@ -13,6 +13,7 @@ def build_action_plan(position: Position, snapshot: PositionSnapshot, chart_anal
     invalidation_levels = _levels(levels.get("invalidation"))
     volume_profile = chart_analysis.get("volume_profile", {})
     volume_xray = chart_analysis.get("volume_xray", {})
+    harmonic_patterns = chart_analysis.get("harmonic_patterns", [])
     candles = chart_analysis.get("candles", [])
     direction = position.direction.value
 
@@ -26,7 +27,7 @@ def build_action_plan(position: Position, snapshot: PositionSnapshot, chart_anal
         "mark_price": mark_price,
         "invalidation": invalidation,
         "engine_invalidation": engine_invalidation if invalidation != engine_invalidation else None,
-        "take_profit": _take_profit_targets(position, mark_price, support, resistance, volume_profile, candles),
+        "take_profit": _take_profit_targets(position, mark_price, support, resistance, volume_profile, candles, harmonic_patterns),
         "watch_triggers": _watch_triggers(position, mark_price, volume_profile, volume_xray),
         "liquidation": _liquidation(position),
     }
@@ -72,6 +73,7 @@ def _take_profit_targets(
     resistance: list[dict[str, Any]],
     volume_profile: dict[str, Any],
     candles: list[dict[str, Any]],
+    harmonic_patterns: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     direction = position.direction.value
     targets: list[dict[str, Any]] = []
@@ -85,6 +87,9 @@ def _take_profit_targets(
                 action="부분 익절 검토",
             )
         )
+
+    for item in _harmonic_targets(position, mark_price, harmonic_patterns):
+        targets.append(item)
 
     level_targets = resistance if direction == "long" else support
     target_label = "저항" if direction == "long" else "지지"
@@ -127,6 +132,40 @@ def _take_profit_targets(
             )
         )
     return _dedupe_price_items(targets)[:3]
+
+
+def _harmonic_targets(position: Position, mark_price: float | None, harmonic_patterns: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not isinstance(harmonic_patterns, list):
+        return []
+    direction = position.direction.value
+    target_direction = "bearish" if direction == "long" else "bullish"
+    targets: list[dict[str, Any]] = []
+    for pattern in sorted(_valid_harmonic_patterns(harmonic_patterns), key=lambda item: -int(item.get("confidence", 0))):
+        if pattern.get("direction") != target_direction:
+            continue
+        prz = pattern.get("prz")
+        if not isinstance(prz, dict):
+            continue
+        price = prz.get("low") if direction == "long" else prz.get("high")
+        if not isinstance(price, (int, float)) or not _is_favorable_target(price, mark_price, direction):
+            continue
+        basis = pattern.get("basis") or f"{pattern.get('label', 'Harmonic')} PRZ"
+        confidence = pattern.get("confidence")
+        suffix = f" · 신뢰도 {confidence}" if isinstance(confidence, int) else ""
+        targets.append(
+            _plan_item(
+                position=position,
+                price=float(price),
+                mark_price=mark_price,
+                basis=f"{basis}{suffix}",
+                action="PRZ 도달 시 부분 익절/반전 경계 점검",
+            )
+        )
+    return targets[:2]
+
+
+def _valid_harmonic_patterns(patterns: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [pattern for pattern in patterns if isinstance(pattern, dict) and isinstance(pattern.get("confidence"), int)]
 
 
 def _watch_triggers(position: Position, mark_price: float | None, volume_profile: dict[str, Any], volume_xray: dict[str, Any]) -> list[dict[str, str]]:

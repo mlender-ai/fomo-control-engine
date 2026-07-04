@@ -24,6 +24,7 @@ export function PositionCandlestickChart({ analysis, trendSummary }: { analysis:
   const profileOverlayRef = useRef<SVGSVGElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
   const [showAllStructureLevels, setShowAllStructureLevels] = useState(false);
+  const [showAllHarmonics, setShowAllHarmonics] = useState(false);
   const validation = useMemo(() => validateCandles(analysis.candles), [analysis.candles]);
   const priceLines = useMemo(() => (validation.valid ? priceLinesForAnalysis(analysis, showAllStructureLevels) : []), [analysis, showAllStructureLevels, validation.valid]);
   const hiddenPriceLines = useMemo(() => (validation.valid ? hiddenPriceLinesForAnalysis(analysis) : []), [analysis, validation.valid]);
@@ -220,7 +221,7 @@ export function PositionCandlestickChart({ analysis, trendSummary }: { analysis:
 
     chart.timeScale().fitContent();
     chart.timeScale().applyOptions({ rightOffset: 18 });
-    const drawOverlay = () => renderVolumeProfileOverlay(profileOverlay, container, candleSeries, chart, analysis);
+    const drawOverlay = () => renderVolumeProfileOverlay(profileOverlay, container, candleSeries, chart, analysis, showAllHarmonics);
     window.setTimeout(drawOverlay, 0);
     chart.timeScale().subscribeVisibleLogicalRangeChange(drawOverlay);
     const resizeObserver = new ResizeObserver(drawOverlay);
@@ -230,7 +231,7 @@ export function PositionCandlestickChart({ analysis, trendSummary }: { analysis:
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(drawOverlay);
       chart.remove();
     };
-  }, [analysis, averageVolume, priceLines, validation]);
+  }, [analysis, averageVolume, priceLines, showAllHarmonics, validation]);
 
   if (!validation.valid) {
     return (
@@ -283,6 +284,22 @@ export function PositionCandlestickChart({ analysis, trendSummary }: { analysis:
         </div>
       ) : (
         <div className="wyckoffMarkerRail muted">와이코프 마커 후보가 아직 없습니다.</div>
+      )}
+      {analysis.harmonic_patterns.length ? (
+        <div className="harmonicPatternRail">
+          {analysis.harmonic_patterns.slice(0, showAllHarmonics ? analysis.harmonic_patterns.length : 2).map((pattern) => (
+            <span key={pattern.id} title={harmonicPatternTitle(pattern)}>
+              {pattern.label} · {pattern.direction === "bearish" ? "하락 반전 PRZ" : "상승 반전 PRZ"} · 신뢰도 {pattern.confidence}
+            </span>
+          ))}
+          {analysis.harmonic_patterns.length > 2 ? (
+            <button className="priceLevelToggle" type="button" onClick={() => setShowAllHarmonics((value) => !value)}>
+              {showAllHarmonics ? "핵심 패턴만" : "전체 패턴"}
+            </button>
+          ) : null}
+        </div>
+      ) : (
+        <div className="harmonicPatternRail muted">하모닉 PRZ 후보가 아직 없습니다.</div>
       )}
     </>
   );
@@ -338,7 +355,8 @@ function renderVolumeProfileOverlay(
   container: HTMLDivElement,
   series: { priceToCoordinate(price: number): number | null },
   chart: { timeScale(): { timeToCoordinate(time: Time): number | null } },
-  analysis: PositionChartAnalysis
+  analysis: PositionChartAnalysis,
+  showAllHarmonics: boolean
 ) {
   if (!svg) return;
   const width = container.clientWidth;
@@ -355,6 +373,7 @@ function renderVolumeProfileOverlay(
   const nodes: string[] = [];
   const rangeNodes = wyckoffRangeNodes(series, chart, analysis);
   nodes.push(...rangeNodes);
+  nodes.push(...harmonicPatternNodes(series, chart, analysis, showAllHarmonics, Math.max(24, right - profileWidth - 10)));
   if (valueHigh !== null && valueLow !== null) {
     const y = Math.min(valueHigh, valueLow);
     const bandHeight = Math.max(2, Math.abs(valueLow - valueHigh));
@@ -385,6 +404,63 @@ function renderVolumeProfileOverlay(
   }
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
   svg.innerHTML = nodes.join("");
+}
+
+function harmonicPatternNodes(
+  series: { priceToCoordinate(price: number): number | null },
+  chart: { timeScale(): { timeToCoordinate(time: Time): number | null } },
+  analysis: PositionChartAnalysis,
+  showAllHarmonics: boolean,
+  rightEdge: number
+): string[] {
+  const patterns = (showAllHarmonics ? analysis.harmonic_patterns : analysis.harmonic_patterns.slice(0, 2)).filter((pattern) => pattern.points.length >= 4);
+  const nodes: string[] = [];
+  for (const pattern of patterns) {
+    const stroke = pattern.direction === "bearish" ? "rgba(238,123,128,0.78)" : "rgba(127,238,100,0.74)";
+    const fill = pattern.direction === "bearish" ? "rgba(238,123,128,0.11)" : "rgba(127,238,100,0.1)";
+    const dash = pattern.status === "forming" ? `stroke-dasharray="6 6"` : "";
+    const coordinates = pattern.points
+      .map((point) => {
+        const x = chart.timeScale().timeToCoordinate(point.time as Time);
+        const y = series.priceToCoordinate(point.price);
+        return x === null || y === null ? null : { x, y, point };
+      })
+      .filter((item): item is { x: number; y: number; point: PositionChartAnalysis["harmonic_patterns"][number]["points"][number] } => item !== null);
+    if (coordinates.length < 4) continue;
+    const przTop = series.priceToCoordinate(pattern.prz.high);
+    const przBottom = series.priceToCoordinate(pattern.prz.low);
+    if (przTop !== null && przBottom !== null) {
+      const y = Math.min(przTop, przBottom);
+      const height = Math.max(4, Math.abs(przBottom - przTop));
+      const x = Math.min(coordinates.at(-2)?.x ?? coordinates[0].x, rightEdge);
+      const width = Math.max(18, rightEdge - x);
+      nodes.push(`<rect x="${x}" y="${y}" width="${width}" height="${height}" fill="${fill}" stroke="${stroke}" stroke-width="1" stroke-dasharray="3 4" />`);
+      nodes.push(`<text x="${x + 6}" y="${Math.max(14, y - 5)}" fill="${stroke}" font-size="11" font-family="SF Mono, Monaco, Consolas, monospace">${escapeSvgText(pattern.label)} PRZ ${pattern.confidence}</text>`);
+    }
+    nodes.push(`<polyline points="${coordinates.map((item) => `${item.x},${item.y}`).join(" ")}" fill="none" stroke="${stroke}" stroke-width="1.6" ${dash} />`);
+    for (const item of coordinates) {
+      nodes.push(`<circle cx="${item.x}" cy="${item.y}" r="3" fill="${stroke}" />`);
+      nodes.push(`<text x="${item.x + 5}" y="${item.y - 6}" fill="rgba(238,242,247,0.82)" font-size="10" font-family="SF Mono, Monaco, Consolas, monospace">${escapeSvgText(item.point.label)}</text>`);
+    }
+    nodes.push(...harmonicRatioLabels(pattern, coordinates));
+  }
+  return nodes;
+}
+
+function harmonicRatioLabels(
+  pattern: PositionChartAnalysis["harmonic_patterns"][number],
+  coordinates: Array<{ x: number; y: number; point: PositionChartAnalysis["harmonic_patterns"][number]["points"][number] }>
+): string[] {
+  const labels = [
+    { index: 2, value: pattern.ratios.b_xa, name: "B" },
+    { index: 3, value: pattern.ratios.c_ab, name: "C" },
+    { index: 4, value: pattern.ratios.d_xa ?? pattern.ratios.cd_ab, name: "D" }
+  ];
+  return labels.flatMap((label) => {
+    const point = coordinates[label.index];
+    if (!point || typeof label.value !== "number") return [];
+    return [`<text x="${point.x + 8}" y="${point.y + 12}" fill="rgba(174,210,164,0.72)" font-size="10" font-family="SF Mono, Monaco, Consolas, monospace">${label.name} ${label.value.toFixed(3)}</text>`];
+  });
 }
 
 function wyckoffRangeNodes(
@@ -453,6 +529,17 @@ function wyckoffMarkerTitle(marker: PositionChartAnalysis["wyckoff_markers"][num
     `복귀 속도 ${components.return_speed}`,
     `거래량 확인 ${components.volume_confirmation}`,
     `레벨 강도 ${components.level_strength}`
+  ].join("\n");
+}
+
+function harmonicPatternTitle(pattern: PositionChartAnalysis["harmonic_patterns"][number]): string {
+  return [
+    `${pattern.label} · ${pattern.status === "forming" ? "형성 중" : "완성"} · 신뢰도 ${pattern.confidence}`,
+    `비율 적합 ${pattern.components.ratio_fit}`,
+    `합류 ${pattern.components.confluence}`,
+    `ATR 유의성 ${pattern.components.atr_significance}`,
+    `PRZ ${formatPrice(pattern.prz.low)} - ${formatPrice(pattern.prz.high)}`,
+    pattern.basis
   ].join("\n");
 }
 

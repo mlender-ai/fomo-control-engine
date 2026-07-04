@@ -417,6 +417,46 @@ export type WyckoffPhase = {
   evidence_event_ids: string[];
 };
 
+export type HarmonicPoint = {
+  label: "X" | "A" | "B" | "C" | "D" | string;
+  time: number;
+  price: number;
+  kind: "high" | "low" | string;
+  index: number;
+};
+
+export type HarmonicPattern = {
+  id: string;
+  name: string;
+  label: string;
+  direction: "bullish" | "bearish" | string;
+  status: "completed" | "forming" | string;
+  confidence: number;
+  components: {
+    ratio_fit: number;
+    confluence: number;
+    atr_significance: number;
+  };
+  points: HarmonicPoint[];
+  ratios: Record<string, number>;
+  ratio_checks: Array<{ name: string; value: number | null; target: string | null; miss: number }>;
+  prz: { low: number; high: number; mid: number };
+  confluence_sources: string[];
+  basis: string;
+};
+
+export type HarmonicPrz = {
+  pattern_id: string;
+  pattern: string;
+  direction: "bullish" | "bearish" | string;
+  status: "completed" | "forming" | string;
+  confidence: number;
+  low: number;
+  high: number;
+  mid: number;
+  basis: string;
+};
+
 export type PositionChartAnalysis = {
   position_id: string;
   symbol: string;
@@ -481,6 +521,14 @@ export type PositionChartAnalysis = {
   wyckoff_phase: WyckoffPhase;
   wyckoff_mtf: WyckoffMtf;
   wyckoff_markers: WyckoffMarker[];
+  harmonic: {
+    pivots: HarmonicPoint[];
+    patterns: HarmonicPattern[];
+    min_confidence: number;
+    atr_multiplier: number;
+  };
+  harmonic_patterns: HarmonicPattern[];
+  harmonic_prz: HarmonicPrz[];
   data_quality: {
     candles: number;
     source: string;

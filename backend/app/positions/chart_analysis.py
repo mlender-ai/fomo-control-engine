@@ -4,12 +4,15 @@ from datetime import datetime, timezone
 from statistics import mean
 from typing import Any
 
+from app.core.config import get_settings
 from app.db.models import MarketCandle, MarketSnapshot, Position
+from app.structure.harmonic.engine import detect_harmonic_patterns
 from app.structure.levels.engine import StructureLevel, detect_structure_levels
 from app.structure.wyckoff.engine import analyze_wyckoff
 
 
 MIN_CHART_CANDLES = 100
+_HARMONIC_CACHE: dict[tuple[str, str, int, int, float], dict[str, Any]] = {}
 
 
 def build_chart_analysis(position: Position, snapshot: MarketSnapshot, trade_flow: dict | None = None) -> dict:
@@ -27,6 +30,7 @@ def build_chart_analysis(position: Position, snapshot: MarketSnapshot, trade_flo
     xray = _volume_xray(recent, trade_flow)
     wyckoff = analyze_wyckoff(recent, levels=levels, trade_flow=trade_flow, timeframe=snapshot.timeframe)
     wyckoff_markers = wyckoff.get("events", [])
+    harmonic = _harmonic_analysis(position.symbol, snapshot.timeframe, recent, levels, profile)
 
     return {
         "position_id": str(position.id),
@@ -58,6 +62,9 @@ def build_chart_analysis(position: Position, snapshot: MarketSnapshot, trade_flo
         },
         "wyckoff_mtf": wyckoff.get("mtf", {"htf_phase": None, "htf_trend": None, "alignment": "neutral"}),
         "wyckoff_markers": wyckoff_markers,
+        "harmonic": harmonic,
+        "harmonic_patterns": harmonic.get("patterns", []),
+        "harmonic_prz": _harmonic_prz(harmonic.get("patterns", [])),
         "data_quality": {
             "candles": len(recent),
             "source": snapshot.provider,
@@ -66,6 +73,47 @@ def build_chart_analysis(position: Position, snapshot: MarketSnapshot, trade_flo
             "last_candle_at": recent[-1].timestamp,
         },
     }
+
+
+def _harmonic_analysis(symbol: str, timeframe: str, candles: list[MarketCandle], levels: dict[str, list[StructureLevel]], volume_profile: dict[str, Any]) -> dict[str, Any]:
+    settings = get_settings()
+    key = (symbol, timeframe, int(candles[-1].timestamp.timestamp()), len(candles), candles[-1].close)
+    cached = _HARMONIC_CACHE.get(key)
+    if cached is not None:
+        return cached
+    result = detect_harmonic_patterns(
+        candles,
+        levels=levels,
+        volume_profile=volume_profile,
+        atr_multiplier=settings.harmonic_zigzag_atr_multiplier,
+        min_confidence=settings.harmonic_min_confidence,
+    )
+    if len(_HARMONIC_CACHE) > 64:
+        _HARMONIC_CACHE.clear()
+    _HARMONIC_CACHE[key] = result
+    return result
+
+
+def _harmonic_prz(patterns: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    zones = []
+    for pattern in patterns:
+        prz = pattern.get("prz")
+        if not isinstance(prz, dict):
+            continue
+        zones.append(
+            {
+                "pattern_id": pattern.get("id"),
+                "pattern": pattern.get("label"),
+                "direction": pattern.get("direction"),
+                "status": pattern.get("status"),
+                "confidence": pattern.get("confidence"),
+                "low": prz.get("low"),
+                "high": prz.get("high"),
+                "mid": prz.get("mid"),
+                "basis": pattern.get("basis"),
+            }
+        )
+    return zones
 
 
 def _candle_payload(candle: MarketCandle) -> dict:

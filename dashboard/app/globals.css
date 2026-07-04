@@ -1707,7 +1707,8 @@ h3 {
 }
 
 .chartVolumeSummary,
-.wyckoffMarkerRail {
+.wyckoffMarkerRail,
+.harmonicPatternRail {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -1720,7 +1721,8 @@ h3 {
 
 .chartVolumeSummary span,
 .chartVolumeSummary em,
-.wyckoffMarkerRail {
+.wyckoffMarkerRail,
+.harmonicPatternRail {
   color: var(--terminal-muted);
   font-family: "SF Mono", Monaco, Consolas, monospace;
   font-size: 11px;
@@ -1741,14 +1743,21 @@ h3 {
   font-style: normal;
 }
 
-.wyckoffMarkerRail span {
+.wyckoffMarkerRail span,
+.harmonicPatternRail span {
   border: 1px solid rgba(240, 184, 64, 0.32);
   border-radius: 999px;
   color: var(--terminal-warning);
   padding: 4px 7px;
 }
 
-.wyckoffMarkerRail.muted {
+.harmonicPatternRail span {
+  border-color: rgba(98, 207, 232, 0.34);
+  color: var(--terminal-cyan);
+}
+
+.wyckoffMarkerRail.muted,
+.harmonicPatternRail.muted {
   color: var(--terminal-muted);
 }
 

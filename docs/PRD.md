@@ -34,7 +34,7 @@ FOMO Control Engine is a personal trading decision engine. It helps the user dec
 - No automatic trading in v0.4.
 - No order, close-position, batch-order, trigger-order, or withdrawal endpoint integration.
 - No autonomous execution agent.
-- No news, social, on-chain, harmonic, Elliott wave, or complex backtesting scope in v0.4.
+- No news, social, on-chain, Elliott wave, or complex backtesting scope in v0.4.
 
 ## Success Criteria
 
