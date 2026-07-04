@@ -37,7 +37,9 @@ def test_live_position_analysis_insight_memo_and_exit_flow(client) -> None:
     assert insight_response.status_code == 200
     insight_payload = insight_response.json()
     assert insight_payload["latest_insight"]["position_id"] == position["id"]
-    assert "매수/매도 지시가 아닙니다" in insight_payload["latest_insight"]["insight_text"]
+    assert insight_payload["latest_insight"]["insight_source"] == "template"
+    assert insight_payload["latest_insight"]["action_plan"]["invalidation"]["price"] == report["price"] * 0.96
+    assert "단정하지 않습니다" not in insight_payload["latest_insight"]["insight_text"]
 
     memo_response = client.patch(
         f"/api/live/positions/{position['id']}/memo",

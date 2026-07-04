@@ -203,13 +203,42 @@ export type PositionInsight = {
   health_score: number;
   status_label: string;
   input_json: PositionState["analysis"];
+  action_plan: PositionActionPlan;
   insight_text: string;
+  insight_source: "llm" | "template" | "fallback_template" | string;
+  fallback_reason: string | null;
+  auto_generated: boolean;
   age_minutes: number | null;
   is_stale: boolean;
   price_drift_pct: number | null;
   basis_mark_price: number | null;
   stale_reasons: string[];
   created_at: string;
+};
+
+export type PositionActionPlanItem = {
+  price: number | null;
+  basis: string;
+  distance_pct: number | null;
+  action: string;
+};
+
+export type PositionWatchTrigger = {
+  condition: string;
+  meaning: string;
+};
+
+export type PositionActionPlan = {
+  as_of: string;
+  mark_price: number | null;
+  invalidation: PositionActionPlanItem | null;
+  engine_invalidation: PositionActionPlanItem | null;
+  take_profit: PositionActionPlanItem[];
+  watch_triggers: PositionWatchTrigger[];
+  liquidation: {
+    price: number | null;
+    warning: string | null;
+  };
 };
 
 export type InsightStatus = {
@@ -258,6 +287,7 @@ export type LivePositionPayload = {
   position: Position;
   state: PositionState;
   latest_snapshot: PositionSnapshot;
+  action_plan?: PositionActionPlan | null;
   latest_insight: PositionInsight | null;
   insight_status: InsightStatus;
   recent_events: PositionEvent[];
@@ -409,6 +439,8 @@ export type SystemStatus = {
     insight_stale_after_minutes: number;
     insight_price_drift_stale_pct: number;
     insight_auto_refresh_enabled: boolean;
+    insight_model: string;
+    insight_min_regeneration_interval_minutes: number;
   };
   timestamp: string;
 };
@@ -433,11 +465,11 @@ export type BitgetSyncResult = {
   error?: string;
 };
 
-export type AgentSummary = {
+export type RuleCheckSummary = {
   id: string;
-  agent: string;
+  check: string;
   stance: string;
-  confidence: number;
+  rule_score: number;
   text_output: string;
   raw_json: Record<string, unknown>;
 };
@@ -451,7 +483,7 @@ export type ResearchRun = {
   state_label: string;
   final_action_label: string;
   summary: string;
-  agents: AgentSummary[];
+  checklists: RuleCheckSummary[];
   created_at: string;
   raw_input?: Record<string, unknown>;
   raw_output?: Record<string, unknown>;

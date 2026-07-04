@@ -53,7 +53,7 @@ def create_research_run(repo, report: Report, memories: list[dict] | None = None
             final_summary=final_summary,
             final_action_label=final_label,
             raw_input=agent_input.model_dump(mode="json"),
-            raw_output={"agents": [result.model_dump(mode="json") for result in results]},
+            raw_output={"checklists": [_checklist_payload(result) for result in results]},
         )
     )
     outputs = [
@@ -70,6 +70,16 @@ def create_research_run(repo, report: Report, memories: list[dict] | None = None
         for result in results
     ]
     return run, outputs
+
+
+def _checklist_payload(result: AgentResult) -> dict:
+    return {
+        "check": result.raw_json.get("check", result.agent.value),
+        "stance": result.stance.value,
+        "rule_score": result.confidence,
+        "raw_json": result.raw_json,
+        "text_output": result.text_output,
+    }
 
 
 def _score(raw: dict, key: str) -> int:
@@ -107,9 +117,9 @@ def _market_structure(agent_input: AgentInput) -> AgentResult:
         stance=stance,
         confidence=min(90, max(35, score)),
         raw_json={
-            "agent": "market_structure_analyst",
+            "check": "market_structure",
             "direction": trend.get("direction", "unknown"),
-            "confidence": min(90, max(35, score)),
+            "rule_score": min(90, max(35, score)),
             "key_points": [text],
             "risk_notes": ["SOS 또는 Spring 신호가 없으면 확정 표현을 피해야 합니다."],
             "invalidations": ["저점 구조가 다시 깨지면 진입 논리는 약화됩니다."],
@@ -131,7 +141,7 @@ def _liquidity(agent_input: AgentInput) -> AgentResult:
         stance=stance,
         confidence=min(88, max(35, score)),
         raw_json={
-            "agent": "liquidity_analyst",
+            "check": "liquidity",
             "dominant_magnet": "upside" if dominant == "upside_liquidity" else "downside" if dominant == "downside_liquidity" else "balanced",
             "upper_liquidity_strength": liquidity.get("upper_liquidity", 0),
             "lower_liquidity_strength": liquidity.get("lower_liquidity", 0),
@@ -156,7 +166,7 @@ def _momentum(agent_input: AgentInput) -> AgentResult:
         stance=stance,
         confidence=min(85, max(35, score)),
         raw_json={
-            "agent": "momentum_analyst",
+            "check": "momentum",
             "state": state,
             "rsi_comment": f"RSI {rsi}",
             "macd_comment": f"MACD histogram {indicators.get('macd_histogram', 'unknown')}",
@@ -176,7 +186,7 @@ def _bull(agent_input: AgentInput) -> AgentResult:
         stance=Stance.supportive if strength >= 70 else Stance.neutral,
         confidence=strength,
         raw_json={
-            "agent": "bull_researcher",
+            "check": "bull_case",
             "bull_case_strength": strength,
             "arguments": [text],
             "required_confirmations": ["다음 캔들 거래량 유지", "시장 구조 훼손 없음"],
@@ -197,7 +207,7 @@ def _bear(agent_input: AgentInput) -> AgentResult:
         stance=Stance.caution if strength >= 55 else Stance.neutral,
         confidence=strength,
         raw_json={
-            "agent": "bear_researcher",
+            "check": "bear_case",
             "bear_case_strength": strength,
             "arguments": [text],
             "invalidation_risks": ["거래량 약화", "저점 재이탈", "FOMO 급등"],
@@ -216,7 +226,7 @@ def _risk(agent_input: AgentInput) -> AgentResult:
         stance=Stance.risk_first,
         confidence=max(45, risk),
         raw_json={
-            "agent": "risk_guardian",
+            "check": "risk_guardian",
             "risk_level": level,
             "max_risk_per_trade_pct": 0.5 if level == "high" else 1.0,
             "suggested_position_mode": "small_probe" if level != "low" else "small_or_split",
@@ -237,7 +247,7 @@ def _fomo(agent_input: AgentInput) -> AgentResult:
         stance=Stance.fomo_warning if fomo >= 70 else Stance.caution if fomo >= 45 else Stance.neutral,
         confidence=max(35, fomo),
         raw_json={
-            "agent": "fomo_gatekeeper",
+            "check": "fomo_gate",
             "fomo_risk": fomo,
             "warning_level": warning,
             "why_this_may_be_fomo": ["가격 움직임만으로 판단하면 이전 실수 패턴과 겹칠 수 있습니다."] + memory_notes,

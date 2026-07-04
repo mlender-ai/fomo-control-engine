@@ -57,9 +57,9 @@ export function ResearchShell() {
     <div className="page">
       <header className="pageHeader">
         <div>
-          <p className="eyebrow">Agentic Research</p>
+          <p className="eyebrow">Rule Research</p>
           <h1>Research Runs</h1>
-          <p className="subtle">동일 market snapshot을 Bull, Bear, Risk Guardian, FOMO Gatekeeper 관점에서 검토합니다.</p>
+          <p className="subtle">동일 market snapshot을 결정론 체크리스트로 검토합니다.</p>
         </div>
         <button className="button secondary" onClick={load} disabled={loading}>
           <RefreshCw size={16} />
@@ -113,9 +113,9 @@ export function ResearchShell() {
               { key: "timeframe", header: "TF", width: 70, render: (run) => run.timeframe.toUpperCase() },
               { key: "entry_score", header: "Entry", align: "center", render: (run) => <TerminalScoreBadge score={run.entry_score} type="entry" /> },
               { key: "fomo_index", header: "FOMO", align: "center", render: (run) => <TerminalScoreBadge score={run.fomo_index} type="fomo" /> },
-              { key: "bull", header: "Bull", align: "center", render: (run) => agentConfidence(run, "bull_researcher") },
-              { key: "bear", header: "Bear", align: "center", render: (run) => agentConfidence(run, "bear_researcher") },
-              { key: "risk", header: "Risk", align: "center", render: (run) => agentConfidence(run, "risk_guardian") },
+              { key: "bull", header: "Bull", align: "center", render: (run) => ruleScore(run, "bull_case") },
+              { key: "bear", header: "Bear", align: "center", render: (run) => ruleScore(run, "bear_case") },
+              { key: "risk", header: "Risk", align: "center", render: (run) => ruleScore(run, "risk_guardian") },
               { key: "final_action_label", header: "Gatekeeper", render: (run) => run.final_action_label },
               { key: "created_at", header: "Created", render: (run) => new Date(run.created_at).toLocaleString() }
             ]}
@@ -141,7 +141,7 @@ export function ResearchShell() {
   );
 }
 
-function agentConfidence(run: ResearchRun, agent: string) {
-  const value = run.agents.find((item) => item.agent === agent)?.confidence;
+function ruleScore(run: ResearchRun, check: string) {
+  const value = run.checklists.find((item) => item.check === check)?.rule_score;
   return value === undefined ? "-" : Math.round(value);
 }

@@ -262,4 +262,4 @@ def test_position_insight_explains_snapshot_without_recalculating_scores() -> No
 
     assert insight.health_score == snapshot.health_score
     assert insight.input_json == snapshot.analysis_json
-    assert "매수/매도 지시가 아닙니다" in insight.insight_text
+    assert "매수/매도 지시가 아닙니다" not in insight.insight_text

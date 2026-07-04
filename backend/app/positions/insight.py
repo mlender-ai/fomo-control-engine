@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import json
+import re
 from typing import Any
 
+import httpx
+
 from app.db.models import Position, PositionInsight, PositionSnapshot
+from app.report.prompts.position_insight_prompt import build_position_insight_prompt
 
 
 class PositionInsightConfigError(RuntimeError):
@@ -62,6 +67,7 @@ def build_position_insight_input(
             "previous_health_score": previous_snapshot.health_score if previous_snapshot else None,
             "entry_health_score": entry_snapshot.health_score if entry_snapshot else None,
             "score_change": position_analysis.get("score_change", 0),
+            "score_scale": 100,
             "risk_score": snapshot.risk_score,
         },
         "chart": {
@@ -116,8 +122,22 @@ def make_ai_position_insight(
     position: Position,
     snapshot: PositionSnapshot,
     input_json: dict[str, Any],
+    action_plan: dict[str, Any],
+    *,
+    api_key: str = "",
+    model: str = "gpt-4.1-mini",
     previous_insight: PositionInsight | None = None,
+    llm_client=None,
+    auto_generated: bool = False,
 ) -> PositionInsight:
+    insight_text, insight_source, fallback_reason = generate_position_insight_text(
+        input_json=input_json,
+        action_plan=action_plan,
+        api_key=api_key,
+        model=model,
+        previous_insight=previous_insight,
+        llm_client=llm_client,
+    )
     return PositionInsight(
         position_id=position.id,
         snapshot_id=snapshot.id,
@@ -126,8 +146,98 @@ def make_ai_position_insight(
         health_score=snapshot.health_score,
         status_label=snapshot.status_label,
         input_json=input_json,
-        insight_text=render_ai_position_insight(input_json, previous_insight),
+        action_plan=action_plan,
+        insight_text=insight_text,
+        insight_source=insight_source,
+        fallback_reason=fallback_reason,
+        auto_generated=auto_generated,
     )
+
+
+def generate_position_insight_text(
+    *,
+    input_json: dict[str, Any],
+    action_plan: dict[str, Any],
+    api_key: str,
+    model: str,
+    previous_insight: PositionInsight | None = None,
+    llm_client=None,
+) -> tuple[str, str, str | None]:
+    template_text = render_ai_position_insight(input_json, previous_insight)
+    if not api_key.strip():
+        return template_text, "template", "openai_api_key_missing"
+    prompt = build_position_insight_prompt(
+        json.dumps({"position_state": input_json, "action_plan": action_plan}, ensure_ascii=False, sort_keys=True)
+    )
+    try:
+        output = llm_client(prompt, model) if llm_client else call_openai_insight(prompt, api_key, model)
+    except Exception as exc:
+        return template_text, "template", f"llm_call_failed:{type(exc).__name__}"
+    if not validate_llm_numbers(output, {"position_state": input_json, "action_plan": action_plan}):
+        return template_text, "fallback_template", "llm_number_validation_failed"
+    if _contains_hedge_boilerplate(output):
+        return template_text, "fallback_template", "llm_hedge_boilerplate_detected"
+    return output.strip(), "llm", None
+
+
+def call_openai_insight(prompt: str, api_key: str, model: str) -> str:
+    require_openai_api_key(api_key)
+    response = httpx.post(
+        "https://api.openai.com/v1/responses",
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        json={
+            "model": model,
+            "input": prompt,
+            "temperature": 0.2,
+            "max_output_tokens": 900,
+        },
+        timeout=30.0,
+    )
+    response.raise_for_status()
+    payload = response.json()
+    if isinstance(payload.get("output_text"), str):
+        return payload["output_text"]
+    texts: list[str] = []
+    for output in payload.get("output", []):
+        if not isinstance(output, dict):
+            continue
+        for content in output.get("content", []):
+            if isinstance(content, dict) and isinstance(content.get("text"), str):
+                texts.append(content["text"])
+    return "\n".join(texts).strip()
+
+
+def validate_llm_numbers(output_text: str, allowed_json: dict[str, Any]) -> bool:
+    allowed = {_normalize_number(token) for token in _number_tokens(json.dumps(allowed_json, ensure_ascii=False))}
+    allowed.update({"0", "1", "2", "3", "4", "5", "10", "100"})
+    for token in _number_tokens(output_text):
+        normalized = _normalize_number(token)
+        if normalized not in allowed:
+            return False
+    return True
+
+
+def _number_tokens(value: str) -> list[str]:
+    return re.findall(r"(?<![A-Za-z0-9_])-?\d+(?:\.\d+)?%?", value)
+
+
+def _normalize_number(token: str) -> str:
+    value = token.strip().rstrip("%")
+    if value.startswith("+"):
+        value = value[1:]
+    try:
+        number = float(value)
+    except ValueError:
+        return value
+    if number == 0:
+        return "0"
+    text = f"{number:.8f}".rstrip("0").rstrip(".")
+    return text
+
+
+def _contains_hedge_boilerplate(value: str) -> bool:
+    patterns = ["단정하지 않습니다", "확정적으로", "투자 조언이 아닙니다"]
+    return any(pattern in value for pattern in patterns)
 
 
 def render_ai_position_insight(input_json: dict[str, Any], previous_insight: PositionInsight | None = None) -> str:
@@ -156,7 +266,7 @@ def render_ai_position_insight(input_json: dict[str, Any], previous_insight: Pos
         f"와이코프/기술적 분석:\n{wyckoff_line}\n\n"
         f"진입 논리:\n{entry_line}\n\n"
         f"주의할 가격:\n{price_line}\n\n"
-        f"제 의견:\n{opinion} 이 문장은 매수/매도 지시가 아닙니다. 최종 판단은 사용자가 정한 손절 기준, 수익 반납 기준, 다음 캔들의 반응을 함께 보고 내려야 합니다."
+        f"제 의견:\n{opinion} 액션 플랜의 가격 조건을 기준으로 대응 시나리오를 나누는 편이 좋습니다."
     )
 
 
@@ -261,7 +371,7 @@ def _wyckoff_line(wyckoff: dict[str, Any], technical: dict[str, Any], volume_pro
         marker_text.append("SOS 후보가 있습니다. SOS는 수요가 강하게 들어오는지 보는 후보 신호입니다.")
     if wyckoff.get("lps_candidate"):
         marker_text.append("LPS 후보가 있습니다. LPS는 지지 재확인 구간인지 보는 후보 신호입니다.")
-    markers = " ".join(marker_text) if marker_text else "확정적인 와이코프 신호로 단정하지 않습니다."
+    markers = " ".join(marker_text) if marker_text else "와이코프 신호는 조건 충족 전까지 보조 근거로만 둡니다."
     return (
         f"와이코프 phase hint는 {wyckoff.get('phase_hint')}입니다. "
         f"Accumulation {wyckoff.get('accumulation_score')}, Distribution {wyckoff.get('distribution_score')}입니다. "

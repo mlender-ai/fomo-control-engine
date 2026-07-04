@@ -1295,6 +1295,99 @@ h3 {
   white-space: pre-line;
 }
 
+.tabActionPlanBlock {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+.tabInsightStack {
+  display: contents;
+}
+
+.actionPlanTable {
+  display: grid;
+  gap: 9px;
+  border: 1px solid var(--terminal-line);
+  border-radius: 5px;
+  background: rgba(8, 11, 16, 0.34);
+  padding: 12px;
+}
+
+.actionPlanHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.actionPlanHeader strong {
+  color: var(--terminal-text);
+}
+
+.actionPlanHeader span {
+  color: var(--terminal-muted);
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 11px;
+}
+
+.actionPlanRows {
+  display: grid;
+  gap: 6px;
+}
+
+.actionPlanRow {
+  display: grid;
+  grid-template-columns: 72px minmax(150px, 0.32fr) minmax(140px, 0.28fr) minmax(220px, 1fr);
+  align-items: center;
+  gap: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.025);
+  padding: 8px 10px;
+}
+
+.actionPlanRow span,
+.actionPlanRow small {
+  color: var(--terminal-muted);
+}
+
+.actionPlanRow strong,
+.actionPlanRow em {
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-style: normal;
+}
+
+.actionPlanRow.tone-danger strong {
+  color: var(--terminal-negative);
+}
+
+.actionPlanRow.tone-positive strong {
+  color: var(--terminal-positive);
+}
+
+.actionPlanRow.tone-warning strong,
+.actionPlanRow.tone-warning em {
+  color: var(--terminal-warning);
+}
+
+.actionPlanWarning {
+  border: 1px solid rgba(240, 184, 64, 0.32);
+  border-radius: 5px;
+  background: rgba(240, 184, 64, 0.08);
+  color: var(--terminal-warning);
+  padding: 8px 10px;
+}
+
+.tabTextBlock summary {
+  cursor: pointer;
+  color: var(--terminal-text);
+  font-weight: 700;
+}
+
+.tabTextBlock details[open] summary {
+  margin-bottom: 10px;
+}
+
 .tabMetricLayout {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -2523,6 +2616,15 @@ h3 {
   .selectedPositionMetrics,
   .tabMetricLayout {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .actionPlanRow {
+    grid-template-columns: 72px minmax(160px, 1fr);
+  }
+
+  .actionPlanRow em,
+  .actionPlanRow small {
+    grid-column: 2;
   }
 
   .positionDecisionGrid {

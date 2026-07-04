@@ -360,8 +360,8 @@ def render_position_insight(position: Position, snapshot: PositionSnapshot, prev
         f"변화폭은 {position_analysis['thesis_delta']:+d}점입니다. "
         f"{'진입 메모: ' + position.entry_memo if position.entry_memo else '진입 메모가 없어 논리 비교는 점수와 차트 구조 중심으로만 판단합니다.'}\n\n"
         f"주의할 가격:\n{_render_critical_levels(risk['critical_levels'])}\n\n"
-        f"제 의견:\n이 문장은 매수/매도 지시가 아닙니다. 현재 포지션은 {position_analysis['status_label']} 관점에서 "
-        f"손절 기준, 수익 반납 기준, 다음 캔들에서의 지지/저항 반응을 점검해야 합니다."
+        f"제 의견:\n현재 포지션은 {position_analysis['status_label']} 관점에서 "
+        f"손절 기준, 수익 반납 기준, 다음 캔들에서의 지지/저항 반응을 조건별로 점검해야 합니다."
         f"{previous_line}"
     )
 

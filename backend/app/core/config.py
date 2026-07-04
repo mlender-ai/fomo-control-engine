@@ -25,10 +25,15 @@ class Settings(BaseSettings):
     bitget_api_passphrase: str = Field("", validation_alias=AliasChoices("FCE_BITGET_API_PASSPHRASE", "BITGET_API_PASSPHRASE"))
     run_live_bitget_tests: bool = Field(False, validation_alias=AliasChoices("FCE_RUN_LIVE_BITGET_TESTS", "RUN_LIVE_BITGET_TESTS"))
     openai_api_key: str = Field("", validation_alias=AliasChoices("FCE_OPENAI_API_KEY", "OPENAI_API_KEY"))
+    insight_model: str = Field("gpt-4.1-mini", validation_alias=AliasChoices("FCE_INSIGHT_MODEL", "INSIGHT_MODEL"))
     insight_stale_after_minutes: int = Field(30, validation_alias=AliasChoices("FCE_INSIGHT_STALE_AFTER_MINUTES", "INSIGHT_STALE_AFTER_MINUTES"))
     insight_price_drift_stale_pct: float = Field(3.0, validation_alias=AliasChoices("FCE_INSIGHT_PRICE_DRIFT_STALE_PCT", "INSIGHT_PRICE_DRIFT_STALE_PCT"))
     live_position_sync_interval_seconds: int = Field(30, validation_alias=AliasChoices("FCE_LIVE_POSITION_SYNC_INTERVAL_SECONDS", "LIVE_POSITION_SYNC_INTERVAL_SECONDS"))
-    insight_auto_refresh_enabled: bool = Field(False, validation_alias=AliasChoices("FCE_INSIGHT_AUTO_REFRESH_ENABLED", "INSIGHT_AUTO_REFRESH_ENABLED"))
+    insight_auto_refresh_enabled: bool = Field(True, validation_alias=AliasChoices("FCE_INSIGHT_AUTO_REFRESH_ENABLED", "INSIGHT_AUTO_REFRESH_ENABLED"))
+    insight_min_regeneration_interval_minutes: int = Field(
+        10,
+        validation_alias=AliasChoices("FCE_INSIGHT_MIN_REGENERATION_INTERVAL_MINUTES", "INSIGHT_MIN_REGENERATION_INTERVAL_MINUTES"),
+    )
 
     model_config = SettingsConfigDict(
         env_file=".env",

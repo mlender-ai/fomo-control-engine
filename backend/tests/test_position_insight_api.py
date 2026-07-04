@@ -40,6 +40,11 @@ def test_position_insight_api_generates_structured_saved_insight(client) -> None
     assert "wyckoff" in insight["input_json"]
     assert "technical" in insight["input_json"]
     assert "volume_profile" in insight["input_json"]
+    assert "action_plan" in insight["input_json"]
+    assert insight["action_plan"]["as_of"] == insight["as_of"]
+    assert insight["insight_source"] == "template"
+    assert insight["fallback_reason"] == "openai_api_key_missing"
+    assert "invalidation" in insight["action_plan"]
     assert "📍 BTCUSDT LONG 포지션 상태" in insight["insight_text"]
     for section in ["현재 상태:", "수익/리스크:", "차트 구조:", "와이코프/기술적 분석:", "진입 논리:", "주의할 가격:", "제 의견:"]:
         assert section in insight["insight_text"]
@@ -50,10 +55,12 @@ def test_position_insight_api_generates_structured_saved_insight(client) -> None
     assert latest_response.status_code == 200
     latest_payload = latest_response.json()
     assert latest_payload["latest_insight"]["id"] == insight["id"]
+    assert latest_payload["action_plan"]["as_of"]
     assert "as_of" in latest_payload["latest_snapshot"]
 
 
-def test_position_insight_status_marks_drifted_insight_stale(client) -> None:
+def test_position_insight_status_marks_drifted_insight_stale(client, monkeypatch) -> None:
+    monkeypatch.setattr(routes.settings, "insight_auto_refresh_enabled", False)
     report = client.post("/api/reports", json={"symbol": "BTCUSDT", "timeframe": "4h"}).json()
     position = client.post(
         "/api/positions",
@@ -83,7 +90,9 @@ def test_position_insight_status_marks_drifted_insight_stale(client) -> None:
     assert latest_payload["latest_insight"]["id"] == insight_payload["latest_insight"]["id"]
 
 
-def test_position_insight_status_marks_old_insight_stale(client) -> None:
+def test_position_insight_auto_regenerates_old_insight_on_detail_view(client, monkeypatch) -> None:
+    monkeypatch.setattr(routes.settings, "insight_auto_refresh_enabled", True)
+    monkeypatch.setattr(routes.settings, "insight_min_regeneration_interval_minutes", 10)
     report = client.post("/api/reports", json={"symbol": "BTCUSDT", "timeframe": "4h"}).json()
     position = client.post(
         "/api/positions",
@@ -96,12 +105,16 @@ def test_position_insight_status_marks_old_insight_stale(client) -> None:
             "entry_report_id": report["id"],
         },
     ).json()
-    client.post(f"/api/live/positions/{position['id']}/insight")
+    first_payload = client.post(f"/api/live/positions/{position['id']}/insight").json()
+    first_id = first_payload["latest_insight"]["id"]
     stored_insight = routes.repository.list_position_insights(UUID(position["id"]), limit=1)[0]
     stored_insight.created_at = stored_insight.created_at - timedelta(minutes=31)
 
     latest_payload = client.get(f"/api/live/positions/{position['id']}").json()
 
-    assert latest_payload["latest_insight"]["age_minutes"] >= 30
-    assert latest_payload["latest_insight"]["is_stale"] is True
-    assert "INSIGHT_OLDER_THAN_30M" in latest_payload["latest_insight"]["stale_reasons"]
+    assert latest_payload["latest_insight"]["id"] != first_id
+    assert latest_payload["latest_insight"]["age_minutes"] == 0
+    assert latest_payload["latest_insight"]["is_stale"] is False
+    assert latest_payload["latest_insight"]["auto_generated"] is True
+    assert latest_payload["latest_insight"]["insight_source"] == "template"
+    assert len(routes.repository.list_position_insights(UUID(position["id"]), limit=10)) == 2

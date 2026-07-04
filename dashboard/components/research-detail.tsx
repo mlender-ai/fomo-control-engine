@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { TerminalMetric, TerminalPanel, TerminalRawJson, TerminalScoreBadge, TerminalTable, TerminalWarning } from "@/components/terminal";
-import { api, type AgentSummary, type ResearchRun } from "@/lib/api";
+import { api, type ResearchRun, type RuleCheckSummary } from "@/lib/api";
 
 export function ResearchDetail({ runId }: { runId: string }) {
   const [run, setRun] = useState<ResearchRun | null>(null);
@@ -28,10 +28,10 @@ export function ResearchDetail({ runId }: { runId: string }) {
     );
   }
 
-  const bull = findAgent(run, "bull_researcher");
-  const bear = findAgent(run, "bear_researcher");
-  const risk = findAgent(run, "risk_guardian");
-  const gatekeeper = findAgent(run, "fomo_gatekeeper");
+  const bull = findCheck(run, "bull_case");
+  const bear = findCheck(run, "bear_case");
+  const risk = findCheck(run, "risk_guardian");
+  const gatekeeper = findCheck(run, "fomo_gate");
 
   return (
     <div className="page">
@@ -55,28 +55,28 @@ export function ResearchDetail({ runId }: { runId: string }) {
         <TerminalPanel title="Final Gatekeeper Report" subtitle="Decision review summary, not an order instruction" status={run.fomo_index >= 70 ? "warning" : "ok"}>
           <p className="reportText">{run.summary}</p>
         </TerminalPanel>
-        <TerminalPanel title="Agent Confidence" subtitle="Structured agent output stored with this run" status="accent">
-          <TerminalTable<AgentSummary>
-            data={run.agents}
+        <TerminalPanel title="Rule Checklist" subtitle="Deterministic checklist output stored with this run" status="accent">
+          <TerminalTable<RuleCheckSummary>
+            data={run.checklists}
             idKey="id"
-            emptyLabel="No agents recorded"
+            emptyLabel="No checklist recorded"
             columns={[
-              { key: "agent", header: "Agent", render: (agent) => agent.agent },
-              { key: "stance", header: "Stance", render: (agent) => agent.stance },
-              { key: "confidence", header: "Confidence", align: "end", render: (agent) => Math.round(agent.confidence) }
+              { key: "check", header: "Check", render: (check) => check.check },
+              { key: "stance", header: "Stance", render: (check) => check.stance },
+              { key: "rule_score", header: "Rule Score", align: "end", render: (check) => Math.round(check.rule_score) }
             ]}
           />
         </TerminalPanel>
       </section>
 
       <section className="grid two">
-        <AgentPanel title="Bull Researcher" agent={bull} status="ok" />
-        <AgentPanel title="Bear Researcher" agent={bear} status="warning" />
+        <RuleCheckPanel title="Bull Case" check={bull} status="ok" />
+        <RuleCheckPanel title="Bear Case" check={bear} status="warning" />
       </section>
 
       <section className="grid two">
-        <AgentPanel title="Risk Guardian" agent={risk} status="error" />
-        <AgentPanel title="FOMO Gatekeeper" agent={gatekeeper} status="accent" />
+        <RuleCheckPanel title="Risk Guard" check={risk} status="error" />
+        <RuleCheckPanel title="FOMO Gate" check={gatekeeper} status="accent" />
       </section>
 
       <TerminalPanel title="Raw Research Tree" subtitle="Stored input/output payload for reproducibility" status="neutral">
@@ -86,22 +86,22 @@ export function ResearchDetail({ runId }: { runId: string }) {
   );
 }
 
-function AgentPanel({ title, agent, status }: { title: string; agent?: AgentSummary; status: "ok" | "warning" | "error" | "accent" }) {
+function RuleCheckPanel({ title, check, status }: { title: string; check?: RuleCheckSummary; status: "ok" | "warning" | "error" | "accent" }) {
   return (
-    <TerminalPanel title={title} subtitle={agent?.stance ?? "No output"} status={status}>
-      {agent ? (
+    <TerminalPanel title={title} subtitle={check?.stance ?? "No output"} status={status}>
+      {check ? (
         <div className="grid">
-          <TerminalMetric label="Confidence" value={Math.round(agent.confidence)} tone={status === "error" ? "negative" : status === "warning" ? "warning" : "agent"} />
-          <p className="reportText">{agent.text_output}</p>
-          <TerminalRawJson data={agent.raw_json} label={`${agent.agent} raw`} />
+          <TerminalMetric label="Rule Score" value={Math.round(check.rule_score)} tone={status === "error" ? "negative" : status === "warning" ? "warning" : "agent"} />
+          <p className="reportText">{check.text_output}</p>
+          <TerminalRawJson data={check.raw_json} label={`${check.check} raw`} />
         </div>
       ) : (
-        <div className="terminalEmpty">No agent output recorded</div>
+        <div className="terminalEmpty">No checklist output recorded</div>
       )}
     </TerminalPanel>
   );
 }
 
-function findAgent(run: ResearchRun, agent: string) {
-  return run.agents.find((item) => item.agent === agent);
+function findCheck(run: ResearchRun, check: string) {
+  return run.checklists.find((item) => item.check === check);
 }

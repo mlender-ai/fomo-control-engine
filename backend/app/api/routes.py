@@ -34,6 +34,7 @@ from app.exchange.factory import create_market_data_provider
 from app.liquidity.liquidation_clusters import analyze_liquidation
 from app.memory.engine import memory_from_shadow, memory_from_trade, memory_from_validation
 from app.monitoring.engine import build_monitoring_log, calculate_pnl
+from app.positions.action_plan import build_action_plan
 from app.positions.chart_analysis import build_chart_analysis
 from app.positions.engine import build_events, build_position_state, direction_aware_score, make_snapshot
 from app.positions.insight import build_position_insight_input, make_ai_position_insight
@@ -106,6 +107,8 @@ def system_status() -> dict:
             "insight_stale_after_minutes": settings.insight_stale_after_minutes,
             "insight_price_drift_stale_pct": settings.insight_price_drift_stale_pct,
             "insight_auto_refresh_enabled": settings.insight_auto_refresh_enabled,
+            "insight_model": settings.insight_model,
+            "insight_min_regeneration_interval_minutes": settings.insight_min_regeneration_interval_minutes,
         },
         "timestamp": utc_now(),
     }
@@ -215,7 +218,7 @@ def compare_research_runs(symbol: str, limit: int = 5) -> dict:
                 "fomo_index": run.fomo_index,
                 "final_action_label": run.final_action_label,
                 "created_at": run.created_at,
-                "agents": _agent_summaries(repository.list_agent_outputs(run.id)),
+                "checklists": _rule_check_summaries(repository.list_agent_outputs(run.id)),
             }
             for run in runs
         ],
@@ -228,7 +231,7 @@ def get_research_run(run_id: UUID) -> dict:
     if run is None:
         raise HTTPException(status_code=404, detail="Research run not found")
     outputs = repository.list_agent_outputs(run.id)
-    return {**_research_run_payload(run, outputs), "raw_input": run.raw_input, "raw_output": run.raw_output}
+    return {**_research_run_payload(run, outputs), "raw_input": run.raw_input, "raw_output": _sanitized_research_raw_output(run.raw_output)}
 
 
 @router.post("/api/liquidity/analyze")
@@ -400,7 +403,7 @@ def _research_run_summary(run) -> dict:
         "final_action_label": run.final_action_label,
         "summary": run.final_summary,
         "created_at": run.created_at,
-        "agents": _agent_summaries(outputs),
+        "checklists": _rule_check_summaries(outputs),
     }
 
 
@@ -414,23 +417,69 @@ def _research_run_payload(run, outputs) -> dict:
         "state_label": run.state_label,
         "final_action_label": run.final_action_label,
         "summary": run.final_summary,
-        "agents": _agent_summaries(outputs),
+        "checklists": _rule_check_summaries(outputs),
         "created_at": run.created_at,
     }
 
 
-def _agent_summaries(outputs) -> list[dict]:
+def _rule_check_summaries(outputs) -> list[dict]:
     return [
         {
             "id": str(output.id),
-            "agent": output.agent_name,
+            "check": _check_name(output.raw_json.get("check", output.agent_name)),
             "stance": output.stance,
-            "confidence": output.confidence,
+            "rule_score": output.confidence,
             "text_output": output.text_output,
-            "raw_json": output.raw_json,
+            "raw_json": _sanitized_rule_json(output.raw_json, output.agent_name, output.confidence),
         }
         for output in outputs
     ]
+
+
+def _check_name(value: str) -> str:
+    mapping = {
+        "market_structure_analyst": "market_structure",
+        "liquidity_analyst": "liquidity",
+        "momentum_analyst": "momentum",
+        "bull_researcher": "bull_case",
+        "bear_researcher": "bear_case",
+        "risk_guardian": "risk_guardian",
+        "fomo_gatekeeper": "fomo_gate",
+    }
+    return mapping.get(value, value)
+
+
+def _sanitized_rule_json(raw_json: dict, fallback_name: str, rule_score: float) -> dict:
+    payload = dict(raw_json)
+    payload.pop("agent", None)
+    payload.pop("confidence", None)
+    payload["check"] = _check_name(str(payload.get("check", fallback_name)))
+    payload["rule_score"] = rule_score
+    return payload
+
+
+def _sanitized_research_raw_output(raw_output: dict) -> dict:
+    if "checklists" in raw_output:
+        return raw_output
+    legacy_agents = raw_output.get("agents")
+    if not isinstance(legacy_agents, list):
+        return raw_output
+    checklists = []
+    for item in legacy_agents:
+        if not isinstance(item, dict):
+            continue
+        raw_json = item.get("raw_json") if isinstance(item.get("raw_json"), dict) else {}
+        rule_score = item.get("confidence", raw_json.get("confidence", 0))
+        checklists.append(
+            {
+                "check": _check_name(str(raw_json.get("check", item.get("agent", "")))),
+                "stance": item.get("stance"),
+                "rule_score": rule_score,
+                "raw_json": _sanitized_rule_json(raw_json, str(item.get("agent", "")), rule_score),
+                "text_output": item.get("text_output", ""),
+            }
+        )
+    return {"checklists": checklists}
 
 
 def _find_bitget_position(positions: list[Position], symbol: str, direction: Direction) -> Position | None:
@@ -565,18 +614,7 @@ def create_position_insight(position_id: UUID) -> dict:
         raise HTTPException(status_code=404, detail="Position not found")
     payload = _live_position_payload(position, store_snapshot=True)
     snapshot = PositionSnapshot.model_validate(payload["latest_snapshot"])
-    previous_insights = repository.list_position_insights(position.id, limit=1)
-    try:
-        chart_analysis = build_chart_analysis(position, market_provider.get_snapshot(position.symbol, "4h"))
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    except MarketDataError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
-    snapshots = repository.list_position_snapshots(position.id, limit=100)
-    previous_insight = previous_insights[0] if previous_insights else None
-    input_json = build_position_insight_input(position, snapshot, chart_analysis, snapshots, previous_insight)
-    insight = make_ai_position_insight(position, snapshot, input_json, previous_insight)
-    saved_insight = repository.add_position_insight(insight)
+    saved_insight = _create_and_store_position_insight(position, snapshot, auto_generated=False)
     repository.add_position_event(
         PositionEvent(
             position_id=position.id,
@@ -584,7 +622,7 @@ def create_position_insight(position_id: UUID) -> dict:
             severity="low",
             title="AI Position Insight 생성",
             description=saved_insight.status_label,
-            data={"insight_id": str(saved_insight.id), "snapshot_id": str(snapshot.id)},
+            data={"insight_id": str(saved_insight.id), "snapshot_id": str(snapshot.id), "insight_source": saved_insight.insight_source},
         )
     )
     insight_status = _insight_status(saved_insight, snapshot)
@@ -659,14 +697,90 @@ def _live_position_payload(position: Position, store_snapshot: bool = False) -> 
 def _live_position_detail(position: Position) -> dict:
     payload = _live_position_payload(position, store_snapshot=False)
     snapshot = payload["latest_snapshot"]
+    try:
+        chart_analysis = _chart_analysis_for_position(position)
+    except HTTPException:
+        chart_analysis = {}
+    current_action_plan = build_action_plan(position, snapshot, chart_analysis)
+    latest_insight = repository.list_position_insights(position.id, limit=1)
+    if latest_insight:
+        status = _insight_status(latest_insight[0], snapshot)
+        refreshed = _maybe_auto_regenerate_insight(position, snapshot, status)
+        if refreshed is not None:
+            insight_status = _insight_status(refreshed, snapshot)
+            payload = {**payload, "latest_insight": _insight_payload(refreshed, insight_status), "insight_status": insight_status}
     insights = repository.list_position_insights(position.id, limit=20)
     return {
         **payload,
+        "action_plan": current_action_plan,
         "snapshots": repository.list_position_snapshots(position.id, limit=50),
         "insights": [_insight_payload(insight, _insight_status(insight, snapshot)) for insight in insights],
         "events": repository.list_position_events(position.id, limit=50),
         "monitoring_logs": repository.list_monitoring_logs(position.id, limit=30),
     }
+
+
+def _create_and_store_position_insight(position: Position, snapshot: PositionSnapshot, *, auto_generated: bool) -> PositionInsight:
+    stored_snapshot = repository.add_position_snapshot(snapshot)
+    chart_analysis = _chart_analysis_for_position(position)
+    previous_insights = repository.list_position_insights(position.id, limit=1)
+    previous_insight = previous_insights[0] if previous_insights else None
+    snapshots = repository.list_position_snapshots(position.id, limit=100)
+    action_plan = build_action_plan(position, stored_snapshot, chart_analysis)
+    input_json = build_position_insight_input(position, stored_snapshot, chart_analysis, snapshots, previous_insight)
+    input_json["action_plan"] = action_plan
+    insight = make_ai_position_insight(
+        position,
+        stored_snapshot,
+        input_json,
+        action_plan,
+        api_key=settings.openai_api_key,
+        model=settings.insight_model,
+        previous_insight=previous_insight,
+        auto_generated=auto_generated,
+    )
+    return repository.add_position_insight(insight)
+
+
+def _chart_analysis_for_position(position: Position) -> dict:
+    try:
+        return build_chart_analysis(position, market_provider.get_snapshot(position.symbol, "4h"))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except MarketDataError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+def _maybe_auto_regenerate_insight(position: Position, snapshot: PositionSnapshot, status: dict) -> PositionInsight | None:
+    if not settings.insight_auto_refresh_enabled or not status.get("is_stale"):
+        return None
+    reasons = set(status.get("reasons", []))
+    trigger_reasons = {"INSIGHT_OLDER_THAN_30M", "STATUS_CHANGED", "MARK_PRICE_CHANGED", "PNL_CHANGED", "HEALTH_CHANGED"}
+    if not reasons.intersection(trigger_reasons):
+        return None
+    previous = repository.list_position_insights(position.id, limit=1)
+    if not previous:
+        return None
+    min_age_seconds = settings.insight_min_regeneration_interval_minutes * 60
+    if (utc_now() - previous[0].created_at).total_seconds() < min_age_seconds:
+        return None
+    refreshed = _create_and_store_position_insight(position, snapshot, auto_generated=True)
+    repository.add_position_event(
+        PositionEvent(
+            position_id=position.id,
+            event_type="ai_insight_auto_refresh",
+            severity="low",
+            title="AI Position Insight 자동 재생성",
+            description=refreshed.status_label,
+            data={
+                "insight_id": str(refreshed.id),
+                "snapshot_id": str(snapshot.id),
+                "reasons": sorted(reasons),
+                "insight_source": refreshed.insight_source,
+            },
+        )
+    )
+    return refreshed
 
 
 def _insight_payload(insight: PositionInsight | None, status: dict) -> dict | None:

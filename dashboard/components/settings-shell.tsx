@@ -129,6 +129,8 @@ export function SettingsShell() {
             <StatusItem label="Insight Stale" value={status ? `${status.refresh_policy.insight_stale_after_minutes}m` : "-"} tone="muted" />
             <StatusItem label="Price Drift Guard" value={status ? `±${status.refresh_policy.insight_price_drift_stale_pct}%` : "-"} tone="muted" />
             <StatusItem label="Auto Insight" value={status?.refresh_policy.insight_auto_refresh_enabled ? "enabled" : "manual only"} tone="muted" />
+            <StatusItem label="Insight Model" value={status?.refresh_policy.insight_model ?? "-"} tone="muted" />
+            <StatusItem label="Min Regen" value={status ? `${status.refresh_policy.insight_min_regeneration_interval_minutes}m` : "-"} tone="muted" />
           </div>
         </TerminalPanel>
 

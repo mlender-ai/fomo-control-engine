@@ -191,7 +191,11 @@ class PositionInsight(BaseModel):
     health_score: int
     status_label: str
     input_json: dict
+    action_plan: dict = Field(default_factory=dict)
     insight_text: str
+    insight_source: str = "template"
+    fallback_reason: str | None = None
+    auto_generated: bool = False
     age_minutes: int | None = None
     is_stale: bool = False
     price_drift_pct: float | None = None

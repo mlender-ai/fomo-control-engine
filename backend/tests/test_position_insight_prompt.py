@@ -7,8 +7,10 @@ from app.positions.engine import build_position_state, make_snapshot
 from app.positions.insight import (
     PositionInsightConfigError,
     build_position_insight_input,
+    generate_position_insight_text,
     render_ai_position_insight,
     require_openai_api_key,
+    validate_llm_numbers,
 )
 from app.report.prompts.position_insight_prompt import build_position_insight_prompt
 from tests.test_position_state_engine import _report
@@ -74,9 +76,71 @@ def test_position_insight_prompt_and_renderer_follow_required_sections() -> None
         assert section in text
     assert "매수하세요" not in text
     assert "매도하세요" not in text
-    assert "매수/매도 지시가 아닙니다" in text
+    assert "단정하지 않습니다" not in text
+    assert "투자 조언이 아닙니다" not in text
 
 
 def test_openai_key_missing_error_is_explicit() -> None:
     with pytest.raises(PositionInsightConfigError, match="OpenAI API key is not configured"):
         require_openai_api_key("")
+
+
+def test_llm_insight_source_is_recorded_when_output_numbers_are_valid() -> None:
+    calls = []
+    input_json = {
+        "position": {"symbol": "BTCUSDT", "direction": "long", "entry_price": 100.0, "mark_price": 105.0},
+        "health": {"health_score": 72, "risk_score": 35, "score_scale": 100, "status_label": "관찰 필요"},
+        "chart": {},
+        "wyckoff": {},
+        "technical": {},
+        "volume_profile": {},
+        "entry_context": {},
+    }
+    action_plan = {
+        "invalidation": {"price": 99.0, "basis": "사용자 기록", "distance_pct": -5.71, "action": "이탈 시 손절 검토"},
+        "take_profit": [{"price": 110.0, "basis": "주요 저항", "distance_pct": 4.76, "action": "부분 익절 검토"}],
+        "watch_triggers": [],
+    }
+
+    def fake_client(prompt: str, model: str) -> str:
+        calls.append((prompt, model))
+        return "현재 상태:\nBTCUSDT는 105.0 기준 관찰 필요입니다. 99.0 이탈이면 손절 검토, 110.0 도달이면 부분 익절 검토입니다."
+
+    text, source, reason = generate_position_insight_text(
+        input_json=input_json,
+        action_plan=action_plan,
+        api_key="test-key",
+        model="test-model",
+        llm_client=fake_client,
+    )
+
+    assert calls
+    assert source == "llm"
+    assert reason is None
+    assert "110.0" in text
+
+
+def test_llm_output_with_unknown_number_falls_back_to_template() -> None:
+    input_json = {
+        "position": {"symbol": "BTCUSDT", "direction": "long", "entry_price": 100.0, "mark_price": 105.0},
+        "health": {"health_score": 72, "risk_score": 35, "score_scale": 100, "status_label": "관찰 필요"},
+        "chart": {},
+        "wyckoff": {},
+        "technical": {},
+        "volume_profile": {},
+        "entry_context": {},
+    }
+    action_plan = {"invalidation": {"price": 99.0, "basis": "사용자 기록", "distance_pct": -5.71, "action": "이탈 시 손절 검토"}}
+
+    assert validate_llm_numbers("허위 목표가 999.0", {"position_state": input_json, "action_plan": action_plan}) is False
+
+    _text, source, reason = generate_position_insight_text(
+        input_json=input_json,
+        action_plan=action_plan,
+        api_key="test-key",
+        model="test-model",
+        llm_client=lambda _prompt, _model: "허위 목표가 999.0",
+    )
+
+    assert source == "fallback_template"
+    assert reason == "llm_number_validation_failed"

@@ -392,32 +392,66 @@ function InsightTab({
   const insight = payload.latest_insight;
   const insightIsFresh = Boolean(insight && !payload.insight_status.is_stale);
   const staleLabel = insight && payload.insight_status.is_stale ? "과거 판단 (재생성 필요)" : "현재 판단";
+  const actionPlan = actionPlanForPayload(payload);
   return (
     <div className="tabContentGrid">
-      <div className={`tabJudgement status-${payload.state.status}`}>
-        <span>{staleLabel}</span>
-        <strong>{payload.state.status_label}</strong>
-        <p>{verdictForState(payload.state)}</p>
+      <div className="tabActionPlanBlock">
+        <ActionPlanTable plan={actionPlan} />
       </div>
-      <div className="tabTextBlock">
-        {insightIsFresh && insight ? (
-          <>
-            <p>{localizeMarketCodes(insight.insight_text)}</p>
-            <small>{insightTimestampLabel(payload)} · 건강도 {insight.health_score}/100</small>
-          </>
-        ) : insight ? (
-          <InsightStaleNotice payload={payload} onCreateInsight={() => onCreateInsight(payload.position.id)} busy={busy} />
-        ) : (
-          <div className="insightEmpty">
-            <strong>아직 인사이트가 없습니다.</strong>
-            <span>인사이트 생성 버튼을 눌러 현재 포지션 상태를 분석하세요.</span>
-            <button className="button" onClick={() => onCreateInsight(payload.position.id)} disabled={busy}>
-              <BrainCircuit size={16} />
-              {busy ? "생성 중" : "인사이트 생성"}
-            </button>
-          </div>
-        )}
+      <div className="tabInsightStack">
+        <div className={`tabJudgement status-${payload.state.status}`}>
+          <span>{staleLabel}</span>
+          <strong>{payload.state.status_label}</strong>
+          <p>{verdictForState(payload.state)}</p>
+        </div>
+        <div className="tabTextBlock">
+          {insightIsFresh && insight ? (
+            <details>
+              <summary>인사이트 해설 보기 · {insightSourceLabel(insight.insight_source)}</summary>
+              <p>{localizeMarketCodes(insight.insight_text)}</p>
+              <small>{insightTimestampLabel(payload)} · 건강도 {insight.health_score}/100</small>
+            </details>
+          ) : insight ? (
+            <InsightStaleNotice payload={payload} onCreateInsight={() => onCreateInsight(payload.position.id)} busy={busy} />
+          ) : (
+            <div className="insightEmpty">
+              <strong>아직 인사이트가 없습니다.</strong>
+              <span>액션 플랜은 현재 데이터로 표시됩니다. 해설이 필요하면 인사이트 생성을 누르세요.</span>
+              <button className="button" onClick={() => onCreateInsight(payload.position.id)} disabled={busy}>
+                <BrainCircuit size={16} />
+                {busy ? "생성 중" : "인사이트 생성"}
+              </button>
+            </div>
+          )}
+        </div>
       </div>
+    </div>
+  );
+}
+
+function ActionPlanTable({ plan }: { plan?: LivePositionPayload["action_plan"] }) {
+  const rows = actionPlanRows(plan);
+  return (
+    <div className="actionPlanTable">
+      <div className="actionPlanHeader">
+        <strong>액션 플랜</strong>
+        <span>{plan?.as_of ? `기준 ${new Date(plan.as_of).toLocaleString()}` : "현재 기준 데이터 부족"}</span>
+      </div>
+      {rows.length ? (
+        <div className="actionPlanRows">
+          {rows.map((row) => (
+            <div className={`actionPlanRow tone-${row.tone}`} key={`${row.kind}-${row.price}-${row.condition}`}>
+              <span>{row.kind}</span>
+              <strong>{row.price ?? row.condition}</strong>
+              <em>{row.action}</em>
+              <small>{row.basis}</small>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="terminalEmpty">액션 플랜을 만들 가격 근거가 부족합니다.</div>
+      )}
+      {plan?.liquidation?.warning ? <div className="actionPlanWarning">{plan.liquidation.warning}</div> : null}
     </div>
   );
 }
@@ -1025,6 +1059,58 @@ function NoPositionsState({ onSync, syncing }: { onSync: () => void; syncing: bo
 
 function StatusPill({ status, label }: { status: string; label: string }) {
   return <span className={`statusPill status-${status}`}>{label}</span>;
+}
+
+function actionPlanForPayload(payload: LivePositionPayload) {
+  return payload.action_plan ?? payload.latest_insight?.action_plan ?? null;
+}
+
+function actionPlanRows(plan: LivePositionPayload["action_plan"]) {
+  if (!plan) return [];
+  const rows: Array<{ kind: string; price?: string; condition?: string; action: string; basis: string; tone: "danger" | "positive" | "warning" | "neutral" }> = [];
+  if (plan.invalidation) {
+    rows.push({
+      kind: "무효화",
+      price: `${formatNullablePrice(plan.invalidation.price)} · ${formatDistance(plan.invalidation.distance_pct)}`,
+      action: plan.invalidation.action,
+      basis: plan.invalidation.basis,
+      tone: "danger"
+    });
+  }
+  for (const target of plan.take_profit.slice(0, 3)) {
+    rows.push({
+      kind: "익절",
+      price: `${formatNullablePrice(target.price)} · ${formatDistance(target.distance_pct)}`,
+      action: target.action,
+      basis: target.basis,
+      tone: "positive"
+    });
+  }
+  for (const trigger of plan.watch_triggers.slice(0, 3)) {
+    rows.push({
+      kind: "감시",
+      condition: trigger.condition,
+      action: "조건 확인",
+      basis: trigger.meaning,
+      tone: "warning"
+    });
+  }
+  if (plan.liquidation.price !== null) {
+    rows.push({
+      kind: "청산가",
+      price: formatNullablePrice(plan.liquidation.price),
+      action: "거리 확인",
+      basis: "거래소 수신 청산가",
+      tone: "neutral"
+    });
+  }
+  return rows.slice(0, 6);
+}
+
+function insightSourceLabel(source: string): string {
+  if (source === "llm") return "LLM 해설";
+  if (source === "fallback_template") return "템플릿 폴백";
+  return "템플릿 해설";
 }
 
 function verdictForState(state: PositionState): string {
