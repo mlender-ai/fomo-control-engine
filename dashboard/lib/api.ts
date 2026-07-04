@@ -553,8 +553,51 @@ export type Trade = {
   holding_minutes: number;
   exit_reason: string;
   review_text: string;
+  review_v2: Record<string, unknown>;
+  judgment_scorecard: JudgmentScorecard;
   memo: string;
   created_at: string;
+};
+
+export type JudgmentOutcome = "correct" | "wrong" | "whipsaw" | "untested";
+
+export type JudgmentScore = {
+  id: string;
+  judgment_id: string;
+  position_id: string;
+  trade_id: string | null;
+  judgment_type: string;
+  claim: Record<string, unknown>;
+  confidence: number | null;
+  outcome: JudgmentOutcome;
+  detail: string;
+  metrics: Record<string, unknown>;
+  created_at: string;
+};
+
+export type JudgmentLedgerEntry = {
+  id: string;
+  judgment_id: string;
+  position_id: string;
+  source_type: string;
+  source_id: string | null;
+  as_of: string;
+  type: string;
+  claim: Record<string, unknown>;
+  confidence: number | null;
+  created_at: string;
+};
+
+export type JudgmentScorecard = {
+  total?: number;
+  tested?: number;
+  correct?: number;
+  wrong?: number;
+  whipsaw?: number;
+  untested?: number;
+  accuracy_pct?: number | null;
+  by_type?: Record<string, Record<string, number>>;
+  scores?: JudgmentScore[];
 };
 
 export type TradeTimeline = {
@@ -562,6 +605,30 @@ export type TradeTimeline = {
   snapshots: PositionSnapshot[];
   events: PositionEvent[];
   monitoring_logs: Array<Record<string, unknown>>;
+  judgments: JudgmentLedgerEntry[];
+  judgment_scores: JudgmentScore[];
+};
+
+export type CalibrationSuggestion = {
+  id: string;
+  suggestion_type: string;
+  title: string;
+  rationale: string;
+  proposed_change: Record<string, unknown>;
+  sample_size: number;
+  status: "pending" | "approved" | "rejected";
+  created_at: string;
+  updated_at: string;
+};
+
+export type CalibrationSummary = {
+  generated_at: string;
+  totals: Record<string, unknown>;
+  invalidation: Record<string, unknown>;
+  take_profit: Record<string, unknown>;
+  wyckoff_confidence: Array<Record<string, unknown>>;
+  suggestions: CalibrationSuggestion[];
+  sample_warning: string;
 };
 
 export type MarketSummary = {
@@ -781,6 +848,15 @@ export const api = {
       method: "POST"
     }),
   tradeTimeline: (tradeId: string) => request<TradeTimeline>(`/api/trades/${tradeId}/timeline`),
+  reviewCalibration: () => request<CalibrationSummary>("/api/review/calibration"),
+  approveCalibrationSuggestion: (suggestionId: string) =>
+    request<CalibrationSuggestion>(`/api/review/calibration/suggestions/${suggestionId}/approve`, {
+      method: "POST"
+    }),
+  rejectCalibrationSuggestion: (suggestionId: string) =>
+    request<CalibrationSuggestion>(`/api/review/calibration/suggestions/${suggestionId}/reject`, {
+      method: "POST"
+    }),
   updateTradeMemo: (tradeId: string, memo: string) =>
     request<Trade>(`/api/trades/${tradeId}/memo`, {
       method: "PATCH",

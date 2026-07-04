@@ -38,8 +38,19 @@ def test_position_monitor_exit_review_flow(client) -> None:
     assert trade["symbol"] == "BTCUSDT"
     assert trade["pnl_percent"] > 0
     assert "Trade Review" in trade["review_text"]
+    assert trade["review_v2"]["version"] == "review_v2"
+    assert "scorecard" in trade["review_v2"]
 
     trades_response = client.get("/api/trades")
     assert trades_response.status_code == 200
     assert trades_response.json()[0]["id"] == trade["id"]
 
+    timeline_response = client.get(f"/api/trades/{trade['id']}/timeline")
+    assert timeline_response.status_code == 200
+    timeline = timeline_response.json()
+    assert "judgments" in timeline
+    assert "judgment_scores" in timeline
+
+    calibration_response = client.get("/api/review/calibration")
+    assert calibration_response.status_code == 200
+    assert "sample_warning" in calibration_response.json()

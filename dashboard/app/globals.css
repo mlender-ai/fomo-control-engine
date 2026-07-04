@@ -494,6 +494,14 @@ h3 {
   color: var(--terminal-warning);
 }
 
+.warningText {
+  color: var(--terminal-warning);
+}
+
+.mutedText {
+  color: var(--terminal-muted);
+}
+
 .tone-info strong {
   color: var(--terminal-cyan);
 }

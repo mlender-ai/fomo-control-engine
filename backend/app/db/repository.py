@@ -9,7 +9,10 @@ from uuid import UUID
 
 from app.db.models import (
     AgentOutput,
+    CalibrationSuggestion,
     DecisionMemory,
+    JudgmentLedgerEntry,
+    JudgmentScore,
     MarketSnapshotRecord,
     MonitoringLog,
     Position,
@@ -45,6 +48,13 @@ class Repository(Protocol):
     def add_trade(self, trade: Trade) -> Trade: ...
     def get_trade(self, trade_id: UUID) -> Trade | None: ...
     def list_trades(self) -> list[Trade]: ...
+    def add_judgment(self, judgment: JudgmentLedgerEntry) -> JudgmentLedgerEntry: ...
+    def list_judgments(self, position_id: UUID, limit: int = 200) -> list[JudgmentLedgerEntry]: ...
+    def add_judgment_score(self, score: JudgmentScore) -> JudgmentScore: ...
+    def list_judgment_scores(self, position_id: UUID | None = None, trade_id: UUID | None = None, limit: int = 500) -> list[JudgmentScore]: ...
+    def add_calibration_suggestion(self, suggestion: CalibrationSuggestion) -> CalibrationSuggestion: ...
+    def get_calibration_suggestion(self, suggestion_id: UUID) -> CalibrationSuggestion | None: ...
+    def list_calibration_suggestions(self, status: str | None = None, limit: int = 50) -> list[CalibrationSuggestion]: ...
     def add_market_snapshot(self, snapshot: MarketSnapshotRecord) -> MarketSnapshotRecord: ...
     def add_research_run(self, run: ResearchRun) -> ResearchRun: ...
     def get_research_run(self, run_id: UUID) -> ResearchRun | None: ...
@@ -71,6 +81,9 @@ class MemoryRepository:
         self.position_insights: dict[UUID, list[PositionInsight]] = {}
         self.position_events: dict[UUID, list[PositionEvent]] = {}
         self.trades: dict[UUID, Trade] = {}
+        self.judgments: dict[UUID, list[JudgmentLedgerEntry]] = {}
+        self.judgment_scores: dict[UUID, JudgmentScore] = {}
+        self.calibration_suggestions: dict[UUID, CalibrationSuggestion] = {}
         self.market_snapshots: dict[UUID, MarketSnapshotRecord] = {}
         self.research_runs: dict[UUID, ResearchRun] = {}
         self.agent_outputs: dict[UUID, list[AgentOutput]] = {}
@@ -148,6 +161,41 @@ class MemoryRepository:
 
     def list_trades(self) -> list[Trade]:
         return sorted(self.trades.values(), key=lambda item: item.created_at, reverse=True)
+
+    def add_judgment(self, judgment: JudgmentLedgerEntry) -> JudgmentLedgerEntry:
+        entries = self.judgments.setdefault(judgment.position_id, [])
+        entries = [item for item in entries if item.id != judgment.id and item.judgment_id != judgment.judgment_id]
+        entries.insert(0, judgment)
+        self.judgments[judgment.position_id] = entries
+        return judgment
+
+    def list_judgments(self, position_id: UUID, limit: int = 200) -> list[JudgmentLedgerEntry]:
+        return sorted(self.judgments.get(position_id, []), key=lambda item: item.as_of, reverse=True)[:limit]
+
+    def add_judgment_score(self, score: JudgmentScore) -> JudgmentScore:
+        self.judgment_scores[score.id] = score
+        return score
+
+    def list_judgment_scores(self, position_id: UUID | None = None, trade_id: UUID | None = None, limit: int = 500) -> list[JudgmentScore]:
+        scores = list(self.judgment_scores.values())
+        if position_id is not None:
+            scores = [score for score in scores if score.position_id == position_id]
+        if trade_id is not None:
+            scores = [score for score in scores if score.trade_id == trade_id]
+        return sorted(scores, key=lambda item: item.created_at, reverse=True)[:limit]
+
+    def add_calibration_suggestion(self, suggestion: CalibrationSuggestion) -> CalibrationSuggestion:
+        self.calibration_suggestions[suggestion.id] = suggestion
+        return suggestion
+
+    def get_calibration_suggestion(self, suggestion_id: UUID) -> CalibrationSuggestion | None:
+        return self.calibration_suggestions.get(suggestion_id)
+
+    def list_calibration_suggestions(self, status: str | None = None, limit: int = 50) -> list[CalibrationSuggestion]:
+        suggestions = list(self.calibration_suggestions.values())
+        if status:
+            suggestions = [suggestion for suggestion in suggestions if suggestion.status == status]
+        return sorted(suggestions, key=lambda item: item.created_at, reverse=True)[:limit]
 
     def add_market_snapshot(self, snapshot: MarketSnapshotRecord) -> MarketSnapshotRecord:
         self.market_snapshots[snapshot.id] = snapshot
@@ -292,6 +340,43 @@ class SQLiteRepository:
                 );
                 CREATE INDEX IF NOT EXISTS idx_trades_created
                     ON trades(created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS judgment_ledger (
+                    id TEXT PRIMARY KEY,
+                    position_id TEXT NOT NULL,
+                    judgment_id TEXT NOT NULL,
+                    as_of TEXT NOT NULL,
+                    type TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_judgment_ledger_judgment_id
+                    ON judgment_ledger(judgment_id);
+                CREATE INDEX IF NOT EXISTS idx_judgment_ledger_position_asof
+                    ON judgment_ledger(position_id, as_of DESC);
+
+                CREATE TABLE IF NOT EXISTS judgment_scores (
+                    id TEXT PRIMARY KEY,
+                    position_id TEXT NOT NULL,
+                    trade_id TEXT,
+                    judgment_id TEXT NOT NULL,
+                    outcome TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_judgment_scores_position_created
+                    ON judgment_scores(position_id, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_judgment_scores_trade_created
+                    ON judgment_scores(trade_id, created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS calibration_suggestions (
+                    id TEXT PRIMARY KEY,
+                    status TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_calibration_suggestions_status_created
+                    ON calibration_suggestions(status, created_at DESC);
 
                 CREATE TABLE IF NOT EXISTS market_snapshots (
                     id TEXT PRIMARY KEY,
@@ -535,6 +620,102 @@ class SQLiteRepository:
         with self._lock, self._connect() as connection:
             rows = connection.execute("SELECT payload FROM trades ORDER BY created_at DESC").fetchall()
         return [Trade.model_validate_json(row["payload"]) for row in rows]
+
+    def add_judgment(self, judgment: JudgmentLedgerEntry) -> JudgmentLedgerEntry:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO judgment_ledger
+                    (id, position_id, judgment_id, as_of, type, created_at, payload)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(judgment.id),
+                    str(judgment.position_id),
+                    judgment.judgment_id,
+                    judgment.as_of.isoformat(),
+                    judgment.type,
+                    judgment.created_at.isoformat(),
+                    _dump_model(judgment),
+                ),
+            )
+        return judgment
+
+    def list_judgments(self, position_id: UUID, limit: int = 200) -> list[JudgmentLedgerEntry]:
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                "SELECT payload FROM judgment_ledger WHERE position_id = ? ORDER BY as_of DESC LIMIT ?",
+                (str(position_id), limit),
+            ).fetchall()
+        return [JudgmentLedgerEntry.model_validate_json(row["payload"]) for row in rows]
+
+    def add_judgment_score(self, score: JudgmentScore) -> JudgmentScore:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO judgment_scores
+                    (id, position_id, trade_id, judgment_id, outcome, created_at, payload)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(score.id),
+                    str(score.position_id),
+                    str(score.trade_id) if score.trade_id else None,
+                    score.judgment_id,
+                    score.outcome,
+                    score.created_at.isoformat(),
+                    _dump_model(score),
+                ),
+            )
+        return score
+
+    def list_judgment_scores(self, position_id: UUID | None = None, trade_id: UUID | None = None, limit: int = 500) -> list[JudgmentScore]:
+        query = "SELECT payload FROM judgment_scores"
+        clauses: list[str] = []
+        params: list[str | int] = []
+        if position_id is not None:
+            clauses.append("position_id = ?")
+            params.append(str(position_id))
+        if trade_id is not None:
+            clauses.append("trade_id = ?")
+            params.append(str(trade_id))
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(query, tuple(params)).fetchall()
+        return [JudgmentScore.model_validate_json(row["payload"]) for row in rows]
+
+    def add_calibration_suggestion(self, suggestion: CalibrationSuggestion) -> CalibrationSuggestion:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO calibration_suggestions
+                    (id, status, created_at, payload)
+                VALUES (?, ?, ?, ?)
+                """,
+                (str(suggestion.id), suggestion.status, suggestion.created_at.isoformat(), _dump_model(suggestion)),
+            )
+        return suggestion
+
+    def get_calibration_suggestion(self, suggestion_id: UUID) -> CalibrationSuggestion | None:
+        with self._lock, self._connect() as connection:
+            row = connection.execute("SELECT payload FROM calibration_suggestions WHERE id = ?", (str(suggestion_id),)).fetchone()
+        return CalibrationSuggestion.model_validate_json(row["payload"]) if row else None
+
+    def list_calibration_suggestions(self, status: str | None = None, limit: int = 50) -> list[CalibrationSuggestion]:
+        query = "SELECT payload FROM calibration_suggestions"
+        params: tuple[str | int, ...]
+        if status:
+            query += " WHERE status = ?"
+            params = (status, limit)
+        else:
+            params = (limit,)
+        query += " ORDER BY created_at DESC LIMIT ?"
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [CalibrationSuggestion.model_validate_json(row["payload"]) for row in rows]
 
     def add_market_snapshot(self, snapshot: MarketSnapshotRecord) -> MarketSnapshotRecord:
         with self._lock, self._connect() as connection:

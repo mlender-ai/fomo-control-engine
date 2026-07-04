@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 from app.agents.orchestrator import create_research_run
 from app.core.config import get_settings
 from app.db.models import (
+    CalibrationSuggestion,
     Direction,
     ExitRequest,
     LiquidityAnalyzeRequest,
@@ -40,7 +41,14 @@ from app.positions.engine import build_events, build_position_state, direction_a
 from app.positions.insight import build_position_insight_input, make_ai_position_insight
 from app.positions.pnl import resolve_position_pnl_percent
 from app.report.engine import generate_report
-from app.review.engine import render_review
+from app.review.engine import (
+    build_calibration_summary,
+    build_judgment_entries,
+    build_review_v2,
+    generate_calibration_suggestions,
+    generate_review_text,
+    score_judgments,
+)
 from app.shadow.engine import ShadowSampleError, compare_shadow_profile, extract_shadow_profile
 from app.validation.engine import run_validation
 
@@ -706,6 +714,7 @@ def _live_position_detail(position: Position) -> dict:
     except HTTPException:
         chart_analysis = {}
     current_action_plan = build_action_plan(position, snapshot, chart_analysis)
+    _store_judgment_entries(position, snapshot, current_action_plan, chart_analysis, source_type="position_detail", source_id=str(snapshot.id))
     latest_insight = repository.list_position_insights(position.id, limit=1)
     if latest_insight:
         status = _insight_status(latest_insight[0], snapshot)
@@ -731,6 +740,7 @@ def _create_and_store_position_insight(position: Position, snapshot: PositionSna
     previous_insight = previous_insights[0] if previous_insights else None
     snapshots = repository.list_position_snapshots(position.id, limit=100)
     action_plan = build_action_plan(position, stored_snapshot, chart_analysis)
+    _store_judgment_entries(position, stored_snapshot, action_plan, chart_analysis, source_type="insight_input", source_id=str(stored_snapshot.id))
     input_json = build_position_insight_input(position, stored_snapshot, chart_analysis, snapshots, previous_insight)
     input_json["action_plan"] = action_plan
     insight = make_ai_position_insight(
@@ -744,6 +754,45 @@ def _create_and_store_position_insight(position: Position, snapshot: PositionSna
         auto_generated=auto_generated,
     )
     return repository.add_position_insight(insight)
+
+
+def _store_judgment_entries(
+    position: Position,
+    snapshot: PositionSnapshot,
+    action_plan: dict,
+    chart_analysis: dict,
+    *,
+    source_type: str,
+    source_id: str | None = None,
+) -> None:
+    try:
+        entries = build_judgment_entries(position, snapshot, action_plan, chart_analysis, source_type=source_type, source_id=source_id)
+    except Exception:
+        return
+    for entry in entries:
+        repository.add_judgment(entry)
+
+
+def _attach_review_v2(trade: Trade) -> Trade:
+    judgments = repository.list_judgments(trade.position_id, limit=500)
+    snapshots = repository.list_position_snapshots(trade.position_id, limit=500)
+    monitoring_logs = repository.list_monitoring_logs(trade.position_id, limit=500)
+    scores = score_judgments(trade, judgments, snapshots, monitoring_logs)
+    for score in scores:
+        repository.add_judgment_score(score)
+    review_v2 = build_review_v2(trade, judgments, scores)
+    review_text, source, fallback_reason = generate_review_text(
+        trade,
+        review_v2,
+        api_key=settings.openai_api_key,
+        model=settings.insight_model,
+    )
+    review_v2["narrative_source"] = source
+    review_v2["fallback_reason"] = fallback_reason
+    trade.review_v2 = review_v2
+    trade.judgment_scorecard = review_v2.get("scorecard", {})
+    trade.review_text = review_text
+    return trade
 
 
 def _chart_analysis_for_position(position: Position) -> dict:
@@ -1000,13 +1049,13 @@ def _record_exit(position_id: UUID, request: ExitRequest, allow_missing: bool = 
         review_text="",
         memo=request.memo,
     )
-    trade.review_text = render_review(trade)
     position.status = PositionStatus.closed
     position.closed_at = datetime.now(timezone.utc)
     position.current_price = request.exit_price
     position.current_score = report.entry_score
     position.pnl_percent = trade.pnl_percent
     repository.update_position(position)
+    trade = _attach_review_v2(trade)
     saved_trade = repository.add_trade(trade)
     repository.add_decision_memory(memory_from_trade(saved_trade))
     repository.add_position_event(
@@ -1027,7 +1076,7 @@ def review_trade(trade_id: UUID):
     trade = repository.get_trade(trade_id)
     if trade is None:
         raise HTTPException(status_code=404, detail="Trade not found")
-    trade.review_text = render_review(trade)
+    trade = _attach_review_v2(trade)
     repository.add_trade(trade)
     repository.add_decision_memory(memory_from_trade(trade))
     return trade
@@ -1056,7 +1105,39 @@ def get_trade_timeline(trade_id: UUID) -> dict:
         "snapshots": repository.list_position_snapshots(trade.position_id, limit=100),
         "events": repository.list_position_events(trade.position_id, limit=100),
         "monitoring_logs": repository.list_monitoring_logs(trade.position_id, limit=100),
+        "judgments": repository.list_judgments(trade.position_id, limit=200),
+        "judgment_scores": repository.list_judgment_scores(position_id=trade.position_id, trade_id=trade.id, limit=200),
     }
+
+
+@router.get("/api/review/calibration")
+def review_calibration() -> dict:
+    scores = repository.list_judgment_scores(limit=2000)
+    for suggestion in generate_calibration_suggestions(scores):
+        existing = repository.get_calibration_suggestion(suggestion.id)
+        if existing is None:
+            repository.add_calibration_suggestion(suggestion)
+    suggestions = repository.list_calibration_suggestions(limit=100)
+    return build_calibration_summary(scores, suggestions)
+
+
+@router.post("/api/review/calibration/suggestions/{suggestion_id}/approve")
+def approve_calibration_suggestion(suggestion_id: UUID) -> CalibrationSuggestion:
+    return _set_calibration_suggestion_status(suggestion_id, "approved")
+
+
+@router.post("/api/review/calibration/suggestions/{suggestion_id}/reject")
+def reject_calibration_suggestion(suggestion_id: UUID) -> CalibrationSuggestion:
+    return _set_calibration_suggestion_status(suggestion_id, "rejected")
+
+
+def _set_calibration_suggestion_status(suggestion_id: UUID, status: str) -> CalibrationSuggestion:
+    suggestion = repository.get_calibration_suggestion(suggestion_id)
+    if suggestion is None:
+        raise HTTPException(status_code=404, detail="Calibration suggestion not found")
+    suggestion.status = status
+    suggestion.updated_at = utc_now()
+    return repository.add_calibration_suggestion(suggestion)
 
 
 @router.patch("/api/trades/{trade_id}/memo")

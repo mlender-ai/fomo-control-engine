@@ -244,12 +244,53 @@ class Trade(BaseModel):
     holding_minutes: int
     exit_reason: str
     review_text: str
+    review_v2: dict = Field(default_factory=dict)
+    judgment_scorecard: dict = Field(default_factory=dict)
     memo: str = ""
     created_at: datetime = Field(default_factory=utc_now)
 
 
 class TradeMemoUpdate(BaseModel):
     memo: str = ""
+
+
+class JudgmentLedgerEntry(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    judgment_id: str
+    position_id: UUID
+    source_type: str
+    source_id: str | None = None
+    as_of: datetime
+    type: str
+    claim: dict = Field(default_factory=dict)
+    confidence: int | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class JudgmentScore(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    judgment_id: str
+    position_id: UUID
+    trade_id: UUID | None = None
+    judgment_type: str
+    claim: dict = Field(default_factory=dict)
+    confidence: int | None = None
+    outcome: Literal["correct", "wrong", "whipsaw", "untested"]
+    detail: str
+    metrics: dict = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class CalibrationSuggestion(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    suggestion_type: str
+    title: str
+    rationale: str
+    proposed_change: dict
+    sample_size: int
+    status: Literal["pending", "approved", "rejected"] = "pending"
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
 
 
 class MarketSnapshotRecord(BaseModel):

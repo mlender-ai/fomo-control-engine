@@ -4,7 +4,7 @@ import Link from "next/link";
 import { BrainCircuit, FileClock, NotebookPen, RefreshCw } from "lucide-react";
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { TerminalMetric, TerminalPanel, TerminalTable, TerminalWarning } from "@/components/terminal";
-import { api, type Trade, type TradeTimeline } from "@/lib/api";
+import { api, type CalibrationSummary, type JudgmentScore, type Trade, type TradeTimeline } from "@/lib/api";
 import { formatPrice, signedPercent } from "@/lib/format";
 
 export function TradeHistoryShell() {
@@ -12,18 +12,38 @@ export function TradeHistoryShell() {
   const [selectedTradeId, setSelectedTradeId] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [calibration, setCalibration] = useState<CalibrationSummary | null>(null);
+  const [calibrationBusy, setCalibrationBusy] = useState("");
 
   async function load() {
     setError("");
     setLoading(true);
     try {
-      const nextTrades = await api.trades();
+      const [nextTrades, nextCalibration] = await Promise.all([api.trades(), api.reviewCalibration()]);
       setTrades(nextTrades);
+      setCalibration(nextCalibration);
       setSelectedTradeId((current) => current || nextTrades[0]?.id || "");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load trade history");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function updateSuggestion(suggestionId: string, action: "approve" | "reject") {
+    setCalibrationBusy(suggestionId);
+    setError("");
+    try {
+      if (action === "approve") {
+        await api.approveCalibrationSuggestion(suggestionId);
+      } else {
+        await api.rejectCalibrationSuggestion(suggestionId);
+      }
+      setCalibration(await api.reviewCalibration());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Calibration update failed");
+    } finally {
+      setCalibrationBusy("");
     }
   }
 
@@ -56,6 +76,47 @@ export function TradeHistoryShell() {
         <TerminalMetric label="Average PnL" value={signedPercent(stats.averagePnl)} tone={stats.averagePnl >= 0 ? "positive" : "negative"} />
         <TerminalMetric label="Total PnL" value={`${stats.totalPnl.toFixed(2)} USDT`} tone={stats.totalPnl >= 0 ? "positive" : "negative"} />
       </section>
+
+      {calibration ? (
+        <section className="grid two">
+          <TerminalPanel title="판단 캘리브레이션" subtitle={calibration.sample_warning} status="accent">
+            <div className="terminalMetricGrid">
+              <TerminalMetric label="전체 판단" value={metricNumber(calibration.totals, "total")} delta={`${metricNumber(calibration.totals, "tested")} tested`} tone="info" />
+              <TerminalMetric label="전체 적중률" value={metricPercent(calibration.totals, "accuracy_pct")} tone={metricTone(calibration.totals)} />
+              <TerminalMetric label="무효화 적중률" value={metricPercent(calibration.invalidation, "accuracy_pct")} delta={`${metricNumber(calibration.invalidation, "total")} samples`} tone={metricTone(calibration.invalidation)} />
+              <TerminalMetric label="익절 도달률" value={metricPercent(calibration.take_profit, "reach_rate_pct")} delta={`${metricNumber(calibration.take_profit, "total")} targets`} tone="warning" />
+            </div>
+          </TerminalPanel>
+
+          <TerminalPanel title="파라미터 조정 제안" subtitle="자동 적용 없이 승인/거절만 기록합니다" status={calibration.suggestions.length ? "warning" : "neutral"}>
+            {calibration.suggestions.length ? (
+              <div className="eventTimeline">
+                {calibration.suggestions.map((suggestion) => (
+                  <div className={`eventItem severity-${suggestion.status === "approved" ? "low" : "medium"}`} key={suggestion.id}>
+                    <div>
+                      <strong>{suggestion.title}</strong>
+                      <span>{suggestion.status} · N={suggestion.sample_size}</span>
+                    </div>
+                    <p>{suggestion.rationale}</p>
+                    {suggestion.status === "pending" ? (
+                      <div className="actionGroup">
+                        <button className="button secondary" onClick={() => updateSuggestion(suggestion.id, "approve")} disabled={calibrationBusy === suggestion.id}>
+                          승인
+                        </button>
+                        <button className="button secondary" onClick={() => updateSuggestion(suggestion.id, "reject")} disabled={calibrationBusy === suggestion.id}>
+                          거절
+                        </button>
+                      </div>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="terminalEmpty">아직 조정 제안이 없습니다. 표본이 10개 이상 쌓이면 표시됩니다.</div>
+            )}
+          </TerminalPanel>
+        </section>
+      ) : null}
 
       <section className="grid two">
         <TerminalPanel title="Closed Trade Tape" subtitle="청산된 거래만 복기 대상으로 표시합니다" status={trades.length ? "ok" : "neutral"}>
@@ -105,6 +166,10 @@ export function TradeHistoryShell() {
                 <TerminalMetric label="Hold" value={`${selectedTrade.holding_minutes}m`} tone="info" />
               </div>
               <p className="reviewText">{selectedTrade.review_text || "No review text recorded."}</p>
+              <div className="terminalMetricGrid">
+                <TerminalMetric label="판단 채점" value={scorecardValue(selectedTrade, "total")} delta={`${scorecardValue(selectedTrade, "tested")} tested`} tone="info" />
+                <TerminalMetric label="적중률" value={scorecardPercent(selectedTrade)} tone={scorecardTone(selectedTrade)} />
+              </div>
               {selectedTrade.memo ? <p className="memoText">{selectedTrade.memo}</p> : null}
             </div>
           ) : (
@@ -225,6 +290,24 @@ export function TradeDetailShell({ tradeId }: { tradeId: string }) {
         </TerminalPanel>
       </section>
 
+      <section className="grid">
+        <TerminalPanel title="판단 채점표" subtitle="무효화·익절·와이코프·PRZ 판단을 실제 종료 경로와 대조합니다" status={timeline.judgment_scores.length ? "ok" : "neutral"}>
+          <TerminalTable<JudgmentScore>
+            data={timeline.judgment_scores}
+            idKey="id"
+            emptyLabel="채점 가능한 판단 원장이 아직 없습니다."
+            columns={[
+              { key: "judgment_type", header: "판단", width: 132, render: (score) => judgmentTypeLabel(score.judgment_type) },
+              { key: "outcome", header: "결과", width: 96, render: (score) => <span className={outcomeClass(score.outcome)}>{outcomeLabel(score.outcome)}</span> },
+              { key: "price", header: "가격", align: "end", width: 112, render: (score) => claimPrice(score) },
+              { key: "confidence", header: "신뢰도", align: "end", width: 92, render: (score) => score.confidence ?? "-" },
+              { key: "detail", header: "근거", render: (score) => score.detail },
+              { key: "created_at", header: "채점 시각", width: 168, render: (score) => new Date(score.created_at).toLocaleString() }
+            ]}
+          />
+        </TerminalPanel>
+      </section>
+
       <section className="grid two">
         <TerminalPanel title="Position Events" subtitle="보유 중 발생한 리스크/상태 이벤트" status={timeline.events.length ? "warning" : "neutral"}>
           {timeline.events.length ? (
@@ -267,4 +350,98 @@ function summarizeTrades(trades: Trade[]) {
   const averagePnl = trades.length ? trades.reduce((sum, trade) => sum + trade.pnl_percent, 0) / trades.length : 0;
   const winRate = trades.length ? (trades.filter((trade) => trade.pnl_percent > 0).length / trades.length) * 100 : 0;
   return { totalPnl, averagePnl, winRate };
+}
+
+function metricNumber(bucket: Record<string, unknown>, key: string) {
+  const value = bucket[key];
+  return typeof value === "number" ? String(value) : "-";
+}
+
+function metricPercent(bucket: Record<string, unknown>, key: string) {
+  const value = bucket[key];
+  return typeof value === "number" ? `${value.toFixed(1)}%` : "표본 부족";
+}
+
+function metricTone(bucket: Record<string, unknown>) {
+  const value = bucket.accuracy_pct;
+  if (typeof value !== "number") {
+    return "neutral" as const;
+  }
+  if (value >= 70) {
+    return "positive" as const;
+  }
+  if (value >= 50) {
+    return "warning" as const;
+  }
+  return "negative" as const;
+}
+
+function scorecardValue(trade: Trade, key: string) {
+  const value = trade.judgment_scorecard?.[key as keyof typeof trade.judgment_scorecard];
+  return typeof value === "number" ? String(value) : "0";
+}
+
+function scorecardPercent(trade: Trade) {
+  const value = trade.judgment_scorecard?.accuracy_pct;
+  return typeof value === "number" ? `${value.toFixed(1)}%` : "표본 부족";
+}
+
+function scorecardTone(trade: Trade) {
+  const value = trade.judgment_scorecard?.accuracy_pct;
+  if (typeof value !== "number") {
+    return "neutral" as const;
+  }
+  if (value >= 70) {
+    return "positive" as const;
+  }
+  if (value >= 50) {
+    return "warning" as const;
+  }
+  return "negative" as const;
+}
+
+function judgmentTypeLabel(type: string) {
+  const labels: Record<string, string> = {
+    invalidation: "무효화",
+    take_profit: "익절 후보",
+    wyckoff_event: "와이코프",
+    harmonic_prz: "하모닉 PRZ"
+  };
+  return labels[type] ?? type;
+}
+
+function outcomeLabel(outcome: string) {
+  const labels: Record<string, string> = {
+    correct: "적중",
+    wrong: "오판",
+    whipsaw: "휩쏘",
+    untested: "미검증"
+  };
+  return labels[outcome] ?? outcome;
+}
+
+function outcomeClass(outcome: string) {
+  if (outcome === "correct") {
+    return "successText";
+  }
+  if (outcome === "wrong") {
+    return "dangerText";
+  }
+  if (outcome === "whipsaw") {
+    return "warningText";
+  }
+  return "mutedText";
+}
+
+function claimPrice(score: JudgmentScore) {
+  const price = score.claim.price;
+  if (typeof price === "number") {
+    return formatPrice(price);
+  }
+  const low = score.claim.low;
+  const high = score.claim.high;
+  if (typeof low === "number" && typeof high === "number") {
+    return `${formatPrice(low)}~${formatPrice(high)}`;
+  }
+  return "-";
 }
