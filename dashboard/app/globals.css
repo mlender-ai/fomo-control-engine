@@ -3051,6 +3051,86 @@ button.actionPlanRow:not(:disabled):hover {
   white-space: pre-line;
 }
 
+.lowConfidenceEvents {
+  grid-column: 1 / -1;
+  border: 1px solid var(--terminal-line);
+  border-radius: 5px;
+  background: rgba(8, 11, 16, 0.3);
+  padding: 8px 10px;
+}
+
+.lowConfidenceEvents summary {
+  cursor: pointer;
+  color: var(--terminal-muted);
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.lowConfidenceEvents[open] summary {
+  margin-bottom: 8px;
+}
+
+.densityToggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.densityToggle button {
+  border: 1px solid var(--terminal-line);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--terminal-muted);
+  cursor: pointer;
+  padding: 6px 14px;
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.densityToggle button.active {
+  border-color: rgba(240, 184, 64, 0.72);
+  background: rgba(240, 184, 64, 0.1);
+  color: var(--terminal-amber);
+}
+
+.densityToggle small {
+  margin-left: 8px;
+  color: var(--terminal-muted);
+  font-size: 11px;
+}
+
+.archivedNotice {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  max-width: 520px;
+  margin: 60px auto;
+  border: 1px solid var(--terminal-line);
+  border-radius: 6px;
+  background: rgba(17, 21, 29, 0.86);
+  color: var(--terminal-muted);
+  padding: 32px;
+  text-align: center;
+}
+
+.archivedNotice h1 {
+  color: var(--terminal-text);
+  font-size: 20px;
+}
+
+.archivedNotice svg {
+  color: var(--terminal-warning);
+}
+
+.archivedNoticeActions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
 @media (max-width: 1100px) {
   .terminalProviderStrip {
     display: none;

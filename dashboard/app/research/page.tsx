@@ -1,5 +1,5 @@
-import { ResearchShell } from "@/components/research-shell";
+import { ArchivedNotice } from "@/components/archived-notice";
 
-export default function ResearchPage() {
-  return <ResearchShell />;
+export default function ArchivedResearchPage() {
+  return <ArchivedNotice title="리서치 런" />;
 }

@@ -42,7 +42,9 @@ import {
   type PositionEvent,
   type PositionState
 } from "@/lib/api";
+import { confidenceLabel, DEFAULT_DENSITY, eventDisplayLimit, loadDensity, type Density } from "@/lib/density";
 import { formatPrice, signedPercent } from "@/lib/format";
+import { plainifyTaText, splitWyckoffEvents, taPlainTooltip, taShortLabel } from "@/lib/labels/taGlossary";
 import {
   atrRiskLabel,
   bollingerLabel,
@@ -85,9 +87,11 @@ function usePositionWorkspace() {
   const [layers, setLayers] = useState<ChartLayerState>(DEFAULT_LAYER_STATE);
   const [highlightPrice, setHighlightPrice] = useState<number | null>(null);
   const [openModule, setOpenModule] = useState<EvidenceModuleId | null>(null);
+  const [density, setDensity] = useState<Density>(DEFAULT_DENSITY);
 
   useEffect(() => {
     setLayers(loadLayerState());
+    setDensity(loadDensity());
   }, []);
 
   useEffect(() => {
@@ -119,7 +123,7 @@ function usePositionWorkspace() {
     if (layer) setLayers((current) => ({ ...current, ta: [layer] }));
   }
 
-  return { layers, highlightPrice, setHighlightPrice, openModule, handleToggleLayer, handleModuleToggle };
+  return { layers, highlightPrice, setHighlightPrice, openModule, handleToggleLayer, handleModuleToggle, density };
 }
 
 export function LivePositionCockpit() {
@@ -319,6 +323,7 @@ export function LivePositionCockpit() {
                   onSelectPrice={workspace.setHighlightPrice}
                   onCreateInsight={() => createInsight(selectedPayload.position.id)}
                   busy={actionLoading === `insight:${selectedPayload.position.id}`}
+                  density={workspace.density}
                 />
               </section>
               <EvidenceAccordion
@@ -326,6 +331,7 @@ export function LivePositionCockpit() {
                 chartAnalysis={selectedChartAnalysis}
                 openModule={workspace.openModule}
                 onModuleToggle={workspace.handleModuleToggle}
+                density={workspace.density}
               />
             </>
           ) : null}
@@ -364,7 +370,7 @@ function PositionStrip({
           <em className={item.state.pnl_percent >= 0 ? "successText" : "dangerText"}>{signedPercent(item.state.pnl_percent)}</em>
           <small>건강도 {item.state.health_score}</small>
           <StatusPill status={item.state.status} label={item.state.status_label} />
-          <span className="stripHeadline">{headlineForPayload(item)}</span>
+          <span className="stripHeadline">{plainifyTaText(headlineForPayload(item))}</span>
         </button>
       ))}
     </section>
@@ -399,7 +405,7 @@ function PositionVerdictBar({
         </em>
         <StatusPill status={state.status} label={`${state.status_label} (${state.health_score}/100)`} />
       </div>
-      <p className="verdictAction">→ {headlineForPayload(payload)}</p>
+      <p className="verdictAction">→ {plainifyTaText(headlineForPayload(payload))}</p>
       <div className="verdictMeta">
         <span>{asOf ? `기준 ${asOf.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}` : "기준 -"} · {freshness}</span>
         {liquidationMissing(payload) ? (
@@ -421,13 +427,15 @@ function ActionPlanPanel({
   highlightPrice,
   onSelectPrice,
   onCreateInsight,
-  busy
+  busy,
+  density
 }: {
   payload: LivePositionPayload;
   highlightPrice: number | null;
   onSelectPrice: (price: number | null) => void;
   onCreateInsight: () => Promise<void> | void;
   busy: boolean;
+  density: Density;
 }) {
   const plan = actionPlanForPayload(payload);
   const rows = actionPlanRows(plan);
@@ -452,9 +460,9 @@ function ActionPlanPanel({
               type="button"
             >
               <span>{row.kind}</span>
-              <strong>{row.price ?? row.condition}</strong>
-              <em>{row.action}</em>
-              <small>{row.basis}</small>
+              <strong>{row.price ?? plainifyTaText(row.condition)}</strong>
+              <em>{plainifyTaText(row.action)}</em>
+              <small>{formatBasis(row.basis, density)}</small>
             </button>
           ))}
         </div>
@@ -475,29 +483,37 @@ function EvidenceAccordion({
   chartAnalysis,
   openModule,
   onModuleToggle,
+  density,
   historyExtras
 }: {
   payload: LivePositionPayload;
   chartAnalysis: PositionChartAnalysis | null;
   openModule: EvidenceModuleId | null;
   onModuleToggle: (id: EvidenceModuleId) => void;
+  density: Density;
   historyExtras?: ReactNode;
 }) {
   const wyckoff = payload.state.analysis.wyckoff;
+  const direction = payload.position.direction;
+  const wyckoffEvents = splitWyckoffEvents(chartAnalysis?.wyckoff_markers ?? [], chartAnalysis?.wyckoff_markers_low_confidence);
   const modules: Array<{ id: EvidenceModuleId; title: string; badge: string; content: ReactNode }> = [
     {
       id: "wyckoff",
       title: "와이코프",
-      badge: `${phaseHintLabel(wyckoff.phase ?? wyckoff.phase_hint)} · 유효 이벤트 ${chartAnalysis?.wyckoff_markers.length ?? 0}개`,
-      content: <WyckoffEvidence state={payload.state} chartAnalysis={chartAnalysis} />
+      badge: density === "simple"
+        ? phaseHintLabel(wyckoff.phase ?? wyckoff.phase_hint)
+        : `${phaseHintLabel(wyckoff.phase ?? wyckoff.phase_hint)} · 유효 이벤트 ${wyckoffEvents.events.length}개`,
+      content: <WyckoffEvidence state={payload.state} chartAnalysis={chartAnalysis} direction={direction} density={density} />
     },
     {
       id: "harmonic",
       title: "하모닉",
       badge: chartAnalysis?.harmonic_patterns.length
-        ? `패턴 ${chartAnalysis.harmonic_patterns.length}개 · 최고 신뢰도 ${Math.max(...chartAnalysis.harmonic_patterns.map((item) => item.confidence))}`
-        : "후보 없음",
-      content: <HarmonicEvidence chartAnalysis={chartAnalysis} />
+        ? density === "simple"
+          ? `패턴 ${chartAnalysis.harmonic_patterns.length}개`
+          : `패턴 ${chartAnalysis.harmonic_patterns.length}개 · 최고 ${confidenceLabel(Math.max(...chartAnalysis.harmonic_patterns.map((item) => item.confidence)), density)}`
+        : "판정 보류",
+      content: <HarmonicEvidence chartAnalysis={chartAnalysis} density={density} />
     },
     {
       id: "volume",
@@ -595,51 +611,80 @@ function InsightEvidence({
   );
 }
 
-function WyckoffEvidence({ state, chartAnalysis }: { state: PositionState; chartAnalysis: PositionChartAnalysis | null }) {
+function WyckoffEvidence({
+  state,
+  chartAnalysis,
+  direction,
+  density
+}: {
+  state: PositionState;
+  chartAnalysis: PositionChartAnalysis | null;
+  direction: "long" | "short";
+  density: Density;
+}) {
   const wyckoff = state.analysis.wyckoff;
   const mtf = wyckoff.mtf;
-  const markers = chartAnalysis?.wyckoff_markers ?? [];
+  const { events, lowConfidence } = splitWyckoffEvents(chartAnalysis?.wyckoff_markers ?? [], chartAnalysis?.wyckoff_markers_low_confidence);
+  const visibleEvents = events.slice(-eventDisplayLimit(density));
+  const phase = chartAnalysis?.wyckoff_phase?.phase ?? wyckoff.phase ?? "undetermined";
+  const emptyMessage = phase === "trending"
+    ? "추세 구간이라 레인지 기반 와이코프 판정을 보류 중입니다."
+    : "레인지가 형성되지 않아 와이코프 판정을 보류 중입니다.";
   return (
     <div className="tabMetricLayout">
       <PositionHeaderMetric label="매집 점수" value={wyckoff.accumulation_score} tone="info" />
       <PositionHeaderMetric label="분산 점수" value={wyckoff.distribution_score} tone="warning" />
       <PositionHeaderMetric label="국면" value={phaseHintLabel(wyckoff.phase ?? wyckoff.phase_hint)} />
       <PositionHeaderMetric label="상위 정합" value={phaseHintLabel(mtf?.alignment)} tone={mtf?.alignment === "conflicting" ? "negative" : mtf?.alignment === "aligned" ? "positive" : "neutral"} />
-      <PositionHeaderMetric label="Spring 후보" value={yesNoLabel(wyckoff.spring_candidate)} />
-      <PositionHeaderMetric label="SOS 후보" value={yesNoLabel(wyckoff.sos_candidate)} />
-      <PositionHeaderMetric label="LPS 후보" value={yesNoLabel(wyckoff.lps_candidate)} />
-      <PositionHeaderMetric label="UTAD 후보" value={yesNoLabel(Boolean(wyckoff.utad_candidate))} tone={wyckoff.utad_candidate ? "warning" : "neutral"} />
-      <PositionHeaderMetric label="SOW 후보" value={yesNoLabel(Boolean(wyckoff.sow_candidate))} tone={wyckoff.sow_candidate ? "warning" : "neutral"} />
-      <PositionHeaderMetric label="LPSY 후보" value={yesNoLabel(Boolean(wyckoff.lpsy_candidate))} tone={wyckoff.lpsy_candidate ? "warning" : "neutral"} />
-      <p className="tabExplanation">{wyckoff.structure_comment}</p>
-      {markers.length ? (
+      <PositionHeaderMetric label={taShortLabel("Spring")} title={taPlainTooltip("Spring", direction)} value={yesNoLabel(wyckoff.spring_candidate)} />
+      <PositionHeaderMetric label={taShortLabel("SOS")} title={taPlainTooltip("SOS", direction)} value={yesNoLabel(wyckoff.sos_candidate)} />
+      <PositionHeaderMetric label={taShortLabel("LPS")} title={taPlainTooltip("LPS", direction)} value={yesNoLabel(wyckoff.lps_candidate)} />
+      <PositionHeaderMetric label={taShortLabel("UTAD")} title={taPlainTooltip("UTAD", direction)} value={yesNoLabel(Boolean(wyckoff.utad_candidate))} tone={wyckoff.utad_candidate ? "warning" : "neutral"} />
+      <PositionHeaderMetric label={taShortLabel("SOW")} title={taPlainTooltip("SOW", direction)} value={yesNoLabel(Boolean(wyckoff.sow_candidate))} tone={wyckoff.sow_candidate ? "warning" : "neutral"} />
+      <PositionHeaderMetric label={taShortLabel("LPSY")} title={taPlainTooltip("LPSY", direction)} value={yesNoLabel(Boolean(wyckoff.lpsy_candidate))} tone={wyckoff.lpsy_candidate ? "warning" : "neutral"} />
+      <p className="tabExplanation">{plainifyTaText(wyckoff.structure_comment)}</p>
+      {visibleEvents.length ? (
         <div className="wyckoffEventList">
-          {markers.map((marker) => (
-            <span key={`${marker.type}-${marker.time}`}>{localizeMarketCodes(marker.label)} · 신뢰도 {marker.confidence}</span>
+          {visibleEvents.map((marker) => (
+            <span key={`${marker.type}-${marker.time}`} title={taPlainTooltip(marker.label, direction)}>
+              {taShortLabel(marker.label)} · {confidenceLabel(marker.confidence, density)}
+            </span>
           ))}
         </div>
       ) : (
-        <p className="tabExplanation">레인지 기반 이벤트가 아직 없습니다.</p>
+        <p className="tabExplanation">{emptyMessage}</p>
       )}
+      {lowConfidence.length ? (
+        <details className="lowConfidenceEvents">
+          <summary>저신뢰 이벤트 {lowConfidence.length}개 보기</summary>
+          <div className="wyckoffEventList">
+            {lowConfidence.map((marker) => (
+              <span key={`low-${marker.type}-${marker.time}`} title={taPlainTooltip(marker.label, direction)}>
+                {taShortLabel(marker.label)} · {confidenceLabel(marker.confidence, density)}
+              </span>
+            ))}
+          </div>
+        </details>
+      ) : null}
     </div>
   );
 }
 
-function HarmonicEvidence({ chartAnalysis }: { chartAnalysis: PositionChartAnalysis | null }) {
+function HarmonicEvidence({ chartAnalysis, density }: { chartAnalysis: PositionChartAnalysis | null; density: Density }) {
   const patterns = chartAnalysis?.harmonic_patterns ?? [];
   if (!patterns.length) {
-    return <div className="terminalEmpty">유효한 하모닉 패턴 후보가 아직 없습니다.</div>;
+    return <div className="terminalEmpty">반전 패턴 조건을 충족한 구간이 없어 하모닉 판정을 보류 중입니다.</div>;
   }
   return (
     <div className="harmonicEvidenceList">
       {patterns.map((pattern) => (
         <div className="harmonicEvidenceItem" key={pattern.id}>
           <div>
-            <strong>{pattern.label}</strong>
-            <span>{pattern.direction === "bearish" ? "하락 반전 후보 구간(PRZ)" : "상승 반전 후보 구간(PRZ)"} · {pattern.status === "forming" ? "형성 중" : "완성"} · 신뢰도 {pattern.confidence}</span>
+            <strong title={taPlainTooltip(pattern.name ?? pattern.label)}>{taShortLabel(pattern.name ?? pattern.label)}</strong>
+            <span>{pattern.direction === "bearish" ? "하락 반전 후보" : "상승 반전 후보"} · {pattern.status === "forming" ? "형성 중" : "완성"} · {confidenceLabel(pattern.confidence, density)}</span>
           </div>
-          <em>PRZ {formatPrice(pattern.prz.low)} ~ {formatPrice(pattern.prz.high)}</em>
-          <p>{pattern.basis}</p>
+          <em title={taPlainTooltip("PRZ")}>반전 후보 구간(PRZ) {formatPrice(pattern.prz.low)} ~ {formatPrice(pattern.prz.high)}</em>
+          <p>{plainifyTaText(pattern.basis)}</p>
         </div>
       ))}
     </div>
@@ -718,14 +763,16 @@ function TimelineEvidence({ payload, extras }: { payload: LivePositionPayload; e
 function PositionHeaderMetric({
   label,
   value,
-  tone = "neutral"
+  tone = "neutral",
+  title
 }: {
   label: string;
   value: string | number;
   tone?: MetricTone;
+  title?: string;
 }) {
   return (
-    <div className={`positionHeaderMetric tone-${tone}`}>
+    <div className={`positionHeaderMetric tone-${tone}`} title={title}>
       <span>{label}</span>
       <strong>{value}</strong>
     </div>
@@ -983,6 +1030,7 @@ export function PositionDetailShell({ positionId }: { positionId: string }) {
           onSelectPrice={workspace.setHighlightPrice}
           onCreateInsight={() => createInsight()}
           busy={busy === "insight"}
+          density={workspace.density}
         />
       </section>
 
@@ -991,6 +1039,7 @@ export function PositionDetailShell({ positionId }: { positionId: string }) {
         chartAnalysis={chartAnalysis}
         openModule={workspace.openModule}
         onModuleToggle={workspace.handleModuleToggle}
+        density={workspace.density}
         historyExtras={recordForms}
       />
     </div>
@@ -1188,6 +1237,13 @@ function actionPlanRows(plan: PositionActionPlan | null) {
     });
   }
   return rows.slice(0, 6);
+}
+
+/** 간단 모드에서는 점수 수치를 숨기고 문장 라벨만 남긴다. */
+function formatBasis(basis: string, density: Density): string {
+  const plain = plainifyTaText(basis);
+  if (density === "detailed") return plain;
+  return plain.replace(/\s*·\s*점수\s*\d+/g, "");
 }
 
 function insightSourceLabel(source: string): string {

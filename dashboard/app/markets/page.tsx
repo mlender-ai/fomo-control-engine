@@ -1,5 +1,5 @@
-import { MarketsShell } from "@/components/markets-shell";
+import { ArchivedNotice } from "@/components/archived-notice";
 
-export default function MarketsPage() {
-  return <MarketsShell />;
+export default function ArchivedMarketsPage() {
+  return <ArchivedNotice title="마켓 워치리스트" />;
 }

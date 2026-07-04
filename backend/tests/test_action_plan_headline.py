@@ -121,7 +121,7 @@ def test_headline_falls_back_to_watch_trigger() -> None:
 
     headline = plan["headline_action"]
     assert headline is not None
-    assert headline.startswith("지금 볼 것: POC 108")
+    assert headline.startswith("지금 볼 것: 최다 거래 가격(POC) 108")
 
 
 def test_headline_none_when_no_triggers() -> None:

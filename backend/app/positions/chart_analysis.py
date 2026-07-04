@@ -29,7 +29,7 @@ def build_chart_analysis(position: Position, snapshot: MarketSnapshot, trade_flo
     invalidation = _invalidation_levels(position, support, resistance)
     xray = _volume_xray(recent, trade_flow)
     wyckoff = analyze_wyckoff(recent, levels=levels, trade_flow=trade_flow, timeframe=snapshot.timeframe)
-    wyckoff_markers = wyckoff.get("events", [])
+    wyckoff_events = split_wyckoff_events(wyckoff, get_settings().wyckoff_event_min_confidence)
     harmonic = _harmonic_analysis(position.symbol, snapshot.timeframe, recent, levels, profile)
 
     return {
@@ -59,9 +59,11 @@ def build_chart_analysis(position: Position, snapshot: MarketSnapshot, trade_flo
             "phase": wyckoff.get("phase", "undetermined"),
             "side": wyckoff.get("side", "neutral"),
             "evidence_event_ids": wyckoff.get("evidence_event_ids", []),
+            "phase_evidence": wyckoff_events["phase_evidence"],
         },
         "wyckoff_mtf": wyckoff.get("mtf", {"htf_phase": None, "htf_trend": None, "alignment": "neutral"}),
-        "wyckoff_markers": wyckoff_markers,
+        "wyckoff_markers": wyckoff_events["events"],
+        "wyckoff_markers_low_confidence": wyckoff_events["events_low_confidence"],
         "harmonic": harmonic,
         "harmonic_patterns": harmonic.get("patterns", []),
         "harmonic_prz": _harmonic_prz(harmonic.get("patterns", [])),
@@ -72,6 +74,22 @@ def build_chart_analysis(position: Position, snapshot: MarketSnapshot, trade_flo
             "volume_profile_method": profile["method"],
             "last_candle_at": recent[-1].timestamp,
         },
+    }
+
+
+def split_wyckoff_events(wyckoff: dict[str, Any], min_confidence: int, display_limit: int = 4) -> dict[str, Any]:
+    """표시용 이벤트(임계값 이상, 최근 N개)와 저신뢰 이벤트를 분리하고 phase 판정 근거를 명시한다.
+
+    저신뢰 이벤트는 삭제하지 않는다 — 복기/캘리브레이션에 원본이 필요하다.
+    """
+    events = [event for event in wyckoff.get("events", []) if isinstance(event, dict)]
+    high = [event for event in events if int(event.get("confidence", 0)) >= min_confidence]
+    low = [event for event in events if int(event.get("confidence", 0)) < min_confidence]
+    evidence_ids = set(wyckoff.get("evidence_event_ids", []))
+    return {
+        "events": high[-display_limit:],
+        "events_low_confidence": low,
+        "phase_evidence": [event for event in events if event.get("id") in evidence_ids],
     }
 
 

@@ -416,6 +416,7 @@ export type WyckoffPhase = {
   phase: string;
   side: "accumulation" | "distribution" | "neutral" | string;
   evidence_event_ids: string[];
+  phase_evidence?: WyckoffMarker[];
 };
 
 export type HarmonicPoint = {
@@ -522,6 +523,7 @@ export type PositionChartAnalysis = {
   wyckoff_phase: WyckoffPhase;
   wyckoff_mtf: WyckoffMtf;
   wyckoff_markers: WyckoffMarker[];
+  wyckoff_markers_low_confidence?: WyckoffMarker[];
   harmonic: {
     pivots: HarmonicPoint[];
     patterns: HarmonicPattern[];

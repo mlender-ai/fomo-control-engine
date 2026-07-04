@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     bitget_trade_fill_cache_ttl_seconds: int = Field(60, validation_alias=AliasChoices("FCE_BITGET_TRADE_FILL_CACHE_TTL_SECONDS", "BITGET_TRADE_FILL_CACHE_TTL_SECONDS"))
     harmonic_zigzag_atr_multiplier: float = Field(2.0, validation_alias=AliasChoices("FCE_HARMONIC_ZIGZAG_ATR_MULTIPLIER", "HARMONIC_ZIGZAG_ATR_MULTIPLIER"))
     harmonic_min_confidence: int = Field(55, validation_alias=AliasChoices("FCE_HARMONIC_MIN_CONFIDENCE", "HARMONIC_MIN_CONFIDENCE"))
+    wyckoff_event_min_confidence: int = Field(55, validation_alias=AliasChoices("FCE_WYCKOFF_EVENT_MIN_CONFIDENCE", "WYCKOFF_EVENT_MIN_CONFIDENCE"))
     run_live_bitget_tests: bool = Field(False, validation_alias=AliasChoices("FCE_RUN_LIVE_BITGET_TESTS", "RUN_LIVE_BITGET_TESTS"))
     openai_api_key: str = Field("", validation_alias=AliasChoices("FCE_OPENAI_API_KEY", "OPENAI_API_KEY"))
     insight_model: str = Field("gpt-4.1-mini", validation_alias=AliasChoices("FCE_INSIGHT_MODEL", "INSIGHT_MODEL"))

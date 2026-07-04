@@ -4,6 +4,7 @@ import { RefreshCw, TestTube2, UploadCloud } from "lucide-react";
 import { useEffect, useState } from "react";
 import { TerminalMetric, TerminalPanel, TerminalTable, TerminalWarning } from "@/components/terminal";
 import { api, type BitgetConnectionTest, type SystemStatus } from "@/lib/api";
+import { DEFAULT_DENSITY, loadDensity, saveDensity, type Density } from "@/lib/density";
 
 type ShortcutRow = {
   id: string;
@@ -29,6 +30,16 @@ export function SettingsShell() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
+  const [density, setDensity] = useState<Density>(DEFAULT_DENSITY);
+
+  useEffect(() => {
+    setDensity(loadDensity());
+  }, []);
+
+  function updateDensity(next: Density) {
+    setDensity(next);
+    saveDensity(next);
+  }
 
   async function load() {
     setError("");
@@ -94,6 +105,18 @@ export function SettingsShell() {
         <TerminalMetric label="Private API" value={connection?.private_positions.status ?? status?.bitget_private_api ?? "-"} tone={status?.bitget_private_api === "ok" ? "positive" : "neutral"} />
         <TerminalMetric label="Sync Cycle" value={status ? `${status.refresh_policy.live_position_sync_interval_seconds}s` : "-"} tone="info" />
       </section>
+
+      <TerminalPanel title="표시 밀도" subtitle="포지션 관제 화면의 숫자 노출 수준" status="accent">
+        <div className="densityToggle" role="group" aria-label="표시 밀도 선택">
+          <button className={density === "simple" ? "active" : ""} onClick={() => updateDensity("simple")} type="button">
+            간단
+          </button>
+          <button className={density === "detailed" ? "active" : ""} onClick={() => updateDensity("detailed")} type="button">
+            상세
+          </button>
+          <small>{density === "simple" ? "신뢰도는 강/중/약으로, 이벤트는 최근 2개만 표시합니다." : "신뢰도 숫자와 이벤트를 모두 표시합니다."}</small>
+        </div>
+      </TerminalPanel>
 
       <section className="grid two">
         <TerminalPanel

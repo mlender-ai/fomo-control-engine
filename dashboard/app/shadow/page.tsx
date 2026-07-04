@@ -1,5 +1,5 @@
-import { ShadowShell } from "@/components/shadow-shell";
+import { ArchivedNotice } from "@/components/archived-notice";
 
-export default function ShadowPage() {
-  return <ShadowShell />;
+export default function ArchivedShadowPage() {
+  return <ArchivedNotice title="섀도우 계정" />;
 }

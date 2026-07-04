@@ -200,22 +200,37 @@ def _valid_harmonic_patterns(patterns: list[dict[str, Any]]) -> list[dict[str, A
     return [pattern for pattern in patterns if isinstance(pattern, dict) and isinstance(pattern.get("confidence"), int)]
 
 
+_VOLUME_STATE_LABELS = {
+    "climax_candidate": "클라이맥스 후보 (거래 폭발 뒤 반전 경계)",
+    "absorption_candidate": "흡수 후보 (큰 물량이 소화되는 흔적)",
+    "volume_expanding": "거래량 확대",
+    "delta_imbalanced": "체결이 한쪽으로 쏠림",
+    "drying_up": "거래량 고갈",
+    "balanced_flow": "체결 균형",
+    "rebound_with_volume": "거래량 동반 반등",
+    "declining_after_push": "가격 이동 후 거래량 둔화",
+    "weak_rebound": "약한 반응",
+    "data_unavailable": "체결 데이터 부족",
+}
+
+
 def _watch_triggers(position: Position, mark_price: float | None, volume_profile: dict[str, Any], volume_xray: dict[str, Any]) -> list[dict[str, str]]:
     triggers: list[dict[str, str]] = []
     poc = volume_profile.get("poc_price")
     if poc is not None and mark_price is not None:
         if position.direction.value == "long":
-            condition = f"POC {_format_price(poc)} 상향 회복" if mark_price < poc else f"POC {_format_price(poc)} 지지 유지"
+            condition = f"최다 거래 가격(POC) {_format_price(poc)} 상향 회복" if mark_price < poc else f"최다 거래 가격(POC) {_format_price(poc)} 지지 유지"
             meaning = "롱 유지 시나리오 강화"
         else:
-            condition = f"POC {_format_price(poc)} 하향 이탈" if mark_price > poc else f"POC {_format_price(poc)} 저항 유지"
+            condition = f"최다 거래 가격(POC) {_format_price(poc)} 하향 이탈" if mark_price > poc else f"최다 거래 가격(POC) {_format_price(poc)} 저항 유지"
             meaning = "숏 유지 시나리오 강화"
         triggers.append({"condition": condition, "meaning": meaning})
     volume_state = volume_xray.get("volume_state")
     if volume_xray.get("spike_detected"):
         triggers.append({"condition": "거래량 급증 캔들 출현", "meaning": "포지션 방향과 캔들 방향이 같은지 확인"})
     if volume_state:
-        triggers.append({"condition": f"거래량 상태 {volume_state}", "meaning": "거래량 변화가 포지션 방향과 정렬되는지 확인"})
+        state_label = _VOLUME_STATE_LABELS.get(str(volume_state), str(volume_state))
+        triggers.append({"condition": f"거래량 상태: {state_label}", "meaning": "거래량 변화가 포지션 방향과 정렬되는지 확인"})
     return triggers[:3]
 
 
@@ -264,11 +279,14 @@ def _levels(value: Any) -> list[dict[str, Any]]:
     return []
 
 
+_STRENGTH_LABELS = {"strong": "반응 강함", "medium": "반응 보통", "weak": "반응 약함"}
+
+
 def _basis(level: dict[str, Any], fallback: str) -> str:
     label = level.get("label") or fallback
     strength = level.get("strength")
     if strength:
-        return f"{label} · strength {strength}"
+        return f"{label} · {_STRENGTH_LABELS.get(str(strength), str(strength))}"
     return str(label)
 
 

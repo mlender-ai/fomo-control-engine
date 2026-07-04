@@ -30,8 +30,9 @@ class StructureLevel:
 
     @property
     def label(self) -> str:
-        prefix = "지지" if self.kind == "support" else "저항"
-        return f"{prefix} · 터치 {self.touches} · 점수 {self.score}"
+        noun = "지지선" if self.kind == "support" else "저항선"
+        qualifier = "많이 막힌" if self.touches >= 4 else "몇 차례 반응한"
+        return f"{qualifier} {noun} ({self.touches}회 반응 · 점수 {self.score})"
 
     def model_dump(self) -> dict:
         return {

@@ -17,6 +17,7 @@ import type { ChartCandle, PositionActionPlan, PositionChartAnalysis } from "@/l
 import { CHART_LAYER_DEFS, layerActive, type ChartLayerId, type ChartLayerState } from "@/lib/chartLayers";
 import { formatPrice } from "@/lib/format";
 import { localizeMarketCodes, phaseHintLabel, sourceLabel, timeframeLabel } from "@/lib/labels/marketStateLabels";
+import { splitWyckoffEvents } from "@/lib/labels/taGlossary";
 import { priceLineColor, priceLinesForAnalysis, type ChartPriceLine } from "./PriceLevelOverlay";
 import { VolumePanel } from "./VolumePanel";
 
@@ -240,7 +241,7 @@ export function PositionCandlestickChart({
           }))
       : [];
     const wyckoffMarkers = layers.ta.includes("wyckoff")
-      ? analysis.wyckoff_markers.slice(-6).map((marker) => ({
+      ? splitWyckoffEvents(analysis.wyckoff_markers, analysis.wyckoff_markers_low_confidence).events.map((marker) => ({
           time: marker.time as Time,
           position: marker.side === "distribution" || marker.type.includes("utad") || marker.type.includes("sow") ? "aboveBar" as const : "belowBar" as const,
           color: marker.side === "distribution" || marker.type.includes("utad") || marker.type.includes("sow") ? "#ee7b80" : "#7fee64",
@@ -334,7 +335,7 @@ export function PositionCandlestickChart({
               <button onClick={() => setHarmonicIndex((value) => value + 1)} type="button" aria-label="다음 패턴">▶</button>
             </>
           ) : (
-            <span className="muted">유효한 하모닉 패턴이 아직 없습니다.</span>
+            <span className="muted">반전 패턴 조건을 충족한 구간이 없어 하모닉 판정을 보류 중입니다.</span>
           )}
         </div>
       ) : null}
