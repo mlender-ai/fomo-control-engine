@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { FormEvent, useEffect, useState } from "react";
 import { TerminalPanel, TerminalWarning } from "@/components/terminal";
+import { HealthScoreBreakdownView } from "@/components/score-breakdown";
 import { PositionChart } from "@/components/position/PositionChart";
 import { hiddenPriceLinesForAnalysis } from "@/components/position/PriceLevelOverlay";
 import { VolumeProfilePanel } from "@/components/position/VolumeProfilePanel";
@@ -239,11 +240,16 @@ function PositionStrip({
   selectedId: string;
   onSelect: (positionId: string) => void;
 }) {
+  const sortedPositions = [...positions].sort((left, right) => {
+    const severityDelta = right.state.severity_rank - left.state.severity_rank;
+    if (severityDelta !== 0) return severityDelta;
+    return Math.abs(right.state.pnl_percent) - Math.abs(left.state.pnl_percent);
+  });
   return (
     <section className="positionStrip" aria-label="보유 포지션">
-      {positions.map((item) => (
+      {sortedPositions.map((item) => (
         <button
-          className={`positionStripCard ${item.position.id === selectedId ? "selected" : ""}`}
+          className={`positionStripCard severity-${item.state.severity_rank} ${item.position.id === selectedId ? "selected" : ""}`}
           key={item.position.id}
           onClick={() => onSelect(item.position.id)}
           type="button"
@@ -450,13 +456,18 @@ function RiskTab({ payload }: { payload: LivePositionPayload }) {
   const { position, state } = payload;
   return (
     <div className="tabRiskGrid">
-      <div className="tabMetricLayout">
-        <PositionHeaderMetric label="청산가 거리" value={formatDistance(state.liquidation_distance_pct)} tone={liquidationTone(state.liquidation_distance_pct)} />
-        <PositionHeaderMetric label="리스크 점수" value={`${state.risk_score}/100`} tone={state.risk_score >= 70 ? "negative" : state.risk_score >= 55 ? "warning" : "neutral"} />
-        <PositionHeaderMetric label="손익률" value={signedPercent(state.pnl_percent)} tone={state.pnl_percent >= 0 ? "positive" : "negative"} />
-        <PositionHeaderMetric label="수익 반납" value={formatDistance(state.analysis.risk.profit_giveback_pct)} />
-        <PositionHeaderMetric label="손절 기준" value={formatNullablePrice(position.planned_stop_price)} tone="warning" />
-        <PositionHeaderMetric label="ATR 리스크" value={atrRiskLabel(state.analysis.risk.atr_risk)} />
+      <div className="tabRiskStack">
+        <HealthScoreBreakdownView components={state.score_json.health_components} />
+        <div className="tabMetricLayout compact">
+          <PositionHeaderMetric label="청산가 거리" value={formatDistance(state.liquidation_distance_pct)} tone={liquidationTone(state.liquidation_distance_pct)} />
+          <PositionHeaderMetric label="리스크 점수" value={`${state.risk_score}/100`} tone={state.risk_score >= 70 ? "negative" : state.risk_score >= 55 ? "warning" : "neutral"} />
+          <PositionHeaderMetric label="손익률" value={signedPercent(state.pnl_percent)} tone={state.pnl_percent >= 0 ? "positive" : "negative"} />
+          <PositionHeaderMetric label="방향 논리" value={`${state.thesis_delta > 0 ? "+" : ""}${state.thesis_delta}`} tone={state.thesis_delta < -20 ? "negative" : state.thesis_delta < -10 ? "warning" : "neutral"} />
+          <PositionHeaderMetric label="수익 반납" value={formatDistance(state.analysis.risk.profit_giveback_pct)} />
+          <PositionHeaderMetric label="손절 기준" value={formatNullablePrice(position.planned_stop_price)} tone="warning" />
+          <PositionHeaderMetric label="ATR 리스크" value={atrRiskLabel(state.analysis.risk.atr_risk)} />
+          <PositionHeaderMetric label="심각도" value={state.severity_rank} tone={state.severity_rank >= 3 ? "negative" : state.severity_rank >= 2 ? "warning" : "neutral"} />
+        </div>
       </div>
       <div className="tabLevelsList">
         <strong>주의할 가격</strong>

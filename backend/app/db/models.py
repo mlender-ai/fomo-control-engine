@@ -96,6 +96,7 @@ class PositionCreate(BaseModel):
     planned_stop_price: float | None = None
     planned_take_profit_price: float | None = None
     thesis_text: str = ""
+    entry_direction_score: int | None = None
 
 
 class Position(BaseModel):
@@ -108,6 +109,7 @@ class Position(BaseModel):
     status: PositionStatus = PositionStatus.open
     entry_report_id: UUID | None = None
     entry_score: int | None = None
+    entry_direction_score: int | None = None
     current_score: int | None = None
     current_price: float | None = None
     mark_price: float | None = None
@@ -145,7 +147,11 @@ class MonitoringLog(BaseModel):
 
 
 class PositionHealthComponents(BaseModel):
+    survival: int = 50
+    pnl_state: int = 50
     thesis_integrity: int
+    structure: int = 50
+    flow: int = 50
     chart_structure: int
     risk_safety: int
     momentum_volume: int
@@ -168,6 +174,7 @@ class PositionSnapshot(BaseModel):
     liquidation_price: float | None = None
     liquidation_distance_pct: float | None = None
     health_score: int
+    severity_rank: int = 0
     status_label: str
     risk_score: int
     score_json: dict

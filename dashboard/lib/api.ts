@@ -42,6 +42,7 @@ export type Position = {
   leverage: number;
   status: "open" | "closed" | "missing_from_exchange" | "needs_exit_record";
   entry_score: number | null;
+  entry_direction_score: number | null;
   current_score: number | null;
   current_price: number | null;
   mark_price: number | null;
@@ -67,7 +68,11 @@ export type Position = {
 };
 
 export type PositionHealthComponents = {
+  survival: number;
+  pnl_state: number;
   thesis_integrity: number;
+  structure: number;
+  flow: number;
   chart_structure: number;
   risk_safety: number;
   momentum_volume: number;
@@ -89,8 +94,12 @@ export type PositionState = {
   health_score: number;
   status: "healthy" | "watch" | "risk_rising" | "thesis_weakening" | "critical" | "unknown";
   status_label: string;
+  severity_rank: number;
   risk_score: number;
   score_change: number;
+  entry_direction_score: number;
+  current_direction_score: number;
+  thesis_delta: number;
   entry_score: number;
   current_score: number;
   analysis: {
@@ -100,7 +109,12 @@ export type PositionState = {
       health_score: number;
       status: string;
       status_label: string;
+      severity_rank: number;
+      survival: number;
+      pnl_state: number;
       thesis_integrity: number;
+      structure: number;
+      flow: number;
       chart_structure: number;
       risk_safety: number;
       momentum_volume: number;
@@ -112,6 +126,9 @@ export type PositionState = {
       entry_score: number;
       current_score: number;
       score_change: number;
+      entry_direction_score: number;
+      current_direction_score: number;
+      thesis_delta: number;
     };
     wyckoff: {
       accumulation_score: number;
@@ -169,6 +186,7 @@ export type PositionSnapshot = {
   liquidation_price: number | null;
   liquidation_distance_pct: number | null;
   health_score: number;
+  severity_rank: number;
   status_label: string;
   risk_score: number;
   score_json: PositionState["score_json"];

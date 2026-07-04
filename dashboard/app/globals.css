@@ -862,6 +862,16 @@ h3 {
   background: rgba(240, 184, 64, 0.09);
 }
 
+.positionStripCard.severity-4 {
+  border-color: rgba(255, 91, 110, 0.58);
+  background: rgba(255, 91, 110, 0.08);
+}
+
+.positionStripCard.severity-3,
+.positionStripCard.severity-2 {
+  border-color: rgba(240, 184, 64, 0.45);
+}
+
 .positionStripCard.selected {
   box-shadow: inset 0 0 0 1px rgba(240, 184, 64, 0.38);
 }
@@ -1301,6 +1311,16 @@ h3 {
 
 .tabRiskGrid {
   grid-template-columns: minmax(0, 1fr) minmax(300px, 0.45fr);
+}
+
+.tabRiskStack {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.tabMetricLayout.compact {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 .tabLevelsList {

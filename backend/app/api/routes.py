@@ -35,7 +35,7 @@ from app.liquidity.liquidation_clusters import analyze_liquidation
 from app.memory.engine import memory_from_shadow, memory_from_trade, memory_from_validation
 from app.monitoring.engine import build_monitoring_log, calculate_pnl
 from app.positions.chart_analysis import build_chart_analysis
-from app.positions.engine import build_events, build_position_state, make_snapshot
+from app.positions.engine import build_events, build_position_state, direction_aware_score, make_snapshot
 from app.positions.insight import build_position_insight_input, make_ai_position_insight
 from app.positions.pnl import resolve_position_pnl_percent
 from app.report.engine import generate_report
@@ -795,6 +795,13 @@ def _pct_delta(current: float | None, previous: float | None) -> float | None:
 @router.post("/api/positions")
 def create_position(request: PositionCreate):
     report = repository.get_report(request.entry_report_id) if request.entry_report_id else repository.latest_report(request.symbol)
+    entry_direction_score = request.entry_direction_score
+    if entry_direction_score is None and report is not None:
+        entry_direction_score = direction_aware_score(
+            request.direction,
+            report.raw_json.get("structure", {}),
+            report.raw_json.get("indicators", {}),
+        )
     position = Position(
         symbol=request.symbol.upper(),
         direction=request.direction,
@@ -803,6 +810,7 @@ def create_position(request: PositionCreate):
         leverage=request.leverage,
         entry_report_id=report.id if report else None,
         entry_score=report.entry_score if report else None,
+        entry_direction_score=entry_direction_score,
         current_score=report.entry_score if report else None,
         current_price=report.price if report else request.entry_price,
         memo=request.memo,

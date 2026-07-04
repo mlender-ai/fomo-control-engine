@@ -98,6 +98,9 @@ def build_position_insight_input(
         "entry_context": {
             "entry_memo": position.entry_memo or position.memo,
             "entry_score": position.entry_score if position.entry_score is not None else position_analysis.get("entry_score"),
+            "entry_direction_score": position_analysis.get("entry_direction_score"),
+            "current_direction_score": position_analysis.get("current_direction_score"),
+            "thesis_delta": position_analysis.get("thesis_delta"),
             "entry_reason_codes": _reason_codes(entry_snapshot) if entry_snapshot else [],
         },
         "reason_codes": analysis.get("reason_codes", []),
@@ -270,9 +273,14 @@ def _wyckoff_line(wyckoff: dict[str, Any], technical: dict[str, Any], volume_pro
 
 def _entry_line(entry_context: dict[str, Any], health: dict[str, Any], previous_insight: PositionInsight | None) -> str:
     memo = entry_context.get("entry_memo")
-    entry_score = entry_context.get("entry_score")
-    score_change = health.get("score_change")
-    base = f"진입 당시 점수는 {entry_score}점, 현재 변화폭은 {score_change:+d}점입니다." if isinstance(score_change, int) else f"진입 당시 점수는 {entry_score}점입니다."
+    entry_direction_score = entry_context.get("entry_direction_score")
+    current_direction_score = entry_context.get("current_direction_score")
+    thesis_delta = entry_context.get("thesis_delta")
+    if isinstance(thesis_delta, int):
+        base = f"진입 당시 방향 점수는 {entry_direction_score}점, 현재 방향 점수는 {current_direction_score}점이며 변화폭은 {thesis_delta:+d}점입니다."
+    else:
+        entry_score = entry_context.get("entry_score")
+        base = f"진입 당시 점수는 {entry_score}점입니다."
     memo_line = f"진입 메모는 “{memo}”입니다." if memo else "진입 메모가 없어 점수와 차트 구조 중심으로만 비교합니다."
     previous = " 직전 인사이트 이후 최신 데이터 기준으로 다시 점검했습니다." if previous_insight else ""
     return f"{base} {memo_line}{previous}"

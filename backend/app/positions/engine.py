@@ -12,6 +12,15 @@ STATUS_LABELS = {
     "unknown": "데이터 부족",
 }
 
+STATUS_SEVERITY_RANK = {
+    "healthy": 0,
+    "unknown": 0,
+    "watch": 1,
+    "risk_rising": 2,
+    "thesis_weakening": 3,
+    "critical": 4,
+}
+
 
 def clamp_score(value: float) -> int:
     return max(0, min(100, int(round(value))))
@@ -71,20 +80,30 @@ def build_position_state(position: Position, report: Report, previous_snapshots:
     indicators = report.raw_json.get("indicators", {})
     structure = report.raw_json.get("structure", {})
     liquidity = report.raw_json.get("liquidity", {})
+    current_direction_score = direction_aware_score(position.direction, structure, indicators)
+    entry_direction_score = position.entry_direction_score
+    if entry_direction_score is None:
+        entry_direction_score = current_direction_score
+        position.entry_direction_score = entry_direction_score
+    thesis_delta = current_direction_score - entry_direction_score
     components = _health_components(
         position=position,
         report=report,
-        score_change=score_change,
         liquidation_distance=liquidation_distance,
         pnl_percent=pnl_percent,
+        giveback_pct=giveback_pct,
         structure=structure,
+        indicators=indicators,
+        liquidity=liquidity,
+        entry_direction_score=entry_direction_score,
+        current_direction_score=current_direction_score,
     )
     health_score = calculate_health_score(components)
     risk_score = calculate_position_risk_score(report.scores.risk, liquidation_distance, drawdown_pct)
     status = classify_status(
         health_score=health_score,
         liquidation_distance=liquidation_distance,
-        score_change=score_change,
+        thesis_delta=thesis_delta,
         risk_score=risk_score,
         drawdown_from_peak=drawdown_pct,
         data_missing=_data_missing(report, position),
@@ -92,6 +111,7 @@ def build_position_state(position: Position, report: Report, previous_snapshots:
         pnl_percent=pnl_percent,
         position=position,
     )
+    severity_rank = STATUS_SEVERITY_RANK[status]
 
     analysis = {
         "position_analysis": {
@@ -100,7 +120,12 @@ def build_position_state(position: Position, report: Report, previous_snapshots:
             "health_score": health_score,
             "status": status,
             "status_label": STATUS_LABELS[status],
+            "severity_rank": severity_rank,
+            "survival": components.survival,
+            "pnl_state": components.pnl_state,
             "thesis_integrity": components.thesis_integrity,
+            "structure": components.structure,
+            "flow": components.flow,
             "chart_structure": components.chart_structure,
             "risk_safety": components.risk_safety,
             "momentum_volume": components.momentum_volume,
@@ -112,6 +137,9 @@ def build_position_state(position: Position, report: Report, previous_snapshots:
             "entry_score": entry_score,
             "current_score": current_score,
             "score_change": score_change,
+            "entry_direction_score": entry_direction_score,
+            "current_direction_score": current_direction_score,
+            "thesis_delta": thesis_delta,
             "as_of": as_of.isoformat(),
             "pnl_source": pnl_source,
         },
@@ -126,7 +154,7 @@ def build_position_state(position: Position, report: Report, previous_snapshots:
             "price_distance_from_entry_pct": calculate_price_distance_from_entry(position, mark_price),
             "critical_levels": _critical_levels(report, position),
         },
-        "reason_codes": _reason_codes(status, position, report, liquidation_distance, score_change, drawdown_pct),
+        "reason_codes": _reason_codes(status, position, report, liquidation_distance, thesis_delta, drawdown_pct),
     }
     return {
         "position": position.model_dump(mode="json"),
@@ -139,8 +167,12 @@ def build_position_state(position: Position, report: Report, previous_snapshots:
         "health_score": health_score,
         "status": status,
         "status_label": STATUS_LABELS[status],
+        "severity_rank": severity_rank,
         "risk_score": risk_score,
         "score_change": score_change,
+        "entry_direction_score": entry_direction_score,
+        "current_direction_score": current_direction_score,
+        "thesis_delta": thesis_delta,
         "entry_score": entry_score,
         "current_score": current_score,
         "analysis": analysis,
@@ -156,15 +188,20 @@ def build_position_state(position: Position, report: Report, previous_snapshots:
 
 
 def calculate_health_score(components: PositionHealthComponents) -> int:
-    return clamp_score(
-        components.pnl_protection * 0.24
-        + components.liquidation_buffer * 0.22
-        + components.direction_alignment * 0.18
-        + components.thesis_integrity * 0.14
-        + components.chart_structure * 0.10
-        + components.momentum_volume * 0.07
-        + components.liquidity_funding * 0.05
+    weighted = clamp_score(
+        components.survival * 0.30
+        + components.pnl_state * 0.20
+        + components.thesis_integrity * 0.20
+        + components.structure * 0.20
+        + components.flow * 0.10
     )
+    if components.pnl_state == 0:
+        weighted = min(weighted, 25)
+    if components.pnl_state <= 10 and components.survival <= 30:
+        weighted = min(weighted, 25)
+    if components.pnl_state <= 10 and components.survival <= 10:
+        weighted = min(weighted, 20)
+    return weighted
 
 
 def calculate_position_risk_score(base_risk_score: int, liquidation_distance: float | None, drawdown_from_peak: float) -> int:
@@ -186,7 +223,7 @@ def classify_status(
     *,
     health_score: int,
     liquidation_distance: float | None,
-    score_change: int,
+    thesis_delta: int,
     risk_score: int,
     drawdown_from_peak: float,
     data_missing: bool,
@@ -194,21 +231,24 @@ def classify_status(
     pnl_percent: float,
     position: Position,
 ) -> str:
-    if data_missing:
-        return "unknown"
     if (liquidation_distance is not None and liquidation_distance < 5) or pnl_percent <= -75:
         return "critical"
+    if data_missing:
+        return "unknown"
+    status = "healthy" if health_score >= 80 and (liquidation_distance is None or liquidation_distance > 15) and thesis_delta > -10 else "watch"
     if position.status == "open" and position.liquidation_price is None and position.leverage >= 5:
-        return "watch" if health_score >= 50 else "thesis_weakening"
-    if score_change < -20 or structure_broken:
-        return "thesis_weakening"
+        status = _max_status(status, "watch")
+    if thesis_delta < -20 or structure_broken:
+        status = _max_status(status, "thesis_weakening")
     if risk_score > 65 or (liquidation_distance is not None and liquidation_distance < 10) or drawdown_from_peak > 50:
-        return "risk_rising"
-    if health_score >= 80 and (liquidation_distance is None or liquidation_distance > 15) and score_change > -10:
-        return "healthy"
-    if 65 <= health_score <= 79 or -20 <= score_change <= -10:
-        return "watch"
-    return "watch" if health_score >= 50 else "thesis_weakening"
+        status = _max_status(status, "risk_rising")
+    if pnl_percent <= -50:
+        status = _max_status(status, "risk_rising")
+    elif pnl_percent <= -30:
+        status = _max_status(status, "watch")
+    if health_score < 50:
+        status = _max_status(status, "thesis_weakening")
+    return status
 
 
 def make_snapshot(position: Position, state: dict) -> PositionSnapshot:
@@ -223,6 +263,7 @@ def make_snapshot(position: Position, state: dict) -> PositionSnapshot:
         liquidation_price=position.liquidation_price,
         liquidation_distance_pct=state["liquidation_distance_pct"],
         health_score=state["health_score"],
+        severity_rank=state["severity_rank"],
         status_label=state["status_label"],
         risk_score=state["risk_score"],
         score_json=state["score_json"],
@@ -314,8 +355,9 @@ def render_position_insight(position: Position, snapshot: PositionSnapshot, prev
         f"와이코프/기술적 분석:\n와이코프 관점에서는 {wyckoff['phase_hint']} 가능성을 봅니다. "
         f"RSI 상태는 {technical['rsi_state']}, MACD 상태는 {technical['macd_state']}, "
         f"거래량 상태는 {technical['volume_state']}입니다.\n\n"
-        f"진입 논리:\n진입 당시 점수는 {position_analysis['entry_score']}점, 현재 점수는 {position_analysis['current_score']}점이며 "
-        f"변화폭은 {position_analysis['score_change']:+d}점입니다. "
+        f"진입 논리:\n진입 당시 방향 점수는 {position_analysis['entry_direction_score']}점, "
+        f"현재 방향 점수는 {position_analysis['current_direction_score']}점이며 "
+        f"변화폭은 {position_analysis['thesis_delta']:+d}점입니다. "
         f"{'진입 메모: ' + position.entry_memo if position.entry_memo else '진입 메모가 없어 논리 비교는 점수와 차트 구조 중심으로만 판단합니다.'}\n\n"
         f"주의할 가격:\n{_render_critical_levels(risk['critical_levels'])}\n\n"
         f"제 의견:\n이 문장은 매수/매도 지시가 아닙니다. 현재 포지션은 {position_analysis['status_label']} 관점에서 "
@@ -340,102 +382,226 @@ def _health_components(
     *,
     position: Position,
     report: Report,
-    score_change: int,
     liquidation_distance: float | None,
     pnl_percent: float,
+    giveback_pct: float,
     structure: dict,
+    indicators: dict,
+    liquidity: dict,
+    entry_direction_score: int,
+    current_direction_score: int,
 ) -> PositionHealthComponents:
-    pnl_protection = _pnl_protection_score(pnl_percent)
-    liquidation_buffer = _liquidation_buffer_score(liquidation_distance)
-    direction_alignment = _direction_alignment_score(position, structure)
-    score_integrity = clamp_score(72 + min(8, score_change) - max(0, -score_change * 1.2))
-    thesis = clamp_score(direction_alignment * 0.50 + pnl_protection * 0.30 + score_integrity * 0.20)
-    chart = clamp_score(report.scores.structure * 0.45 + direction_alignment * 0.55)
-    risk_safety = clamp_score(100 - report.scores.risk)
-    risk_safety = min(risk_safety, liquidation_buffer)
-    if pnl_percent < 0:
-        risk_safety = min(risk_safety, pnl_protection)
-    momentum_volume = clamp_score((report.scores.momentum + report.scores.volume) / 2)
+    survival = _survival_score(liquidation_distance, position.leverage)
+    pnl_state = _pnl_state_score(pnl_percent, giveback_pct)
+    direction_alignment = current_direction_score
+    thesis = _thesis_integrity_score(entry_direction_score, current_direction_score)
+    structure_score = _directional_structure_score(position, structure, report.scores.structure, current_direction_score)
+    flow = _flow_score(position, indicators, liquidity)
     return PositionHealthComponents(
+        survival=survival,
+        pnl_state=pnl_state,
         thesis_integrity=thesis,
-        chart_structure=chart,
-        risk_safety=risk_safety,
-        momentum_volume=momentum_volume,
-        liquidity_funding=clamp_score(report.scores.liquidity),
-        pnl_protection=pnl_protection,
-        liquidation_buffer=liquidation_buffer,
+        structure=structure_score,
+        flow=flow,
+        chart_structure=structure_score,
+        risk_safety=survival,
+        momentum_volume=flow,
+        liquidity_funding=flow,
+        pnl_protection=pnl_state,
+        liquidation_buffer=survival,
         direction_alignment=direction_alignment,
     )
 
 
-def _pnl_protection_score(pnl_percent: float) -> int:
-    if pnl_percent <= -75:
-        return 5
-    if pnl_percent <= -50:
-        return 15
-    if pnl_percent <= -30:
-        return 30
-    if pnl_percent <= -15:
-        return 45
-    if pnl_percent < 0:
-        return clamp_score(58 + pnl_percent * 0.8)
-    if pnl_percent < 10:
-        return clamp_score(70 + pnl_percent * 1.5)
-    if pnl_percent < 30:
-        return clamp_score(85 + (pnl_percent - 10) * 0.45)
-    return 95
-
-
-def _liquidation_buffer_score(liquidation_distance: float | None) -> int:
+def _survival_score(liquidation_distance: float | None, leverage: float) -> int:
     if liquidation_distance is None:
-        return 45
+        if leverage >= 10:
+            return 30
+        if leverage >= 5:
+            return 45
+        return 60
     if liquidation_distance < 3:
-        return 5
+        return 0
     if liquidation_distance < 5:
-        return 12
+        return clamp_score(_interpolate(liquidation_distance, 3, 5, 0, 10))
     if liquidation_distance < 10:
-        return 30
+        return clamp_score(_interpolate(liquidation_distance, 5, 10, 10, 40))
     if liquidation_distance < 15:
-        return 50
-    if liquidation_distance < 25:
-        return 70
-    return 86
+        return clamp_score(_interpolate(liquidation_distance, 10, 15, 40, 70))
+    if liquidation_distance < 30:
+        return clamp_score(_interpolate(liquidation_distance, 15, 30, 70, 100))
+    return 100
 
 
-def _direction_alignment_score(position: Position, structure: dict) -> int:
-    trend = structure.get("trend", {})
-    direction = trend.get("direction", "unknown")
-    break_of_structure = bool(trend.get("break_of_structure", False))
-    higher_low = bool(trend.get("higher_low", False))
-    if position.direction == "long":
-        base = {
-            "bullish": 88,
-            "neutral_to_bullish": 78,
-            "neutral": 58,
-            "bearish_to_neutral": 42,
-            "bearish": 18,
-        }.get(direction, 50)
-        if higher_low:
-            base += 6
-        if break_of_structure:
-            base += 6
+def _pnl_state_score(pnl_percent: float, giveback_pct: float) -> int:
+    if pnl_percent >= 20:
+        score = clamp_score(90 + min(10, (pnl_percent - 20) * 0.5))
+    elif pnl_percent >= 0:
+        score = clamp_score(_interpolate(pnl_percent, 0, 20, 70, 90))
+    elif pnl_percent >= -10:
+        score = clamp_score(_interpolate(pnl_percent, -10, 0, 50, 70))
+    elif pnl_percent >= -30:
+        score = clamp_score(_interpolate(pnl_percent, -30, -10, 25, 50))
+    elif pnl_percent >= -50:
+        score = clamp_score(_interpolate(pnl_percent, -50, -30, 10, 25))
     else:
+        score = clamp_score(_interpolate(max(pnl_percent, -75), -75, -50, 0, 10))
+    if giveback_pct > 50:
+        score -= 15
+    return clamp_score(score)
+
+
+def _thesis_integrity_score(entry_direction_score: int, current_direction_score: int) -> int:
+    delta = current_direction_score - entry_direction_score
+    if delta >= 10:
+        return clamp_score(82 + min(18, delta * 0.9))
+    if delta >= 0:
+        return clamp_score(72 + delta)
+    if delta >= -15:
+        return clamp_score(72 + delta * 1.5)
+    if delta >= -30:
+        return clamp_score(50 + (delta + 15) * 1.4)
+    return clamp_score(25 + (delta + 30) * 0.8)
+
+
+def _directional_structure_score(position: Position, structure: dict, base_structure_score: int, direction_score: int) -> int:
+    # Until the structural S/R engine lands in WO-FCE-04, short-side structure uses
+    # the inverse of the existing long-biased structure score plus directional trend evidence.
+    if position.direction == "long":
+        score = direction_score * 0.70 + base_structure_score * 0.30
+    else:
+        score = direction_score * 0.70 + (100 - base_structure_score) * 0.30
+    trend = structure.get("trend", {})
+    if position.direction == "long" and trend.get("support_broken", False):
+        score -= 18
+    if position.direction == "short" and trend.get("resistance_broken", False):
+        score -= 18
+    return clamp_score(score)
+
+
+def direction_aware_score(direction, structure: dict, indicators: dict) -> int:
+    trend = structure.get("trend", {})
+    wyckoff = structure.get("wyckoff", {})
+    trend_direction = trend.get("direction", "unknown")
+    higher_low = bool(trend.get("higher_low", False))
+    lower_high = bool(trend.get("lower_high", False))
+    if not lower_high:
+        lower_high = trend_direction in {"bearish", "bearish_to_neutral"} and not higher_low
+    break_of_structure = bool(trend.get("break_of_structure", False))
+    spring = bool(wyckoff.get("spring_candidate", False))
+    sos = bool(wyckoff.get("sos_confirmed", False))
+    accumulation = float(wyckoff.get("accumulation_score", 0))
+    distribution = float(wyckoff.get("distribution_score", 0))
+    close = _optional_float(indicators.get("last_close"))
+    upper = _optional_float(indicators.get("bollinger_upper"))
+    lower = _optional_float(indicators.get("bollinger_lower"))
+    direction_value = getattr(direction, "value", str(direction))
+
+    if direction_value == "long":
         base = {
-            "bearish": 88,
-            "bearish_to_neutral": 74,
-            "neutral": 58,
-            "neutral_to_bullish": 32,
-            "bullish": 16,
-        }.get(direction, 50)
+            "bullish": 78,
+            "neutral_to_bullish": 68,
+            "neutral": 55,
+            "bearish_to_neutral": 45,
+            "bearish": 25,
+        }.get(trend_direction, 50)
         if higher_low:
-            base -= 8
-        if break_of_structure and direction in {"neutral_to_bullish", "bullish"}:
-            base -= 8
+            base += 10
+        if break_of_structure:
+            base += 8
+        if spring:
+            base += 6
+        if sos:
+            base += 8
+        if lower is not None and close is not None and close < lower:
+            base -= 18
+        if distribution > accumulation + 20:
+            base -= 10
+        return clamp_score(base)
+
+    base = {
+        "bearish": 78,
+        "bearish_to_neutral": 68,
+        "neutral": 55,
+        "neutral_to_bullish": 35,
+        "bullish": 22,
+    }.get(trend_direction, 50)
+    if lower_high:
+        base += 10
+    if higher_low:
+        base -= 10
+    if break_of_structure and trend_direction in {"neutral_to_bullish", "bullish"}:
+        base -= 12
+    if upper is not None and close is not None and close > upper:
+        base -= 18
+    if distribution > accumulation + 10:
+        base += 8
+    if spring:
+        base -= 6
+    if sos:
+        base -= 8
     return clamp_score(base)
+
+
+def _flow_score(position: Position, indicators: dict, liquidity: dict) -> int:
+    relative_volume = _optional_float(indicators.get("relative_volume")) or 1.0
+    macd = _optional_float(indicators.get("macd_histogram")) or 0.0
+    last_close = _optional_float(indicators.get("last_close"))
+    previous_close = _optional_float(indicators.get("previous_close"))
+    price_delta = 0.0 if last_close is None or previous_close is None else last_close - previous_close
+    side = 1 if position.direction == "long" else -1
+    score = 55.0
+    if price_delta * side > 0:
+        score += 12
+    elif price_delta * side < 0:
+        score -= 12
+    if macd * side > 0:
+        score += 12
+    elif macd * side < 0:
+        score -= 12
+    if relative_volume >= 1.8:
+        score += 10 if price_delta * side >= 0 else -8
+    elif relative_volume >= 1.2:
+        score += 6 if price_delta * side >= 0 else -5
+    elif relative_volume < 0.8:
+        score -= 6
+    funding = str(liquidity.get("funding_rate_state", "neutral"))
+    if position.direction == "long" and funding in {"positive", "bullish", "long_favored"}:
+        score += 4
+    elif position.direction == "short" and funding in {"negative", "bearish", "short_favored"}:
+        score += 4
+    elif funding in {"overheated", "crowded"}:
+        score -= 6
+    open_interest = str(liquidity.get("open_interest_change", "stable"))
+    if open_interest in {"rising", "increasing", "expanding"} and price_delta * side > 0:
+        score += 5
+    elif open_interest in {"rising", "increasing", "expanding"} and price_delta * side < 0:
+        score -= 5
+    return clamp_score(score)
+
+
+def _interpolate(value: float, left: float, right: float, left_score: float, right_score: float) -> float:
+    if right == left:
+        return 45
+    ratio = (value - left) / (right - left)
+    return left_score + ratio * (right_score - left_score)
+
+
+def _optional_float(value) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _data_missing(report: Report, position: Position) -> bool:
     return not report.data_quality.ohlcv_ok or not report.data_quality.min_candles_met or report.price <= 0
+
+
+def _max_status(left: str, right: str) -> str:
+    return left if STATUS_SEVERITY_RANK[left] >= STATUS_SEVERITY_RANK[right] else right
 
 
 def _structure_broken(structure: dict, position: Position) -> bool:
@@ -517,7 +683,7 @@ def _critical_levels(report: Report, position: Position) -> list[dict]:
     return levels
 
 
-def _reason_codes(status: str, position: Position, report: Report, liquidation_distance: float | None, score_change: int, drawdown_from_peak: float) -> list[str]:
+def _reason_codes(status: str, position: Position, report: Report, liquidation_distance: float | None, thesis_delta: int, drawdown_from_peak: float) -> list[str]:
     codes = [f"STATUS_{status.upper()}"]
     codes.append("POSITION_PNL_POSITIVE" if position.pnl_percent >= 0 else "POSITION_PNL_NEGATIVE")
     if liquidation_distance is None:
@@ -528,10 +694,10 @@ def _reason_codes(status: str, position: Position, report: Report, liquidation_d
         codes.append("LIQUIDATION_DISTANCE_SAFE")
     elif liquidation_distance < 10:
         codes.append("LIQUIDATION_DISTANCE_NARROW")
-    if score_change < -20:
-        codes.append("SCORE_DROP_OVER_20")
-    elif score_change < -10:
-        codes.append("SCORE_DROP_OVER_10")
+    if thesis_delta < -20:
+        codes.extend(["DIRECTION_THESIS_DROP_OVER_20", "SCORE_DROP_OVER_20"])
+    elif thesis_delta < -10:
+        codes.extend(["DIRECTION_THESIS_DROP_OVER_10", "SCORE_DROP_OVER_10"])
     if report.scores.risk > 65:
         codes.append("RISK_SCORE_HIGH")
     if report.scores.fomo > 70:
