@@ -120,6 +120,7 @@ const phraseLabels: Record<string, string> = {
   "phase hint": "국면 힌트",
   "Accumulation": "매집",
   "Distribution": "분산",
+  "Spring": "스프링",
   "LONG": "롱",
   "SHORT": "숏",
   "PnL": "손익률",

@@ -7,21 +7,21 @@
 @tailwind utilities;
 
 :root {
-  --terminal-bg: #090b0f;
-  --terminal-bg-2: #0d1016;
-  --terminal-surface: #11151d;
-  --terminal-panel: #151a23;
-  --terminal-panel-2: #18202b;
-  --terminal-line: #2a3240;
-  --terminal-line-strong: #3b4658;
-  --terminal-text: #eef2f7;
-  --terminal-muted: #99a4b4;
-  --terminal-dim: #687386;
+  --terminal-bg: #000000;
+  --terminal-bg-2: #0a0d0a;
+  --terminal-surface: #181818;
+  --terminal-panel: #181b18;
+  --terminal-panel-2: #212525;
+  --terminal-line: #2f3b31;
+  --terminal-line-strong: #485346;
+  --terminal-text: #ddffdc;
+  --terminal-muted: #8cab87;
+  --terminal-dim: #677d64;
   --terminal-amber: #f0b840;
-  --terminal-cyan: #62cfe8;
-  --terminal-blue: #75bdf2;
-  --terminal-agent: #b6a3ff;
-  --terminal-positive: #6ed28f;
+  --terminal-cyan: #9cbf93;
+  --terminal-blue: #aed2a4;
+  --terminal-agent: #aed2a4;
+  --terminal-positive: #7fee64;
   --terminal-negative: #ee7b80;
   --terminal-warning: #f0b840;
   --terminal-shadow: 0 18px 42px rgba(0, 0, 0, 0.34);
@@ -1362,8 +1362,8 @@ h3 {
 
 .positionDetailMain {
   display: grid;
-  grid-template-columns: minmax(0, 1.65fr) minmax(320px, 0.75fr);
-  gap: 10px;
+  grid-template-columns: minmax(0, 1.76fr) minmax(300px, 0.68fr);
+  gap: 14px;
   align-items: stretch;
 }
 
@@ -1371,15 +1371,15 @@ h3 {
 .positionInsightRail,
 .analysisPanel {
   border: 1px solid var(--terminal-line);
-  border-radius: 6px;
-  background: rgba(17, 21, 29, 0.88);
+  border-radius: 8px;
+  background: rgba(18, 22, 18, 0.92);
 }
 
 .positionChartPanel {
   display: grid;
-  gap: 10px;
+  gap: 12px;
   min-width: 0;
-  padding: 12px;
+  padding: 16px;
 }
 
 .positionChartHeader,
@@ -1402,51 +1402,70 @@ h3 {
 .positionChartHeader > span,
 .analysisPanelHeader > span {
   border: 1px solid var(--terminal-line);
-  border-radius: 4px;
+  border-radius: 999px;
+  background: rgba(33, 37, 37, 0.72);
   color: var(--terminal-muted);
-  padding: 4px 7px;
+  padding: 5px 9px;
   font-family: "SF Mono", Monaco, Consolas, monospace;
   font-size: 11px;
-  text-transform: uppercase;
   white-space: nowrap;
+}
+
+.positionChartHeader h2 {
+  color: var(--terminal-text);
+  font-size: 18px;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .positionChartCanvas {
   position: relative;
-  min-height: 520px;
+  min-height: 560px;
   overflow: hidden;
   border: 1px solid var(--terminal-line);
-  border-radius: 5px;
-  background: #0b0f15;
+  border-radius: 8px;
+  background: #000000;
+  touch-action: none;
 }
 
-.chartTooltip {
-  position: absolute;
-  z-index: 5;
-  display: grid;
-  gap: 3px;
-  min-width: 174px;
-  pointer-events: none;
-  border: 1px solid rgba(238, 242, 247, 0.16);
-  border-radius: 5px;
-  background: rgba(8, 12, 18, 0.94);
-  box-shadow: 0 14px 32px rgba(0, 0, 0, 0.34);
-  opacity: 0;
-  padding: 8px;
-  color: var(--terminal-text);
+.positionChartCanvas:hover {
+  cursor: grab;
+}
+
+.positionChartCanvas:active {
+  cursor: grabbing;
+}
+
+.chartHoverReadout {
+  display: flex;
+  min-height: 36px;
+  align-items: center;
+  gap: 12px;
+  overflow-x: auto;
+  border: 1px solid rgba(72, 83, 70, 0.78);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.62);
+  padding: 8px 10px;
+  color: var(--terminal-muted);
   font-family: "SF Mono", Monaco, Consolas, monospace;
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.3;
-  transition: opacity 0.08s ease;
+  scrollbar-width: thin;
 }
 
-.chartTooltip strong {
-  color: var(--terminal-amber);
+.chartHoverReadout strong {
+  flex: 0 0 auto;
+  color: var(--terminal-text);
   font-size: 11px;
 }
 
-.chartTooltip span {
-  color: #d8dee8;
+.chartHoverReadout span {
+  flex: 0 0 auto;
+  color: var(--terminal-muted);
+}
+
+.chartHoverReadout.is-active span {
+  color: #def0dd;
 }
 
 .chartOutOfRangeNotice {
@@ -1456,25 +1475,29 @@ h3 {
 }
 
 .chartOutOfRangeNotice span {
-  border: 1px solid rgba(238, 123, 128, 0.42);
-  border-radius: 4px;
-  background: rgba(238, 123, 128, 0.08);
+  border: 1px solid rgba(238, 123, 128, 0.34);
+  border-radius: 999px;
+  background: rgba(238, 123, 128, 0.05);
   color: var(--terminal-negative);
-  padding: 5px 8px;
+  padding: 5px 9px;
   font-family: "SF Mono", Monaco, Consolas, monospace;
   font-size: 10px;
 }
 
 .priceLevelLegend {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+  scrollbar-width: thin;
 }
 
 .priceLevelChip {
   border: 1px solid var(--terminal-line);
-  border-radius: 4px;
-  padding: 4px 7px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.28);
+  padding: 5px 9px;
   color: var(--terminal-muted);
   font-family: "SF Mono", Monaco, Consolas, monospace;
   font-size: 10px;
@@ -1518,9 +1541,9 @@ h3 {
   align-items: center;
   gap: 8px;
   border: 1px solid var(--terminal-line);
-  border-radius: 5px;
-  background: rgba(8, 11, 16, 0.36);
-  padding: 8px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.34);
+  padding: 9px 10px;
 }
 
 .chartVolumeSummary span,
@@ -1548,9 +1571,9 @@ h3 {
 
 .wyckoffMarkerRail span {
   border: 1px solid rgba(240, 184, 64, 0.32);
-  border-radius: 4px;
+  border-radius: 999px;
   color: var(--terminal-warning);
-  padding: 3px 6px;
+  padding: 4px 7px;
 }
 
 .wyckoffMarkerRail.muted {

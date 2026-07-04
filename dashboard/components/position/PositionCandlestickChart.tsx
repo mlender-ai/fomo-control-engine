@@ -34,14 +34,14 @@ export function PositionCandlestickChart({ analysis, trendSummary }: { analysis:
     const chart = createChart(container, {
       autoSize: true,
       layout: {
-        background: { type: ColorType.Solid, color: "#080c12" },
-        textColor: "#b8c1cf",
+        background: { type: ColorType.Solid, color: "#000000" },
+        textColor: "#8cab87",
         fontFamily: "SF Mono, Monaco, Consolas, monospace",
         attributionLogo: false
       },
       grid: {
-        vertLines: { color: "rgba(255,255,255,0.045)" },
-        horzLines: { color: "rgba(255,255,255,0.055)" }
+        vertLines: { color: "rgba(72, 83, 70, 0.26)" },
+        horzLines: { color: "rgba(72, 83, 70, 0.28)" }
       },
       localization: {
         locale: "ko-KR",
@@ -49,39 +49,53 @@ export function PositionCandlestickChart({ analysis, trendSummary }: { analysis:
         timeFormatter: (time: Time) => formatKoreanDateTime(Number(time))
       },
       rightPriceScale: {
-        borderColor: "#2a3240",
+        borderColor: "#485346",
         scaleMargins: { top: 0.08, bottom: 0.26 }
       },
       timeScale: {
-        borderColor: "#2a3240",
+        borderColor: "#485346",
         timeVisible: true,
         secondsVisible: false,
         fixLeftEdge: true,
-        fixRightEdge: true
+        fixRightEdge: false,
+        rightOffset: 18,
+        barSpacing: 13,
+        minBarSpacing: 5
+      },
+      handleScroll: {
+        mouseWheel: true,
+        pressedMouseMove: true,
+        horzTouchDrag: true,
+        vertTouchDrag: false
+      },
+      handleScale: {
+        mouseWheel: true,
+        pinch: true,
+        axisPressedMouseMove: true
       },
       crosshair: {
         mode: 1,
         horzLine: {
-          color: "rgba(238,242,247,0.34)",
-          labelBackgroundColor: "#11151d"
+          color: "rgba(221, 255, 220, 0.34)",
+          labelBackgroundColor: "#181818"
         },
         vertLine: {
-          color: "rgba(238,242,247,0.24)",
-          labelBackgroundColor: "#11151d"
+          color: "rgba(221, 255, 220, 0.24)",
+          labelBackgroundColor: "#181818"
         }
       }
     });
 
     const candleSeries = chart.addSeries(CandlestickSeries, {
-      upColor: "#5fd0a5",
-      downColor: "#f16672",
-      wickUpColor: "#5fd0a5",
-      wickDownColor: "#f16672",
-      borderUpColor: "#8ee3c4",
-      borderDownColor: "#ff9ca3",
+      upColor: "rgba(127, 238, 100, 0.74)",
+      downColor: "rgba(238, 123, 128, 0.78)",
+      wickUpColor: "#9cbf93",
+      wickDownColor: "#ee7b80",
+      borderUpColor: "#ddffdc",
+      borderDownColor: "#ffadb1",
       borderVisible: true,
       priceLineVisible: false,
-      lastValueVisible: true
+      lastValueVisible: false
     });
 
     const candleData: CandlestickData[] = validation.candles.map((candle) => ({
@@ -106,13 +120,13 @@ export function PositionCandlestickChart({ analysis, trendSummary }: { analysis:
     const volumeData: HistogramData[] = validation.candles.map((candle) => ({
       time: candle.time as Time,
       value: candle.volume,
-      color: candle.close >= candle.open ? "rgba(95,208,165,0.48)" : "rgba(241,102,114,0.46)"
+      color: candle.close >= candle.open ? "rgba(127, 238, 100, 0.32)" : "rgba(238, 123, 128, 0.34)"
     }));
     volumeSeries.setData(volumeData);
 
     const averageVolumeSeries = chart.addSeries(LineSeries, {
       priceScaleId: "volume",
-      color: "rgba(240,184,64,0.72)",
+      color: "rgba(174, 210, 164, 0.64)",
       lineWidth: 1,
       lineStyle: LineStyle.Dashed,
       priceLineVisible: false,
@@ -126,34 +140,33 @@ export function PositionCandlestickChart({ analysis, trendSummary }: { analysis:
       }))
     );
 
-    priceLines.forEach((line, index) => {
-      const showAxisLabel = index < 3;
+    priceLines.forEach((line) => {
       candleSeries.createPriceLine({
         price: line.price,
         color: priceLineColor(line.kind),
         lineWidth: line.kind === "mark" ? 2 : 1,
         lineStyle: line.kind === "mark" ? LineStyle.Solid : LineStyle.Dashed,
-        axisLabelVisible: showAxisLabel,
-        title: showAxisLabel ? `${line.label} ${formatPrice(line.price)}` : ""
+        axisLabelVisible: false,
+        title: ""
       });
     });
 
     const spikeMarkers = validation.candles
       .filter((candle) => candle.volume >= averageVolume * 1.8)
-      .slice(-5)
+      .slice(-3)
       .map((candle) => ({
         time: candle.time as Time,
         position: "belowBar" as const,
-        color: "#f0b840",
+        color: "#aed2a4",
         shape: "circle" as const,
-        text: "거래량 급증"
+        text: ""
       }));
-    const wyckoffMarkers = analysis.wyckoff_markers.map((marker) => ({
+    const wyckoffMarkers = analysis.wyckoff_markers.slice(-4).map((marker) => ({
       time: marker.time as Time,
       position: marker.type.includes("spring") || marker.type.includes("lps") ? "belowBar" as const : "aboveBar" as const,
-      color: marker.type.includes("distribution") ? "#f16672" : "#f0b840",
+      color: marker.type.includes("distribution") ? "#ee7b80" : "#7fee64",
       shape: marker.type.includes("spring") ? "arrowUp" as const : "circle" as const,
-      text: `${localizeMarketCodes(marker.label)} ${marker.confidence}`
+      text: compactMarkerText(marker.label, marker.confidence)
     }));
     if (spikeMarkers.length || wyckoffMarkers.length) {
       createSeriesMarkers(candleSeries, [...wyckoffMarkers, ...spikeMarkers].sort((left, right) => Number(left.time) - Number(right.time)));
@@ -162,17 +175,15 @@ export function PositionCandlestickChart({ analysis, trendSummary }: { analysis:
     chart.subscribeCrosshairMove((param) => {
       const tooltip = tooltipRef.current;
       if (!tooltip || !param.time || !param.point) {
-        if (tooltip) tooltip.style.opacity = "0";
+        if (tooltip) resetHoverReadout(tooltip);
         return;
       }
       const data = param.seriesData.get(candleSeries);
       if (!isCandlestickData(data)) {
-        tooltip.style.opacity = "0";
+        resetHoverReadout(tooltip);
         return;
       }
-      tooltip.style.opacity = "1";
-      tooltip.style.left = `${Math.min(param.point.x + 16, container.clientWidth - 190)}px`;
-      tooltip.style.top = `${Math.max(12, param.point.y - 58)}px`;
+      tooltip.classList.add("is-active");
       tooltip.innerHTML = `
         <strong>${formatKoreanDateTime(Number(data.time))}</strong>
         <span>시가 ${formatPrice(data.open)}</span>
@@ -184,6 +195,7 @@ export function PositionCandlestickChart({ analysis, trendSummary }: { analysis:
     });
 
     chart.timeScale().fitContent();
+    chart.timeScale().applyOptions({ rightOffset: 18 });
     return () => chart.remove();
   }, [analysis, averageVolume, priceLines, validation]);
 
@@ -214,9 +226,11 @@ export function PositionCandlestickChart({ analysis, trendSummary }: { analysis:
           ))}
         </div>
       ) : null}
-      <div className="positionChartCanvas" ref={containerRef}>
-        <div className="chartTooltip" ref={tooltipRef} />
+      <div className="chartHoverReadout" ref={tooltipRef}>
+        <strong>캔들 정보</strong>
+        <span>시가·고가·저가·종가·거래량</span>
       </div>
+      <div className="positionChartCanvas" ref={containerRef} />
       <VolumePanel analysis={analysis} averageVolume={averageVolume} />
       {analysis.wyckoff_markers.length ? (
         <div className="wyckoffMarkerRail">
@@ -281,4 +295,20 @@ function formatCompactNumber(value: number): string {
   if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M`;
   if (value >= 1_000) return `${(value / 1_000).toFixed(2)}K`;
   return value.toFixed(2);
+}
+
+function resetHoverReadout(element: HTMLDivElement): void {
+  element.classList.remove("is-active");
+  element.innerHTML = `
+    <strong>캔들 정보</strong>
+    <span>시가·고가·저가·종가·거래량</span>
+  `;
+}
+
+function compactMarkerText(label: string, confidence: number): string {
+  const localized = localizeMarketCodes(label)
+    .replace("거래량 급증", "급증")
+    .replace("클라이맥스 후보", "클라이맥스")
+    .replace("스프링 후보", "스프링");
+  return `${localized} ${confidence}`;
 }

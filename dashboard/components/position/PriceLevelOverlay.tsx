@@ -28,7 +28,7 @@ function allPriceLinesForAnalysis(analysis: PositionChartAnalysis): ChartPriceLi
     ...numberLine("청산가", analysis.price_levels.liquidation, "liquidation", 2),
     ...analysis.price_levels.support.slice(0, 2).map((level, index) => ({ label: index === 0 ? "지지선" : "보조 지지선", price: level.price, kind: "support" as const, priority: 3 + index })),
     ...analysis.price_levels.resistance.slice(0, 2).map((level, index) => ({ label: index === 0 ? "저항선" : "보조 저항선", price: level.price, kind: "resistance" as const, priority: 4 + index })),
-    ...analysis.price_levels.invalidation.slice(0, 1).map((level) => ({ label: level.label || "무효화 가격", price: level.price, kind: "invalidation" as const, priority: 5 }))
+    ...analysis.price_levels.invalidation.slice(0, 1).map((level) => ({ label: "무효화", price: level.price, kind: "invalidation" as const, priority: 5 }))
   ];
   return lines.filter((line) => Number.isFinite(line.price));
 }
