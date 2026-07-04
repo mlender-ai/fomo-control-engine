@@ -133,10 +133,20 @@ export type PositionState = {
     wyckoff: {
       accumulation_score: number;
       distribution_score: number;
+      phase?: string;
       phase_hint: string;
+      side?: "accumulation" | "distribution" | "neutral" | string;
+      evidence_event_ids?: string[];
       spring_candidate: boolean;
       sos_candidate: boolean;
       lps_candidate: boolean;
+      test_candidate?: boolean;
+      utad_candidate?: boolean;
+      sow_candidate?: boolean;
+      lpsy_candidate?: boolean;
+      range?: WyckoffRange | null;
+      events?: WyckoffMarker[];
+      mtf?: WyckoffMtf;
       structure_comment: string;
     };
     technical: {
@@ -367,11 +377,44 @@ export type CvdPoint = {
 };
 
 export type WyckoffMarker = {
+  id?: string;
   time: number;
   price: number;
   type: string;
   label: string;
+  side?: "accumulation" | "distribution" | "neutral" | string;
   confidence: number;
+  components?: {
+    depth_significance: number;
+    return_speed: number;
+    volume_confirmation: number;
+    level_strength: number;
+  };
+  level_price?: number;
+  level_kind?: "support" | "resistance" | string;
+  level_score?: number;
+};
+
+export type WyckoffRange = {
+  support: { price: number; score: number; touches: number; sources: string[] };
+  resistance: { price: number; score: number; touches: number; sources: string[] };
+  start_time: number;
+  end_time: number;
+  candles_inside: number;
+  width_pct: number;
+  atr: number;
+};
+
+export type WyckoffMtf = {
+  htf_phase: string | null;
+  htf_trend: string | null;
+  alignment: "aligned" | "conflicting" | "neutral" | string;
+};
+
+export type WyckoffPhase = {
+  phase: string;
+  side: "accumulation" | "distribution" | "neutral" | string;
+  evidence_event_ids: string[];
 };
 
 export type PositionChartAnalysis = {
@@ -433,6 +476,10 @@ export type PositionChartAnalysis = {
     cvd: CvdPoint[];
     notes: string[];
   };
+  wyckoff: Record<string, unknown>;
+  wyckoff_range: WyckoffRange | null;
+  wyckoff_phase: WyckoffPhase;
+  wyckoff_mtf: WyckoffMtf;
   wyckoff_markers: WyckoffMarker[];
   data_quality: {
     candles: number;

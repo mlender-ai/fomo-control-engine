@@ -15,7 +15,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ChartCandle, PositionChartAnalysis } from "@/lib/api";
 import { formatPrice } from "@/lib/format";
-import { localizeMarketCodes, sourceLabel, timeframeLabel } from "@/lib/labels/marketStateLabels";
+import { localizeMarketCodes, phaseHintLabel, sourceLabel, timeframeLabel } from "@/lib/labels/marketStateLabels";
 import { hasHiddenStructureLevels, hiddenPriceLinesForAnalysis, priceLineColor, priceLinesForAnalysis, PriceLevelLegend } from "./PriceLevelOverlay";
 import { VolumePanel } from "./VolumePanel";
 
@@ -185,11 +185,11 @@ export function PositionCandlestickChart({ analysis, trendSummary }: { analysis:
         shape: "circle" as const,
         text: ""
       }));
-    const wyckoffMarkers = analysis.wyckoff_markers.slice(-4).map((marker) => ({
+    const wyckoffMarkers = analysis.wyckoff_markers.slice(-6).map((marker) => ({
       time: marker.time as Time,
-      position: marker.type.includes("spring") || marker.type.includes("lps") ? "belowBar" as const : "aboveBar" as const,
-      color: marker.type.includes("distribution") ? "#ee7b80" : "#7fee64",
-      shape: marker.type.includes("spring") ? "arrowUp" as const : "circle" as const,
+      position: marker.side === "distribution" || marker.type.includes("utad") || marker.type.includes("sow") ? "aboveBar" as const : "belowBar" as const,
+      color: marker.side === "distribution" || marker.type.includes("utad") || marker.type.includes("sow") ? "#ee7b80" : "#7fee64",
+      shape: marker.side === "distribution" || marker.type.includes("utad") || marker.type.includes("sow") ? "arrowDown" as const : "arrowUp" as const,
       text: compactMarkerText(marker.label, marker.confidence)
     }));
     if (spikeMarkers.length || wyckoffMarkers.length) {
@@ -220,7 +220,7 @@ export function PositionCandlestickChart({ analysis, trendSummary }: { analysis:
 
     chart.timeScale().fitContent();
     chart.timeScale().applyOptions({ rightOffset: 18 });
-    const drawOverlay = () => renderVolumeProfileOverlay(profileOverlay, container, candleSeries, analysis);
+    const drawOverlay = () => renderVolumeProfileOverlay(profileOverlay, container, candleSeries, chart, analysis);
     window.setTimeout(drawOverlay, 0);
     chart.timeScale().subscribeVisibleLogicalRangeChange(drawOverlay);
     const resizeObserver = new ResizeObserver(drawOverlay);
@@ -276,7 +276,9 @@ export function PositionCandlestickChart({ analysis, trendSummary }: { analysis:
       {analysis.wyckoff_markers.length ? (
         <div className="wyckoffMarkerRail">
           {analysis.wyckoff_markers.map((marker) => (
-            <span key={`${marker.type}-${marker.time}`}>{localizeMarketCodes(marker.label)} · 신뢰도 {marker.confidence}</span>
+            <span key={`${marker.type}-${marker.time}`} title={wyckoffMarkerTitle(marker)}>
+              {localizeMarketCodes(marker.label)} · 신뢰도 {marker.confidence}
+            </span>
           ))}
         </div>
       ) : (
@@ -335,6 +337,7 @@ function renderVolumeProfileOverlay(
   svg: SVGSVGElement | null,
   container: HTMLDivElement,
   series: { priceToCoordinate(price: number): number | null },
+  chart: { timeScale(): { timeToCoordinate(time: Time): number | null } },
   analysis: PositionChartAnalysis
 ) {
   if (!svg) return;
@@ -350,6 +353,8 @@ function renderVolumeProfileOverlay(
   const valueLow = series.priceToCoordinate(analysis.volume_profile.value_area_low);
   const poc = series.priceToCoordinate(analysis.volume_profile.poc_price);
   const nodes: string[] = [];
+  const rangeNodes = wyckoffRangeNodes(series, chart, analysis);
+  nodes.push(...rangeNodes);
   if (valueHigh !== null && valueLow !== null) {
     const y = Math.min(valueHigh, valueLow);
     const bandHeight = Math.max(2, Math.abs(valueLow - valueHigh));
@@ -380,6 +385,30 @@ function renderVolumeProfileOverlay(
   }
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
   svg.innerHTML = nodes.join("");
+}
+
+function wyckoffRangeNodes(
+  series: { priceToCoordinate(price: number): number | null },
+  chart: { timeScale(): { timeToCoordinate(time: Time): number | null } },
+  analysis: PositionChartAnalysis
+): string[] {
+  const range = analysis.wyckoff_range;
+  if (!range) return [];
+  const top = series.priceToCoordinate(range.resistance.price);
+  const bottom = series.priceToCoordinate(range.support.price);
+  if (top === null || bottom === null) return [];
+  const x1 = chart.timeScale().timeToCoordinate(range.start_time as Time);
+  const x2 = chart.timeScale().timeToCoordinate(range.end_time as Time);
+  if (x1 === null || x2 === null) return [];
+  const y = Math.min(top, bottom);
+  const height = Math.max(8, Math.abs(bottom - top));
+  const x = Math.min(x1, x2);
+  const width = Math.max(12, Math.abs(x2 - x1));
+  const phase = phaseHintLabel(analysis.wyckoff_phase?.phase);
+  return [
+    `<rect x="${x}" y="${y}" width="${width}" height="${height}" fill="rgba(98,207,232,0.045)" stroke="rgba(98,207,232,0.22)" stroke-width="1" stroke-dasharray="4 5" />`,
+    `<text x="${x + 8}" y="${Math.max(16, y + 18)}" fill="rgba(221,255,220,0.72)" font-size="12" font-family="SF Mono, Monaco, Consolas, monospace">${escapeSvgText(phase)}</text>`
+  ];
 }
 
 function formatKoreanDateTime(time: number): string {
@@ -413,4 +442,20 @@ function compactMarkerText(label: string, confidence: number): string {
     .replace("클라이맥스 후보", "클라이맥스")
     .replace("스프링 후보", "스프링");
   return `${localized} ${confidence}`;
+}
+
+function wyckoffMarkerTitle(marker: PositionChartAnalysis["wyckoff_markers"][number]): string {
+  const components = marker.components;
+  if (!components) return `${localizeMarketCodes(marker.label)} 신뢰도 ${marker.confidence}`;
+  return [
+    `${localizeMarketCodes(marker.label)} 신뢰도 ${marker.confidence}`,
+    `이탈/돌파 깊이 ${components.depth_significance}`,
+    `복귀 속도 ${components.return_speed}`,
+    `거래량 확인 ${components.volume_confirmation}`,
+    `레벨 강도 ${components.level_strength}`
+  ].join("\n");
+}
+
+function escapeSvgText(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }

@@ -483,13 +483,21 @@ def direction_aware_score(direction, structure: dict, indicators: dict) -> int:
     trend = structure.get("trend", {})
     wyckoff = structure.get("wyckoff", {})
     trend_direction = trend.get("direction", "unknown")
+    phase = str(wyckoff.get("phase") or wyckoff.get("phase_hint") or "unknown")
+    side = str(wyckoff.get("side", "neutral"))
+    mtf = wyckoff.get("mtf", {}) if isinstance(wyckoff.get("mtf", {}), dict) else {}
     higher_low = bool(trend.get("higher_low", False))
     lower_high = bool(trend.get("lower_high", False))
     if not lower_high:
         lower_high = trend_direction in {"bearish", "bearish_to_neutral"} and not higher_low
     break_of_structure = bool(trend.get("break_of_structure", False))
+    breakdown_structure = bool(trend.get("breakdown_structure", False))
     spring = bool(wyckoff.get("spring_candidate", False))
     sos = bool(wyckoff.get("sos_confirmed", False))
+    lps = bool(wyckoff.get("lps_candidate", False))
+    utad = bool(wyckoff.get("utad_candidate", False))
+    sow = bool(wyckoff.get("sow_confirmed", False))
+    lpsy = bool(wyckoff.get("lpsy_candidate", False))
     accumulation = float(wyckoff.get("accumulation_score", 0))
     distribution = float(wyckoff.get("distribution_score", 0))
     close = _optional_float(indicators.get("last_close"))
@@ -513,10 +521,22 @@ def direction_aware_score(direction, structure: dict, indicators: dict) -> int:
             base += 6
         if sos:
             base += 8
+        if lps:
+            base += 6
+        if utad:
+            base -= 10
+        if sow:
+            base -= 12
+        if lpsy:
+            base -= 8
         if lower is not None and close is not None and close < lower:
             base -= 18
         if distribution > accumulation + 20:
             base -= 10
+        if phase.startswith("distribution") or side == "distribution":
+            base -= 12
+        if mtf.get("alignment") == "conflicting" or str(mtf.get("htf_phase", "")).startswith("distribution"):
+            base -= 12
         return clamp_score(base)
 
     base = {
@@ -532,6 +552,8 @@ def direction_aware_score(direction, structure: dict, indicators: dict) -> int:
         base -= 10
     if break_of_structure and trend_direction in {"neutral_to_bullish", "bullish"}:
         base -= 12
+    if breakdown_structure:
+        base += 8
     if upper is not None and close is not None and close > upper:
         base -= 18
     if distribution > accumulation + 10:
@@ -540,6 +562,20 @@ def direction_aware_score(direction, structure: dict, indicators: dict) -> int:
         base -= 6
     if sos:
         base -= 8
+    if lps:
+        base -= 6
+    if utad:
+        base += 10
+    if sow:
+        base += 12
+    if lpsy:
+        base += 8
+    if phase.startswith("distribution") or side == "distribution":
+        base += 12
+    if phase.startswith("accumulation") or side == "accumulation":
+        base -= 10
+    if mtf.get("alignment") == "conflicting" or str(mtf.get("htf_phase", "")).startswith("accumulation"):
+        base -= 12
     return clamp_score(base)
 
 
@@ -613,14 +649,25 @@ def _structure_broken(structure: dict, position: Position) -> bool:
 
 def _wyckoff_payload(structure: dict) -> dict:
     wyckoff = structure.get("wyckoff", {})
+    phase = wyckoff.get("phase", wyckoff.get("phase_hint", "unknown"))
     return {
         "accumulation_score": wyckoff.get("accumulation_score", 0),
         "distribution_score": wyckoff.get("distribution_score", 0),
-        "phase_hint": wyckoff.get("phase_hint", "unknown"),
+        "phase": phase,
+        "phase_hint": phase,
+        "side": wyckoff.get("side", "neutral"),
+        "evidence_event_ids": wyckoff.get("evidence_event_ids", []),
         "spring_candidate": bool(wyckoff.get("spring_candidate", False)),
         "sos_candidate": bool(wyckoff.get("sos_confirmed", False)),
-        "lps_candidate": bool(wyckoff.get("sos_confirmed", False) and not wyckoff.get("spring_candidate", False)),
-        "structure_comment": "상승 구조는 유지되지만 강한 SOS 확정은 아닙니다." if not wyckoff.get("sos_confirmed", False) else "거래량을 동반한 구조 돌파 후보가 있습니다.",
+        "lps_candidate": bool(wyckoff.get("lps_candidate", False)),
+        "test_candidate": bool(wyckoff.get("test_candidate", False)),
+        "utad_candidate": bool(wyckoff.get("utad_candidate", False)),
+        "sow_candidate": bool(wyckoff.get("sow_confirmed", False)),
+        "lpsy_candidate": bool(wyckoff.get("lpsy_candidate", False)),
+        "range": wyckoff.get("range"),
+        "events": wyckoff.get("events", []),
+        "mtf": wyckoff.get("mtf", {"htf_phase": None, "htf_trend": None, "alignment": "neutral"}),
+        "structure_comment": wyckoff.get("structure_comment", "와이코프 국면을 확인 중입니다."),
     }
 
 

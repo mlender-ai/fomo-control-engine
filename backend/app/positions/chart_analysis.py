@@ -6,6 +6,7 @@ from typing import Any
 
 from app.db.models import MarketCandle, MarketSnapshot, Position
 from app.structure.levels.engine import StructureLevel, detect_structure_levels
+from app.structure.wyckoff.engine import analyze_wyckoff
 
 
 MIN_CHART_CANDLES = 100
@@ -24,7 +25,8 @@ def build_chart_analysis(position: Position, snapshot: MarketSnapshot, trade_flo
     resistance = levels["resistance"]
     invalidation = _invalidation_levels(position, support, resistance)
     xray = _volume_xray(recent, trade_flow)
-    wyckoff_markers = _wyckoff_markers(recent, support, resistance)
+    wyckoff = analyze_wyckoff(recent, levels=levels, trade_flow=trade_flow, timeframe=snapshot.timeframe)
+    wyckoff_markers = wyckoff.get("events", [])
 
     return {
         "position_id": str(position.id),
@@ -47,6 +49,14 @@ def build_chart_analysis(position: Position, snapshot: MarketSnapshot, trade_flo
         "volume_profile": profile,
         "volume_xray": xray,
         "trade_flow": _trade_flow_payload(trade_flow),
+        "wyckoff": wyckoff,
+        "wyckoff_range": wyckoff.get("range"),
+        "wyckoff_phase": {
+            "phase": wyckoff.get("phase", "undetermined"),
+            "side": wyckoff.get("side", "neutral"),
+            "evidence_event_ids": wyckoff.get("evidence_event_ids", []),
+        },
+        "wyckoff_mtf": wyckoff.get("mtf", {"htf_phase": None, "htf_trend": None, "alignment": "neutral"}),
         "wyckoff_markers": wyckoff_markers,
         "data_quality": {
             "candles": len(recent),
@@ -350,39 +360,6 @@ def _parse_datetime(value: Any) -> datetime | None:
 
 def _bucket_total(bucket: dict[str, Any]) -> float:
     return float(bucket.get("buy_volume", 0.0)) + float(bucket.get("sell_volume", 0.0))
-
-
-def _wyckoff_markers(candles: list[MarketCandle], support: list[StructureLevel], resistance: list[StructureLevel]) -> list[dict]:
-    markers: list[dict] = []
-    if support:
-        support_price = support[0].price
-        for candle in candles[-40:]:
-            if candle.low < support_price and candle.close > support_price:
-                markers.append(
-                    {
-                        "time": int(candle.timestamp.timestamp()),
-                        "price": candle.low,
-                        "type": "spring_candidate",
-                        "label": "Spring 후보",
-                        "confidence": 62,
-                    }
-                )
-                break
-    if resistance:
-        resistance_price = resistance[0].price
-        for candle in candles[-40:]:
-            if candle.high > resistance_price and candle.close < resistance_price:
-                markers.append(
-                    {
-                        "time": int(candle.timestamp.timestamp()),
-                        "price": candle.high,
-                        "type": "distribution_warning",
-                        "label": "Distribution 주의",
-                        "confidence": 58,
-                    }
-                )
-                break
-    return markers[:3]
 
 
 def _indicators(candles: list[MarketCandle]) -> dict:

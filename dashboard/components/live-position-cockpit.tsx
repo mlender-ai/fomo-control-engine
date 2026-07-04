@@ -458,14 +458,19 @@ function ActionPlanTable({ plan }: { plan?: LivePositionPayload["action_plan"] }
 
 function WyckoffTab({ state }: { state: PositionState }) {
   const wyckoff = state.analysis.wyckoff;
+  const mtf = wyckoff.mtf;
   return (
     <div className="tabMetricLayout">
       <PositionHeaderMetric label="매집 점수" value={wyckoff.accumulation_score} tone="info" />
       <PositionHeaderMetric label="분산 점수" value={wyckoff.distribution_score} tone="warning" />
-      <PositionHeaderMetric label="국면 힌트" value={phaseHintLabel(wyckoff.phase_hint)} />
+      <PositionHeaderMetric label="국면" value={phaseHintLabel(wyckoff.phase ?? wyckoff.phase_hint)} />
+      <PositionHeaderMetric label="상위 정합" value={phaseHintLabel(mtf?.alignment)} tone={mtf?.alignment === "conflicting" ? "negative" : mtf?.alignment === "aligned" ? "positive" : "neutral"} />
       <PositionHeaderMetric label="Spring 후보" value={yesNoLabel(wyckoff.spring_candidate)} />
       <PositionHeaderMetric label="SOS 후보" value={yesNoLabel(wyckoff.sos_candidate)} />
       <PositionHeaderMetric label="LPS 후보" value={yesNoLabel(wyckoff.lps_candidate)} />
+      <PositionHeaderMetric label="UTAD 후보" value={yesNoLabel(Boolean(wyckoff.utad_candidate))} tone={wyckoff.utad_candidate ? "warning" : "neutral"} />
+      <PositionHeaderMetric label="SOW 후보" value={yesNoLabel(Boolean(wyckoff.sow_candidate))} tone={wyckoff.sow_candidate ? "warning" : "neutral"} />
+      <PositionHeaderMetric label="LPSY 후보" value={yesNoLabel(Boolean(wyckoff.lpsy_candidate))} tone={wyckoff.lpsy_candidate ? "warning" : "neutral"} />
       <p className="tabExplanation">{wyckoff.structure_comment}</p>
     </div>
   );
@@ -1010,8 +1015,9 @@ function TechnicalSummaryCard({
         <RailPrice label="RSI" value={rsiLabel(technical.rsi_state)} />
         <RailPrice label="MACD" value={macdLabel(technical.macd_state)} tone={technical.macd_state.includes("bearish") ? "negative" : "positive"} />
         <RailPrice label="거래량" value={volumeStateLabel(chartAnalysis?.volume_xray.volume_state ?? technical.volume_state)} tone={chartAnalysis?.volume_xray.spike_detected ? "warning" : "neutral"} />
-        <RailPrice label="와이코프" value={phaseHintLabel(wyckoff.phase_hint)} />
+        <RailPrice label="와이코프" value={phaseHintLabel(wyckoff.phase ?? wyckoff.phase_hint)} />
         <RailPrice label="마커 수" value={String(chartAnalysis?.wyckoff_markers.length ?? 0)} />
+        <RailPrice label="상위 정합" value={phaseHintLabel(wyckoff.mtf?.alignment)} tone={wyckoff.mtf?.alignment === "conflicting" ? "negative" : "neutral"} />
       </div>
       <p className="technicalSummaryText">{wyckoff.structure_comment}</p>
     </section>
