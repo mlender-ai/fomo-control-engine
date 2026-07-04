@@ -190,6 +190,7 @@ class BitgetMarketDataProvider(MarketDataProvider):
             open_price_avg=_required_float(row.get("openPriceAvg"), "openPriceAvg"),
             mark_price=_optional_float(row.get("markPrice")),
             unrealized_pl=_optional_float(row.get("unrealizedPL")),
+            margin_size=_optional_float(row.get("marginSize")),
             liquidation_price=liquidation_price if liquidation_price and liquidation_price > 0 else None,
             margin_mode=_optional_string(row.get("marginMode")),
             position_mode=_optional_string(row.get("posMode")),

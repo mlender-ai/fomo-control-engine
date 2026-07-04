@@ -113,6 +113,8 @@ class Position(BaseModel):
     mark_price: float | None = None
     pnl_percent: float = 0
     unrealized_pl: float | None = None
+    margin_size: float | None = None
+    pnl_source: Literal["exchange", "computed"] = "computed"
     liquidation_price: float | None = None
     margin_mode: str | None = None
     position_mode: str | None = None
@@ -158,9 +160,11 @@ class PositionSnapshot(BaseModel):
     id: UUID = Field(default_factory=uuid4)
     position_id: UUID
     symbol: str
+    as_of: datetime = Field(default_factory=utc_now)
     mark_price: float | None = None
     pnl_percent: float = 0
     pnl_amount: float | None = None
+    pnl_source: Literal["exchange", "computed"] = "computed"
     liquidation_price: float | None = None
     liquidation_distance_pct: float | None = None
     health_score: int
@@ -176,10 +180,16 @@ class PositionInsight(BaseModel):
     position_id: UUID
     snapshot_id: UUID | None = None
     insight_type: str = "position_state"
+    as_of: datetime = Field(default_factory=utc_now)
     health_score: int
     status_label: str
     input_json: dict
     insight_text: str
+    age_minutes: int | None = None
+    is_stale: bool = False
+    price_drift_pct: float | None = None
+    basis_mark_price: float | None = None
+    stale_reasons: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=utc_now)
 
 

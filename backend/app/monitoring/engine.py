@@ -1,16 +1,15 @@
 from app.db.models import MonitoringLog, Position, Report
+from app.positions.pnl import calculate_computed_pnl_percent, resolve_position_pnl_percent
 
 
 def calculate_pnl(position: Position, current_price: float) -> float:
-    if position.direction == "long":
-        return ((current_price - position.entry_price) / position.entry_price) * 100 * position.leverage
-    return ((position.entry_price - current_price) / position.entry_price) * 100 * position.leverage
+    return calculate_computed_pnl_percent(position, current_price)
 
 
 def build_monitoring_log(position: Position, report: Report) -> MonitoringLog:
     entry_score = position.entry_score or report.entry_score
     score_change = report.entry_score - entry_score
-    pnl_percent = calculate_pnl(position, report.price)
+    pnl_percent = resolve_position_pnl_percent(position, report.price).pnl_percent
     if score_change <= -20:
         logic_status = "진입 근거 약화"
     elif score_change < -8:
@@ -39,4 +38,3 @@ def build_monitoring_log(position: Position, report: Report) -> MonitoringLog:
         logic_status=logic_status,
         report_text=report_text,
     )
-

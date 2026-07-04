@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.db.models import Position, PositionEvent, PositionHealthComponents, PositionInsight, PositionSnapshot, Report
+from app.positions.pnl import resolve_position_pnl_percent
 
 STATUS_LABELS = {
     "healthy": "진입 논리 유지",
@@ -56,11 +57,13 @@ def drawdown_from_peak(current_pnl: float, previous_snapshots: list[PositionSnap
 def build_position_state(position: Position, report: Report, previous_snapshots: list[PositionSnapshot] | None = None) -> dict:
     previous_snapshots = previous_snapshots or []
     mark_price = position.mark_price or position.current_price or report.price
-    pnl_percent = round(position.pnl_percent if position.pnl_percent is not None else 0, 2)
-    if mark_price is not None:
-        pnl_percent = round(_calculate_pnl_percent(position, mark_price), 2)
+    pnl_result = resolve_position_pnl_percent(position, mark_price)
+    pnl_percent = round(pnl_result.pnl_percent, 2)
+    pnl_source = pnl_result.source
+    position.pnl_source = pnl_source
     pnl_amount = calculate_pnl_amount(position, mark_price)
     liquidation_distance = calculate_liquidation_distance(position, mark_price)
+    as_of = _position_as_of(position, report)
     entry_score = position.entry_score if position.entry_score is not None else report.entry_score
     current_score = report.entry_score
     score_change = current_score - entry_score
@@ -87,6 +90,7 @@ def build_position_state(position: Position, report: Report, previous_snapshots:
         data_missing=_data_missing(report, position),
         structure_broken=_structure_broken(structure, position),
         pnl_percent=pnl_percent,
+        position=position,
     )
 
     analysis = {
@@ -108,6 +112,8 @@ def build_position_state(position: Position, report: Report, previous_snapshots:
             "entry_score": entry_score,
             "current_score": current_score,
             "score_change": score_change,
+            "as_of": as_of.isoformat(),
+            "pnl_source": pnl_source,
         },
         "wyckoff": _wyckoff_payload(structure),
         "technical": _technical_payload(indicators, structure, liquidity, position, report),
@@ -124,9 +130,11 @@ def build_position_state(position: Position, report: Report, previous_snapshots:
     }
     return {
         "position": position.model_dump(mode="json"),
+        "as_of": as_of,
         "mark_price": mark_price,
         "pnl_percent": pnl_percent,
         "pnl_amount": pnl_amount,
+        "pnl_source": pnl_source,
         "liquidation_distance_pct": liquidation_distance,
         "health_score": health_score,
         "status": status,
@@ -184,11 +192,14 @@ def classify_status(
     data_missing: bool,
     structure_broken: bool,
     pnl_percent: float,
+    position: Position,
 ) -> str:
     if data_missing:
         return "unknown"
     if (liquidation_distance is not None and liquidation_distance < 5) or pnl_percent <= -75:
         return "critical"
+    if position.status == "open" and position.liquidation_price is None and position.leverage >= 5:
+        return "watch" if health_score >= 50 else "thesis_weakening"
     if score_change < -20 or structure_broken:
         return "thesis_weakening"
     if risk_score > 65 or (liquidation_distance is not None and liquidation_distance < 10) or drawdown_from_peak > 50:
@@ -204,9 +215,11 @@ def make_snapshot(position: Position, state: dict) -> PositionSnapshot:
     return PositionSnapshot(
         position_id=position.id,
         symbol=position.symbol,
+        as_of=state["as_of"],
         mark_price=state["mark_price"],
         pnl_percent=state["pnl_percent"],
         pnl_amount=state["pnl_amount"],
+        pnl_source=state["pnl_source"],
         liquidation_price=position.liquidation_price,
         liquidation_distance_pct=state["liquidation_distance_pct"],
         health_score=state["health_score"],
@@ -244,6 +257,17 @@ def build_events(position: Position, snapshot: PositionSnapshot, previous_snapsh
                     data={"previous": previous_snapshot.status_label, "current": snapshot.status_label},
                 )
             )
+    if position.status == "open" and position.liquidation_price is None and position.leverage >= 5:
+        events.append(
+            PositionEvent(
+                position_id=position.id,
+                event_type="missing_liquidation_price",
+                severity="medium",
+                title="청산가 미수신",
+                description="거래소에서 청산가가 내려오지 않았습니다. 5x 이상 포지션은 별도 리스크 확인이 필요합니다.",
+                data={"leverage": position.leverage},
+            )
+        )
     if snapshot.liquidation_distance_pct is not None and snapshot.liquidation_distance_pct < 10:
         events.append(
             PositionEvent(
@@ -304,19 +328,12 @@ def make_insight(position: Position, snapshot: PositionSnapshot, previous_insigh
     return PositionInsight(
         position_id=position.id,
         snapshot_id=snapshot.id,
+        as_of=snapshot.as_of,
         health_score=snapshot.health_score,
         status_label=snapshot.status_label,
         input_json=snapshot.analysis_json,
         insight_text=render_position_insight(position, snapshot, previous_insight),
     )
-
-
-def _calculate_pnl_percent(position: Position, current_price: float) -> float:
-    if position.entry_price <= 0:
-        return 0
-    if position.direction == "long":
-        return ((current_price - position.entry_price) / position.entry_price) * 100 * position.leverage
-    return ((position.entry_price - current_price) / position.entry_price) * 100 * position.leverage
 
 
 def _health_components(
@@ -505,6 +522,8 @@ def _reason_codes(status: str, position: Position, report: Report, liquidation_d
     codes.append("POSITION_PNL_POSITIVE" if position.pnl_percent >= 0 else "POSITION_PNL_NEGATIVE")
     if liquidation_distance is None:
         codes.append("LIQUIDATION_DISTANCE_UNKNOWN")
+        if position.status == "open" and position.liquidation_price is None and position.leverage >= 5:
+            codes.append("LIQUIDATION_PRICE_MISSING_HIGH_LEVERAGE")
     elif liquidation_distance >= 15:
         codes.append("LIQUIDATION_DISTANCE_SAFE")
     elif liquidation_distance < 10:
@@ -540,3 +559,11 @@ def _render_critical_levels(levels: list[dict]) -> str:
     if not levels:
         return "중요 가격대 데이터가 충분하지 않습니다."
     return "\n".join([f"- {level['type']}: {level['price']} ({level['meaning']})" for level in levels[:4]])
+
+
+def _position_as_of(position: Position, report: Report):
+    if position.mark_price is not None and position.synced_at is not None:
+        return position.synced_at
+    if report.data_quality.last_candle_at is not None:
+        return report.data_quality.last_candle_at
+    return report.created_at

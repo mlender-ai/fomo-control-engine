@@ -92,6 +92,7 @@ export function SettingsShell() {
         <TerminalMetric label="Provider" value={status?.market_data_provider ?? "-"} tone={status?.market_data_provider === "bitget" ? "positive" : "warning"} />
         <TerminalMetric label="Database" value={status?.database ?? "-"} tone={status?.database === "ok" ? "positive" : "negative"} />
         <TerminalMetric label="Private API" value={connection?.private_positions.status ?? status?.bitget_private_api ?? "-"} tone={status?.bitget_private_api === "ok" ? "positive" : "neutral"} />
+        <TerminalMetric label="Sync Cycle" value={status ? `${status.refresh_policy.live_position_sync_interval_seconds}s` : "-"} tone="info" />
       </section>
 
       <section className="grid two">
@@ -119,6 +120,15 @@ export function SettingsShell() {
             <StatusItem label="Candles" value={String(connection?.public_market_data.candles ?? "-")} tone="muted" />
             <StatusItem label="Default Symbols" value={String(status?.default_symbols.length ?? "-")} tone="muted" />
             <StatusItem label="Updated" value={status?.timestamp ? new Date(status.timestamp).toLocaleString() : "-"} tone="muted" />
+          </div>
+        </TerminalPanel>
+
+        <TerminalPanel title="Refresh Policy" subtitle="자동 동기화와 인사이트 stale 기준" status="accent">
+          <div className="statusGrid">
+            <StatusItem label="Position Sync" value={status ? `${status.refresh_policy.live_position_sync_interval_seconds}s` : "-"} tone="muted" />
+            <StatusItem label="Insight Stale" value={status ? `${status.refresh_policy.insight_stale_after_minutes}m` : "-"} tone="muted" />
+            <StatusItem label="Price Drift Guard" value={status ? `±${status.refresh_policy.insight_price_drift_stale_pct}%` : "-"} tone="muted" />
+            <StatusItem label="Auto Insight" value={status?.refresh_policy.insight_auto_refresh_enabled ? "enabled" : "manual only"} tone="muted" />
           </div>
         </TerminalPanel>
 

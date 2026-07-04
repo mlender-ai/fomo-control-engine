@@ -1,3 +1,4 @@
+from datetime import timedelta
 from uuid import UUID
 
 from app.api import routes
@@ -27,6 +28,10 @@ def test_position_insight_api_generates_structured_saved_insight(client) -> None
     insight = payload["latest_insight"]
 
     assert insight["position_id"] == position["id"]
+    assert insight["as_of"] == insight["input_json"]["snapshot"]["as_of"]
+    assert insight["age_minutes"] == 0
+    assert insight["is_stale"] is False
+    assert insight["price_drift_pct"] == 0
     assert payload["insight_status"]["has_insight"] is True
     assert payload["insight_status"]["is_stale"] is False
     assert insight["insight_type"] == "position_status"
@@ -43,7 +48,9 @@ def test_position_insight_api_generates_structured_saved_insight(client) -> None
 
     latest_response = client.get(f"/api/live/positions/{position['id']}")
     assert latest_response.status_code == 200
-    assert latest_response.json()["latest_insight"]["id"] == insight["id"]
+    latest_payload = latest_response.json()
+    assert latest_payload["latest_insight"]["id"] == insight["id"]
+    assert "as_of" in latest_payload["latest_snapshot"]
 
 
 def test_position_insight_status_marks_drifted_insight_stale(client) -> None:
@@ -71,5 +78,30 @@ def test_position_insight_status_marks_drifted_insight_stale(client) -> None:
     latest_payload = client.get(f"/api/live/positions/{position['id']}").json()
 
     assert latest_payload["insight_status"]["is_stale"] is True
-    assert "PNL_CHANGED" in latest_payload["insight_status"]["reasons"]
+    assert "MARK_PRICE_CHANGED" in latest_payload["insight_status"]["reasons"]
+    assert abs(latest_payload["latest_insight"]["price_drift_pct"]) >= 3
     assert latest_payload["latest_insight"]["id"] == insight_payload["latest_insight"]["id"]
+
+
+def test_position_insight_status_marks_old_insight_stale(client) -> None:
+    report = client.post("/api/reports", json={"symbol": "BTCUSDT", "timeframe": "4h"}).json()
+    position = client.post(
+        "/api/positions",
+        json={
+            "symbol": "BTCUSDT",
+            "direction": "long",
+            "entry_price": report["price"],
+            "quantity": 0.02,
+            "leverage": 5,
+            "entry_report_id": report["id"],
+        },
+    ).json()
+    client.post(f"/api/live/positions/{position['id']}/insight")
+    stored_insight = routes.repository.list_position_insights(UUID(position["id"]), limit=1)[0]
+    stored_insight.created_at = stored_insight.created_at - timedelta(minutes=31)
+
+    latest_payload = client.get(f"/api/live/positions/{position['id']}").json()
+
+    assert latest_payload["latest_insight"]["age_minutes"] >= 30
+    assert latest_payload["latest_insight"]["is_stale"] is True
+    assert "INSIGHT_OLDER_THAN_30M" in latest_payload["latest_insight"]["stale_reasons"]

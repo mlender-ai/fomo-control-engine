@@ -38,15 +38,22 @@ def build_position_insight_input(
     poc_price = volume_profile.get("poc_price")
 
     return {
+        "snapshot": {
+            "id": str(snapshot.id),
+            "as_of": snapshot.as_of.isoformat(),
+            "created_at": snapshot.created_at.isoformat(),
+        },
         "position": {
             "symbol": position.symbol,
             "direction": position.direction.value,
             "leverage": position.leverage,
             "entry_price": position.entry_price,
             "mark_price": mark_price,
+            "as_of": snapshot.as_of.isoformat(),
             "liquidation_price": position.liquidation_price,
             "pnl_percent": snapshot.pnl_percent,
             "pnl_amount": snapshot.pnl_amount,
+            "pnl_source": snapshot.pnl_source,
             "liquidation_distance_pct": snapshot.liquidation_distance_pct,
         },
         "health": {
@@ -112,6 +119,7 @@ def make_ai_position_insight(
         position_id=position.id,
         snapshot_id=snapshot.id,
         insight_type="position_status",
+        as_of=snapshot.as_of,
         health_score=snapshot.health_score,
         status_label=snapshot.status_label,
         input_json=input_json,

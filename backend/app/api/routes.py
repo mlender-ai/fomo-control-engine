@@ -37,6 +37,7 @@ from app.monitoring.engine import build_monitoring_log, calculate_pnl
 from app.positions.chart_analysis import build_chart_analysis
 from app.positions.engine import build_events, build_position_state, make_snapshot
 from app.positions.insight import build_position_insight_input, make_ai_position_insight
+from app.positions.pnl import resolve_position_pnl_percent
 from app.report.engine import generate_report
 from app.review.engine import render_review
 from app.shadow.engine import ShadowSampleError, compare_shadow_profile, extract_shadow_profile
@@ -47,9 +48,7 @@ settings = get_settings()
 repository: Repository = create_repository(settings.database_url)
 market_provider: MarketDataProvider = create_market_data_provider(settings)
 
-INSIGHT_STALE_AFTER_MINUTES = 30
 INSIGHT_STALE_PNL_DELTA_POINTS = 2.0
-INSIGHT_STALE_MARK_DELTA_PCT = 0.5
 INSIGHT_STALE_HEALTH_DELTA_POINTS = 5
 
 
@@ -102,6 +101,12 @@ def system_status() -> dict:
         "bitget_public_api": "available" if isinstance(market_provider, BitgetMarketDataProvider) else "not_active",
         "bitget_private_api": private_status,
         "default_symbols": settings.symbol_list,
+        "refresh_policy": {
+            "live_position_sync_interval_seconds": settings.live_position_sync_interval_seconds,
+            "insight_stale_after_minutes": settings.insight_stale_after_minutes,
+            "insight_price_drift_stale_pct": settings.insight_price_drift_stale_pct,
+            "insight_auto_refresh_enabled": settings.insight_auto_refresh_enabled,
+        },
         "timestamp": utc_now(),
     }
 
@@ -447,6 +452,7 @@ def _position_from_bitget(exchange_position: BitgetPosition) -> Position:
         current_price=exchange_position.mark_price,
         mark_price=exchange_position.mark_price,
         unrealized_pl=exchange_position.unrealized_pl,
+        margin_size=exchange_position.margin_size,
         liquidation_price=exchange_position.liquidation_price,
         margin_mode=exchange_position.margin_mode,
         position_mode=exchange_position.position_mode,
@@ -459,7 +465,9 @@ def _position_from_bitget(exchange_position: BitgetPosition) -> Position:
         memo="Synced from Bitget read-only position API",
     )
     if exchange_position.mark_price:
-        position.pnl_percent = round(calculate_pnl(position, exchange_position.mark_price), 2)
+        pnl_result = resolve_position_pnl_percent(position, exchange_position.mark_price)
+        position.pnl_percent = round(pnl_result.pnl_percent, 2)
+        position.pnl_source = pnl_result.source
     return position
 
 
@@ -471,6 +479,7 @@ def _merge_bitget_position(position: Position, exchange_position: BitgetPosition
     position.current_price = exchange_position.mark_price
     position.mark_price = exchange_position.mark_price
     position.unrealized_pl = exchange_position.unrealized_pl
+    position.margin_size = exchange_position.margin_size
     position.liquidation_price = exchange_position.liquidation_price
     position.margin_mode = exchange_position.margin_mode
     position.position_mode = exchange_position.position_mode
@@ -480,7 +489,9 @@ def _merge_bitget_position(position: Position, exchange_position: BitgetPosition
     position.detected_source = "bitget"
     position.synced_at = utc_now()
     if exchange_position.mark_price:
-        position.pnl_percent = round(calculate_pnl(position, exchange_position.mark_price), 2)
+        pnl_result = resolve_position_pnl_percent(position, exchange_position.mark_price)
+        position.pnl_percent = round(pnl_result.pnl_percent, 2)
+        position.pnl_source = pnl_result.source
     return position
 
 
@@ -576,7 +587,8 @@ def create_position_insight(position_id: UUID) -> dict:
             data={"insight_id": str(saved_insight.id), "snapshot_id": str(snapshot.id)},
         )
     )
-    return {**payload, "latest_insight": saved_insight, "insight_status": _insight_status(saved_insight, snapshot)}
+    insight_status = _insight_status(saved_insight, snapshot)
+    return {**payload, "latest_insight": _insight_payload(saved_insight, insight_status), "insight_status": insight_status}
 
 
 @router.get("/api/live/positions/{position_id}/events")
@@ -621,6 +633,7 @@ def _live_position_payload(position: Position, store_snapshot: bool = False) -> 
     position.current_score = state["current_score"]
     position.current_price = state["mark_price"]
     position.pnl_percent = state["pnl_percent"]
+    position.pnl_source = state["pnl_source"]
     repository.update_position(position)
     snapshot = make_snapshot(position, state)
     events: list[PositionEvent] = []
@@ -632,25 +645,47 @@ def _live_position_payload(position: Position, store_snapshot: bool = False) -> 
     latest_insights = repository.list_position_insights(position.id, limit=1)
     latest_events = repository.list_position_events(position.id, limit=5)
     latest_insight = latest_insights[0] if latest_insights else None
+    insight_status = _insight_status(latest_insight, snapshot)
     return {
         "position": position,
         "state": state,
         "latest_snapshot": snapshot,
-        "latest_insight": latest_insight,
-        "insight_status": _insight_status(latest_insight, snapshot),
+        "latest_insight": _insight_payload(latest_insight, insight_status) if latest_insight else None,
+        "insight_status": insight_status,
         "recent_events": latest_events if latest_events else events,
     }
 
 
 def _live_position_detail(position: Position) -> dict:
     payload = _live_position_payload(position, store_snapshot=False)
+    snapshot = payload["latest_snapshot"]
+    insights = repository.list_position_insights(position.id, limit=20)
     return {
         **payload,
         "snapshots": repository.list_position_snapshots(position.id, limit=50),
-        "insights": repository.list_position_insights(position.id, limit=20),
+        "insights": [_insight_payload(insight, _insight_status(insight, snapshot)) for insight in insights],
         "events": repository.list_position_events(position.id, limit=50),
         "monitoring_logs": repository.list_monitoring_logs(position.id, limit=30),
     }
+
+
+def _insight_payload(insight: PositionInsight | None, status: dict) -> dict | None:
+    if insight is None:
+        return None
+    payload = insight.model_dump(mode="json")
+    snapshot_meta = insight.input_json.get("snapshot", {}) if isinstance(insight.input_json, dict) else {}
+    generated_as_of = snapshot_meta.get("as_of") or payload.get("as_of") or payload.get("created_at")
+    payload.update(
+        {
+            "as_of": generated_as_of,
+            "age_minutes": status["age_minutes"],
+            "is_stale": status["is_stale"],
+            "price_drift_pct": status["price_drift_pct"],
+            "basis_mark_price": status["generated_for"]["mark_price"] if status.get("generated_for") else None,
+            "stale_reasons": status["reasons"],
+        }
+    )
+    return payload
 
 
 def _insight_status(insight: PositionInsight | None, snapshot: PositionSnapshot) -> dict:
@@ -659,17 +694,20 @@ def _insight_status(insight: PositionInsight | None, snapshot: PositionSnapshot)
             "has_insight": False,
             "is_stale": True,
             "age_minutes": None,
+            "price_drift_pct": None,
             "reasons": ["NO_INSIGHT"],
             "message": "아직 생성된 인사이트가 없습니다.",
             "insight_created_at": None,
             "current_snapshot_created_at": snapshot.created_at,
+            "current_as_of": snapshot.as_of,
             "generated_for": None,
             "current": _snapshot_status_payload(snapshot),
         }
 
     now = utc_now()
-    age_minutes = round(max(0, (now - insight.created_at).total_seconds() / 60), 1)
+    age_minutes = int(max(0, (now - insight.created_at).total_seconds()) // 60)
     generated_position = insight.input_json.get("position", {}) if isinstance(insight.input_json, dict) else {}
+    generated_snapshot = insight.input_json.get("snapshot", {}) if isinstance(insight.input_json, dict) else {}
     generated_mark = _optional_float(generated_position.get("mark_price"))
     generated_pnl = _optional_float(generated_position.get("pnl_percent"))
     current_mark = snapshot.mark_price
@@ -678,11 +716,11 @@ def _insight_status(insight: PositionInsight | None, snapshot: PositionSnapshot)
     pnl_delta_points = None if generated_pnl is None else round(current_pnl - generated_pnl, 2)
     health_delta = snapshot.health_score - insight.health_score
     reasons: list[str] = []
-    if age_minutes > INSIGHT_STALE_AFTER_MINUTES:
+    if age_minutes > settings.insight_stale_after_minutes:
         reasons.append("INSIGHT_OLDER_THAN_30M")
     if pnl_delta_points is not None and abs(pnl_delta_points) >= INSIGHT_STALE_PNL_DELTA_POINTS:
         reasons.append("PNL_CHANGED")
-    if mark_delta_pct is not None and abs(mark_delta_pct) >= INSIGHT_STALE_MARK_DELTA_PCT:
+    if mark_delta_pct is not None and abs(mark_delta_pct) >= settings.insight_price_drift_stale_pct:
         reasons.append("MARK_PRICE_CHANGED")
     if abs(health_delta) >= INSIGHT_STALE_HEALTH_DELTA_POINTS:
         reasons.append("HEALTH_CHANGED")
@@ -693,12 +731,15 @@ def _insight_status(insight: PositionInsight | None, snapshot: PositionSnapshot)
         "has_insight": True,
         "is_stale": bool(reasons),
         "age_minutes": age_minutes,
+        "price_drift_pct": mark_delta_pct,
         "reasons": reasons,
         "message": _insight_status_message(reasons, age_minutes),
         "insight_created_at": insight.created_at,
         "current_snapshot_created_at": snapshot.created_at,
+        "current_as_of": snapshot.as_of,
         "generated_for": {
             "snapshot_id": str(insight.snapshot_id) if insight.snapshot_id else None,
+            "as_of": generated_snapshot.get("as_of") or insight.as_of,
             "mark_price": generated_mark,
             "pnl_percent": generated_pnl,
             "health_score": insight.health_score,
@@ -716,6 +757,7 @@ def _insight_status(insight: PositionInsight | None, snapshot: PositionSnapshot)
 def _snapshot_status_payload(snapshot: PositionSnapshot) -> dict:
     return {
         "snapshot_id": str(snapshot.id),
+        "as_of": snapshot.as_of,
         "mark_price": snapshot.mark_price,
         "pnl_percent": snapshot.pnl_percent,
         "health_score": snapshot.health_score,
@@ -727,7 +769,7 @@ def _insight_status_message(reasons: list[str], age_minutes: float) -> str:
     if not reasons:
         return "현재 데이터 기준으로 사용할 수 있는 인사이트입니다."
     if "INSIGHT_OLDER_THAN_30M" in reasons:
-        return f"인사이트 생성 후 {age_minutes:.1f}분이 지나 현재 판단으로 사용하지 않습니다."
+        return f"인사이트 생성 후 {age_minutes}분이 지나 현재 판단으로 사용하지 않습니다."
     if "PNL_CHANGED" in reasons or "MARK_PRICE_CHANGED" in reasons:
         return "가격 또는 손익률이 생성 시점과 달라 현재 판단으로 사용하지 않습니다."
     if "HEALTH_CHANGED" in reasons or "STATUS_CHANGED" in reasons:
@@ -784,6 +826,7 @@ def monitor_position(position_id: UUID):
     position.current_price = report.price
     position.current_score = report.entry_score
     position.pnl_percent = log.pnl_percent
+    position.pnl_source = resolve_position_pnl_percent(position, report.price).source
     repository.update_position(position)
     repository.add_monitoring_log(log)
     return log

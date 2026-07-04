@@ -58,6 +58,8 @@ const detailTabs: Array<{ id: DetailTab; label: string }> = [
   { id: "timeline", label: "기록" }
 ];
 
+const LIVE_POSITION_SYNC_INTERVAL_SECONDS = 30;
+
 export function LivePositionCockpit() {
   const [data, setData] = useState<LivePositionsResponse | null>(null);
   const [selectedId, setSelectedId] = useState("");
@@ -97,7 +99,7 @@ export function LivePositionCockpit() {
     void load(true);
     const interval = window.setInterval(() => {
       void load(true);
-    }, 30000);
+    }, LIVE_POSITION_SYNC_INTERVAL_SECONDS * 1000);
     return () => window.clearInterval(interval);
   }, []);
 
@@ -250,6 +252,7 @@ function PositionStrip({
           <span>{directionLabel(item.position.direction)} · {item.position.leverage}x</span>
           <em className={item.state.pnl_percent >= 0 ? "successText" : "dangerText"}>{signedPercent(item.state.pnl_percent)}</em>
           <small>건강도 {item.state.health_score}</small>
+          {liquidationMissing(item) ? <span className="missingLiqBadge">청산가 미수신</span> : null}
           <StatusPill status={item.state.status} label={item.state.status_label} />
         </button>
       ))}
@@ -267,9 +270,10 @@ function SelectedPositionHeader({ payload }: { payload: LivePositionPayload }) {
       </div>
       <div className="selectedPositionMetrics">
         <PositionHeaderMetric label="손익률" value={signedPercent(state.pnl_percent)} tone={state.pnl_percent >= 0 ? "positive" : "negative"} />
+        <PositionHeaderMetric label="손익률 출처" value={pnlSourceLabel(state.pnl_source)} />
         <PositionHeaderMetric label="진입가" value={formatPrice(position.entry_price)} />
         <PositionHeaderMetric label="현재가" value={formatNullablePrice(state.mark_price)} tone="info" />
-        <PositionHeaderMetric label="청산가" value={formatNullablePrice(position.liquidation_price)} tone="warning" />
+        <PositionHeaderMetric label="청산가" value={liquidationMissing(payload) ? "청산가 미수신" : formatNullablePrice(position.liquidation_price)} tone={liquidationMissing(payload) ? "warning" : "neutral"} />
         <PositionHeaderMetric label="청산가 거리" value={formatDistance(state.liquidation_distance_pct)} tone={liquidationTone(state.liquidation_distance_pct)} />
         <PositionHeaderMetric label="건강도" value={`${state.health_score}/100`} tone={healthTone(state.health_score)} />
       </div>
@@ -277,6 +281,9 @@ function SelectedPositionHeader({ payload }: { payload: LivePositionPayload }) {
         <span>상태</span>
         <strong>{state.status_label}</strong>
       </div>
+      {liquidationMissing(payload) ? (
+        <div className="selectedPositionWarning">청산가가 거래소에서 수신되지 않았습니다. {position.leverage}x 포지션은 수동으로 청산가와 증거금 상태를 확인하세요.</div>
+      ) : null}
     </section>
   );
 }
@@ -292,6 +299,7 @@ function InsightSummaryPanel({
 }) {
   const { position, state, latest_insight: insight, insight_status: insightStatus } = payload;
   const insightIsFresh = Boolean(insight && !insightStatus.is_stale);
+  const staleLabel = insight && insightStatus.is_stale ? "과거 판단 (재생성 필요)" : "현재 판단";
   return (
     <section className="focusPanel insightFocusPanel">
       <div className="focusPanelHeader">
@@ -305,7 +313,7 @@ function InsightSummaryPanel({
         </button>
       </div>
       <div className={`insightJudgement status-${state.status}`}>
-        <span>현재 판단</span>
+        <span>{staleLabel}</span>
         <strong>{state.status_label}</strong>
         <p>{verdictForState(state)}</p>
       </div>
@@ -315,7 +323,7 @@ function InsightSummaryPanel({
           <small>{insightTimestampLabel(payload)} · 건강도 {insight.health_score}/100</small>
         </div>
       ) : insight ? (
-        <InsightStaleNotice payload={payload} compact />
+        <InsightStaleNotice payload={payload} onCreateInsight={() => onCreateInsight(position.id)} busy={busy} compact />
       ) : (
         <div className="insightEmpty">
           <strong>아직 인사이트가 없습니다.</strong>
@@ -377,10 +385,11 @@ function InsightTab({
 }) {
   const insight = payload.latest_insight;
   const insightIsFresh = Boolean(insight && !payload.insight_status.is_stale);
+  const staleLabel = insight && payload.insight_status.is_stale ? "과거 판단 (재생성 필요)" : "현재 판단";
   return (
     <div className="tabContentGrid">
       <div className={`tabJudgement status-${payload.state.status}`}>
-        <span>현재 판단</span>
+        <span>{staleLabel}</span>
         <strong>{payload.state.status_label}</strong>
         <p>{verdictForState(payload.state)}</p>
       </div>
@@ -391,7 +400,7 @@ function InsightTab({
             <small>{insightTimestampLabel(payload)} · 건강도 {insight.health_score}/100</small>
           </>
         ) : insight ? (
-          <InsightStaleNotice payload={payload} />
+          <InsightStaleNotice payload={payload} onCreateInsight={() => onCreateInsight(payload.position.id)} busy={busy} />
         ) : (
           <div className="insightEmpty">
             <strong>아직 인사이트가 없습니다.</strong>
@@ -801,7 +810,7 @@ function PositionInsightRail({
         </div>
         <RailPrice label="진입가" value={formatPrice(position.entry_price)} />
         <RailPrice label="현재가" value={formatNullablePrice(state.mark_price)} tone="info" />
-        <RailPrice label="청산가" value={formatNullablePrice(position.liquidation_price)} tone="danger" />
+        <RailPrice label="청산가" value={liquidationMissing(payload) ? "청산가 미수신" : formatNullablePrice(position.liquidation_price)} tone={liquidationMissing(payload) ? "warning" : "danger"} />
         {liquidationOutOfRange ? <div className="railPriceNotice">청산가가 현재 차트 범위 밖에 있습니다.</div> : null}
         <RailPrice label="지지선" value={support ? formatPrice(support.price) : "-"} />
         <RailPrice label="저항선" value={resistance ? formatPrice(resistance.price) : "-"} tone="warning" />
@@ -830,6 +839,7 @@ function PositionInsightRail({
         </div>
         {insightIsFresh && insight ? (
           <>
+            <div className="insightBasisLine">{insightTimestampLabel(payload)}</div>
             <div className="railInsightText full">{localizeMarketCodes(insight.insight_text)}</div>
             <div className="insightActionRow">
               <button className="button secondary" onClick={copyInsight} type="button">{copied ? "복사됨" : "복사"}</button>
@@ -842,7 +852,7 @@ function PositionInsightRail({
             ) : null}
           </>
         ) : insight ? (
-          <InsightStaleNotice payload={payload} />
+          <InsightStaleNotice payload={payload} onCreateInsight={onCreateInsight} busy={busy} />
         ) : (
           <div className="railInsightEmpty">
             <strong>아직 생성된 포지션 인사이트가 없습니다.</strong>
@@ -871,17 +881,35 @@ function RailPrice({
   );
 }
 
-function InsightStaleNotice({ payload, compact = false }: { payload: LivePositionPayload; compact?: boolean }) {
+function InsightStaleNotice({
+  payload,
+  onCreateInsight,
+  busy,
+  compact = false
+}: {
+  payload: LivePositionPayload;
+  onCreateInsight: () => Promise<void> | void;
+  busy: boolean;
+  compact?: boolean;
+}) {
   const status = payload.insight_status;
   const generated = status.generated_for;
+  const basisPrice = payload.latest_insight?.basis_mark_price ?? generated?.mark_price ?? null;
+  const priceDrift = payload.latest_insight?.price_drift_pct ?? status.price_drift_pct;
   return (
     <div className={`insightStaleNotice ${compact ? "compact" : ""}`}>
-      <strong>인사이트 재생성이 필요합니다.</strong>
-      <p>{status.message}</p>
+      <div className="insightStaleHeader">
+        <strong>과거 판단 (재생성 필요)</strong>
+        <button className="button secondary" onClick={onCreateInsight} disabled={busy} type="button">
+          <BrainCircuit size={16} />
+          {busy ? "재생성 중" : "인사이트 재생성"}
+        </button>
+      </div>
+      <p>이 인사이트는 {status.age_minutes ?? "-"}분 전 가격({formatNullablePrice(basisPrice)}) 기준입니다. 현재가와 {priceDrift === null || priceDrift === undefined ? "-" : signedPercent(priceDrift)} 차이입니다.</p>
       <div className="insightStaleMeta">
-        <span>생성 {status.insight_created_at ? new Date(status.insight_created_at).toLocaleString() : "-"}</span>
-        <span>현재 기준 {new Date(status.current_snapshot_created_at).toLocaleString()}</span>
-        {status.age_minutes !== null ? <span>경과 {status.age_minutes.toFixed(1)}분</span> : null}
+        <span>기준 {generated?.as_of ? new Date(generated.as_of).toLocaleString() : "-"}</span>
+        <span>현재 기준 {new Date(status.current_as_of).toLocaleString()}</span>
+        <span>{status.message}</span>
       </div>
       {!compact ? (
         <>
@@ -1035,6 +1063,14 @@ function formatDistance(value: number | null): string {
   return value === null ? "-" : signedPercent(value);
 }
 
+function pnlSourceLabel(source: "exchange" | "computed"): string {
+  return source === "exchange" ? "거래소" : "계산";
+}
+
+function liquidationMissing(payload: LivePositionPayload): boolean {
+  return payload.position.status === "open" && payload.position.liquidation_price === null && payload.position.leverage >= 5;
+}
+
 function numberOrNull(value: FormDataEntryValue | null): number | null {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
@@ -1046,9 +1082,9 @@ function firstInsightParagraph(text: string): string {
 }
 
 function insightTimestampLabel(payload: LivePositionPayload): string {
-  const generatedAt = payload.insight_status.insight_created_at ?? payload.latest_insight?.created_at;
-  const currentAt = payload.insight_status.current_snapshot_created_at;
-  return `생성 ${generatedAt ? new Date(generatedAt).toLocaleString() : "-"} · 기준 ${new Date(currentAt).toLocaleString()}`;
+  const basisAt = payload.latest_insight?.as_of ?? payload.insight_status.generated_for?.as_of;
+  const basisPrice = payload.latest_insight?.basis_mark_price ?? payload.insight_status.generated_for?.mark_price ?? null;
+  return `기준 ${basisAt ? new Date(basisAt).toLocaleString() : "-"} · 당시 가격 ${formatNullablePrice(basisPrice)}`;
 }
 
 function insightStaleReasonLabel(reason: string): string {

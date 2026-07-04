@@ -118,6 +118,63 @@ def test_position_health_v2_directly_penalizes_large_unrealized_loss() -> None:
     assert components["direction_alignment"] < 50
 
 
+def test_position_pnl_uses_exchange_margin_when_available() -> None:
+    position = Position(
+        symbol="BTCUSDT",
+        direction=Direction.long,
+        entry_price=100.0,
+        quantity=0.5,
+        leverage=10,
+        current_price=120.0,
+        unrealized_pl=-25.0,
+        margin_size=100.0,
+        entry_score=84,
+    )
+
+    state = build_position_state(position, _report(), [])
+
+    assert state["pnl_percent"] == -25.0
+    assert state["pnl_source"] == "exchange"
+    assert state["score_json"]["health_components"]["pnl_protection"] == 45
+
+
+def test_position_pnl_falls_back_to_computed_when_margin_missing() -> None:
+    position = Position(
+        symbol="BTCUSDT",
+        direction=Direction.long,
+        entry_price=100.0,
+        quantity=0.5,
+        leverage=10,
+        current_price=120.0,
+        unrealized_pl=-25.0,
+        margin_size=None,
+        entry_score=84,
+    )
+
+    state = build_position_state(position, _report(), [])
+
+    assert state["pnl_percent"] == 200.0
+    assert state["pnl_source"] == "computed"
+
+
+def test_high_leverage_position_without_liquidation_price_is_explicit() -> None:
+    position = Position(
+        symbol="BTCUSDT",
+        direction=Direction.long,
+        entry_price=100.0,
+        quantity=0.5,
+        leverage=10,
+        current_price=110.0,
+        liquidation_price=None,
+        entry_score=84,
+    )
+
+    state = build_position_state(position, _report(), [])
+
+    assert state["status"] in {"watch", "thesis_weakening", "critical"}
+    assert "LIQUIDATION_PRICE_MISSING_HIGH_LEVERAGE" in state["analysis"]["reason_codes"]
+
+
 def test_position_insight_explains_snapshot_without_recalculating_scores() -> None:
     position = Position(
         symbol="BTCUSDT",

@@ -40,6 +40,7 @@ class BitgetPosition(BaseModel):
     open_price_avg: float
     mark_price: float | None = None
     unrealized_pl: float | None = None
+    margin_size: float | None = None
     liquidation_price: float | None = None
     margin_mode: str | None = None
     position_mode: str | None = None
@@ -47,4 +48,3 @@ class BitgetPosition(BaseModel):
     break_even_price: float | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
-

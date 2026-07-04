@@ -47,6 +47,8 @@ export type Position = {
   mark_price: number | null;
   pnl_percent: number;
   unrealized_pl: number | null;
+  margin_size: number | null;
+  pnl_source: "exchange" | "computed";
   liquidation_price: number | null;
   margin_mode: string | null;
   position_mode: string | null;
@@ -78,9 +80,11 @@ export type PositionHealthComponents = {
 
 export type PositionState = {
   position: Position;
+  as_of: string;
   mark_price: number | null;
   pnl_percent: number;
   pnl_amount: number | null;
+  pnl_source: "exchange" | "computed";
   liquidation_distance_pct: number | null;
   health_score: number;
   status: "healthy" | "watch" | "risk_rising" | "thesis_weakening" | "critical" | "unknown";
@@ -157,9 +161,11 @@ export type PositionSnapshot = {
   id: string;
   position_id: string;
   symbol: string;
+  as_of: string;
   mark_price: number | null;
   pnl_percent: number;
   pnl_amount: number | null;
+  pnl_source: "exchange" | "computed";
   liquidation_price: number | null;
   liquidation_distance_pct: number | null;
   health_score: number;
@@ -175,10 +181,16 @@ export type PositionInsight = {
   position_id: string;
   snapshot_id: string | null;
   insight_type: string;
+  as_of: string;
   health_score: number;
   status_label: string;
   input_json: PositionState["analysis"];
   insight_text: string;
+  age_minutes: number | null;
+  is_stale: boolean;
+  price_drift_pct: number | null;
+  basis_mark_price: number | null;
+  stale_reasons: string[];
   created_at: string;
 };
 
@@ -186,12 +198,15 @@ export type InsightStatus = {
   has_insight: boolean;
   is_stale: boolean;
   age_minutes: number | null;
+  price_drift_pct: number | null;
   reasons: string[];
   message: string;
   insight_created_at: string | null;
   current_snapshot_created_at: string;
+  current_as_of: string;
   generated_for: {
     snapshot_id: string | null;
+    as_of: string;
     mark_price: number | null;
     pnl_percent: number | null;
     health_score: number;
@@ -199,6 +214,7 @@ export type InsightStatus = {
   } | null;
   current: {
     snapshot_id: string;
+    as_of: string;
     mark_price: number | null;
     pnl_percent: number;
     health_score: number;
@@ -370,6 +386,12 @@ export type SystemStatus = {
   bitget_public_api: string;
   bitget_private_api: string;
   default_symbols: string[];
+  refresh_policy: {
+    live_position_sync_interval_seconds: number;
+    insight_stale_after_minutes: number;
+    insight_price_drift_stale_pct: number;
+    insight_auto_refresh_enabled: boolean;
+  };
   timestamp: string;
 };
 
