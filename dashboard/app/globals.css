@@ -1619,6 +1619,7 @@ h3 {
 .priceLevelLegend {
   display: flex;
   flex-wrap: nowrap;
+  align-items: center;
   gap: 6px;
   overflow-x: auto;
   padding-bottom: 2px;
@@ -1664,6 +1665,23 @@ h3 {
 .priceLevelChip.level-invalidation {
   border-color: rgba(242, 139, 84, 0.44);
   color: #f28b54;
+}
+
+.priceLevelToggle {
+  flex: 0 0 auto;
+  border: 1px solid rgba(174, 210, 164, 0.32);
+  border-radius: 999px;
+  background: rgba(174, 210, 164, 0.08);
+  color: var(--terminal-muted);
+  padding: 5px 9px;
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.priceLevelToggle:hover {
+  border-color: rgba(174, 210, 164, 0.54);
+  color: var(--terminal-text);
 }
 
 .chartVolumeSummary,

@@ -480,8 +480,16 @@ function TechnicalTab({ state }: { state: PositionState }) {
       <PositionHeaderMetric label="MACD" value={macdLabel(technical.macd_state)} tone={technical.macd_state.includes("bearish") ? "negative" : "positive"} />
       <PositionHeaderMetric label="볼린저" value={bollingerLabel(technical.bollinger_state)} />
       <PositionHeaderMetric label="거래량" value={volumeStateLabel(technical.volume_state)} tone={technical.volume_state.includes("declining") ? "warning" : "positive"} />
-      <PositionHeaderMetric label="지지" value={supportStatusLabel(technical.support_status)} tone={technical.support_status === "at_risk" ? "negative" : "positive"} />
-      <PositionHeaderMetric label="저항" value={resistanceStatusLabel(technical.resistance_status)} />
+      <PositionHeaderMetric
+        label="지지"
+        value={supportStatusLabel(technical.support_status)}
+        tone={technical.support_status === "broken" || technical.support_status === "at_risk" ? "negative" : technical.support_status === "near" ? "warning" : "positive"}
+      />
+      <PositionHeaderMetric
+        label="저항"
+        value={resistanceStatusLabel(technical.resistance_status)}
+        tone={technical.resistance_status === "broken" ? "negative" : technical.resistance_status === "testing" ? "warning" : "neutral"}
+      />
     </div>
   );
 }
@@ -859,7 +867,11 @@ function PositionInsightRail({
         {liquidationOutOfRange ? <div className="railPriceNotice">청산가가 현재 차트 범위 밖에 있습니다.</div> : null}
         <RailPrice label="지지선" value={support ? formatPrice(support.price) : "-"} />
         <RailPrice label="저항선" value={resistance ? formatPrice(resistance.price) : "-"} tone="warning" />
-        <RailPrice label="무효화 가격" value={invalidation ? formatPrice(invalidation.price) : formatNullablePrice(position.planned_stop_price)} tone="danger" />
+        <RailPrice
+          label="무효화 가격"
+          value={invalidation && typeof invalidation.price === "number" ? formatPrice(invalidation.price) : invalidation?.label ?? formatNullablePrice(position.planned_stop_price)}
+          tone="danger"
+        />
       </div>
       <div className="railSection">
         <div className="railSectionHeader">
@@ -1127,14 +1139,15 @@ function directionalChartVerdict(payload: LivePositionPayload, chartAnalysis: Po
   const support = chartAnalysis?.price_levels.support[0];
   const resistance = chartAnalysis?.price_levels.resistance[0];
   const invalidation = chartAnalysis?.price_levels.invalidation[0];
+  const invalidationLabel = invalidation && typeof invalidation.price === "number" ? formatPrice(invalidation.price) : "사용자 기준 필요";
   if (!chartAnalysis) return verdictForState(payload.state);
   if (direction === "long") {
     return support
-      ? `롱 기준 핵심은 ${formatPrice(support.price)} 지지 유지입니다. 무효화 기준은 ${invalidation ? formatPrice(invalidation.price) : "미지정"}로 봅니다.`
+      ? `롱 기준 핵심은 ${formatPrice(support.price)} 지지 유지입니다. 무효화 기준은 ${invalidationLabel}로 봅니다.`
       : "롱 기준 지지 후보가 부족합니다. 진입가와 현재가 관계를 먼저 확인해야 합니다.";
   }
   return resistance
-    ? `숏 기준 핵심은 ${formatPrice(resistance.price)} 저항 유지입니다. 무효화 기준은 ${invalidation ? formatPrice(invalidation.price) : "미지정"}로 봅니다.`
+    ? `숏 기준 핵심은 ${formatPrice(resistance.price)} 저항 유지입니다. 무효화 기준은 ${invalidationLabel}로 봅니다.`
     : "숏 기준 저항 후보가 부족합니다. 진입가 위 반등 거래량을 먼저 확인해야 합니다.";
 }
 

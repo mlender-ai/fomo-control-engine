@@ -2,6 +2,7 @@ from app.db.models import Report
 from app.indicators.engine import calculate_indicators
 from app.liquidity.engine import analyze_liquidity
 from app.scoring.engine import build_breakdown, state_label
+from app.structure.levels.engine import detect_structure_levels
 from app.structure.wyckoff.engine import analyze_structure
 
 
@@ -18,6 +19,7 @@ def generate_report(snapshot) -> Report:
         indicators,
     )
     label = state_label(entry_score, scores.fomo)
+    structure_levels = detect_structure_levels(snapshot.candles, snapshot.price)
     raw_json = {
         "symbol": snapshot.symbol,
         "timeframe": snapshot.timeframe,
@@ -26,6 +28,10 @@ def generate_report(snapshot) -> Report:
         "scores": scores.model_dump(),
         "indicators": indicators,
         "structure": structure,
+        "structure_levels": {
+            "support": [level.model_dump() for level in structure_levels["support"]],
+            "resistance": [level.model_dump() for level in structure_levels["resistance"]],
+        },
         "liquidity": liquidity,
         "provider": snapshot.provider,
         "data_quality": snapshot.data_quality.model_dump(mode="json"),

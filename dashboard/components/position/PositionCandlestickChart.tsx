@@ -12,19 +12,21 @@ import {
   type HistogramData,
   type Time
 } from "lightweight-charts";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { ChartCandle, PositionChartAnalysis } from "@/lib/api";
 import { formatPrice } from "@/lib/format";
 import { localizeMarketCodes, sourceLabel, timeframeLabel } from "@/lib/labels/marketStateLabels";
-import { hiddenPriceLinesForAnalysis, priceLineColor, priceLinesForAnalysis, PriceLevelLegend } from "./PriceLevelOverlay";
+import { hasHiddenStructureLevels, hiddenPriceLinesForAnalysis, priceLineColor, priceLinesForAnalysis, PriceLevelLegend } from "./PriceLevelOverlay";
 import { VolumePanel } from "./VolumePanel";
 
 export function PositionCandlestickChart({ analysis, trendSummary }: { analysis: PositionChartAnalysis; trendSummary: string }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
+  const [showAllStructureLevels, setShowAllStructureLevels] = useState(false);
   const validation = useMemo(() => validateCandles(analysis.candles), [analysis.candles]);
-  const priceLines = useMemo(() => (validation.valid ? priceLinesForAnalysis(analysis) : []), [analysis, validation.valid]);
+  const priceLines = useMemo(() => (validation.valid ? priceLinesForAnalysis(analysis, showAllStructureLevels) : []), [analysis, showAllStructureLevels, validation.valid]);
   const hiddenPriceLines = useMemo(() => (validation.valid ? hiddenPriceLinesForAnalysis(analysis) : []), [analysis, validation.valid]);
+  const hasAdditionalLevels = useMemo(() => hasHiddenStructureLevels(analysis), [analysis]);
   const lastCandle = validation.candles.at(-1);
   const averageVolume = validation.valid ? average(validation.candles.map((candle) => candle.volume)) : 0;
 
@@ -143,8 +145,8 @@ export function PositionCandlestickChart({ analysis, trendSummary }: { analysis:
     priceLines.forEach((line) => {
       candleSeries.createPriceLine({
         price: line.price,
-        color: priceLineColor(line.kind),
-        lineWidth: line.kind === "mark" ? 2 : 1,
+        color: priceLineColor(line.kind, line.opacity),
+        lineWidth: line.lineWidth,
         lineStyle: line.kind === "mark" ? LineStyle.Solid : LineStyle.Dashed,
         axisLabelVisible: false,
         title: ""
@@ -218,7 +220,12 @@ export function PositionCandlestickChart({ analysis, trendSummary }: { analysis:
         </div>
         <span>{trendSummary}</span>
       </div>
-      <PriceLevelLegend lines={priceLines} />
+      <PriceLevelLegend
+        lines={priceLines}
+        showAll={showAllStructureLevels}
+        hasHiddenLevels={hasAdditionalLevels}
+        onToggleAll={() => setShowAllStructureLevels((value) => !value)}
+      />
       {hiddenPriceLines.length ? (
         <div className="chartOutOfRangeNotice">
           {hiddenPriceLines.map((line) => (

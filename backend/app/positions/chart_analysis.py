@@ -1,19 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from statistics import mean
 
 from app.db.models import MarketCandle, MarketSnapshot, Position
+from app.structure.levels.engine import StructureLevel, detect_structure_levels
 
 
 MIN_CHART_CANDLES = 100
-
-
-@dataclass(frozen=True)
-class PriceLevel:
-    price: float
-    strength: str
-    label: str
 
 
 def build_chart_analysis(position: Position, snapshot: MarketSnapshot) -> dict:
@@ -21,12 +14,13 @@ def build_chart_analysis(position: Position, snapshot: MarketSnapshot) -> dict:
     if len(candles) < MIN_CHART_CANDLES:
         raise ValueError("차트 분석에 필요한 캔들 데이터가 부족합니다.")
 
-    recent = candles[-MIN_CHART_CANDLES:]
+    recent = candles[-200:]
     mark_price = position.mark_price or position.current_price or snapshot.price or recent[-1].close
-    support = _support_levels(recent, mark_price)
-    resistance = _resistance_levels(recent, mark_price)
-    invalidation = _invalidation_levels(position, mark_price, support, resistance)
     profile = _volume_profile(recent)
+    levels = detect_structure_levels(recent, mark_price, profile)
+    support = levels["support"]
+    resistance = levels["resistance"]
+    invalidation = _invalidation_levels(position, support, resistance)
     xray = _volume_xray(recent)
     wyckoff_markers = _wyckoff_markers(recent, support, resistance)
 
@@ -43,8 +37,8 @@ def build_chart_analysis(position: Position, snapshot: MarketSnapshot) -> dict:
             "entry": position.entry_price,
             "mark": mark_price,
             "liquidation": position.liquidation_price,
-            "support": [level.__dict__ for level in support],
-            "resistance": [level.__dict__ for level in resistance],
+            "support": [level.model_dump() for level in support],
+            "resistance": [level.model_dump() for level in resistance],
             "invalidation": invalidation,
         },
         "indicators": _indicators(recent),
@@ -71,41 +65,16 @@ def _candle_payload(candle: MarketCandle) -> dict:
     }
 
 
-def _support_levels(candles: list[MarketCandle], mark_price: float) -> list[PriceLevel]:
-    lows = sorted({round(candle.low, 8) for candle in candles if candle.low <= mark_price})
-    if not lows:
-        lows = sorted({round(candle.low, 8) for candle in candles})
-    candidates = sorted(lows, key=lambda price: abs(mark_price - price))[:2]
-    return [PriceLevel(price=price, strength=_level_strength(price, candles), label="주요 지지") for price in candidates]
-
-
-def _resistance_levels(candles: list[MarketCandle], mark_price: float) -> list[PriceLevel]:
-    highs = sorted({round(candle.high, 8) for candle in candles if candle.high >= mark_price})
-    if not highs:
-        highs = sorted({round(candle.high, 8) for candle in candles})
-    candidates = sorted(highs, key=lambda price: abs(mark_price - price))[:2]
-    return [PriceLevel(price=price, strength=_level_strength(price, candles), label="주요 저항") for price in candidates]
-
-
-def _invalidation_levels(position: Position, mark_price: float, support: list[PriceLevel], resistance: list[PriceLevel]) -> list[dict]:
+def _invalidation_levels(position: Position, support: list[StructureLevel], resistance: list[StructureLevel]) -> list[dict]:
     if position.planned_stop_price:
-        return [{"price": position.planned_stop_price, "label": "계획 손절/무효화"}]
-    if position.direction.value == "long" and support:
-        return [{"price": support[0].price, "label": "이탈 시 진입 논리 약화"}]
-    if position.direction.value == "short" and resistance:
-        return [{"price": resistance[0].price, "label": "돌파 시 진입 논리 약화"}]
-    fallback = mark_price * (0.98 if position.direction.value == "long" else 1.02)
-    return [{"price": round(fallback, 8), "label": "임시 무효화 기준"}]
-
-
-def _level_strength(price: float, candles: list[MarketCandle]) -> str:
-    tolerance = price * 0.004
-    touches = sum(1 for candle in candles if abs(candle.low - price) <= tolerance or abs(candle.high - price) <= tolerance)
-    if touches >= 6:
-        return "strong"
-    if touches >= 3:
-        return "medium"
-    return "weak"
+        return [{"price": position.planned_stop_price, "label": "계획 손절/무효화", "source": "user"}]
+    candidates = support if position.direction.value == "long" else resistance
+    strong_candidates = [level for level in candidates if level.score >= 40]
+    if strong_candidates:
+        level = strong_candidates[0]
+        action = "이탈 시 진입 논리 약화" if position.direction.value == "long" else "돌파 시 진입 논리 약화"
+        return [{**level.model_dump(), "label": action, "source": "structure_level"}]
+    return [{"price": None, "label": "구조 레벨 부족, 사용자 손절 기준 필요", "source": "insufficient_structure"}]
 
 
 def _volume_profile(candles: list[MarketCandle], bin_count: int = 24) -> dict:
@@ -231,7 +200,7 @@ def _volume_notes(state: str, absorption: bool, climax: bool) -> list[str]:
     return result
 
 
-def _wyckoff_markers(candles: list[MarketCandle], support: list[PriceLevel], resistance: list[PriceLevel]) -> list[dict]:
+def _wyckoff_markers(candles: list[MarketCandle], support: list[StructureLevel], resistance: list[StructureLevel]) -> list[dict]:
     markers: list[dict] = []
     if support:
         support_price = support[0].price

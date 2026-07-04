@@ -631,6 +631,7 @@ def _technical_payload(indicators: dict, structure: dict, liquidity: dict, posit
     upper = float(indicators.get("bollinger_upper", close))
     lower = float(indicators.get("bollinger_lower", close))
     relative_volume = float(indicators.get("relative_volume", 1))
+    structure_levels = report.raw_json.get("structure_levels", {})
     trend = structure.get("trend", {})
     trend_direction = trend.get("direction", "unknown")
     if position.direction == "short" and trend_direction == "neutral_to_bullish":
@@ -646,8 +647,8 @@ def _technical_payload(indicators: dict, structure: dict, liquidity: dict, posit
         "macd_state": "bullish_but_weakening" if macd > 0 else "bearish_or_weak",
         "bollinger_state": "above_upper_band" if close > upper else "near_lower_band" if close < lower else "inside_band",
         "volume_state": "expanding" if relative_volume >= 1.4 else "declining_after_push" if relative_volume < 0.9 else "normal",
-        "support_status": "holding" if close >= lower else "at_risk",
-        "resistance_status": "nearby" if close >= upper * 0.985 else "not_near",
+        "support_status": _support_status_from_levels(close, structure_levels.get("support", [])),
+        "resistance_status": _resistance_status_from_levels(close, structure_levels.get("resistance", [])),
         "open_interest": liquidity.get("open_interest_change", "unknown"),
         "funding": liquidity.get("funding_rate_state", "unknown"),
         "break_of_structure": bool(trend.get("break_of_structure", False)),
@@ -668,19 +669,45 @@ def _atr_risk(indicators: dict, mark_price: float | None) -> str:
 
 
 def _critical_levels(report: Report, position: Position) -> list[dict]:
-    indicators = report.raw_json.get("indicators", {})
+    structure_levels = report.raw_json.get("structure_levels", {})
     levels = []
-    support = indicators.get("bollinger_lower")
-    resistance = indicators.get("bollinger_upper")
-    if support:
-        levels.append({"type": "support", "price": support, "meaning": "이탈 시 진입 논리 약화"})
-    if resistance:
-        levels.append({"type": "resistance", "price": resistance, "meaning": "돌파 실패 시 수익 반납 가능"})
+    for level in structure_levels.get("support", [])[:2]:
+        if isinstance(level, dict) and level.get("price") is not None:
+            levels.append({**level, "type": "support", "meaning": "이탈 시 진입 논리 약화"})
+    for level in structure_levels.get("resistance", [])[:2]:
+        if isinstance(level, dict) and level.get("price") is not None:
+            levels.append({**level, "type": "resistance", "meaning": "돌파 실패 시 수익 반납 가능"})
     if position.planned_stop_price:
         levels.append({"type": "invalidation", "price": position.planned_stop_price, "meaning": "사용자가 기록한 손절/무효화 기준"})
     if position.planned_take_profit_price:
         levels.append({"type": "take_profit", "price": position.planned_take_profit_price, "meaning": "사용자가 기록한 수익 실현 기준"})
     return levels
+
+
+def _support_status_from_levels(close: float, levels: list[dict]) -> str:
+    supports = [level for level in levels if isinstance(level, dict) and isinstance(level.get("price"), (int, float))]
+    if not supports:
+        return "unknown"
+    nearest = min(supports, key=lambda level: abs(close - level["price"]))
+    price = float(nearest["price"])
+    if close < price:
+        return "broken"
+    if abs(close - price) / close <= 0.01:
+        return "near"
+    return "holding"
+
+
+def _resistance_status_from_levels(close: float, levels: list[dict]) -> str:
+    resistances = [level for level in levels if isinstance(level, dict) and isinstance(level.get("price"), (int, float))]
+    if not resistances:
+        return "unknown"
+    nearest = min(resistances, key=lambda level: abs(close - level["price"]))
+    price = float(nearest["price"])
+    if close > price:
+        return "broken"
+    if abs(close - price) / close <= 0.01:
+        return "testing"
+    return "not_near"
 
 
 def _reason_codes(status: str, position: Position, report: Report, liquidation_distance: float | None, thesis_delta: int, drawdown_from_peak: float) -> list[str]:

@@ -319,8 +319,25 @@ export type ChartCandle = {
 
 export type ChartPriceLevel = {
   price: number;
+  score: number;
+  touches: number;
+  last_touch_at: string;
+  kind: "support" | "resistance" | string;
+  sources: string[];
   strength?: "weak" | "medium" | "strong" | string;
   label: string;
+};
+
+export type ChartInvalidationLevel = {
+  price: number | null;
+  label: string;
+  source?: string;
+  score?: number;
+  touches?: number;
+  last_touch_at?: string;
+  kind?: string;
+  sources?: string[];
+  strength?: "weak" | "medium" | "strong" | string;
 };
 
 export type VolumeProfileBin = {
@@ -354,7 +371,7 @@ export type PositionChartAnalysis = {
     liquidation: number | null;
     support: ChartPriceLevel[];
     resistance: ChartPriceLevel[];
-    invalidation: Array<{ price: number; label: string }>;
+    invalidation: ChartInvalidationLevel[];
   };
   indicators: {
     rsi: Array<{ time: number; value: number }>;
