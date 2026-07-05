@@ -2,7 +2,7 @@
 
 import { ReactNode, useEffect, useState } from "react";
 import { HealthScoreBreakdownView } from "@/components/score-breakdown";
-import { PositionChart } from "@/components/position/PositionChart";
+import { PositionChart, type PositionChartOverlay } from "@/components/position/PositionChart";
 import { VolumeProfilePanel } from "@/components/position/VolumeProfilePanel";
 import { VolumeXrayPanel } from "@/components/position/VolumeXrayPanel";
 import {
@@ -151,6 +151,7 @@ export function SymbolAnalysisView({
           layers={workspace.layers}
           onToggleLayer={workspace.handleToggleLayer}
           highlightPrice={workspace.highlightPrice}
+          positionOverlay={chartOverlayFromPayload(payload)}
         />
         {sidePanel}
       </section>
@@ -164,6 +165,20 @@ export function SymbolAnalysisView({
       />
     </>
   );
+}
+
+function chartOverlayFromPayload(payload: LivePositionPayload | undefined): PositionChartOverlay | null {
+  if (!payload || payload.position.status !== "open") return null;
+  return {
+    direction: payload.position.direction,
+    quantity: payload.position.quantity,
+    leverage: payload.position.leverage,
+    entryPrice: payload.position.entry_price,
+    markPrice: payload.state.mark_price ?? payload.position.mark_price ?? payload.position.current_price,
+    pnlPercent: payload.state.pnl_percent,
+    pnlAmount: payload.state.pnl_amount ?? payload.position.unrealized_pl,
+    openedAt: payload.position.opened_at
+  };
 }
 
 type WyckoffSummary = {

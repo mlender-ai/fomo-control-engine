@@ -19,9 +19,15 @@ import { formatPrice } from "@/lib/format";
 import { localizeMarketCodes, phaseHintLabel, sourceLabel, timeframeLabel } from "@/lib/labels/marketStateLabels";
 import { splitWyckoffEvents } from "@/lib/labels/taGlossary";
 import { priceLineColor, priceLinesForAnalysis, type ChartPriceLine } from "./PriceLevelOverlay";
+import type { PositionChartOverlay } from "./PositionChart";
 import { VolumePanel } from "./VolumePanel";
 
 const LABEL_MERGE_PX = 8;
+const BITGET_GREEN = "#00c087";
+const BITGET_GREEN_SOFT = "rgba(0, 192, 135, 0.22)";
+const BITGET_RED = "#ff5b5a";
+const BITGET_RED_SOFT = "rgba(255, 91, 90, 0.24)";
+const POSITION_LINE_COLOR = "#00d1b2";
 
 export function PositionCandlestickChart({
   analysis,
@@ -29,7 +35,8 @@ export function PositionCandlestickChart({
   plan,
   layers,
   onToggleLayer,
-  highlightPrice = null
+  highlightPrice = null,
+  positionOverlay = null
 }: {
   analysis: PositionChartAnalysis;
   trendSummary: string;
@@ -37,6 +44,7 @@ export function PositionCandlestickChart({
   layers: ChartLayerState;
   onToggleLayer: (id: ChartLayerId, additive: boolean) => void;
   highlightPrice?: number | null;
+  positionOverlay?: PositionChartOverlay | null;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const overlayRef = useRef<SVGSVGElement | null>(null);
@@ -120,12 +128,12 @@ export function PositionCandlestickChart({
     });
 
     const candleSeries = chart.addSeries(CandlestickSeries, {
-      upColor: "rgba(127, 238, 100, 0.74)",
-      downColor: "rgba(238, 123, 128, 0.78)",
-      wickUpColor: "#9cbf93",
-      wickDownColor: "#ee7b80",
-      borderUpColor: "#ddffdc",
-      borderDownColor: "#ffadb1",
+      upColor: BITGET_GREEN,
+      downColor: BITGET_RED,
+      wickUpColor: "#1fe6ae",
+      wickDownColor: "#ff7878",
+      borderUpColor: "#20dba4",
+      borderDownColor: "#ff6968",
       borderVisible: true,
       priceLineVisible: false,
       lastValueVisible: false
@@ -244,7 +252,7 @@ export function PositionCandlestickChart({
       ? splitWyckoffEvents(analysis.wyckoff_markers, analysis.wyckoff_markers_low_confidence).events.map((marker) => ({
           time: marker.time as Time,
           position: marker.side === "distribution" || marker.type.includes("utad") || marker.type.includes("sow") ? "aboveBar" as const : "belowBar" as const,
-          color: marker.side === "distribution" || marker.type.includes("utad") || marker.type.includes("sow") ? "#ee7b80" : "#7fee64",
+          color: marker.side === "distribution" || marker.type.includes("utad") || marker.type.includes("sow") ? BITGET_RED : BITGET_GREEN,
           shape: marker.side === "distribution" || marker.type.includes("utad") || marker.type.includes("sow") ? "arrowDown" as const : "arrowUp" as const,
           text: compactMarkerText(marker.label, marker.confidence)
         }))
@@ -277,7 +285,7 @@ export function PositionCandlestickChart({
 
     chart.timeScale().fitContent();
     chart.timeScale().applyOptions({ rightOffset: 18 });
-    const drawOverlay = () => renderTaOverlay(overlay, container, candleSeries, chart, analysis, layers, activeHarmonic);
+    const drawOverlay = () => renderTaOverlay(overlay, container, candleSeries, chart, analysis, layers, activeHarmonic, positionOverlay);
     window.setTimeout(drawOverlay, 0);
     chart.timeScale().subscribeVisibleLogicalRangeChange(drawOverlay);
     const resizeObserver = new ResizeObserver(drawOverlay);
@@ -287,7 +295,7 @@ export function PositionCandlestickChart({
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(drawOverlay);
       chart.remove();
     };
-  }, [analysis, averageVolume, priceLines, layers, highlightPrice, activeHarmonic, validation]);
+  }, [analysis, averageVolume, priceLines, layers, highlightPrice, activeHarmonic, positionOverlay, validation]);
 
   if (!validation.valid) {
     return (
@@ -422,15 +430,42 @@ function volumeAtTime(candles: ChartCandle[], time: number): number {
   return candles.find((candle) => candle.time === time)?.volume ?? 0;
 }
 
+function nearestCandleAtOrAfter(candles: ChartCandle[], time: number): ChartCandle | null {
+  return candles.find((candle) => candle.time >= time) ?? candles.at(-1) ?? null;
+}
+
+function formatSignedNumber(value: number): string {
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${value.toFixed(Math.abs(value) >= 100 ? 1 : 2)}`;
+}
+
+function formatSignedPercent(value: number): string {
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${value.toFixed(2)}%`;
+}
+
+function formatCompactQuantity(value: number): string {
+  if (!Number.isFinite(value)) return "-";
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000) return `${trimFixed(value / 1_000_000, 2)}M`;
+  if (abs >= 1_000) return new Intl.NumberFormat("en-US", { maximumFractionDigits: 4 }).format(value);
+  if (abs >= 1) return trimFixed(value, 4);
+  return trimFixed(value, 6);
+}
+
+function trimFixed(value: number, digits: number): string {
+  return value.toFixed(digits).replace(/\.?0+$/, "");
+}
+
 function simpleVolumeColor(candle: ChartCandle): string {
-  return candle.close >= candle.open ? "rgba(127, 238, 100, 0.22)" : "rgba(238, 123, 128, 0.24)";
+  return candle.close >= candle.open ? BITGET_GREEN_SOFT : BITGET_RED_SOFT;
 }
 
 function volumeColorForCandle(analysis: PositionChartAnalysis, candle: ChartCandle): string {
   const bucket = analysis.trade_flow.buckets.find((item) => item.time === candle.time);
   if (bucket) {
-    if (bucket.delta > 0) return "rgba(98, 207, 232, 0.38)";
-    if (bucket.delta < 0) return "rgba(238, 123, 128, 0.38)";
+    if (bucket.delta > 0) return "rgba(0, 192, 135, 0.42)";
+    if (bucket.delta < 0) return "rgba(255, 91, 90, 0.42)";
     return "rgba(174, 210, 164, 0.28)";
   }
   return simpleVolumeColor(candle);
@@ -443,7 +478,8 @@ function renderTaOverlay(
   chart: { timeScale(): { timeToCoordinate(time: Time): number | null } },
   analysis: PositionChartAnalysis,
   layers: ChartLayerState,
-  activeHarmonic: PositionChartAnalysis["harmonic_patterns"][number] | null
+  activeHarmonic: PositionChartAnalysis["harmonic_patterns"][number] | null,
+  positionOverlay: PositionChartOverlay | null
 ) {
   if (!svg) return;
   const width = container.clientWidth;
@@ -461,8 +497,60 @@ function renderTaOverlay(
     const right = Math.max(24, width - axisGutter);
     nodes.push(...harmonicPatternNodes(series, chart, activeHarmonic, right));
   }
+  if (positionOverlay) {
+    nodes.push(...positionOverlayNodes(series, chart, analysis, positionOverlay, width, height));
+  }
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
   svg.innerHTML = nodes.join("");
+}
+
+function positionOverlayNodes(
+  series: { priceToCoordinate(price: number): number | null },
+  chart: { timeScale(): { timeToCoordinate(time: Time): number | null } },
+  analysis: PositionChartAnalysis,
+  position: PositionChartOverlay,
+  width: number,
+  height: number
+): string[] {
+  const y = series.priceToCoordinate(position.entryPrice);
+  if (y === null || y < 18 || y > height - 42) return [];
+  const axisGutter = 82;
+  const right = Math.max(24, width - axisGutter);
+  const labelX = 118;
+  const labelY = Math.max(28, Math.min(height - 58, y - 18));
+  const sideLabel = position.direction === "long" ? "롱" : "숏";
+  const pnlAmount = position.pnlAmount ?? null;
+  const pnlText = pnlAmount === null
+    ? formatSignedPercent(position.pnlPercent)
+    : `${formatSignedNumber(pnlAmount)} USDT (${formatSignedPercent(position.pnlPercent)})`;
+  const pnlPositive = position.pnlPercent >= 0;
+  const pnlColor = pnlPositive ? BITGET_GREEN : BITGET_RED;
+  const tagWidth = Math.max(62, Math.min(110, formatCompactQuantity(position.quantity).length * 11 + 30));
+  const pnlWidth = Math.max(176, Math.min(310, pnlText.length * 9 + 34));
+  const sideWidth = 82;
+  const totalWidth = sideWidth + tagWidth + pnlWidth;
+  const nodes = [
+    `<line x1="0" x2="${right}" y1="${y}" y2="${y}" stroke="${POSITION_LINE_COLOR}" stroke-width="1.3" stroke-dasharray="5 4" opacity="0.9" />`,
+    `<rect x="${labelX}" y="${labelY}" width="${totalWidth}" height="34" rx="6" fill="rgba(0,0,0,0.72)" stroke="${POSITION_LINE_COLOR}" stroke-width="1.2" />`,
+    `<rect x="${labelX}" y="${labelY}" width="${sideWidth}" height="34" rx="6" fill="rgba(0, 192, 135, 0.92)" />`,
+    `<text x="${labelX + 12}" y="${labelY + 22}" fill="#001a14" font-size="12" font-weight="700" font-family="SF Mono, Monaco, Consolas, monospace">${sideLabel} ${position.leverage}x</text>`,
+    `<line x1="${labelX + sideWidth}" x2="${labelX + sideWidth}" y1="${labelY}" y2="${labelY + 34}" stroke="${POSITION_LINE_COLOR}" stroke-width="1" opacity="0.75" />`,
+    `<text x="${labelX + sideWidth + 14}" y="${labelY + 22}" fill="#dffcf5" font-size="13" font-family="SF Mono, Monaco, Consolas, monospace">${escapeSvgText(formatCompactQuantity(position.quantity))}</text>`,
+    `<line x1="${labelX + sideWidth + tagWidth}" x2="${labelX + sideWidth + tagWidth}" y1="${labelY}" y2="${labelY + 34}" stroke="${POSITION_LINE_COLOR}" stroke-width="1" opacity="0.75" />`,
+    `<text x="${labelX + sideWidth + tagWidth + 14}" y="${labelY + 22}" fill="${pnlColor}" font-size="13" font-family="SF Mono, Monaco, Consolas, monospace">${escapeSvgText(pnlText)}</text>`,
+    `<text x="${Math.min(right - 88, labelX + totalWidth + 12)}" y="${labelY + 22}" fill="rgba(223,252,245,0.76)" font-size="11" font-family="SF Mono, Monaco, Consolas, monospace">진입 ${escapeSvgText(formatPrice(position.entryPrice))}</text>`
+  ];
+  const openedTime = position.openedAt ? Math.floor(new Date(position.openedAt).getTime() / 1000) : null;
+  const entryCandle = openedTime ? nearestCandleAtOrAfter(analysis.candles, openedTime) : null;
+  if (entryCandle) {
+    const x = chart.timeScale().timeToCoordinate(entryCandle.time as Time);
+    if (x !== null && x > 0 && x < right) {
+      nodes.push(`<line x1="${x}" x2="${x}" y1="${Math.max(0, y - 52)}" y2="${Math.min(height, y + 52)}" stroke="${POSITION_LINE_COLOR}" stroke-width="1" stroke-dasharray="3 5" opacity="0.65" />`);
+      nodes.push(`<path d="M ${x - 7} ${y - 11} L ${x + 7} ${y - 11} L ${x} ${y - 1} Z" fill="${POSITION_LINE_COLOR}" />`);
+      nodes.push(`<text x="${x + 8}" y="${Math.max(16, y - 14)}" fill="${POSITION_LINE_COLOR}" font-size="10" font-family="SF Mono, Monaco, Consolas, monospace">진입</text>`);
+    }
+  }
+  return nodes;
 }
 
 function volumeProfileNodes(

@@ -13,7 +13,8 @@ export function PositionChart({
   plan,
   layers,
   onToggleLayer,
-  highlightPrice
+  highlightPrice,
+  positionOverlay
 }: {
   analysis: PositionChartAnalysis | null;
   loading: boolean;
@@ -24,6 +25,7 @@ export function PositionChart({
   layers: ChartLayerState;
   onToggleLayer: (id: ChartLayerId, additive: boolean) => void;
   highlightPrice?: number | null;
+  positionOverlay?: PositionChartOverlay | null;
 }) {
   if (loading) {
     return (
@@ -70,7 +72,19 @@ export function PositionChart({
         layers={layers}
         onToggleLayer={onToggleLayer}
         highlightPrice={highlightPrice}
+        positionOverlay={positionOverlay}
       />
     </section>
   );
 }
+
+export type PositionChartOverlay = {
+  direction: "long" | "short";
+  quantity: number;
+  leverage: number;
+  entryPrice: number;
+  markPrice: number | null;
+  pnlPercent: number;
+  pnlAmount: number | null;
+  openedAt: string | null;
+};
