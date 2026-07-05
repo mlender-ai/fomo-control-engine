@@ -34,6 +34,15 @@ class Settings(BaseSettings):
     insight_stale_after_minutes: int = Field(30, validation_alias=AliasChoices("FCE_INSIGHT_STALE_AFTER_MINUTES", "INSIGHT_STALE_AFTER_MINUTES"))
     insight_price_drift_stale_pct: float = Field(3.0, validation_alias=AliasChoices("FCE_INSIGHT_PRICE_DRIFT_STALE_PCT", "INSIGHT_PRICE_DRIFT_STALE_PCT"))
     live_position_sync_interval_seconds: int = Field(30, validation_alias=AliasChoices("FCE_LIVE_POSITION_SYNC_INTERVAL_SECONDS", "LIVE_POSITION_SYNC_INTERVAL_SECONDS"))
+    background_worker_enabled: bool = Field(True, validation_alias=AliasChoices("FCE_BACKGROUND_WORKER_ENABLED", "BACKGROUND_WORKER_ENABLED"))
+    worker_startup_delay_seconds: int = Field(3, validation_alias=AliasChoices("FCE_WORKER_STARTUP_DELAY_SECONDS", "WORKER_STARTUP_DELAY_SECONDS"))
+    telegram_bot_enabled: bool = Field(True, validation_alias=AliasChoices("FCE_TELEGRAM_BOT_ENABLED", "TELEGRAM_BOT_ENABLED"))
+    telegram_bot_token: str = Field("", validation_alias=AliasChoices("FCE_TELEGRAM_BOT_TOKEN", "TELEGRAM_BOT_TOKEN"))
+    telegram_allowed_chat_ids: str = Field("", validation_alias=AliasChoices("FCE_TELEGRAM_ALLOWED_CHAT_IDS", "TELEGRAM_ALLOWED_CHAT_IDS"))
+    telegram_alerts_enabled: bool = Field(True, validation_alias=AliasChoices("FCE_TELEGRAM_ALERTS_ENABLED", "TELEGRAM_ALERTS_ENABLED"))
+    telegram_alert_min_interval_seconds: int = Field(600, validation_alias=AliasChoices("FCE_TELEGRAM_ALERT_MIN_INTERVAL_SECONDS", "TELEGRAM_ALERT_MIN_INTERVAL_SECONDS"))
+    telegram_command_timeout_seconds: int = Field(10, validation_alias=AliasChoices("FCE_TELEGRAM_COMMAND_TIMEOUT_SECONDS", "TELEGRAM_COMMAND_TIMEOUT_SECONDS"))
+    telegram_daily_summary_time: str = Field("08:30", validation_alias=AliasChoices("FCE_TELEGRAM_DAILY_SUMMARY_TIME", "TELEGRAM_DAILY_SUMMARY_TIME"))
     insight_auto_refresh_enabled: bool = Field(True, validation_alias=AliasChoices("FCE_INSIGHT_AUTO_REFRESH_ENABLED", "INSIGHT_AUTO_REFRESH_ENABLED"))
     insight_min_regeneration_interval_minutes: int = Field(
         10,
@@ -52,6 +61,19 @@ class Settings(BaseSettings):
     @property
     def symbol_list(self) -> list[str]:
         return [symbol.strip().upper() for symbol in self.default_symbols.split(",") if symbol.strip()]
+
+    @property
+    def telegram_allowed_chat_id_list(self) -> list[int]:
+        chat_ids: list[int] = []
+        for raw in self.telegram_allowed_chat_ids.split(","):
+            value = raw.strip()
+            if not value:
+                continue
+            try:
+                chat_ids.append(int(value))
+            except ValueError:
+                continue
+        return chat_ids
 
 
 @lru_cache
