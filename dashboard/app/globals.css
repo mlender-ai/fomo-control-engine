@@ -24,6 +24,16 @@
   --terminal-positive: #7fee64;
   --terminal-negative: #ee7b80;
   --terminal-warning: #f0b840;
+  --chart-teal-rgb: 0, 209, 178;
+  --chart-green-rgb: 0, 192, 135;
+  --chart-red-rgb: 255, 91, 90;
+  --chart-amber-rgb: 240, 184, 64;
+  --chart-blue-rgb: 98, 207, 232;
+  --chart-purple-rgb: 168, 118, 255;
+  --chart-neutral-rgb: 147, 166, 142;
+  --chart-text-rgb: 238, 242, 247;
+  --chart-muted-rgb: 140, 171, 135;
+  --chart-panel-rgb: 0, 0, 0;
   --terminal-shadow: 0 18px 42px rgba(0, 0, 0, 0.34);
   --ink: var(--terminal-text);
   --muted: var(--terminal-muted);
