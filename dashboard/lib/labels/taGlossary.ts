@@ -185,7 +185,7 @@ export const VOLUME_STATE_GLOSSARY: Record<VolumeStateTerm, TaGlossaryEntry> = {
   }
 };
 
-export type MarketStructureTerm = "PRZ" | "POC" | "VAH" | "VAL" | "CVD";
+export type MarketStructureTerm = "PRZ" | "POC" | "VAH" | "VAL" | "CVD" | "RR" | "ActionFlag" | "Range";
 
 export const MARKET_STRUCTURE_GLOSSARY: Record<MarketStructureTerm, TaGlossaryEntry> = {
   PRZ: {
@@ -212,6 +212,21 @@ export const MARKET_STRUCTURE_GLOSSARY: Record<MarketStructureTerm, TaGlossaryEn
     term: "CVD",
     short: "누적 체결 우위",
     plain: "매수 체결과 매도 체결의 차이를 누적한 선. 가격과 방향이 어긋나면 경계 신호"
+  },
+  RR: {
+    term: "RR",
+    short: "손익비 구간",
+    plain: "초록 구간은 1차 익절 후보까지, 빨강 구간은 무효화 기준까지의 거리입니다. 가격 도달 시 행동 기준을 다시 확인합니다"
+  },
+  ActionFlag: {
+    term: "ActionFlag",
+    short: "행동 가격표",
+    plain: "무효화·익절·감시 가격을 같은 가격축에 붙인 표식. 도달 시 액션 플랜의 조건을 확인합니다"
+  },
+  Range: {
+    term: "Range",
+    short: "가격 레인지",
+    plain: "가격이 일정한 상단과 하단 사이에 머문 구간. 경계 반응을 확인합니다"
   }
 };
 

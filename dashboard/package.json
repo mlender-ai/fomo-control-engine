@@ -8,6 +8,7 @@
     "build": "next build",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
+    "scan:design-tokens": "node scripts/scan-design-tokens.mjs",
     "test:chart-visual": "playwright test tests/chart-visual-regression.spec.ts",
     "astryx": "node node_modules/@astryxdesign/cli/bin/astryx.mjs"
   },

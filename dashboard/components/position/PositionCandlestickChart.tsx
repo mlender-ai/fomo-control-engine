@@ -18,7 +18,7 @@ import { CHART_LAYER_DEFS, layerActive, type ChartLayerId, type ChartLayerState 
 import { chartTheme, createChartPalette, type ResolvedChartPalette } from "@/lib/chartTheme";
 import { formatPrice } from "@/lib/format";
 import { localizeMarketCodes, phaseHintLabel, sourceLabel, timeframeLabel } from "@/lib/labels/marketStateLabels";
-import { splitWyckoffEvents, taShortLabel } from "@/lib/labels/taGlossary";
+import { splitWyckoffEvents, taGlossaryEntry, taShortLabel } from "@/lib/labels/taGlossary";
 import { priceLinesForAnalysis, type ChartPriceLine } from "./PriceLevelOverlay";
 import type { PositionChartOverlay } from "./PositionChart";
 import { VolumePanel } from "./VolumePanel";
@@ -47,6 +47,7 @@ export function PositionCandlestickChart({
   const overlayRef = useRef<SVGSVGElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
   const [harmonicIndex, setHarmonicIndex] = useState(0);
+  const [guideOpen, setGuideOpen] = useState(false);
   const validation = useMemo(() => validateCandles(analysis.candles), [analysis.candles]);
   const priceLines = useMemo(
     () => (validation.valid ? priceLinesForAnalysis(analysis, plan, layers) : []),
@@ -60,10 +61,25 @@ export function PositionCandlestickChart({
     [analysis.harmonic_patterns]
   );
   const activeHarmonic = harmonicPatterns.length ? harmonicPatterns[((harmonicIndex % harmonicPatterns.length) + harmonicPatterns.length) % harmonicPatterns.length] : null;
+  const guideLayer = activeGuideLayer(layers);
 
   useEffect(() => {
     setHarmonicIndex(0);
   }, [analysis.position_id, analysis.timeframe]);
+
+  useEffect(() => {
+    const key = chartGuideStorageKey(guideLayer);
+    setGuideOpen(window.localStorage.getItem(key) !== "dismissed");
+  }, [guideLayer]);
+
+  function toggleGuide() {
+    const key = chartGuideStorageKey(guideLayer);
+    setGuideOpen((current) => {
+      const next = !current;
+      if (!next) window.localStorage.setItem(key, "dismissed");
+      return next;
+    });
+  }
 
   useEffect(() => {
     if (!validation.valid || !containerRef.current || !validation.candles.length) return;
@@ -303,7 +319,12 @@ export function PositionCandlestickChart({
           <h2>{analysis.symbol} 차트</h2>
           <p>{timeframeLabel(analysis.timeframe)} · {sourceLabel(analysis.data_quality.source)} · 마지막 캔들: {lastCandle ? formatKoreanDateTime(lastCandle.time) : "-"}</p>
         </div>
-        <span>{trendSummary}</span>
+        <div className="positionChartHeaderActions">
+          <span className="positionChartTrendPill">{trendSummary}</span>
+          <button className={`chartGuideButton ${guideOpen ? "active" : ""}`} onClick={toggleGuide} type="button" aria-pressed={guideOpen} title="차트 읽기">
+            ?
+          </button>
+        </div>
       </div>
       <div className="taLayerToggle" role="group" aria-label="차트 레이어 선택">
         {CHART_LAYER_DEFS.map((layer) => (
@@ -343,6 +364,7 @@ export function PositionCandlestickChart({
       <div className="positionChartCanvasFrame">
         <div className="positionChartCanvas" ref={containerRef} />
         <svg className="volumeProfileOverlay" ref={overlayRef} aria-hidden="true" />
+        {guideOpen ? <ChartGuideLayer layer={guideLayer} /> : null}
       </div>
       {layers.flow ? <VolumePanel analysis={analysis} averageVolume={averageVolume} /> : null}
     </>
@@ -350,6 +372,46 @@ export function PositionCandlestickChart({
 }
 
 type LabeledPriceLine = ChartPriceLine & { title: string };
+
+type GuideLayer = "plan" | "wyckoff" | "harmonic" | "flow" | "levels";
+
+function activeGuideLayer(layers: ChartLayerState): GuideLayer {
+  if (layers.ta.includes("wyckoff")) return "wyckoff";
+  if (layers.ta.includes("harmonic")) return "harmonic";
+  if (layers.flow || layers.ta.includes("volume_profile")) return "flow";
+  if (layers.ta.includes("levels")) return "levels";
+  return "plan";
+}
+
+function chartGuideStorageKey(layer: GuideLayer): string {
+  return `fce.chartGuide.dismissed.${layer}`;
+}
+
+function ChartGuideLayer({ layer }: { layer: GuideLayer }) {
+  const terms = guideTermsForLayer(layer);
+  return (
+    <div className={`chartGuideLayer guide-${layer}`} aria-label="차트 읽기 가이드">
+      {terms.map((term, index) => {
+        const entry = taGlossaryEntry(term);
+        if (!entry) return null;
+        return (
+          <div className={`chartGuideCallout callout-${index + 1}`} key={term}>
+            <strong>{entry.short}</strong>
+            <span>{entry.plain}</span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function guideTermsForLayer(layer: GuideLayer): string[] {
+  if (layer === "wyckoff") return ["Range", "Spring", "UTAD"];
+  if (layer === "harmonic") return ["PRZ", "ActionFlag"];
+  if (layer === "flow") return ["POC", "CVD"];
+  if (layer === "levels") return ["strong", "POC"];
+  return ["RR", "ActionFlag"];
+}
 
 /** 같은 y좌표 ±8px 내 가격선 라벨을 병합한다 ("S1 · POC 260.4"). */
 function mergeLineLabels(lines: ChartPriceLine[], containerHeight: number, candles: ChartCandle[]): LabeledPriceLine[] {

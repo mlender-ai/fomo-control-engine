@@ -9,6 +9,10 @@ test("live position chart renders visual grammar states", async ({ page }) => {
   const chartFrame = page.locator(".positionChartCanvasFrame");
   await chartFrame.waitFor({ state: "visible", timeout: 20_000 });
 
+  await expect(page.locator(".positionSparkline").first()).toBeVisible({ timeout: 10_000 });
+  await expect(page.locator(".healthGaugeRing").first()).toBeVisible({ timeout: 10_000 });
+  await expect(page.locator(".triggerMeter")).toBeVisible({ timeout: 10_000 });
+  await expect(page.locator(".chartGuideCallout")).toHaveCount(2, { timeout: 10_000 });
   await expect(page.locator(".volumeProfileOverlay text").filter({ hasText: "R:R" })).toHaveCount(1, { timeout: 10_000 });
   await expect(page.locator(".volumeProfileOverlay text").filter({ hasText: "무효화" })).toHaveCount(1, { timeout: 10_000 });
   await page.screenshot({ path: `${artifactDir}/plan.png`, fullPage: false });

@@ -50,6 +50,7 @@ export function LivePositionCockpit() {
   const [selectedChartLoading, setSelectedChartLoading] = useState(false);
   const [selectedChartError, setSelectedChartError] = useState("");
   const [selectedDetail, setSelectedDetail] = useState<LivePositionDetail | null>(null);
+  const [stripChartAnalysis, setStripChartAnalysis] = useState<Record<string, PositionChartAnalysis>>({});
   const workspace = useAnalysisWorkspace();
 
   async function load(sync = false) {
@@ -144,6 +145,7 @@ export function LivePositionCockpit() {
   const selected = positions.find((item) => item.position.id === selectedId) ?? positions[0];
   const selectedDetailPayload = selectedDetail?.position.id === selected?.position.id ? selectedDetail : null;
   const selectedPayload = selectedDetailPayload ?? selected;
+  const stripChartKey = positions.map((item) => item.position.id).join("|");
 
   async function loadSelectedDetail(positionId: string) {
     try {
@@ -171,6 +173,38 @@ export function LivePositionCockpit() {
     void loadSelectedDetail(selected.position.id);
     void loadSelectedChart(selected.position.id);
   }, [selected?.position.id, data?.timestamp]);
+
+  useEffect(() => {
+    if (!positions.length) {
+      setStripChartAnalysis({});
+      return;
+    }
+    let cancelled = false;
+    const ids = positions.slice(0, 10).map((item) => item.position.id);
+    async function loadStripCharts() {
+      const results = await Promise.allSettled(
+        ids.map(async (positionId) => [positionId, await api.positionChartAnalysis(positionId, "4h")] as const)
+      );
+      if (cancelled) return;
+      setStripChartAnalysis((current) => {
+        const next: Record<string, PositionChartAnalysis> = {};
+        for (const id of ids) {
+          if (current[id]) next[id] = current[id];
+        }
+        results.forEach((result) => {
+          if (result.status === "fulfilled") {
+            const [positionId, analysis] = result.value;
+            next[positionId] = analysis;
+          }
+        });
+        return next;
+      });
+    }
+    void loadStripCharts();
+    return () => {
+      cancelled = true;
+    };
+  }, [stripChartKey, data?.timestamp]);
 
   return (
     <div className="page cockpitPage">
@@ -209,7 +243,12 @@ export function LivePositionCockpit() {
         </TerminalPanel>
       ) : positions.length ? (
         <>
-          <PositionStrip positions={positions} selectedId={selected?.position.id ?? ""} onSelect={setSelectedId} />
+          <PositionStrip
+            chartAnalysisById={stripChartAnalysis}
+            positions={positions}
+            selectedId={selected?.position.id ?? ""}
+            onSelect={setSelectedId}
+          />
           {selectedPayload ? (
             <>
               <PositionVerdictBar
@@ -249,10 +288,12 @@ export function LivePositionCockpit() {
 }
 
 function PositionStrip({
+  chartAnalysisById,
   positions,
   selectedId,
   onSelect
 }: {
+  chartAnalysisById: Record<string, PositionChartAnalysis>;
   positions: LivePositionPayload[];
   selectedId: string;
   onSelect: (positionId: string) => void;
@@ -260,25 +301,100 @@ function PositionStrip({
   const sortedPositions = [...positions].sort((left, right) => right.state.severity_rank - left.state.severity_rank);
   return (
     <section className="positionStrip" aria-label="보유 포지션">
-      {sortedPositions.map((item) => (
-        <button
-          className={`positionStripCard severity-${item.state.severity_rank} ${item.position.id === selectedId ? "selected" : ""}`}
-          key={item.position.id}
-          onClick={() => onSelect(item.position.id)}
-          type="button"
-        >
-          <strong>
-            {item.position.symbol}
-            {liquidationMissing(item) ? <AlertTriangle className="liqMissingIcon" size={12} aria-label="청산가 미수신" /> : null}
-          </strong>
-          <span>{directionLabel(item.position.direction)} · {item.position.leverage}x</span>
-          <em className={item.state.pnl_percent >= 0 ? "successText" : "dangerText"}>{signedPercent(item.state.pnl_percent)}</em>
-          <small>건강도 {item.state.health_score}</small>
-          <StatusPill status={item.state.status} label={item.state.status_label} />
-          <span className="stripHeadline">{plainifyTaText(headlineForPayload(item))}</span>
-        </button>
-      ))}
+      {sortedPositions.map((item) => {
+        const trigger = nearestActionTrigger(item);
+        return (
+          <button
+            className={`positionStripCard severity-${item.state.severity_rank} ${item.position.id === selectedId ? "selected" : ""}`}
+            key={item.position.id}
+            onClick={() => onSelect(item.position.id)}
+            title={riskRewardSummary(item)}
+            type="button"
+          >
+            <span className="stripSeverityBar" aria-hidden="true" />
+            <div className="stripCardTop">
+              <div className="stripIdentity">
+                <strong>
+                  {item.position.symbol}
+                  {liquidationMissing(item) ? <AlertTriangle className="liqMissingIcon" size={12} aria-label="청산가 미수신" /> : null}
+                </strong>
+                <span>{directionLabel(item.position.direction)} · {item.position.leverage}x</span>
+              </div>
+              <HealthGaugeRing score={item.state.health_score} severity={item.state.severity_rank} />
+            </div>
+            <PositionMiniSparkline payload={item} analysis={chartAnalysisById[item.position.id]} />
+            <div className="stripCardMetrics">
+              <em className={`pnlFlash ${item.state.pnl_percent >= 0 ? "successText pnlFlashUp" : "dangerText pnlFlashDown"}`}>
+                {signedPercent(item.state.pnl_percent)}
+              </em>
+              <StatusPill status={item.state.status} label={item.state.status_label} />
+            </div>
+            <span className="stripHeadline">
+              {plainifyTaText(headlineForPayload(item))}
+              {trigger ? <b>{formatDistance(trigger.distance_pct)}</b> : null}
+            </span>
+          </button>
+        );
+      })}
     </section>
+  );
+}
+
+function HealthGaugeRing({ score, severity }: { score: number; severity: number }) {
+  const radius = 15;
+  const circumference = 2 * Math.PI * radius;
+  const progress = clamp(score, 0, 100);
+  return (
+    <span className={`healthGaugeRing severity-${severity}`} aria-label={`건강도 ${score}`}>
+      <svg viewBox="0 0 40 40" aria-hidden="true">
+        <circle cx="20" cy="20" r={radius} className="healthGaugeTrack" />
+        <circle
+          cx="20"
+          cy="20"
+          r={radius}
+          className="healthGaugeValue"
+          strokeDasharray={circumference}
+          strokeDashoffset={circumference * (1 - progress / 100)}
+        />
+      </svg>
+      <strong>{Math.round(score)}</strong>
+    </span>
+  );
+}
+
+function PositionMiniSparkline({
+  payload,
+  analysis
+}: {
+  payload: LivePositionPayload;
+  analysis?: PositionChartAnalysis;
+}) {
+  const candles = analysis?.candles.slice(-48) ?? [];
+  const closes = candles.map((candle) => candle.close);
+  const fallbackMark = markPriceForPayload(payload);
+  const values = closes.length >= 2 ? closes : [payload.position.entry_price, fallbackMark ?? payload.position.entry_price];
+  const plan = actionPlanForPayload(payload);
+  const invalidation = numericPlanPrice(plan?.invalidation) ?? numericPlanPrice(plan?.engine_invalidation);
+  const takeProfit = numericPlanPrice(plan?.take_profit?.[0]);
+  const domainValues = values
+    .concat([payload.position.entry_price])
+    .concat(invalidation === null ? [] : [invalidation])
+    .concat(takeProfit === null ? [] : [takeProfit]);
+  const min = Math.min(...domainValues);
+  const max = Math.max(...domainValues);
+  const width = 154;
+  const height = 44;
+  const y = (value: number) => height - 8 - ((value - min) / Math.max(max - min, 1e-12)) * (height - 16);
+  const x = (index: number) => (values.length <= 1 ? 0 : (index / (values.length - 1)) * width);
+  const path = values.map((value, index) => `${index === 0 ? "M" : "L"} ${x(index).toFixed(1)} ${y(value).toFixed(1)}`).join(" ");
+  const entryY = y(payload.position.entry_price);
+  return (
+    <svg className="positionSparkline" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="최근 48캔들 위치 요약">
+      <line className="sparkEntry" x1="0" x2={width} y1={entryY} y2={entryY} />
+      {invalidation !== null ? <line className="sparkTick sparkInvalidation" x1={width - 18} x2={width} y1={y(invalidation)} y2={y(invalidation)} /> : null}
+      {takeProfit !== null ? <line className="sparkTick sparkTakeProfit" x1={width - 18} x2={width} y1={y(takeProfit)} y2={y(takeProfit)} /> : null}
+      <path className={payload.state.pnl_percent >= 0 ? "sparkLine positive" : "sparkLine negative"} d={path} />
+    </svg>
   );
 }
 
@@ -296,23 +412,34 @@ function PositionVerdictBar({
   const asOf = plan?.as_of ? new Date(plan.as_of) : null;
   // 벽시계 대신 최신 분석 시각(state.as_of) 대비 나이로 신선도를 판정 (렌더 순수성 유지)
   const ageMinutes = asOf ? (new Date(payload.state.as_of).getTime() - asOf.getTime()) / 60000 : null;
-  const freshness = ageMinutes === null ? "기준 데이터 없음" : ageMinutes <= 30 ? "신선" : "오래됨 · 갱신 권장";
+  const freshness = freshnessCountdownLabel(ageMinutes);
+  const StatusIcon = severityIcon(state.severity_rank);
   return (
-    <section className={`verdictBar status-${state.status}`}>
-      <div className="verdictTopRow">
-        <strong className="verdictSymbol">{position.symbol} {directionLabel(position.direction)} {position.leverage}x</strong>
-        <em
-          className={`verdictPnl ${state.pnl_percent >= 0 ? "successText" : "dangerText"}`}
-          title={`손익률 출처: ${pnlSourceLabel(state.pnl_source)}`}
-        >
-          {signedPercent(state.pnl_percent)}
-          {state.pnl_source === "exchange" ? <Landmark size={12} /> : <Calculator size={12} />}
-        </em>
-        <StatusPill status={state.status} label={`${state.status_label} (${state.health_score}/100)`} />
+    <section className={`verdictBar status-${state.status} severity-${state.severity_rank}`}>
+      <div className="verdictHero">
+        <div className="verdictStatusIcon">
+          <StatusIcon size={26} aria-hidden="true" />
+        </div>
+        <div className="verdictHeroMain">
+          <div className="verdictTopRow">
+            <strong className="verdictSymbol">{position.symbol} {directionLabel(position.direction)} {position.leverage}x</strong>
+            <em
+              className={`verdictPnl pnlFlash ${state.pnl_percent >= 0 ? "successText pnlFlashUp" : "dangerText pnlFlashDown"}`}
+              title={`손익률 출처: ${pnlSourceLabel(state.pnl_source)}`}
+            >
+              {signedPercent(state.pnl_percent)}
+              {state.pnl_source === "exchange" ? <Landmark size={12} /> : <Calculator size={12} />}
+            </em>
+            <StatusPill status={state.status} label={`${state.status_label} (${state.health_score}/100)`} />
+          </div>
+          <p className="verdictAction">→ {plainifyTaText(headlineForPayload(payload))}</p>
+        </div>
       </div>
-      <p className="verdictAction">→ {plainifyTaText(headlineForPayload(payload))}</p>
+      <TriggerProximityMeter payload={payload} />
       <div className="verdictMeta">
-        <span>{asOf ? `기준 ${asOf.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}` : "기준 -"} · {freshness}</span>
+        <span className={ageMinutes !== null && ageMinutes > 30 ? "freshnessBadge stale" : "freshnessBadge"}>
+          {asOf ? `기준 ${asOf.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}` : "기준 -"} · {freshness}
+        </span>
         {liquidationMissing(payload) ? (
           <span className="verdictLiqWarning">
             <AlertTriangle size={12} /> 청산가 미수신 — {position.leverage}x 포지션은 청산가·증거금을 수동 확인하세요
@@ -324,6 +451,33 @@ function PositionVerdictBar({
         </button>
       </div>
     </section>
+  );
+}
+
+function TriggerProximityMeter({ payload }: { payload: LivePositionPayload }) {
+  const plan = actionPlanForPayload(payload);
+  const invalidationPrice = numericPlanPrice(plan?.invalidation) ?? numericPlanPrice(plan?.engine_invalidation);
+  const takeProfitPrice = numericPlanPrice(plan?.take_profit?.[0]);
+  const currentPrice = markPriceForPayload(payload);
+  if (invalidationPrice === null || takeProfitPrice === null || currentPrice === null || invalidationPrice === takeProfitPrice) return null;
+  const min = Math.min(invalidationPrice, takeProfitPrice);
+  const max = Math.max(invalidationPrice, takeProfitPrice);
+  const currentLeft = clamp(((currentPrice - min) / Math.max(max - min, 1e-12)) * 100, 0, 100);
+  const invalidationLeft = clamp(((invalidationPrice - min) / Math.max(max - min, 1e-12)) * 100, 0, 100);
+  const targetLeft = clamp(((takeProfitPrice - min) / Math.max(max - min, 1e-12)) * 100, 0, 100);
+  return (
+    <div className="triggerMeter" aria-label="무효화와 1차 익절 사이 현재가 위치">
+      <div className="triggerMeterTrack">
+        <span className="triggerMeterRisk" style={{ left: `${Math.min(invalidationLeft, currentLeft)}%`, width: `${Math.abs(currentLeft - invalidationLeft)}%` }} />
+        <span className="triggerMeterReward" style={{ left: `${Math.min(targetLeft, currentLeft)}%`, width: `${Math.abs(targetLeft - currentLeft)}%` }} />
+        <i className="triggerMeterMarker" style={{ left: `${currentLeft}%` }} />
+      </div>
+      <div className="triggerMeterLabels">
+        <span>무효화 {formatPrice(invalidationPrice)}</span>
+        <strong>현재 {formatPrice(currentPrice)}</strong>
+        <span>익절1 {formatPrice(takeProfitPrice)}</span>
+      </div>
+    </div>
   );
 }
 
@@ -354,6 +508,11 @@ function ActionPlanPanel({
         </div>
         <span>{plan?.as_of ? `기준 ${new Date(plan.as_of).toLocaleString()}` : "데이터 부족"}</span>
       </div>
+      {payload.latest_insight && !payload.insight_status.is_stale ? (
+        <div className="insightSuccessToast">
+          인사이트 최신 · {new Date(payload.latest_insight.created_at).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}
+        </div>
+      ) : null}
       {rows.length ? (
         <div className="actionPlanRows">
           {rows.map((row) => (
@@ -855,6 +1014,71 @@ function headlineForPayload(payload: LivePositionPayload): string {
   );
 }
 
+function nearestActionTrigger(payload: LivePositionPayload): { distance_pct: number | null } | null {
+  const plan = actionPlanForPayload(payload);
+  if (!plan) return null;
+  const current = markPriceForPayload(payload);
+  const candidates = [plan.invalidation, ...(plan.take_profit ?? [])]
+    .map((item) => {
+      if (!item) return null;
+      const derivedDistance =
+        typeof item.distance_pct === "number"
+          ? item.distance_pct
+          : typeof item.price === "number" && current !== null
+            ? distancePctFromCurrent(item.price, current)
+            : null;
+      return derivedDistance === null ? null : { distance_pct: derivedDistance };
+    })
+    .filter((item): item is { distance_pct: number } => item !== null);
+  if (!candidates.length) return null;
+  return candidates.reduce((left, right) => (Math.abs(right.distance_pct) < Math.abs(left.distance_pct) ? right : left));
+}
+
+function riskRewardSummary(payload: LivePositionPayload): string {
+  const plan = actionPlanForPayload(payload);
+  const invalidation = plan?.invalidation ?? plan?.engine_invalidation ?? null;
+  const target = plan?.take_profit?.[0] ?? null;
+  const current = markPriceForPayload(payload);
+  const risk = signedDistanceFromPlanItem(invalidation, current);
+  const reward = signedDistanceFromPlanItem(target, current);
+  const rr = typeof risk === "number" && typeof reward === "number" && Math.abs(risk) > 0 ? Math.abs(reward / risk) : null;
+  if (rr !== null) return `R:R ${rr.toFixed(1)} · 익절 ${formatDistance(reward)} / 무효화 ${formatDistance(risk)}`;
+  return "액션 플랜의 익절·무효화 가격을 확인하세요.";
+}
+
+function signedDistanceFromPlanItem(item: { price: number | null; distance_pct: number | null } | null, current: number | null): number | null {
+  if (!item) return null;
+  if (typeof item.distance_pct === "number") return item.distance_pct;
+  if (typeof item.price === "number" && current !== null) return distancePctFromCurrent(item.price, current);
+  return null;
+}
+
+function distancePctFromCurrent(price: number, current: number): number {
+  if (!Number.isFinite(price) || !Number.isFinite(current) || current === 0) return 0;
+  return ((price - current) / current) * 100;
+}
+
+function numericPlanPrice(item: { price: number | null } | null | undefined): number | null {
+  return typeof item?.price === "number" && Number.isFinite(item.price) ? item.price : null;
+}
+
+function markPriceForPayload(payload: LivePositionPayload): number | null {
+  return payload.state.mark_price ?? payload.position.mark_price ?? payload.position.current_price ?? null;
+}
+
+function freshnessCountdownLabel(ageMinutes: number | null): string {
+  if (ageMinutes === null || !Number.isFinite(ageMinutes)) return "기준 데이터 없음";
+  const remaining = Math.ceil(30 - ageMinutes);
+  if (remaining > 0) return `유효 ${remaining}분 남음`;
+  return `만료 ${Math.abs(remaining)}분 지남 · 갱신 권장`;
+}
+
+function severityIcon(severityRank: number) {
+  if (severityRank >= 3) return AlertTriangle;
+  if (severityRank >= 1) return Activity;
+  return ShieldCheck;
+}
+
 /** 백엔드 headline_action과 동일 규칙의 클라이언트 폴백: 현재가에서 가장 가까운 트리거 1개. */
 function deriveHeadlineAction(plan: PositionActionPlan | null, direction: "long" | "short"): string | null {
   if (!plan) return null;
@@ -954,6 +1178,10 @@ function formatNullablePrice(value: number | null): string {
 
 function formatDistance(value: number | null): string {
   return value === null ? "-" : signedPercent(value);
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
 
 function pnlSourceLabel(source: "exchange" | "computed"): string {
