@@ -76,6 +76,8 @@ class BitgetMarketDataProvider(MarketDataProvider):
                     "base_coin": str(row.get("baseCoin", "")),
                     "quote_coin": str(row.get("quoteCoin", "")),
                     "status": str(row.get("symbolStatus", "")),
+                    "maintenance_margin_rate": _first_float(row, ("maintainMarginRate", "maintenanceMarginRate", "keepMarginRate")),
+                    "taker_fee_rate": _first_float(row, ("takerFeeRate", "takerFee")),
                 }
             )
         return contracts
@@ -362,6 +364,14 @@ def _optional_float(value: Any) -> float | None:
     if value in (None, ""):
         return None
     return _required_float(value, "optional")
+
+
+def _first_float(row: dict[str, Any], keys: tuple[str, ...]) -> float | None:
+    for key in keys:
+        value = _optional_float(row.get(key))
+        if value is not None:
+            return value
+    return None
 
 
 def _optional_int(value: Any) -> int | None:

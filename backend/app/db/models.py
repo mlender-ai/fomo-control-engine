@@ -130,6 +130,7 @@ class Position(BaseModel):
     planned_stop_price: float | None = None
     planned_take_profit_price: float | None = None
     thesis_text: str = ""
+    scenario_id: UUID | None = None
     opened_at: datetime = Field(default_factory=utc_now)
     closed_at: datetime | None = None
 
@@ -450,7 +451,35 @@ class CatalogSymbol(BaseModel):
     base_coin: str = ""
     quote_coin: str = ""
     status: str = ""
+    maintenance_margin_rate: float | None = None
+    taker_fee_rate: float | None = None
     updated_at: datetime = Field(default_factory=utc_now)
+
+
+class EntryChecklistItem(BaseModel):
+    key: str
+    label: str
+    status: Literal["pass", "fail", "na"]
+    reason: str = ""
+
+
+class EntryScenario(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    symbol: str
+    direction: Direction
+    entry_price: float
+    leverage: float
+    margin_usdt: float | None = None
+    margin_mode: str = "isolated"
+    timeframe: str = "4h"
+    estimated_liquidation: float | None = None
+    action_plan: dict = Field(default_factory=dict)
+    checklist: list[EntryChecklistItem] = Field(default_factory=list)
+    rr_ratio: float | None = None
+    analysis_as_of: datetime | None = None
+    note: str = ""
+    linked_position_id: UUID | None = None
+    created_at: datetime = Field(default_factory=utc_now)
 
 
 class ValidationRunRequest(BaseModel):

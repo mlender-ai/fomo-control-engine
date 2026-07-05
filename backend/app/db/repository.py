@@ -10,6 +10,7 @@ from uuid import UUID
 
 from app.db.models import (
     CatalogSymbol,
+    EntryScenario,
     AgentOutput,
     CalibrationSuggestion,
     DecisionMemory,
@@ -28,6 +29,7 @@ from app.db.models import (
     Trade,
     ValidationRun,
     WatchlistItem,
+    utc_now,
 )
 
 
@@ -78,6 +80,11 @@ class Repository(Protocol):
     def replace_symbol_catalog(self, symbols: list[CatalogSymbol]) -> int: ...
     def search_symbols(self, query: str, limit: int = 20) -> list[CatalogSymbol]: ...
     def symbol_catalog_updated_at(self) -> datetime | None: ...
+    def add_entry_scenario(self, scenario: EntryScenario) -> EntryScenario: ...
+    def get_entry_scenario(self, scenario_id: UUID) -> EntryScenario | None: ...
+    def list_entry_scenarios(self, symbol: str | None = None, limit: int = 50) -> list[EntryScenario]: ...
+    def find_matching_scenario(self, symbol: str, direction: str, within_hours: int = 72) -> EntryScenario | None: ...
+    def link_scenario_position(self, scenario_id: UUID, position_id: UUID) -> EntryScenario | None: ...
 
 
 class MemoryRepository:
@@ -101,6 +108,7 @@ class MemoryRepository:
         self.validation_runs: dict[UUID, ValidationRun] = {}
         self.watchlist: dict[str, WatchlistItem] = {}
         self.symbol_catalog: dict[str, CatalogSymbol] = {}
+        self.entry_scenarios: dict[UUID, EntryScenario] = {}
 
     def add_report(self, report: Report) -> Report:
         self.reports[report.id] = report
@@ -285,6 +293,41 @@ class MemoryRepository:
         if not self.symbol_catalog:
             return None
         return max(item.updated_at for item in self.symbol_catalog.values())
+
+    def add_entry_scenario(self, scenario: EntryScenario) -> EntryScenario:
+        self.entry_scenarios[scenario.id] = scenario
+        return scenario
+
+    def get_entry_scenario(self, scenario_id: UUID) -> EntryScenario | None:
+        return self.entry_scenarios.get(scenario_id)
+
+    def list_entry_scenarios(self, symbol: str | None = None, limit: int = 50) -> list[EntryScenario]:
+        items = list(self.entry_scenarios.values())
+        if symbol:
+            items = [item for item in items if item.symbol.upper() == symbol.upper()]
+        return sorted(items, key=lambda item: item.created_at, reverse=True)[:limit]
+
+    def find_matching_scenario(self, symbol: str, direction: str, within_hours: int = 72) -> EntryScenario | None:
+        from datetime import timedelta
+
+        cutoff = utc_now() - timedelta(hours=within_hours)
+        candidates = [
+            item
+            for item in self.entry_scenarios.values()
+            if item.symbol.upper() == symbol.upper()
+            and item.direction.value == direction
+            and item.linked_position_id is None
+            and item.created_at >= cutoff
+        ]
+        return max(candidates, key=lambda item: item.created_at, default=None)
+
+    def link_scenario_position(self, scenario_id: UUID, position_id: UUID) -> EntryScenario | None:
+        scenario = self.entry_scenarios.get(scenario_id)
+        if scenario is None:
+            return None
+        updated = scenario.model_copy(update={"linked_position_id": position_id})
+        self.entry_scenarios[scenario_id] = updated
+        return updated
 
 
 class SQLiteRepository:
@@ -481,6 +524,16 @@ class SQLiteRepository:
                     updated_at TEXT NOT NULL,
                     payload TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS entry_scenarios (
+                    id TEXT PRIMARY KEY,
+                    symbol TEXT NOT NULL,
+                    direction TEXT NOT NULL,
+                    linked_position_id TEXT,
+                    created_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_entry_scenarios_symbol
+                    ON entry_scenarios(symbol, direction, created_at DESC);
                 """
             )
 
@@ -930,6 +983,63 @@ class SQLiteRepository:
             row = connection.execute("SELECT MAX(updated_at) AS updated_at FROM symbol_catalog").fetchone()
         value = row["updated_at"] if row else None
         return datetime.fromisoformat(value) if value else None
+
+    def add_entry_scenario(self, scenario: EntryScenario) -> EntryScenario:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO entry_scenarios
+                    (id, symbol, direction, linked_position_id, created_at, payload)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(scenario.id),
+                    scenario.symbol.upper(),
+                    scenario.direction.value,
+                    str(scenario.linked_position_id) if scenario.linked_position_id else None,
+                    scenario.created_at.isoformat(),
+                    _dump_model(scenario),
+                ),
+            )
+        return scenario
+
+    def get_entry_scenario(self, scenario_id: UUID) -> EntryScenario | None:
+        with self._lock, self._connect() as connection:
+            row = connection.execute("SELECT payload FROM entry_scenarios WHERE id = ?", (str(scenario_id),)).fetchone()
+        return EntryScenario.model_validate_json(row["payload"]) if row else None
+
+    def list_entry_scenarios(self, symbol: str | None = None, limit: int = 50) -> list[EntryScenario]:
+        with self._lock, self._connect() as connection:
+            if symbol:
+                rows = connection.execute(
+                    "SELECT payload FROM entry_scenarios WHERE symbol = ? ORDER BY created_at DESC LIMIT ?",
+                    (symbol.upper(), limit),
+                ).fetchall()
+            else:
+                rows = connection.execute("SELECT payload FROM entry_scenarios ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        return [EntryScenario.model_validate_json(row["payload"]) for row in rows]
+
+    def find_matching_scenario(self, symbol: str, direction: str, within_hours: int = 72) -> EntryScenario | None:
+        from datetime import timedelta
+
+        cutoff = (utc_now() - timedelta(hours=within_hours)).isoformat()
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT payload FROM entry_scenarios
+                WHERE symbol = ? AND direction = ? AND linked_position_id IS NULL AND created_at >= ?
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                (symbol.upper(), direction, cutoff),
+            ).fetchone()
+        return EntryScenario.model_validate_json(row["payload"]) if row else None
+
+    def link_scenario_position(self, scenario_id: UUID, position_id: UUID) -> EntryScenario | None:
+        scenario = self.get_entry_scenario(scenario_id)
+        if scenario is None:
+            return None
+        updated = scenario.model_copy(update={"linked_position_id": position_id})
+        return self.add_entry_scenario(updated)
 
     def _upsert_position(self, position: Position) -> Position:
         with self._lock, self._connect() as connection:

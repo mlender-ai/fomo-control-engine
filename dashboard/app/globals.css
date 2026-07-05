@@ -3545,3 +3545,270 @@ button.actionPlanRow:not(:disabled):hover {
     grid-template-columns: 1fr auto;
   }
 }
+
+/* ---- WO-FCE-13: 진입 시뮬레이터 + 시나리오 연결 ---- */
+
+.scoutSidePanel {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+
+.entrySimulatorPanel {
+  align-content: start;
+}
+
+.simInputs {
+  display: grid;
+  gap: 8px;
+}
+
+.simDirectionToggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.simDirectionToggle button {
+  border: 1px solid var(--terminal-line);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--terminal-muted);
+  cursor: pointer;
+  padding: 8px;
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-weight: 800;
+}
+
+.simDirectionToggle button.active.long {
+  border-color: var(--terminal-positive);
+  background: rgba(0, 192, 135, 0.12);
+  color: var(--terminal-positive);
+}
+
+.simDirectionToggle button.active.short {
+  border-color: var(--terminal-negative);
+  background: rgba(255, 91, 90, 0.12);
+  color: var(--terminal-negative);
+}
+
+.simField {
+  display: grid;
+  gap: 4px;
+}
+
+.simField span {
+  color: var(--terminal-muted);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.simField input,
+.simField select {
+  min-height: 32px;
+  border: 1px solid var(--terminal-line-strong);
+  border-radius: 5px;
+  background: #0b0e14;
+  color: var(--terminal-text);
+  padding: 0 9px;
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+}
+
+.simFieldRow {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.simNotice {
+  border: 1px solid rgba(0, 192, 135, 0.32);
+  border-radius: 5px;
+  background: rgba(0, 192, 135, 0.08);
+  color: var(--terminal-positive);
+  padding: 8px 10px;
+  font-size: 12px;
+}
+
+.simResult {
+  display: grid;
+  gap: 10px;
+  margin-top: 4px;
+  border-top: 1px solid var(--terminal-line);
+  padding-top: 10px;
+}
+
+.simVerdict {
+  border: 1px solid var(--terminal-line);
+  border-left: 3px solid var(--terminal-cyan);
+  border-radius: 5px;
+  background: rgba(8, 11, 16, 0.42);
+  color: #eef2f7;
+  padding: 9px 11px;
+  font-weight: 750;
+}
+
+.simVerdict.warn {
+  border-left-color: var(--terminal-warning);
+}
+
+.simDangerBanner {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid rgba(255, 91, 90, 0.5);
+  border-radius: 5px;
+  background: rgba(255, 91, 90, 0.1);
+  color: var(--terminal-negative);
+  padding: 9px 11px;
+  font-weight: 750;
+  font-size: 12px;
+}
+
+.simMetricGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.simMetric {
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 5px;
+  background: rgba(8, 11, 16, 0.34);
+  padding: 8px 9px;
+}
+
+.simMetric span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--terminal-muted);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.simMetric strong {
+  display: block;
+  margin-top: 4px;
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 14px;
+}
+
+.simMetric.tone-positive strong { color: var(--terminal-positive); }
+.simMetric.tone-negative strong { color: var(--terminal-negative); }
+.simMetric.tone-warning strong { color: var(--terminal-warning); }
+.simMetric.tone-info strong { color: var(--terminal-cyan); }
+
+.simChecklist {
+  display: grid;
+  gap: 5px;
+  border: 1px solid var(--terminal-line);
+  border-radius: 5px;
+  background: rgba(8, 11, 16, 0.34);
+  padding: 10px;
+}
+
+.simChecklistHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.simChecklistHeader strong {
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.simChecklistHeader span {
+  color: var(--terminal-amber);
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.simChecklistRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 4px 0;
+}
+
+.simChecklistRow > div {
+  display: grid;
+  gap: 2px;
+}
+
+.simChecklistRow span {
+  font-size: 12px;
+}
+
+.simChecklistRow small {
+  color: var(--terminal-muted);
+  font-size: 11px;
+}
+
+.simChecklistRow.status-pass svg { color: var(--terminal-positive); }
+.simChecklistRow.status-fail svg { color: var(--terminal-negative); }
+.simChecklistRow.status-na svg { color: var(--terminal-muted); }
+.simChecklistRow.status-na span { color: var(--terminal-muted); }
+
+.simChecklistNote {
+  margin-top: 4px;
+  color: var(--terminal-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.scenarioLinkBanner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  border: 1px solid rgba(240, 184, 64, 0.5);
+  border-radius: 6px;
+  background: rgba(240, 184, 64, 0.08);
+  padding: 12px 14px;
+}
+
+.scenarioLinkBody {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.scenarioLinkBody strong {
+  color: var(--terminal-amber);
+  font-size: 14px;
+}
+
+.scenarioLinkBody p {
+  color: #eef2f7;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.scenarioLinkBody small {
+  color: var(--terminal-muted);
+  font-size: 11px;
+}
+
+.scenarioSlippageFlag {
+  color: var(--terminal-negative);
+  font-weight: 750;
+}
+
+.scenarioLinkActions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+@media (max-width: 760px) {
+  .simFieldRow,
+  .simMetricGrid {
+    grid-template-columns: 1fr;
+  }
+}

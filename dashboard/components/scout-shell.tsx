@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Radar, RefreshCw, Search, Star, Trash2 } from "lucide-react";
 import { TerminalWarning } from "@/components/terminal";
 import { SymbolAnalysisView, useAnalysisWorkspace } from "@/components/symbol-analysis-view";
+import { EntrySimulator } from "@/components/entry-simulator";
 import {
   api,
   type CatalogSymbolInfo,
@@ -329,7 +330,12 @@ function ScoutSymbolView({ symbol, onBack }: { symbol: string; onBack: () => voi
         plan={null}
         workspace={workspace}
         gridClassName="positionDetailMain"
-        sidePanel={<ScenarioPanel scenarios={scenarios} asOf={data?.as_of} />}
+        sidePanel={
+          <div className="scoutSidePanel">
+            <EntrySimulator symbol={symbol} markPrice={analysis?.mark_price ?? null} timeframe={timeframe} />
+            <ScenarioPanel scenarios={scenarios} asOf={data?.as_of} />
+          </div>
+        }
       />
     </div>
   );

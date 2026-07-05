@@ -63,6 +63,7 @@ export type Position = {
   planned_stop_price: number | null;
   planned_take_profit_price: number | null;
   thesis_text: string;
+  scenario_id: string | null;
   opened_at: string;
   closed_at: string | null;
 };
@@ -481,6 +482,74 @@ export type ScoutAnalysisResponse = {
   summary: ScoutScanRow;
 };
 
+export type EntryChecklistItem = {
+  key: string;
+  label: string;
+  status: "pass" | "fail" | "na";
+  reason: string;
+};
+
+export type EntrySimulation = {
+  symbol: string;
+  direction: "long" | "short";
+  entry_price: number;
+  leverage: number;
+  margin_usdt: number | null;
+  margin_mode: string;
+  estimated_liquidation: number | null;
+  estimated_liquidation_distance_pct: number | null;
+  mmr_used: number;
+  mmr_source: "exchange" | "default";
+  liquidation_formula: string;
+  action_plan: PositionActionPlan;
+  invalidation_distance_pct: number | null;
+  first_take_profit_distance_pct: number | null;
+  rr_ratio: number | null;
+  loss_usdt: number | null;
+  profit_usdt: number | null;
+  survives_to_invalidation: boolean | null;
+  direction_score: number | null;
+  mtf: WyckoffMtf;
+  htf_conflict: boolean;
+  checklist: EntryChecklistItem[];
+  checklist_passed: number;
+  checklist_total: number;
+  verdict_line: string;
+  analysis_as_of?: string;
+};
+
+export type EntryScenario = {
+  id: string;
+  symbol: string;
+  direction: "long" | "short";
+  entry_price: number;
+  leverage: number;
+  margin_usdt: number | null;
+  margin_mode: string;
+  timeframe: string;
+  estimated_liquidation: number | null;
+  action_plan: PositionActionPlan;
+  checklist: EntryChecklistItem[];
+  rr_ratio: number | null;
+  analysis_as_of: string | null;
+  note: string;
+  linked_position_id: string | null;
+  created_at: string;
+};
+
+export type ScenarioMatchResponse = {
+  already_linked: boolean;
+  scenario: EntryScenario | null;
+  suggestion: {
+    entry_memo: string;
+    thesis_text: string;
+    planned_stop_price: number | null;
+    planned_take_profit_price: number | null;
+    slippage_pct: number | null;
+    slippage_flag: boolean;
+  } | null;
+};
+
 export type HarmonicPoint = {
   label: "X" | "A" | "B" | "C" | "D" | string;
   time: number;
@@ -894,6 +963,24 @@ export const api = {
     request<ScoutAnalysisResponse>(`/api/scout/${encodeURIComponent(symbol)}/analysis?timeframe=${encodeURIComponent(timeframe)}&force=${force}`),
   scoutScan: (payload: { timeframe?: string | null; force?: boolean } = {}) =>
     request<ScoutScanResponse>("/api/scout/scan", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  simulateEntry: (payload: { symbol: string; direction: "long" | "short"; entry_price?: number | null; leverage: number; margin_usdt?: number | null; margin_mode?: string; timeframe?: string }) =>
+    request<EntrySimulation>("/api/scout/simulate", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  saveScenario: (payload: { symbol: string; direction: "long" | "short"; entry_price: number; leverage: number; margin_usdt?: number | null; margin_mode?: string; timeframe?: string; note?: string }) =>
+    request<{ scenario: EntryScenario }>("/api/scout/scenarios", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  listScenarios: (symbol?: string) =>
+    request<{ scenarios: EntryScenario[] }>(`/api/scout/scenarios${symbol ? `?symbol=${encodeURIComponent(symbol)}` : ""}`),
+  matchScenario: (positionId: string) => request<ScenarioMatchResponse>(`/api/scout/match/${encodeURIComponent(positionId)}`),
+  linkScenario: (scenarioId: string, payload: { position_id: string; apply_prefill?: boolean }) =>
+    request<{ linked: boolean; position_id: string; scenario_id: string; slippage_pct: number | null; slippage_flag: boolean; position: Position }>(`/api/scout/scenarios/${encodeURIComponent(scenarioId)}/link`, {
       method: "POST",
       body: JSON.stringify(payload)
     }),

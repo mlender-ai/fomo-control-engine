@@ -28,7 +28,8 @@ import {
   type LivePositionPayload,
   type LivePositionsResponse,
   type PositionActionPlan,
-  type PositionChartAnalysis
+  type PositionChartAnalysis,
+  type ScenarioMatchResponse
 } from "@/lib/api";
 import { type Density } from "@/lib/density";
 import { formatPrice, signedPercent } from "@/lib/format";
@@ -432,16 +433,48 @@ export function PositionDetailShell({ positionId }: { positionId: string }) {
   const [busy, setBusy] = useState("");
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const [scenarioMatch, setScenarioMatch] = useState<ScenarioMatchResponse | null>(null);
   const workspace = useAnalysisWorkspace();
 
   async function load() {
     setError("");
     try {
-      setDetail(await api.livePosition(positionId));
+      const next = await api.livePosition(positionId);
+      setDetail(next);
+      void loadScenarioMatch(next);
     } catch (err) {
       setError(err instanceof Error ? err.message : "포지션 상세 데이터를 불러오지 못했습니다.");
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function loadScenarioMatch(next: LivePositionDetail) {
+    if (next.position.status !== "open" || next.position.scenario_id) {
+      setScenarioMatch(null);
+      return;
+    }
+    try {
+      const match = await api.matchScenario(next.position.id);
+      setScenarioMatch(match.suggestion ? match : null);
+    } catch {
+      setScenarioMatch(null);
+    }
+  }
+
+  async function applyScenarioLink() {
+    if (!scenarioMatch?.scenario) return;
+    setBusy("link");
+    setError("");
+    try {
+      await api.linkScenario(scenarioMatch.scenario.id, { position_id: positionId, apply_prefill: true });
+      setScenarioMatch(null);
+      await load();
+      setNotice("저장된 진입 시나리오를 연결하고 메모·계획 가격을 프리필했습니다.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "시나리오 연결에 실패했습니다.");
+    } finally {
+      setBusy("");
     }
   }
 
@@ -653,6 +686,10 @@ export function PositionDetailShell({ positionId }: { positionId: string }) {
       {error ? <TerminalWarning tone="error">{error}</TerminalWarning> : null}
       {notice ? <TerminalWarning tone="info">{notice}</TerminalWarning> : null}
 
+      {scenarioMatch?.scenario && scenarioMatch.suggestion ? (
+        <ScenarioLinkBanner match={scenarioMatch} onApply={() => void applyScenarioLink()} onDismiss={() => setScenarioMatch(null)} busy={busy === "link"} />
+      ) : null}
+
       <PositionVerdictBar payload={detail} onRefresh={() => void analyze()} refreshing={busy === "analyze"} />
 
       <SymbolAnalysisView
@@ -767,6 +804,42 @@ function NoPositionsState({ onSync, syncing }: { onSync: () => void; syncing: bo
 
 function StatusPill({ status, label }: { status: string; label: string }) {
   return <span className={`statusPill status-${status}`}>{label}</span>;
+}
+
+function ScenarioLinkBanner({
+  match,
+  onApply,
+  onDismiss,
+  busy
+}: {
+  match: ScenarioMatchResponse;
+  onApply: () => void;
+  onDismiss: () => void;
+  busy: boolean;
+}) {
+  const scenario = match.scenario!;
+  const suggestion = match.suggestion!;
+  const created = new Date(scenario.created_at).toLocaleString();
+  return (
+    <section className="scenarioLinkBanner">
+      <div className="scenarioLinkBody">
+        <strong>저장된 진입 시나리오와 연결할까요?</strong>
+        <p>
+          {created}에 저장한 {scenario.direction === "long" ? "롱" : "숏"} {scenario.leverage}x 시나리오(계획 진입 {formatPrice(scenario.entry_price)})와 일치합니다.
+          {suggestion.slippage_flag ? (
+            <span className="scenarioSlippageFlag"> 계획과 다른 가격에 진입: 슬리피지 {suggestion.slippage_pct === null ? "-" : signedPercent(suggestion.slippage_pct)}</span>
+          ) : suggestion.slippage_pct !== null ? (
+            <span> 슬리피지 {signedPercent(suggestion.slippage_pct)}</span>
+          ) : null}
+        </p>
+        <small>연결 시 메모·핵심 가설·손절/익절 계획을 프리필하고, 진입 전 판단을 복기 원장에 기록합니다.</small>
+      </div>
+      <div className="scenarioLinkActions">
+        <button className="button" onClick={onApply} disabled={busy} type="button">{busy ? "연결 중" : "연결하고 프리필"}</button>
+        <button className="button secondary" onClick={onDismiss} disabled={busy} type="button">나중에</button>
+      </div>
+    </section>
+  );
 }
 
 function actionPlanForPayload(payload: LivePositionPayload): PositionActionPlan | null {
