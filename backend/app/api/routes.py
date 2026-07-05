@@ -36,7 +36,7 @@ from app.liquidity.liquidation_clusters import analyze_liquidation
 from app.memory.engine import memory_from_shadow, memory_from_trade, memory_from_validation
 from app.monitoring.engine import build_monitoring_log, calculate_pnl
 from app.positions.action_plan import build_action_plan
-from app.positions.chart_analysis import build_chart_analysis
+from app.positions.chart_analysis import PositionContext, build_chart_analysis
 from app.positions.engine import build_events, build_position_state, direction_aware_score, make_snapshot
 from app.positions.insight import build_position_insight_input, make_ai_position_insight
 from app.positions.pnl import resolve_position_pnl_percent
@@ -596,7 +596,7 @@ def get_position_chart_analysis(position_id: UUID, timeframe: str = "4h") -> dic
         raise HTTPException(status_code=404, detail="Position not found")
     try:
         snapshot = market_provider.get_snapshot(position.symbol, timeframe)
-        return build_chart_analysis(position, snapshot, _trade_flow_for_snapshot(position.symbol, timeframe, snapshot.candles))
+        return build_chart_analysis(snapshot, PositionContext.from_position(position), _trade_flow_for_snapshot(position.symbol, timeframe, snapshot.candles))
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except MarketDataError as exc:
@@ -798,7 +798,7 @@ def _attach_review_v2(trade: Trade) -> Trade:
 def _chart_analysis_for_position(position: Position) -> dict:
     try:
         snapshot = market_provider.get_snapshot(position.symbol, "4h")
-        return build_chart_analysis(position, snapshot, _trade_flow_for_snapshot(position.symbol, "4h", snapshot.candles))
+        return build_chart_analysis(snapshot, PositionContext.from_position(position), _trade_flow_for_snapshot(position.symbol, "4h", snapshot.candles))
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except MarketDataError as exc:

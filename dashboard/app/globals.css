@@ -3326,3 +3326,222 @@ button.actionPlanRow:not(:disabled):hover {
     font-size: 20px;
   }
 }
+
+/* ---- WO-FCE-12: Pre-Entry Scout ---- */
+
+.scoutPage {
+  gap: 12px;
+}
+
+.scoutSearchBar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--terminal-line-strong);
+  border-radius: 6px;
+  background: #0b0e14;
+  padding: 9px 12px;
+}
+
+.scoutSearchBar svg {
+  color: var(--terminal-muted);
+}
+
+.scoutSearchBar input {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: var(--terminal-text);
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 13px;
+  outline: none;
+}
+
+.scoutSearchResults {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 20;
+  display: grid;
+  gap: 2px;
+  max-height: 320px;
+  overflow-y: auto;
+  border: 1px solid var(--terminal-line-strong);
+  border-radius: 6px;
+  background: #0b0e14;
+  padding: 6px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+}
+
+.scoutSearchResults button {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.5fr) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--terminal-text);
+  cursor: pointer;
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.scoutSearchResults button:hover {
+  background: rgba(240, 184, 64, 0.09);
+}
+
+.scoutSearchResults strong {
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 13px;
+}
+
+.scoutSearchResults span {
+  color: var(--terminal-muted);
+  font-size: 11px;
+}
+
+.scoutSearchResults svg {
+  color: var(--terminal-amber);
+}
+
+.scoutDisclaimer {
+  border: 1px solid var(--terminal-line);
+  border-left: 3px solid var(--terminal-cyan);
+  border-radius: 5px;
+  background: rgba(8, 11, 16, 0.4);
+  color: var(--terminal-muted);
+  padding: 9px 12px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.scoutTableWrap {
+  overflow-x: auto;
+  border: 1px solid var(--terminal-line);
+  border-radius: 6px;
+  background: rgba(17, 21, 29, 0.86);
+}
+
+.scoutTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.scoutTable th,
+.scoutTable td {
+  padding: 9px 12px;
+  text-align: left;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--terminal-line);
+}
+
+.scoutTable thead th {
+  color: var(--terminal-muted);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.scoutTable thead button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  text-transform: uppercase;
+}
+
+.scoutTable thead button:hover {
+  color: var(--terminal-amber);
+}
+
+.scoutTable td {
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+}
+
+.scoutRow {
+  cursor: pointer;
+}
+
+.scoutRow:hover {
+  background: rgba(240, 184, 64, 0.07);
+}
+
+.scoutRow.stale {
+  color: var(--terminal-muted);
+}
+
+.scoutRow.error {
+  color: var(--terminal-negative);
+}
+
+.scoutStaleCell {
+  color: var(--terminal-warning);
+}
+
+.scoutEmpty {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--terminal-line);
+  border-radius: 6px;
+  background: rgba(17, 21, 29, 0.86);
+  color: var(--terminal-muted);
+  padding: 24px;
+}
+
+.scoutWatchChips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.scoutWatchChips span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--terminal-line);
+  border-radius: 999px;
+  background: rgba(8, 11, 16, 0.4);
+  color: var(--terminal-text);
+  padding: 4px 10px;
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 12px;
+}
+
+.scoutWatchChips button {
+  border: 0;
+  background: transparent;
+  color: var(--terminal-muted);
+  cursor: pointer;
+  padding: 0;
+  display: inline-flex;
+}
+
+.scoutWatchChips button:hover {
+  color: var(--terminal-negative);
+}
+
+.scenarioBlock {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--terminal-line);
+  border-radius: 5px;
+  background: rgba(8, 11, 16, 0.34);
+  padding: 10px;
+}
+
+.scenarioBlock > strong {
+  font-size: 12px;
+  text-transform: uppercase;
+  color: var(--terminal-text);
+}
+
+@media (max-width: 760px) {
+  .scoutSearchResults button {
+    grid-template-columns: 1fr auto;
+  }
+}

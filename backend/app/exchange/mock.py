@@ -16,6 +16,12 @@ BASE_PRICES = {
 
 
 class MockMarketDataProvider(MarketDataProvider):
+    def list_contracts(self) -> list[dict]:
+        return [
+            {"symbol": symbol, "base_coin": symbol.removesuffix("USDT"), "quote_coin": "USDT", "status": "normal"}
+            for symbol in BASE_PRICES
+        ]
+
     def get_snapshot(self, symbol: str, timeframe: str = "4h") -> MarketSnapshot:
         normalized = symbol.upper().replace("/", "")
         base_price = BASE_PRICES.get(normalized, 100.0)

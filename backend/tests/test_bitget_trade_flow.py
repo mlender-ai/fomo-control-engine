@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 from app.db.models import Direction, MarketCandle, MarketSnapshot, Position
 from app.exchange.bitget.trades import aggregate_trade_buckets, cvd_series_from_buckets, parse_trade_fill
-from app.positions.chart_analysis import build_chart_analysis
+from app.positions.chart_analysis import PositionContext, build_chart_analysis
 
 
 BASE_TIME = datetime(2026, 7, 4, tzinfo=timezone.utc)
@@ -55,7 +55,7 @@ def test_uncovered_volume_profile_bins_do_not_expose_fake_buy_sell() -> None:
     snapshot = MarketSnapshot(symbol="BTCUSDT", timeframe="4h", price=110.0, change_24h=0.0, funding_rate=0.0, open_interest_change=0.0, candles=candles)
     position = Position(symbol="BTCUSDT", direction=Direction.long, entry_price=100.0, quantity=1.0, mark_price=110.0)
 
-    analysis = build_chart_analysis(position, snapshot)
+    analysis = build_chart_analysis(snapshot, PositionContext.from_position(position))
 
     assert analysis["volume_profile"]["method"] == "ohlcv_estimated"
     assert analysis["volume_profile"]["has_trade_fills"] is False
@@ -83,7 +83,7 @@ def test_trade_fill_volume_profile_exposes_real_delta_only_for_covered_bins() ->
     snapshot = MarketSnapshot(symbol="BTCUSDT", timeframe="4h", price=110.0, change_24h=0.0, funding_rate=0.0, open_interest_change=0.0, candles=candles)
     position = Position(symbol="BTCUSDT", direction=Direction.long, entry_price=100.0, quantity=1.0, mark_price=110.0)
 
-    analysis = build_chart_analysis(position, snapshot, trade_flow)
+    analysis = build_chart_analysis(snapshot, PositionContext.from_position(position), trade_flow)
     trade_bins = [item for item in analysis["volume_profile"]["bins"] if item["method"] in {"trade_fills", "mixed"}]
 
     assert analysis["volume_profile"]["has_trade_fills"] is True

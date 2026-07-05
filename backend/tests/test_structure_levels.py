@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
 from app.db.models import Direction, MarketCandle, MarketSnapshot, Position, Report, ScoreBreakdown
-from app.positions.chart_analysis import build_chart_analysis
+from app.positions.chart_analysis import PositionContext, build_chart_analysis
 from app.positions.engine import build_position_state
 from app.structure.levels.engine import detect_structure_levels
 
@@ -33,7 +33,7 @@ def test_short_position_invalidation_uses_structural_resistance() -> None:
     snapshot = MarketSnapshot(symbol="BTCUSDT", timeframe="4h", price=100.0, change_24h=0.0, funding_rate=0.0, open_interest_change=0.0, candles=candles)
     position = Position(symbol="BTCUSDT", direction=Direction.short, entry_price=103.0, quantity=1.0, leverage=5, mark_price=100.0)
 
-    analysis = build_chart_analysis(position, snapshot)
+    analysis = build_chart_analysis(snapshot, PositionContext.from_position(position))
     invalidation = analysis["price_levels"]["invalidation"][0]
 
     assert invalidation["source"] == "structure_level"

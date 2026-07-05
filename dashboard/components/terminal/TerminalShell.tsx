@@ -12,6 +12,7 @@ const routeShortcuts: Record<string, string> = {
   d: "/",
   p: "/",
   l: "/",
+  s: "/scout",
   t: "/trades",
   h: "/trades",
   ",": "/settings"

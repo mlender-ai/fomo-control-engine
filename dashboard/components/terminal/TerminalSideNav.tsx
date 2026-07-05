@@ -6,6 +6,7 @@ import {
   Activity,
   FileClock,
   Gauge,
+  Radar,
   Settings,
   ShieldCheck
 } from "lucide-react";
@@ -16,7 +17,8 @@ const sections = [
   {
     heading: "관제",
     items: [
-      { href: "/", label: "라이브 포지션", icon: Activity, shortcut: "G P" }
+      { href: "/", label: "라이브 포지션", icon: Activity, shortcut: "G P" },
+      { href: "/scout", label: "스카우트", icon: Radar, shortcut: "G S" }
     ]
   },
   {

@@ -438,6 +438,21 @@ class ValidationRun(BaseModel):
     created_at: datetime = Field(default_factory=utc_now)
 
 
+class WatchlistItem(BaseModel):
+    symbol: str
+    added_at: datetime = Field(default_factory=utc_now)
+    note: str = ""
+    default_timeframe: str = "4h"
+
+
+class CatalogSymbol(BaseModel):
+    symbol: str
+    base_coin: str = ""
+    quote_coin: str = ""
+    status: str = ""
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
 class ValidationRunRequest(BaseModel):
     strategy_type: str = "entry_score_threshold"
     symbol: str = "BTCUSDT"

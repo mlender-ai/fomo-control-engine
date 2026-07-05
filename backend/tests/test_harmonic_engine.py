@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from app.db.models import Direction, MarketCandle, Position, PositionSnapshot
 from app.positions.action_plan import build_action_plan
-from app.positions.chart_analysis import build_chart_analysis
+from app.positions.chart_analysis import PositionContext, build_chart_analysis
 from app.structure.harmonic.engine import detect_harmonic_patterns
 
 
@@ -76,7 +76,7 @@ def _chart_analysis_payload(position: Position, candles: list[MarketCandle], lev
     from app.db.models import MarketSnapshot
 
     snapshot = MarketSnapshot(symbol=position.symbol, timeframe="4h", price=position.mark_price or candles[-1].close, change_24h=0, funding_rate=0, open_interest_change=0, candles=_pad_candles(candles))
-    analysis = build_chart_analysis(position, snapshot)
+    analysis = build_chart_analysis(snapshot, PositionContext.from_position(position))
     harmonic = detect_harmonic_patterns(_pad_candles(candles), levels=levels, volume_profile=volume_profile, atr_multiplier=3.0)
     return {
         **analysis,

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from statistics import mean
 from typing import Any
 
 from app.core.config import get_settings
 from app.db.models import MarketCandle, MarketSnapshot, Position
+from app.positions.scenarios import build_direction_scenarios
 from app.structure.harmonic.engine import detect_harmonic_patterns
 from app.structure.levels.engine import StructureLevel, detect_structure_levels
 from app.structure.wyckoff.engine import analyze_wyckoff
@@ -15,36 +17,67 @@ MIN_CHART_CANDLES = 100
 _HARMONIC_CACHE: dict[tuple[str, str, int, int, float], dict[str, Any]] = {}
 
 
-def build_chart_analysis(position: Position, snapshot: MarketSnapshot, trade_flow: dict | None = None) -> dict:
+@dataclass(frozen=True)
+class PositionContext:
+    """차트 분석이 필요로 하는 포지션 정보의 옵셔널 묶음 (스카우트 뷰는 None)."""
+
+    direction: str
+    entry_price: float
+    leverage: int | None = None
+    planned_stop_price: float | None = None
+    planned_take_profit_price: float | None = None
+    mark_price: float | None = None
+    current_price: float | None = None
+    liquidation_price: float | None = None
+    position_id: str | None = None
+
+    @classmethod
+    def from_position(cls, position: Position) -> "PositionContext":
+        return cls(
+            direction=position.direction.value,
+            entry_price=position.entry_price,
+            leverage=position.leverage,
+            planned_stop_price=position.planned_stop_price,
+            planned_take_profit_price=position.planned_take_profit_price,
+            mark_price=position.mark_price,
+            current_price=position.current_price,
+            liquidation_price=position.liquidation_price,
+            position_id=str(position.id),
+        )
+
+
+def build_chart_analysis(snapshot: MarketSnapshot, position_context: PositionContext | None = None, trade_flow: dict | None = None) -> dict:
     candles = sorted(snapshot.candles, key=lambda candle: candle.timestamp)
     if len(candles) < MIN_CHART_CANDLES:
         raise ValueError("차트 분석에 필요한 캔들 데이터가 부족합니다.")
 
+    context = position_context
     recent = candles[-200:]
-    mark_price = position.mark_price or position.current_price or snapshot.price or recent[-1].close
+    context_mark = (context.mark_price or context.current_price) if context else None
+    mark_price = context_mark or snapshot.price or recent[-1].close
     profile = _volume_profile(recent, trade_flow)
     levels = detect_structure_levels(recent, mark_price, profile)
     support = levels["support"]
     resistance = levels["resistance"]
-    invalidation = _invalidation_levels(position, support, resistance)
+    invalidation = _invalidation_levels(context, support, resistance)
     xray = _volume_xray(recent, trade_flow)
     wyckoff = analyze_wyckoff(recent, levels=levels, trade_flow=trade_flow, timeframe=snapshot.timeframe)
     wyckoff_events = split_wyckoff_events(wyckoff, get_settings().wyckoff_event_min_confidence)
-    harmonic = _harmonic_analysis(position.symbol, snapshot.timeframe, recent, levels, profile)
+    harmonic = _harmonic_analysis(snapshot.symbol, snapshot.timeframe, recent, levels, profile)
 
-    return {
-        "position_id": str(position.id),
-        "symbol": position.symbol,
+    payload = {
+        "position_id": context.position_id if context else None,
+        "symbol": snapshot.symbol,
         "timeframe": snapshot.timeframe,
-        "direction": position.direction.value,
-        "entry_price": position.entry_price,
+        "direction": context.direction if context else None,
+        "entry_price": context.entry_price if context else None,
         "mark_price": mark_price,
-        "liquidation_price": position.liquidation_price,
+        "liquidation_price": context.liquidation_price if context else None,
         "candles": [_candle_payload(candle) for candle in recent],
         "price_levels": {
-            "entry": position.entry_price,
+            "entry": context.entry_price if context else None,
             "mark": mark_price,
-            "liquidation": position.liquidation_price,
+            "liquidation": context.liquidation_price if context else None,
             "support": [level.model_dump() for level in support],
             "resistance": [level.model_dump() for level in resistance],
             "invalidation": invalidation,
@@ -75,6 +108,16 @@ def build_chart_analysis(position: Position, snapshot: MarketSnapshot, trade_flo
             "last_candle_at": recent[-1].timestamp,
         },
     }
+    if context is None:
+        # 포지션 없는 스카우트 뷰: 방향 미지정 → 롱/숏 양쪽 시나리오를 제공
+        payload["scenarios"] = build_direction_scenarios(
+            support=[level.model_dump() for level in support],
+            resistance=[level.model_dump() for level in resistance],
+            volume_profile=profile,
+            volume_xray=xray,
+            mark_price=mark_price,
+        )
+    return payload
 
 
 def split_wyckoff_events(wyckoff: dict[str, Any], min_confidence: int, display_limit: int = 4) -> dict[str, Any]:
@@ -145,14 +188,16 @@ def _candle_payload(candle: MarketCandle) -> dict:
     }
 
 
-def _invalidation_levels(position: Position, support: list[StructureLevel], resistance: list[StructureLevel]) -> list[dict]:
-    if position.planned_stop_price:
-        return [{"price": position.planned_stop_price, "label": "계획 손절/무효화", "source": "user"}]
-    candidates = support if position.direction.value == "long" else resistance
+def _invalidation_levels(context: PositionContext | None, support: list[StructureLevel], resistance: list[StructureLevel]) -> list[dict]:
+    if context is None:
+        return []
+    if context.planned_stop_price:
+        return [{"price": context.planned_stop_price, "label": "계획 손절/무효화", "source": "user"}]
+    candidates = support if context.direction == "long" else resistance
     strong_candidates = [level for level in candidates if level.score >= 40]
     if strong_candidates:
         level = strong_candidates[0]
-        action = "이탈 시 진입 논리 약화" if position.direction.value == "long" else "돌파 시 진입 논리 약화"
+        action = "이탈 시 진입 논리 약화" if context.direction == "long" else "돌파 시 진입 논리 약화"
         return [{**level.model_dump(), "label": action, "source": "structure_level"}]
     return [{"price": None, "label": "구조 레벨 부족, 사용자 손절 기준 필요", "source": "insufficient_structure"}]
 

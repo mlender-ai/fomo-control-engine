@@ -31,6 +31,7 @@ export function TerminalCommandPalette({
   const commands = useMemo<TerminalCommand[]>(
     () => [
       command("nav-live-positions", "라이브 포지션 열기", "이동", "실시간 포지션 관제 화면", ["positions", "live", "cockpit", "gp", "포지션", "관제"], () => router.push("/"), "g p"),
+      command("nav-scout", "스카우트 열기", "이동", "관심종목 스캔과 진입 전 분석", ["scout", "watchlist", "gs", "스카우트", "관심종목", "검색", "symbol"], () => router.push("/scout"), "g s"),
       command("nav-trades", "거래 복기 열기", "이동", "종료 거래 기록과 복기", ["journal", "trades", "history", "gt", "거래", "복기"], () => router.push("/trades"), "g t"),
       command("nav-settings", "설정 열기", "이동", "API와 터미널 설정", ["settings", "config", "설정"], () => router.push("/settings"), "g ,"),
       command("sync-positions", "/포지션 동기화", "실행", "Bitget read-only 포지션 동기화와 결정론적 분석", ["bitget", "private", "positions", "sync", "동기화"], async () => {

@@ -57,6 +57,29 @@ class BitgetMarketDataProvider(MarketDataProvider):
     def get_trade_flow(self, symbol: str, timeframe: str, candles: list[MarketCandle]) -> dict:
         return _run(self.get_trade_flow_async(symbol, timeframe, candles))
 
+    def list_contracts(self) -> list[dict]:
+        return _run(self.get_contracts())
+
+    async def get_contracts(self) -> list[dict]:
+        payload = await self.client.public_get(
+            "/api/v2/mix/market/contracts",
+            {"productType": self.product_type},
+        )
+        rows = payload.get("data") or []
+        contracts: list[dict] = []
+        for row in rows:
+            if not isinstance(row, dict) or not row.get("symbol"):
+                continue
+            contracts.append(
+                {
+                    "symbol": str(row["symbol"]).upper(),
+                    "base_coin": str(row.get("baseCoin", "")),
+                    "quote_coin": str(row.get("quoteCoin", "")),
+                    "status": str(row.get("symbolStatus", "")),
+                }
+            )
+        return contracts
+
     async def get_ohlcv(self, symbol: str, timeframe: str, limit: int = 200) -> list[Candle]:
         granularity = TIMEFRAME_MAP.get(timeframe.lower())
         if granularity is None:

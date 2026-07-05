@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+from datetime import datetime
 from pathlib import Path
 from typing import Protocol
 from uuid import UUID
 
 from app.db.models import (
+    CatalogSymbol,
     AgentOutput,
     CalibrationSuggestion,
     DecisionMemory,
@@ -25,6 +27,7 @@ from app.db.models import (
     ShadowProfile,
     Trade,
     ValidationRun,
+    WatchlistItem,
 )
 
 
@@ -69,6 +72,12 @@ class Repository(Protocol):
     def add_validation_run(self, run: ValidationRun) -> ValidationRun: ...
     def get_validation_run(self, run_id: UUID) -> ValidationRun | None: ...
     def list_validation_runs(self, limit: int = 20) -> list[ValidationRun]: ...
+    def list_watchlist(self) -> list[WatchlistItem]: ...
+    def upsert_watchlist_item(self, item: WatchlistItem) -> WatchlistItem: ...
+    def remove_watchlist_item(self, symbol: str) -> bool: ...
+    def replace_symbol_catalog(self, symbols: list[CatalogSymbol]) -> int: ...
+    def search_symbols(self, query: str, limit: int = 20) -> list[CatalogSymbol]: ...
+    def symbol_catalog_updated_at(self) -> datetime | None: ...
 
 
 class MemoryRepository:
@@ -90,6 +99,8 @@ class MemoryRepository:
         self.shadow_profiles: dict[str, ShadowProfile] = {}
         self.decision_memories: dict[UUID, DecisionMemory] = {}
         self.validation_runs: dict[UUID, ValidationRun] = {}
+        self.watchlist: dict[str, WatchlistItem] = {}
+        self.symbol_catalog: dict[str, CatalogSymbol] = {}
 
     def add_report(self, report: Report) -> Report:
         self.reports[report.id] = report
@@ -250,6 +261,30 @@ class MemoryRepository:
 
     def list_validation_runs(self, limit: int = 20) -> list[ValidationRun]:
         return sorted(self.validation_runs.values(), key=lambda item: item.created_at, reverse=True)[:limit]
+
+    def list_watchlist(self) -> list[WatchlistItem]:
+        return sorted(self.watchlist.values(), key=lambda item: item.added_at, reverse=True)
+
+    def upsert_watchlist_item(self, item: WatchlistItem) -> WatchlistItem:
+        self.watchlist[item.symbol.upper()] = item
+        return item
+
+    def remove_watchlist_item(self, symbol: str) -> bool:
+        return self.watchlist.pop(symbol.upper(), None) is not None
+
+    def replace_symbol_catalog(self, symbols: list[CatalogSymbol]) -> int:
+        self.symbol_catalog = {item.symbol.upper(): item for item in symbols}
+        return len(self.symbol_catalog)
+
+    def search_symbols(self, query: str, limit: int = 20) -> list[CatalogSymbol]:
+        needle = query.strip().upper()
+        matches = [item for symbol, item in self.symbol_catalog.items() if needle in symbol] if needle else list(self.symbol_catalog.values())
+        return sorted(matches, key=lambda item: (len(item.symbol), item.symbol))[:limit]
+
+    def symbol_catalog_updated_at(self) -> datetime | None:
+        if not self.symbol_catalog:
+            return None
+        return max(item.updated_at for item in self.symbol_catalog.values())
 
 
 class SQLiteRepository:
@@ -436,6 +471,16 @@ class SQLiteRepository:
                 );
                 CREATE INDEX IF NOT EXISTS idx_validation_runs_created
                     ON validation_runs(created_at DESC);
+                CREATE TABLE IF NOT EXISTS watchlist (
+                    symbol TEXT PRIMARY KEY,
+                    added_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS symbol_catalog (
+                    symbol TEXT PRIMARY KEY,
+                    updated_at TEXT NOT NULL,
+                    payload TEXT NOT NULL
+                );
                 """
             )
 
@@ -840,6 +885,51 @@ class SQLiteRepository:
         with self._lock, self._connect() as connection:
             rows = connection.execute("SELECT payload FROM validation_runs ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
         return [ValidationRun.model_validate_json(row["payload"]) for row in rows]
+
+    def list_watchlist(self) -> list[WatchlistItem]:
+        with self._lock, self._connect() as connection:
+            rows = connection.execute("SELECT payload FROM watchlist ORDER BY added_at DESC").fetchall()
+        return [WatchlistItem.model_validate_json(row["payload"]) for row in rows]
+
+    def upsert_watchlist_item(self, item: WatchlistItem) -> WatchlistItem:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                "INSERT OR REPLACE INTO watchlist (symbol, added_at, payload) VALUES (?, ?, ?)",
+                (item.symbol.upper(), item.added_at.isoformat(), _dump_model(item)),
+            )
+        return item
+
+    def remove_watchlist_item(self, symbol: str) -> bool:
+        with self._lock, self._connect() as connection:
+            cursor = connection.execute("DELETE FROM watchlist WHERE symbol = ?", (symbol.upper(),))
+        return cursor.rowcount > 0
+
+    def replace_symbol_catalog(self, symbols: list[CatalogSymbol]) -> int:
+        with self._lock, self._connect() as connection:
+            connection.execute("DELETE FROM symbol_catalog")
+            connection.executemany(
+                "INSERT OR REPLACE INTO symbol_catalog (symbol, updated_at, payload) VALUES (?, ?, ?)",
+                [(item.symbol.upper(), item.updated_at.isoformat(), _dump_model(item)) for item in symbols],
+            )
+        return len(symbols)
+
+    def search_symbols(self, query: str, limit: int = 20) -> list[CatalogSymbol]:
+        needle = query.strip().upper()
+        with self._lock, self._connect() as connection:
+            if needle:
+                rows = connection.execute(
+                    "SELECT payload FROM symbol_catalog WHERE symbol LIKE ? ORDER BY length(symbol), symbol LIMIT ?",
+                    (f"%{needle}%", limit),
+                ).fetchall()
+            else:
+                rows = connection.execute("SELECT payload FROM symbol_catalog ORDER BY length(symbol), symbol LIMIT ?", (limit,)).fetchall()
+        return [CatalogSymbol.model_validate_json(row["payload"]) for row in rows]
+
+    def symbol_catalog_updated_at(self) -> datetime | None:
+        with self._lock, self._connect() as connection:
+            row = connection.execute("SELECT MAX(updated_at) AS updated_at FROM symbol_catalog").fetchone()
+        value = row["updated_at"] if row else None
+        return datetime.fromisoformat(value) if value else None
 
     def _upsert_position(self, position: Position) -> Position:
         with self._lock, self._connect() as connection:

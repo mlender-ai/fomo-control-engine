@@ -419,6 +419,68 @@ export type WyckoffPhase = {
   phase_evidence?: WyckoffMarker[];
 };
 
+export type SymbolScenario = {
+  invalidation: PositionActionPlanItem | null;
+  take_profit: PositionActionPlanItem[];
+  watch_triggers: PositionWatchTrigger[];
+};
+
+export type SymbolScenarios = {
+  long: SymbolScenario;
+  short: SymbolScenario;
+};
+
+export type CatalogSymbolInfo = {
+  symbol: string;
+  base_coin: string;
+  quote_coin: string;
+  status: string;
+  updated_at: string;
+};
+
+export type WatchlistEntry = {
+  symbol: string;
+  added_at: string;
+  note: string;
+  default_timeframe: string;
+};
+
+export type ScoutScanRow = {
+  symbol: string;
+  timeframe: string;
+  as_of?: string;
+  note?: string;
+  error?: string;
+  long_score?: number;
+  short_score?: number;
+  wyckoff_phase?: string;
+  top_event?: { label: string; confidence: number } | null;
+  harmonic_active?: boolean;
+  prz_distance_pct?: number | null;
+  nearest_level_distance_pct?: number | null;
+  volume_state?: string;
+  change_24h?: number;
+  funding_rate?: number;
+  setup_proximity_pct?: number | null;
+  mark_price?: number | null;
+};
+
+export type ScoutScanResponse = {
+  rows: ScoutScanRow[];
+  scanned_at: string;
+  cache_ttl_seconds: number;
+  count: number;
+};
+
+export type ScoutAnalysisResponse = {
+  symbol: string;
+  timeframe: string;
+  as_of: string;
+  cache_age_seconds: number;
+  analysis: PositionChartAnalysis;
+  summary: ScoutScanRow;
+};
+
 export type HarmonicPoint = {
   label: "X" | "A" | "B" | "C" | "D" | string;
   time: number;
@@ -524,6 +586,7 @@ export type PositionChartAnalysis = {
   wyckoff_mtf: WyckoffMtf;
   wyckoff_markers: WyckoffMarker[];
   wyckoff_markers_low_confidence?: WyckoffMarker[];
+  scenarios?: SymbolScenarios | null;
   harmonic: {
     pivots: HarmonicPoint[];
     patterns: HarmonicPattern[];
@@ -812,6 +875,25 @@ export const api = {
     }),
   recordLiveExit: (positionId: string, payload: { exit_price: number; exit_reason: string; memo: string }) =>
     request<Trade>(`/api/live/positions/${positionId}/record-exit`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  searchSymbols: (query: string, limit = 20) =>
+    request<{ symbols: CatalogSymbolInfo[] }>(`/api/symbols?query=${encodeURIComponent(query)}&limit=${limit}`),
+  watchlist: () => request<{ items: WatchlistEntry[] }>("/api/watchlist"),
+  addWatchlistItem: (payload: { symbol: string; note?: string; default_timeframe?: string }) =>
+    request<{ item: WatchlistEntry }>("/api/watchlist", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  removeWatchlistItem: (symbol: string) =>
+    request<{ removed: string }>(`/api/watchlist/${encodeURIComponent(symbol)}`, {
+      method: "DELETE"
+    }),
+  scoutAnalysis: (symbol: string, timeframe = "4h", force = false) =>
+    request<ScoutAnalysisResponse>(`/api/scout/${encodeURIComponent(symbol)}/analysis?timeframe=${encodeURIComponent(timeframe)}&force=${force}`),
+  scoutScan: (payload: { timeframe?: string | null; force?: boolean } = {}) =>
+    request<ScoutScanResponse>("/api/scout/scan", {
       method: "POST",
       body: JSON.stringify(payload)
     }),
