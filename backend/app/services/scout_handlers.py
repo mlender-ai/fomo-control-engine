@@ -79,11 +79,7 @@ def reset_scout_cache() -> None:
 def _ensure_catalog() -> None:
     repo = _repo()
     updated_at = repo.symbol_catalog_updated_at()
-    if (
-        updated_at is not None
-        and (utc_now() - updated_at).total_seconds() < CATALOG_REFRESH_SECONDS
-        and not _catalog_has_stale_asset_classes(repo)
-    ):
+    if updated_at is not None and (utc_now() - updated_at).total_seconds() < CATALOG_REFRESH_SECONDS and not _catalog_has_stale_asset_classes(repo):
         return
     lister = getattr(_provider(), "list_contracts", None)
     if lister is None:
@@ -241,6 +237,30 @@ def scan_watchlist(request: ScanRequest | None = None) -> dict:
     }
 
 
+def list_universe_discoveries(symbol: str | None = None, status: str | None = None, limit: int = 50) -> dict:
+    items = _repo().list_universe_discoveries(symbol=symbol, status=status, limit=min(max(limit, 1), 200))
+    return {"discoveries": [item.model_dump(mode="json") for item in items]}
+
+
+def scan_universe(request: ScanRequest | None = None) -> dict:
+    from app.scout.universe import run_universe_scan
+
+    request = request or ScanRequest()
+
+    def load(symbol: str, timeframe: str) -> dict[str, Any]:
+        return _analysis_entry(symbol, timeframe, force=request.force, include_trade_flow=False)
+
+    payload = run_universe_scan(
+        _repo(),
+        runtime.settings,
+        analysis_loader=load,
+        timeframe=request.timeframe or "4h",
+        ticker_rows=_market_tickers(),
+    )
+    payload.pop("_alert_candidate_objects", None)
+    return payload
+
+
 def _analysis_entry(symbol: str, timeframe: str, force: bool, include_trade_flow: bool) -> dict[str, Any]:
     key = (symbol.upper(), timeframe)
     cached = _ANALYSIS_CACHE.get(key)
@@ -279,6 +299,17 @@ def _analysis_entry(symbol: str, timeframe: str, force: bool, include_trade_flow
     }
     _ANALYSIS_CACHE[key] = entry
     return entry
+
+
+def _market_tickers() -> list[dict[str, Any]]:
+    lister = getattr(_provider(), "list_tickers", None)
+    if not callable(lister):
+        return []
+    try:
+        rows = lister()
+    except Exception:
+        return []
+    return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
 
 
 def _derivative_context(symbol: str) -> dict[str, Any]:
@@ -335,12 +366,27 @@ def _summary_row(
         "funding_rate": snapshot.funding_rate,
         "funding_state": funding.get("label") if funding else None,
         "crowding_score": crowding.get("score") if crowding else None,
+        "quote_volume_24h": _quote_volume_24h(snapshot.candles),
         "setup_proximity_pct": min(proximity_candidates) if proximity_candidates else None,
         "entry_intent_distance_pct": _nearest_intent_distance(symbol, mark),
         "mark_price": mark,
         "setup_candidates": setup_candidates,
         "backtest_summary": backtest_line(analysis.get("historical_backtest")),
     }
+
+
+def _quote_volume_24h(candles: list[Any]) -> float | None:
+    recent = list(candles[-6:]) if candles else []
+    if not recent:
+        return None
+    total = 0.0
+    for candle in recent:
+        quote_volume = getattr(candle, "quote_volume", None)
+        if quote_volume is not None:
+            total += float(quote_volume)
+            continue
+        total += float(getattr(candle, "volume", 0.0) or 0.0) * float(getattr(candle, "close", 0.0) or 0.0)
+    return round(total, 2)
 
 
 def _attach_backtest_to_candidates(candidates: list[dict[str, Any]], context: Any) -> None:

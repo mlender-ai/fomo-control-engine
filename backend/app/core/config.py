@@ -372,6 +372,61 @@ class Settings(BaseSettings):
         10,
         validation_alias=AliasChoices("FCE_BACKTEST_SAMPLE_FLOOR", "BACKTEST_SAMPLE_FLOOR"),
     )
+    universe_scanner_enabled: bool = Field(
+        True,
+        validation_alias=AliasChoices("FCE_UNIVERSE_SCANNER_ENABLED", "UNIVERSE_SCANNER_ENABLED"),
+    )
+    worker_universe_scan_interval_seconds: int = Field(
+        1800,
+        validation_alias=AliasChoices(
+            "FCE_WORKER_UNIVERSE_SCAN_INTERVAL_SECONDS",
+            "WORKER_UNIVERSE_SCAN_INTERVAL_SECONDS",
+        ),
+    )
+    universe_crypto_symbol_limit: int = Field(
+        40,
+        validation_alias=AliasChoices("FCE_UNIVERSE_CRYPTO_SYMBOL_LIMIT", "UNIVERSE_CRYPTO_SYMBOL_LIMIT"),
+    )
+    universe_stock_symbol_limit: int = Field(
+        40,
+        validation_alias=AliasChoices("FCE_UNIVERSE_STOCK_SYMBOL_LIMIT", "UNIVERSE_STOCK_SYMBOL_LIMIT"),
+    )
+    universe_round_robin_batch_size: int = Field(
+        12,
+        validation_alias=AliasChoices("FCE_UNIVERSE_ROUND_ROBIN_BATCH_SIZE", "UNIVERSE_ROUND_ROBIN_BATCH_SIZE"),
+    )
+    universe_min_quote_volume_24h: float = Field(
+        1_000_000.0,
+        validation_alias=AliasChoices("FCE_UNIVERSE_MIN_QUOTE_VOLUME_24H", "UNIVERSE_MIN_QUOTE_VOLUME_24H"),
+    )
+    universe_min_confidence: int = Field(
+        70,
+        validation_alias=AliasChoices("FCE_UNIVERSE_MIN_CONFIDENCE", "UNIVERSE_MIN_CONFIDENCE"),
+    )
+    universe_backtest_min_sample: int = Field(
+        30,
+        validation_alias=AliasChoices("FCE_UNIVERSE_BACKTEST_MIN_SAMPLE", "UNIVERSE_BACKTEST_MIN_SAMPLE"),
+    )
+    universe_backtest_min_win_1r_pct: float = Field(
+        55.0,
+        validation_alias=AliasChoices("FCE_UNIVERSE_BACKTEST_MIN_WIN_1R_PCT", "UNIVERSE_BACKTEST_MIN_WIN_1R_PCT"),
+    )
+    universe_daily_alert_limit: int = Field(
+        3,
+        validation_alias=AliasChoices("FCE_UNIVERSE_DAILY_ALERT_LIMIT", "UNIVERSE_DAILY_ALERT_LIMIT"),
+    )
+    universe_symbol_cooldown_hours: int = Field(
+        48,
+        validation_alias=AliasChoices("FCE_UNIVERSE_SYMBOL_COOLDOWN_HOURS", "UNIVERSE_SYMBOL_COOLDOWN_HOURS"),
+    )
+    universe_blacklist: str = Field(
+        "",
+        validation_alias=AliasChoices("FCE_UNIVERSE_BLACKLIST", "UNIVERSE_BLACKLIST"),
+    )
+    universe_classes_enabled: str = Field(
+        "crypto,stock,index",
+        validation_alias=AliasChoices("FCE_UNIVERSE_CLASSES_ENABLED", "UNIVERSE_CLASSES_ENABLED"),
+    )
     worker_backoff_failure_threshold: int = Field(
         3,
         validation_alias=AliasChoices("FCE_WORKER_BACKOFF_FAILURE_THRESHOLD", "WORKER_BACKOFF_FAILURE_THRESHOLD"),
@@ -444,7 +499,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("FCE_TELEGRAM_QUIET_HOURS_TIMEZONE", "TELEGRAM_QUIET_HOURS_TIMEZONE"),
     )
     alert_rules_enabled: str = Field(
-        "trigger_near,invalidation_breach,take_profit_hit,status_worsened,health_drop,liq_proximity,liq_unknown_high_lev,wyckoff_event,data_stall,funding_extreme,oi_divergence,liq_cluster_near,setup_near,setup_triggered,setup_invalidated,intent_approaching,intent_zone_entered,intent_zone_entered_partial,intent_invalidated",
+        "trigger_near,invalidation_breach,take_profit_hit,status_worsened,health_drop,liq_proximity,liq_unknown_high_lev,wyckoff_event,data_stall,funding_extreme,oi_divergence,liq_cluster_near,setup_near,setup_triggered,setup_invalidated,intent_approaching,intent_zone_entered,intent_zone_entered_partial,intent_invalidated,universe_discovery",
         validation_alias=AliasChoices("FCE_ALERT_RULES_ENABLED", "ALERT_RULES_ENABLED"),
     )
     alert_trigger_near_pct: float = Field(
@@ -540,6 +595,14 @@ class Settings(BaseSettings):
     @property
     def alert_enabled_rule_set(self) -> set[str]:
         return {rule.strip() for rule in self.alert_rules_enabled.split(",") if rule.strip()}
+
+    @property
+    def universe_enabled_class_set(self) -> set[str]:
+        return {item.strip().lower() for item in self.universe_classes_enabled.split(",") if item.strip()}
+
+    @property
+    def universe_blacklist_set(self) -> set[str]:
+        return {symbol.strip().upper() for symbol in self.universe_blacklist.split(",") if symbol.strip()}
 
 
 @lru_cache

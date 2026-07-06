@@ -401,6 +401,7 @@ def score_entry_intents(repo: Any, settings: Settings) -> dict[str, Any]:
 def build_scout_calibration_summary(scores: list[JudgmentScore]) -> dict[str, Any]:
     scout_scores = [score for score in scores if score.judgment_type == "scout_setup"]
     intent_scores = [score for score in scores if score.judgment_type == "entry_intent"]
+    discovery_scores = [score for score in scores if score.judgment_type == "universe_discovery"]
     total = len(scout_scores)
     correct = len([score for score in scout_scores if score.outcome == "correct"])
     wrong = len([score for score in scout_scores if score.outcome == "wrong"])
@@ -430,7 +431,27 @@ def build_scout_calibration_summary(scores: list[JudgmentScore]) -> dict[str, An
         "accuracy_pct": round((correct / tested) * 100, 1) if tested else None,
         "by_type": by_type,
         "entry_intents": _intent_calibration_summary(intent_scores),
+        "discoveries": _generic_score_summary(discovery_scores),
         "sample_warning": "진입하지 않은 셋업도 트리거 이후 가격 경로로 결과론적 채점합니다. N<10 구간은 결론을 보류합니다.",
+    }
+
+
+def _generic_score_summary(scores: list[JudgmentScore]) -> dict[str, Any]:
+    total = len(scores)
+    correct = len([score for score in scores if score.outcome == "correct"])
+    wrong = len([score for score in scores if score.outcome == "wrong"])
+    whipsaw = len([score for score in scores if score.outcome == "whipsaw"])
+    untested = len([score for score in scores if score.outcome == "untested"])
+    tested = correct + wrong + whipsaw
+    return {
+        "total": total,
+        "tested": tested,
+        "correct": correct,
+        "wrong": wrong,
+        "whipsaw": whipsaw,
+        "untested": untested,
+        "accuracy_pct": round((correct / tested) * 100, 1) if tested else None,
+        "sample_warning": "발견 채널은 기존 관심종목 셋업과 분리 집계합니다. N<10 구간은 결론을 보류합니다.",
     }
 
 

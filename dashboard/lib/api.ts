@@ -733,6 +733,29 @@ export type ScoutScanResponse = {
   rate_budget?: Record<string, unknown>;
 };
 
+export type UniverseDiscovery = {
+  id: string;
+  symbol: string;
+  timeframe: string;
+  asset_class: "crypto" | "stock" | "index" | "unknown" | string;
+  signature_key: string;
+  signature: Record<string, unknown>;
+  status: "alerted" | "stored" | "rejected";
+  gate_passed: boolean;
+  gate_reasons: Array<{ code: string; passed: boolean; value?: unknown; threshold?: unknown }>;
+  confidence: number | null;
+  win_1r_pct: number | null;
+  sample_size: number | null;
+  quote_volume_24h: number | null;
+  current_price: number | null;
+  message: string;
+  payload: Record<string, unknown>;
+  judgment_id: string | null;
+  alerted_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
 export type ScoutAnalysisResponse = {
   symbol: string;
   timeframe: string;
@@ -1407,6 +1430,19 @@ export const api = {
     ),
   scoutScan: (payload: { timeframe?: string | null; force?: boolean } = {}) =>
     request<ScoutScanResponse>("/api/scout/scan", {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  universeDiscoveries: (params: { symbol?: string; status?: string; limit?: number } = {}) =>
+    request<{ discoveries: UniverseDiscovery[] }>(
+      `/api/scout/discoveries${Object.keys(params).length ? `?${new URLSearchParams(
+        Object.entries(params)
+          .filter(([, value]) => value !== undefined && value !== "")
+          .map(([key, value]) => [key, String(value)])
+      ).toString()}` : ""}`
+    ),
+  universeScan: (payload: { timeframe?: string | null; force?: boolean } = {}) =>
+    request<{ discoveries: UniverseDiscovery[]; rate_budget?: Record<string, unknown> }>("/api/scout/universe/scan", {
       method: "POST",
       body: JSON.stringify(payload)
     }),

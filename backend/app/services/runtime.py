@@ -47,6 +47,7 @@ from app.review.params import (
     engine_param_snapshot,
 )
 from app.scout.monitor import process_scout_scan
+from app.scout.universe import run_universe_scan
 
 
 @dataclass(frozen=True)
@@ -601,6 +602,24 @@ def refresh_scout_scan_cache() -> dict[str, Any]:
     payload = scout_handlers.scan_watchlist(ScanRequest(force=True))
     payload = _attach_scout_previews(payload)
     return process_scout_scan(runtime.repository, runtime.settings, payload)
+
+
+def refresh_universe_scan_cache() -> dict[str, Any]:
+    def load(symbol: str, timeframe: str) -> dict[str, Any]:
+        return scout_handlers._analysis_entry(symbol, timeframe, force=True, include_trade_flow=False)
+
+    return run_universe_scan(runtime.repository, runtime.settings, analysis_loader=load, ticker_rows=_market_tickers())
+
+
+def _market_tickers() -> list[dict[str, Any]]:
+    lister = getattr(runtime.market_provider, "list_tickers", None)
+    if not callable(lister):
+        return []
+    try:
+        rows = lister()
+    except Exception:
+        return []
+    return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
 
 
 def simulate_entry(symbol: str, direction: str, leverage: float, entry_price: float | None = None) -> dict[str, Any]:

@@ -207,6 +207,14 @@ class WorkerManager:
         payload.pop("_alert_candidate_objects", None)
         return payload
 
+    async def _universe_scan(self) -> dict[str, Any]:
+        payload = await asyncio.to_thread(service.refresh_universe_scan_cache)
+        candidates = payload.get("_alert_candidate_objects", [])
+        if candidates:
+            await self.alerts.evaluate_scout_setups(candidates)
+        payload.pop("_alert_candidate_objects", None)
+        return payload
+
     async def _telegram_bot_loop(self) -> None:
         heartbeat = self.heartbeats["telegram_bot"]
 
@@ -304,6 +312,12 @@ class WorkerManager:
                 self.settings.worker_scout_scan_interval_seconds,
                 self._scout_scan,
                 enabled=self.settings.worker_scout_scan_enabled,
+            ),
+            "universe_scan": WorkerJob(
+                "universe_scan",
+                self.settings.worker_universe_scan_interval_seconds,
+                self._universe_scan,
+                enabled=self.settings.universe_scanner_enabled,
             ),
             "telegram_bot": WorkerJob("telegram_bot", 0, None, scheduled=False),
         }

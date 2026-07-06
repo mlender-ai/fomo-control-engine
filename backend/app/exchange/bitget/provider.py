@@ -75,6 +75,9 @@ class BitgetMarketDataProvider(MarketDataProvider):
     def list_contracts(self) -> list[dict]:
         return _run(self.get_contracts())
 
+    def list_tickers(self) -> list[dict]:
+        return _run(self.get_tickers())
+
     async def get_contracts(self) -> list[dict]:
         payload = await self.client.public_get(
             "/api/v2/mix/market/contracts",
@@ -124,6 +127,41 @@ class BitgetMarketDataProvider(MarketDataProvider):
                 }
             )
         return contracts
+
+    async def get_tickers(self) -> list[dict]:
+        payload = await self.client.public_get(
+            "/api/v2/mix/market/tickers",
+            {"productType": self.product_type},
+        )
+        rows = payload.get("data") or []
+        tickers: list[dict] = []
+        for row in rows:
+            if not isinstance(row, dict) or not row.get("symbol"):
+                continue
+            quote_volume = _first_float(
+                row,
+                (
+                    "usdtVolume",
+                    "quoteVolume",
+                    "quoteVol",
+                    "turnover24h",
+                    "turnover",
+                ),
+            )
+            if quote_volume is None:
+                base_volume = _first_float(row, ("baseVolume", "baseVol", "volume24h", "volume"))
+                last_price = _first_float(row, ("lastPr", "last", "close"))
+                if base_volume is not None and last_price is not None:
+                    quote_volume = base_volume * last_price
+            tickers.append(
+                {
+                    "symbol": str(row["symbol"]).upper(),
+                    "quote_volume_24h": quote_volume,
+                    "last_price": _first_float(row, ("lastPr", "last", "close")),
+                    "raw": row,
+                }
+            )
+        return tickers
 
     async def get_ohlcv(self, symbol: str, timeframe: str, limit: int = 200) -> list[Candle]:
         granularity = TIMEFRAME_MAP.get(timeframe.lower())

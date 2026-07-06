@@ -46,6 +46,7 @@ RULE_LABELS: dict[str, str] = {
     "intent_zone_entered": "진입 의도 조건 충족",
     "intent_zone_entered_partial": "진입 의도 부분 충족",
     "intent_invalidated": "진입 의도 무효화",
+    "universe_discovery": "유니버스 발견",
 }
 
 RULE_SEVERITY: dict[str, AlertSeverity] = {
@@ -68,6 +69,7 @@ RULE_SEVERITY: dict[str, AlertSeverity] = {
     "intent_zone_entered": "action",
     "intent_zone_entered_partial": "info",
     "intent_invalidated": "info",
+    "universe_discovery": "info",
 }
 
 

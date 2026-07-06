@@ -40,6 +40,16 @@ class FakeBitgetProvider(MarketDataProvider):
             for symbol in DEMO_SYMBOLS
         ]
 
+    def list_tickers(self) -> list[dict]:
+        return [
+            {
+                "symbol": symbol,
+                "quote_volume_24h": round((85_000_000 / (index + 1)), 2),
+                "last_price": float(spec["base"]),
+            }
+            for index, (symbol, spec) in enumerate(DEMO_SYMBOLS.items())
+        ]
+
     def get_snapshot(self, symbol: str, timeframe: str = "4h") -> MarketSnapshot:
         normalized = symbol.upper().replace("/", "")
         spec = DEMO_SYMBOLS.get(normalized, {"base": 100.0, "scenario": "healthy_long"})

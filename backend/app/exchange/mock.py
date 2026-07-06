@@ -41,6 +41,19 @@ class MockMarketDataProvider(MarketDataProvider):
             for symbol in BASE_PRICES
         ]
 
+    def list_tickers(self) -> list[dict]:
+        tickers = []
+        for index, (symbol, price) in enumerate(BASE_PRICES.items()):
+            base_volume = 25_000_000 / max(price, 1) / (index + 1)
+            tickers.append(
+                {
+                    "symbol": symbol,
+                    "quote_volume_24h": round(base_volume * price, 2),
+                    "last_price": price,
+                }
+            )
+        return tickers
+
     def get_snapshot(self, symbol: str, timeframe: str = "4h") -> MarketSnapshot:
         normalized = symbol.upper().replace("/", "")
         base_price = BASE_PRICES.get(normalized, 100.0)

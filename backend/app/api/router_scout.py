@@ -12,6 +12,8 @@ router.add_api_route("/api/scout/{symbol}/analysis", handlers.scout_analysis, me
 router.add_api_route("/api/scout/{symbol}/briefing", handlers.scout_briefing, methods=["GET"])
 router.add_api_route("/api/scout/{symbol}/backtest", handlers.scout_backtest, methods=["GET"])
 router.add_api_route("/api/scout/scan", handlers.scan_watchlist, methods=["POST"])
+router.add_api_route("/api/scout/discoveries", handlers.list_universe_discoveries, methods=["GET"])
+router.add_api_route("/api/scout/universe/scan", handlers.scan_universe, methods=["POST"])
 router.add_api_route("/api/scout/setups", handlers.list_scout_setups, methods=["GET"])
 router.add_api_route("/api/scout/{symbol}/setups", handlers.create_manual_setup, methods=["POST"])
 router.add_api_route("/api/scout/setups/{setup_id}/disarm", handlers.disarm_scout_setup, methods=["POST"])

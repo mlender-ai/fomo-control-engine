@@ -13,6 +13,7 @@ import {
   type HistoricalBacktest,
   type ScoutAnalysisResponse,
   type ScoutScanRow,
+  type UniverseDiscovery,
   type WatchlistEntry
 } from "@/lib/api";
 import { formatPrice, signedPercent } from "@/lib/format";
@@ -48,6 +49,7 @@ export function ScoutShell() {
   const [scanRows, setScanRows] = useState<ScoutScanRow[]>([]);
   const [armedSetups, setArmedSetups] = useState<ArmedSetup[]>([]);
   const [entryIntents, setEntryIntents] = useState<EntryIntent[]>([]);
+  const [discoveries, setDiscoveries] = useState<UniverseDiscovery[]>([]);
   const [scannedAt, setScannedAt] = useState<string>("");
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState("");
@@ -63,8 +65,12 @@ export function ScoutShell() {
     try {
       const response = await api.watchlist();
       setWatchlist(response.items);
-      const intents = await api.entryIntents(undefined, "active");
+      const [intents, discoveryResponse] = await Promise.all([
+        api.entryIntents(undefined, "active"),
+        api.universeDiscoveries({ limit: 20 })
+      ]);
       setEntryIntents(intents.intents);
+      setDiscoveries(discoveryResponse.discoveries);
     } catch (err) {
       setError(err instanceof Error ? err.message : "관심종목을 불러오지 못했습니다.");
     }
@@ -99,6 +105,8 @@ export function ScoutShell() {
       setArmedSetups(response.armed_setups ?? []);
       setEntryIntents((current) => response.entry_intents ?? current);
       setScannedAt(response.scanned_at);
+      const discoveryResponse = await api.universeDiscoveries({ limit: 20 });
+      setDiscoveries(discoveryResponse.discoveries);
     } catch (err) {
       setError(err instanceof Error ? err.message : "스캔에 실패했습니다.");
     } finally {
@@ -176,6 +184,20 @@ export function ScoutShell() {
     }
   }
 
+  async function runUniverseScan() {
+    setScanning(true);
+    setError("");
+    try {
+      const response = await api.universeScan({ force: true });
+      setDiscoveries((items) => [...response.discoveries, ...items].slice(0, 20));
+      setNotice(`유니버스 스캔 완료 · 발견 기록 ${response.discoveries.length}건`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "유니버스 스캔에 실패했습니다.");
+    } finally {
+      setScanning(false);
+    }
+  }
+
   if (activeSymbol) {
     return <ScoutSymbolView symbol={activeSymbol} onBack={() => setActiveSymbol("")} />;
   }
@@ -227,7 +249,7 @@ export function ScoutShell() {
         ) : null}
       </div>
 
-      <p className="scoutDisclaimer">셋업 근접도는 가장 가까운 트리거(반전 후보 구간·구조 레벨)까지의 거리입니다. 매수 추천이 아니라 &ldquo;지금 반응을 지켜볼 종목&rdquo;의 정렬 기준입니다.</p>
+      <p className="scoutDisclaimer">셋업 근접도는 가장 가까운 트리거(반전 후보 구간·구조 레벨)까지의 거리입니다. 매수 판단 문구가 아니라 &ldquo;지금 반응을 지켜볼 종목&rdquo;의 정렬 기준입니다.</p>
 
       <div className="assetClassTabs" role="group" aria-label="자산 클래스 필터">
         {ASSET_FILTERS.map((filter) => (
@@ -242,6 +264,8 @@ export function ScoutShell() {
           </button>
         ))}
       </div>
+
+      <UniverseDiscoveryPanel discoveries={discoveries} onOpen={(symbol) => setActiveSymbol(symbol)} onScan={() => void runUniverseScan()} scanning={scanning} />
 
       {watchlist.length ? (
         scanRows.length ? (
@@ -408,6 +432,54 @@ function ScanRow({
         <button className="iconButton secondary" onClick={(event) => { event.stopPropagation(); onRemove(); }} type="button" aria-label="삭제"><Trash2 size={13} /></button>
       </td>
     </tr>
+  );
+}
+
+function UniverseDiscoveryPanel({
+  discoveries,
+  scanning,
+  onOpen,
+  onScan
+}: {
+  discoveries: UniverseDiscovery[];
+  scanning: boolean;
+  onOpen: (symbol: string) => void;
+  onScan: () => void;
+}) {
+  const latest = discoveries.slice(0, 6);
+  return (
+    <section className="universeDiscoveryPanel" data-testid="universe-discoveries">
+      <div className="universeDiscoveryHeader">
+        <div>
+          <p className="eyebrow">유니버스 발견</p>
+          <h2>검증된 시그니처 포착 이력</h2>
+        </div>
+        <button className="button secondary" type="button" onClick={onScan} disabled={scanning}>
+          <Radar size={14} />
+          유니버스 스캔
+        </button>
+      </div>
+      {latest.length ? (
+        <div className="universeDiscoveryGrid">
+          {latest.map((item) => (
+            <button className={`universeDiscoveryCard ${item.status}`} key={item.id} type="button" onClick={() => onOpen(item.symbol)}>
+              <span className="universeDiscoveryTopline">
+                <strong>{item.symbol}</strong>
+                <AssetClassBadge assetClass={item.asset_class} />
+                <em>{discoveryStatusLabel(item)}</em>
+              </span>
+              <span className="universeDiscoverySignal">{String(item.signature.label ?? item.signature.event_type ?? "시그니처")}</span>
+              <span className="universeDiscoveryStats">
+                신뢰도 {item.confidence ?? "-"} · N {item.sample_size ?? "-"} · 1R {formatNullablePct(item.win_1r_pct)}
+              </span>
+              <span className="universeDiscoveryReasons">{gateReasonSummary(item.gate_reasons)}</span>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="universeDiscoveryEmpty">아직 발견 이력이 없습니다. 유니버스 스캔은 관심종목 밖의 확정 셋업만 저소음으로 기록합니다.</div>
+      )}
+    </section>
   );
 }
 
@@ -725,7 +797,7 @@ function ScenarioPanel({ scenarios, asOf }: { scenarios: ScoutAnalysisResponse["
       <div className="focusPanelHeader">
         <div>
           <h2>양방향 시나리오</h2>
-          <p>포지션이 없어 롱/숏 트리거를 모두 표시합니다 · 추천 아님</p>
+          <p>포지션이 없어 롱/숏 트리거를 모두 표시합니다 · 판단 유보</p>
         </div>
         <span>{asOf ? `기준 ${new Date(asOf).toLocaleTimeString()}` : "-"}</span>
       </div>
@@ -899,6 +971,32 @@ function scoreTone(score: number | null | undefined): string {
 function formatFunding(value: number | null | undefined): string {
   if (typeof value !== "number") return "-";
   return `${value > 0 ? "+" : ""}${(value * 100).toFixed(4)}%`;
+}
+
+function discoveryStatusLabel(item: UniverseDiscovery): string {
+  if (item.status === "alerted") return "알림 발송";
+  if (item.status === "stored") return "탭 적재";
+  return "게이트 차단";
+}
+
+function gateReasonSummary(reasons: UniverseDiscovery["gate_reasons"]): string {
+  const failed = reasons.filter((reason) => !reason.passed);
+  if (!failed.length) return "게이트 통과";
+  return failed.slice(0, 2).map((reason) => gateReasonLabel(reason.code)).join(" · ");
+}
+
+function gateReasonLabel(code: string): string {
+  const labels: Record<string, string> = {
+    confidence: "신뢰도 부족",
+    backtest_sample: "백테스트 N 부족",
+    backtest_win_1r: "1R 기준 미달",
+    live_backtest_divergence: "라이브 괴리",
+    liquidity_floor: "거래대금 부족",
+    earnings_window: "실적 구간",
+    daily_alert_limit: "일 상한",
+    symbol_cooldown: "쿨다운"
+  };
+  return labels[code] ?? code;
 }
 
 function assetMatchesFilter(assetClass: string | null | undefined, filter: AssetFilter): boolean {

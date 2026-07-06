@@ -4215,6 +4215,108 @@ button.actionPlanRow:not(:disabled):hover {
   color: var(--terminal-amber);
 }
 
+.universeDiscoveryPanel {
+  display: grid;
+  gap: 10px;
+  border: 1px solid var(--terminal-line);
+  border-radius: 6px;
+  background: rgba(8, 11, 16, 0.38);
+  padding: 12px;
+}
+
+.universeDiscoveryHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.universeDiscoveryHeader h2 {
+  margin: 2px 0 0;
+  color: var(--terminal-text);
+  font-size: 15px;
+}
+
+.universeDiscoveryGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 8px;
+}
+
+.universeDiscoveryCard {
+  display: grid;
+  gap: 7px;
+  border: 1px solid var(--terminal-line);
+  border-radius: 6px;
+  background: rgba(13, 18, 25, 0.76);
+  color: var(--terminal-text);
+  cursor: pointer;
+  padding: 10px;
+  text-align: left;
+}
+
+.universeDiscoveryCard:hover {
+  border-color: rgba(240, 184, 64, 0.55);
+}
+
+.universeDiscoveryCard.alerted {
+  border-color: rgba(87, 210, 130, 0.4);
+}
+
+.universeDiscoveryCard.stored {
+  border-color: rgba(240, 184, 64, 0.38);
+}
+
+.universeDiscoveryCard.rejected {
+  opacity: 0.72;
+}
+
+.universeDiscoveryTopline {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.universeDiscoveryTopline strong {
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 13px;
+}
+
+.universeDiscoveryTopline em {
+  margin-left: auto;
+  color: var(--terminal-muted);
+  font-size: 11px;
+  font-style: normal;
+}
+
+.universeDiscoverySignal {
+  overflow: hidden;
+  color: var(--terminal-text);
+  font-size: 12px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.universeDiscoveryStats,
+.universeDiscoveryReasons,
+.universeDiscoveryEmpty {
+  color: var(--terminal-muted);
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 11px;
+}
+
+.universeDiscoveryReasons {
+  color: var(--terminal-amber);
+}
+
+.universeDiscoveryEmpty {
+  border: 1px dashed var(--terminal-line);
+  border-radius: 6px;
+  padding: 10px;
+}
+
 .assetClassBadge {
   display: inline-flex;
   align-items: center;

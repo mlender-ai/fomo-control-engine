@@ -348,6 +348,29 @@ class BacktestStat(BaseModel):
     created_at: datetime = Field(default_factory=utc_now)
 
 
+class UniverseDiscovery(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    symbol: str
+    timeframe: str = "4h"
+    asset_class: Literal["crypto", "stock", "index", "unknown"] | str = "unknown"
+    signature_key: str
+    signature: dict = Field(default_factory=dict)
+    status: Literal["alerted", "stored", "rejected"] = "rejected"
+    gate_passed: bool = False
+    gate_reasons: list[dict] = Field(default_factory=list)
+    confidence: int | None = None
+    win_1r_pct: float | None = None
+    sample_size: int | None = None
+    quote_volume_24h: float | None = None
+    current_price: float | None = None
+    message: str = ""
+    payload: dict = Field(default_factory=dict)
+    judgment_id: str | None = None
+    alerted_at: datetime | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
 class PositionMemoUpdate(BaseModel):
     memo: str | None = None
     entry_memo: str | None = None

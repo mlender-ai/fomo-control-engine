@@ -37,6 +37,7 @@ from app.db.models import (
     ScoutSnapshot,
     ShadowProfile,
     Trade,
+    UniverseDiscovery,
     ValidationRun,
     WatchlistItem,
     utc_now,
@@ -93,6 +94,13 @@ class Repository(Protocol):
         signature_key: str | None = None,
         limit: int = 100,
     ) -> list[BacktestStat]: ...
+    def upsert_universe_discovery(self, discovery: UniverseDiscovery) -> UniverseDiscovery: ...
+    def list_universe_discoveries(
+        self,
+        symbol: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> list[UniverseDiscovery]: ...
     def add_trade(self, trade: Trade) -> Trade: ...
     def get_trade(self, trade_id: UUID) -> Trade | None: ...
     def list_trades(self) -> list[Trade]: ...
@@ -166,6 +174,7 @@ class MemoryRepository:
         self.armed_setups: dict[UUID, ArmedSetup] = {}
         self.entry_intents: dict[UUID, EntryIntent] = {}
         self.backtest_stats: dict[UUID, BacktestStat] = {}
+        self.universe_discoveries: dict[UUID, UniverseDiscovery] = {}
         self.trades: dict[UUID, Trade] = {}
         self.judgments: dict[UUID, list[JudgmentLedgerEntry]] = {}
         self.judgment_scores: dict[UUID, JudgmentScore] = {}
@@ -364,6 +373,24 @@ class MemoryRepository:
         if signature_key:
             stats = [stat for stat in stats if stat.signature_key == signature_key]
         return sorted(stats, key=lambda item: item.generated_at, reverse=True)[:limit]
+
+    def upsert_universe_discovery(self, discovery: UniverseDiscovery) -> UniverseDiscovery:
+        normalized = discovery.model_copy(update={"symbol": discovery.symbol.upper()})
+        self.universe_discoveries[normalized.id] = normalized
+        return normalized
+
+    def list_universe_discoveries(
+        self,
+        symbol: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> list[UniverseDiscovery]:
+        discoveries = list(self.universe_discoveries.values())
+        if symbol:
+            discoveries = [item for item in discoveries if item.symbol.upper() == symbol.upper()]
+        if status:
+            discoveries = [item for item in discoveries if item.status == status]
+        return sorted(discoveries, key=lambda item: item.created_at, reverse=True)[:limit]
 
     def add_trade(self, trade: Trade) -> Trade:
         self.trades[trade.id] = trade
@@ -593,10 +620,7 @@ class MemoryRepository:
             [
                 item
                 for symbol, item in self.symbol_catalog.items()
-                if needle in symbol
-                or needle in item.base_coin.upper()
-                or needle in item.quote_coin.upper()
-                or needle in item.asset_class.upper()
+                if needle in symbol or needle in item.base_coin.upper() or needle in item.quote_coin.upper() or needle in item.asset_class.upper()
             ]
             if needle
             else list(self.symbol_catalog.values())
@@ -1102,6 +1126,53 @@ class SQLiteRepository:
         with self._lock, self._connect() as connection:
             rows = connection.execute(query, tuple(params)).fetchall()
         return [BacktestStat.model_validate_json(row["payload"]) for row in rows]
+
+    def upsert_universe_discovery(self, discovery: UniverseDiscovery) -> UniverseDiscovery:
+        normalized = discovery.model_copy(update={"symbol": discovery.symbol.upper()})
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO universe_discoveries
+                    (id, symbol, timeframe, asset_class, signature_key, status, gate_passed, created_at, updated_at, payload)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(normalized.id),
+                    normalized.symbol.upper(),
+                    normalized.timeframe,
+                    normalized.asset_class,
+                    normalized.signature_key,
+                    normalized.status,
+                    1 if normalized.gate_passed else 0,
+                    normalized.created_at.isoformat(),
+                    normalized.updated_at.isoformat(),
+                    _dump_model(normalized),
+                ),
+            )
+        return normalized
+
+    def list_universe_discoveries(
+        self,
+        symbol: str | None = None,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> list[UniverseDiscovery]:
+        query = "SELECT payload FROM universe_discoveries"
+        clauses: list[str] = []
+        params: list[str | int] = []
+        if symbol:
+            clauses.append("symbol = ?")
+            params.append(symbol.upper())
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(query, tuple(params)).fetchall()
+        return [UniverseDiscovery.model_validate_json(row["payload"]) for row in rows]
 
     def add_trade(self, trade: Trade) -> Trade:
         with self._lock, self._connect() as connection:
