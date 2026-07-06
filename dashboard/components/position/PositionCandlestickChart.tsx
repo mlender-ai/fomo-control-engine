@@ -12,7 +12,7 @@ import {
   type HistogramData,
   type Time
 } from "lightweight-charts";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 import type {
   ChartCandle,
   ChartPriceLevel,
@@ -46,7 +46,8 @@ export function PositionCandlestickChart({
   onToggleLayer,
   highlightPrice = null,
   positionOverlay = null,
-  density = "simple"
+  density = "simple",
+  intentZoneSelector
 }: {
   analysis: PositionChartAnalysis;
   trendSummary: string;
@@ -56,12 +57,22 @@ export function PositionCandlestickChart({
   highlightPrice?: number | null;
   positionOverlay?: PositionChartOverlay | null;
   density?: Density;
+  intentZoneSelector?: {
+    enabled: boolean;
+    draft: { lower: number | null; upper: number | null };
+    onDraftChange: (lower: number, upper: number) => void;
+    onComplete: (lower: number, upper: number) => void;
+  };
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const overlayRef = useRef<SVGSVGElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
+  const priceAtYRef = useRef<((y: number) => number | null) | null>(null);
   const [harmonicIndex, setHarmonicIndex] = useState(0);
   const [guideOpen, setGuideOpen] = useState(false);
+  const [dragStartPrice, setDragStartPrice] = useState<number | null>(null);
+  const [dragStartY, setDragStartY] = useState<number | null>(null);
+  const [zoneBand, setZoneBand] = useState<{ top: number; bottom: number } | null>(null);
   const validation = useMemo(() => validateCandles(analysis.candles), [analysis.candles]);
   const priceLines = useMemo(
     () => (validation.valid ? priceLinesForAnalysis(analysis, plan, layers) : []),
@@ -76,6 +87,13 @@ export function PositionCandlestickChart({
   );
   const activeHarmonic = harmonicPatterns.length ? harmonicPatterns[((harmonicIndex % harmonicPatterns.length) + harmonicPatterns.length) % harmonicPatterns.length] : null;
   const guideLayer = activeGuideLayer(layers);
+  const intentZoneDraft = intentZoneSelector?.draft ?? null;
+
+  useEffect(() => {
+    if (intentZoneDraft?.lower === null && intentZoneDraft?.upper === null) {
+      setZoneBand(null);
+    }
+  }, [intentZoneDraft?.lower, intentZoneDraft?.upper]);
 
   useEffect(() => {
     setHarmonicIndex(0);
@@ -164,6 +182,10 @@ export function PositionCandlestickChart({
       priceLineVisible: false,
       lastValueVisible: false
     });
+    priceAtYRef.current = (y: number) => {
+      const price = candleSeries.coordinateToPrice(y);
+      return typeof price === "number" && Number.isFinite(price) ? price : null;
+    };
 
     const candleData: CandlestickData[] = validation.candles.map((candle) => ({
       time: candle.time as Time,
@@ -338,9 +360,57 @@ export function PositionCandlestickChart({
     return () => {
       resizeObserver.disconnect();
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(drawOverlay);
+      priceAtYRef.current = null;
       chart.remove();
     };
   }, [analysis, averageVolume, priceLines, plan, layers, highlightPrice, activeHarmonic, positionOverlay, validation, density]);
+
+  function pointerY(event: PointerEvent<HTMLDivElement>): number {
+    const rect = event.currentTarget.getBoundingClientRect();
+    return event.clientY - rect.top;
+  }
+
+  function priceFromPointer(event: PointerEvent<HTMLDivElement>): number | null {
+    const y = pointerY(event);
+    return priceAtYRef.current?.(y) ?? null;
+  }
+
+  function handleZonePointerDown(event: PointerEvent<HTMLDivElement>) {
+    if (!intentZoneSelector?.enabled) return;
+    const price = priceFromPointer(event);
+    if (price === null) return;
+    const y = pointerY(event);
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setDragStartPrice(price);
+    setDragStartY(y);
+    setZoneBand({ top: y, bottom: y });
+    intentZoneSelector.onDraftChange(price, price);
+  }
+
+  function handleZonePointerMove(event: PointerEvent<HTMLDivElement>) {
+    if (!intentZoneSelector?.enabled || dragStartPrice === null || dragStartY === null) return;
+    const price = priceFromPointer(event);
+    if (price === null) return;
+    const y = pointerY(event);
+    setZoneBand({ top: Math.min(dragStartY, y), bottom: Math.max(dragStartY, y) });
+    intentZoneSelector.onDraftChange(Math.min(dragStartPrice, price), Math.max(dragStartPrice, price));
+  }
+
+  function handleZonePointerUp(event: PointerEvent<HTMLDivElement>) {
+    if (!intentZoneSelector?.enabled || dragStartPrice === null) return;
+    const price = priceFromPointer(event);
+    const y = pointerY(event);
+    if (dragStartY !== null) {
+      setZoneBand({ top: Math.min(dragStartY, y), bottom: Math.max(dragStartY, y) });
+    }
+    setDragStartPrice(null);
+    setDragStartY(null);
+    if (price === null) return;
+    const lower = Math.min(dragStartPrice, price);
+    const upper = Math.max(dragStartPrice, price);
+    if (Math.abs(upper - lower) <= Math.max(Math.abs(upper) * 0.0001, 1e-12)) return;
+    intentZoneSelector.onComplete(lower, upper);
+  }
 
   if (!validation.valid) {
     return (
@@ -412,6 +482,27 @@ export function PositionCandlestickChart({
       <div className={`positionChartCanvasFrame ${guideOpen ? "showOverlayGuides" : ""}`} data-testid="chart-canvas-frame">
         <div className="positionChartCanvas" data-testid="chart-canvas" ref={containerRef} />
         <svg className="volumeProfileOverlay" data-testid="chart-overlay" ref={overlayRef} aria-hidden="true" />
+        {zoneBand ? (
+          <div
+            className="chartIntentZoneBand"
+            style={{
+              top: `${zoneBand.top}px`,
+              height: `${Math.max(2, zoneBand.bottom - zoneBand.top)}px`
+            }}
+          />
+        ) : null}
+        {intentZoneSelector?.enabled ? (
+          <div
+            className="chartIntentZonePicker"
+            data-testid="chart-intent-zone-picker"
+            onPointerDown={handleZonePointerDown}
+            onPointerMove={handleZonePointerMove}
+            onPointerUp={handleZonePointerUp}
+            role="presentation"
+          >
+            <span>드래그해서 의도 존 지정</span>
+          </div>
+        ) : null}
         {guideOpen ? <ChartGuideLayer layer={guideLayer} /> : null}
       </div>
       {layers.flow ? <VolumePanel analysis={analysis} averageVolume={averageVolume} /> : null}

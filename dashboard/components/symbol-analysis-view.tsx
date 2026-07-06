@@ -128,7 +128,8 @@ export function SymbolAnalysisView({
   sidePanel,
   workspace,
   gridClassName = "positionDetailMain",
-  historyExtras
+  historyExtras,
+  intentZoneSelector
 }: {
   chartAnalysis: PositionChartAnalysis | null;
   chartLoading: boolean;
@@ -142,6 +143,12 @@ export function SymbolAnalysisView({
   workspace: AnalysisWorkspace;
   gridClassName?: string;
   historyExtras?: ReactNode;
+  intentZoneSelector?: {
+    enabled: boolean;
+    draft: { lower: number | null; upper: number | null };
+    onDraftChange: (lower: number, upper: number) => void;
+    onComplete: (lower: number, upper: number) => void;
+  };
 }) {
   return (
     <>
@@ -158,6 +165,7 @@ export function SymbolAnalysisView({
           highlightPrice={workspace.highlightPrice}
           positionOverlay={chartOverlayFromPayload(payload)}
           density={workspace.density}
+          intentZoneSelector={intentZoneSelector}
         />
         {sidePanel}
       </section>

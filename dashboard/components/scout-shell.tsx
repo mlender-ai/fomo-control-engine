@@ -418,6 +418,8 @@ function ScoutSymbolView({ symbol, onBack }: { symbol: string; onBack: () => voi
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [timeframe, setTimeframe] = useState("4h");
+  const [zonePickEnabled, setZonePickEnabled] = useState(false);
+  const [zoneDraft, setZoneDraft] = useState<{ lower: number | null; upper: number | null }>({ lower: null, upper: null });
 
   async function load(force = false) {
     setLoading(true);
@@ -457,6 +459,8 @@ function ScoutSymbolView({ symbol, onBack }: { symbol: string; onBack: () => voi
     setError("");
     const response = await api.createEntryIntent(symbol, { ...payload, timeframe });
     setIntents((items) => [response.intent, ...items.filter((item) => item.id !== response.intent.id)]);
+    setZonePickEnabled(false);
+    setZoneDraft({ lower: null, upper: null });
     setNotice("진입 의도를 등록했습니다. 스카우트 워커가 존 접근과 조건 충족을 감시합니다.");
   }
 
@@ -504,12 +508,24 @@ function ScoutSymbolView({ symbol, onBack }: { symbol: string; onBack: () => voi
         plan={null}
         analystBriefing={data?.analyst_briefing ?? null}
         workspace={workspace}
+        intentZoneSelector={{
+          enabled: zonePickEnabled,
+          draft: zoneDraft,
+          onDraftChange: (lower, upper) => setZoneDraft({ lower, upper }),
+          onComplete: (lower, upper) => {
+            setZoneDraft({ lower, upper });
+            setZonePickEnabled(false);
+          }
+        }}
         gridClassName="positionDetailMain"
         sidePanel={
           <div className="scoutSidePanel">
             <EntryIntentPanel
               intents={intents}
               markPrice={analysis?.mark_price ?? null}
+              zoneDraft={zoneDraft}
+              chartPickEnabled={zonePickEnabled}
+              onToggleChartPick={() => setZonePickEnabled((enabled) => !enabled)}
               onCancel={(intentId) => void cancelIntent(intentId)}
               onCreate={(payload) => void createIntent(payload)}
             />
@@ -525,11 +541,17 @@ function ScoutSymbolView({ symbol, onBack }: { symbol: string; onBack: () => voi
 function EntryIntentPanel({
   intents,
   markPrice,
+  zoneDraft,
+  chartPickEnabled,
+  onToggleChartPick,
   onCreate,
   onCancel
 }: {
   intents: EntryIntent[];
   markPrice: number | null;
+  zoneDraft: { lower: number | null; upper: number | null };
+  chartPickEnabled: boolean;
+  onToggleChartPick: () => void;
   onCreate: (payload: {
     direction: "long" | "short";
     zone_lower?: number | null;
@@ -549,6 +571,12 @@ function EntryIntentPanel({
   const [conditions, setConditions] = useState<string[]>(["price_in_zone"]);
   const [submitting, setSubmitting] = useState(false);
   const [formError, setFormError] = useState("");
+
+  useEffect(() => {
+    if (zoneDraft.lower === null || zoneDraft.upper === null) return;
+    setZoneLower(formatInputPrice(zoneDraft.lower));
+    setZoneUpper(formatInputPrice(zoneDraft.upper));
+  }, [zoneDraft.lower, zoneDraft.upper]);
 
   function fillAroundMark() {
     if (!markPrice) return;
@@ -648,6 +676,11 @@ function EntryIntentPanel({
           <MapPin size={14} />
           현재가 ±0.5%
         </button>
+        <button className={`button secondary ${chartPickEnabled ? "active" : ""}`} type="button" onClick={onToggleChartPick}>
+          <MapPin size={14} />
+          {chartPickEnabled ? "차트 지정 중" : "차트에서 존 지정"}
+        </button>
+        {chartPickEnabled ? <p className="entryIntentHint">차트 위에서 원하는 가격 범위를 위아래로 드래그하세요.</p> : null}
         <div className="entryIntentConditions">
           {["price_in_zone", "sweep_confirmed", "wyckoff_event", "volume_spike", "briefing_aligned"].map((condition) => (
             <label key={condition}>
@@ -766,6 +799,13 @@ function intentDistanceFromMark(intent: EntryIntent, markPrice: number | null | 
 function formatPct(value: number | null | undefined): string {
   if (typeof value !== "number") return "-";
   return `${value.toFixed(2)}%`;
+}
+
+function formatInputPrice(value: number): string {
+  if (!Number.isFinite(value)) return "";
+  if (Math.abs(value) >= 1000) return value.toFixed(2);
+  if (Math.abs(value) >= 1) return value.toPrecision(8).replace(/\.?0+$/, "");
+  return value.toPrecision(8).replace(/\.?0+$/, "");
 }
 
 function scoreTone(score: number | null | undefined): string {

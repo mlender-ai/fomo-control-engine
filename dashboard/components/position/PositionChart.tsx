@@ -16,7 +16,8 @@ export function PositionChart({
   onToggleLayer,
   highlightPrice,
   positionOverlay,
-  density = "simple"
+  density = "simple",
+  intentZoneSelector
 }: {
   analysis: PositionChartAnalysis | null;
   loading: boolean;
@@ -29,6 +30,12 @@ export function PositionChart({
   highlightPrice?: number | null;
   positionOverlay?: PositionChartOverlay | null;
   density?: Density;
+  intentZoneSelector?: {
+    enabled: boolean;
+    draft: { lower: number | null; upper: number | null };
+    onDraftChange: (lower: number, upper: number) => void;
+    onComplete: (lower: number, upper: number) => void;
+  };
 }) {
   if (loading && !analysis) {
     return (
@@ -78,6 +85,7 @@ export function PositionChart({
         highlightPrice={highlightPrice}
         positionOverlay={positionOverlay}
         density={density}
+        intentZoneSelector={intentZoneSelector}
       />
     </section>
   );
