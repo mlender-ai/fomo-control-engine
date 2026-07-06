@@ -1005,14 +1005,14 @@ function wyckoffOverlayNodes(context: OverlayContext): OverlayGroup {
     const labelX = phaseX + width / phaseLabels.length / 2 - 8;
     return [
       index > 0 ? `<line x1="${phaseX}" x2="${phaseX}" y1="${y}" y2="${y + height}" stroke="${context.palette.color("blue", 0.32)}" stroke-width="1" stroke-dasharray="4 4" />` : "",
-      `<text class="chartOverlayGuideLabel" x="${labelX}" y="${Math.max(12, y - 6)}" fill="${context.palette.color("blue", 0.82)}" font-size="10" font-family="SF Mono, Monaco, Consolas, monospace">Phase ${label}</text>`
+      `<text x="${labelX}" y="${Math.max(12, y - 6)}" fill="${context.palette.color("blue", 0.82)}" font-size="10" font-family="SF Mono, Monaco, Consolas, monospace">Phase ${label}</text>`
     ];
   });
   const events = splitWyckoffEvents(context.analysis.wyckoff_markers, context.analysis.wyckoff_markers_low_confidence).events;
   shapes.push(...events.flatMap((marker) => wyckoffEventMarker(context, marker)));
   const badges = events.flatMap((marker, index) => wyckoffEventBadge(context, marker, { top, bottom, x, width }, index));
-  // 국면 배지: 레인지 좌상단에 시안 톤으로 또렷하게
-  badges.unshift(labelBadge(x + 6, Math.max(20, y + 6), phaseHintLabel(context.analysis.wyckoff_phase?.phase), context.palette.color("blue", 0.22), rangeStroke, context.palette.color("text"), 128, "chartOverlayGuideLabel"));
+  // 국면 배지: 레인지 좌상단에 시안 톤으로 또렷하게 (기본 노출 — 가이드 토글과 무관하게 항상 보여야 하는 핵심 정보)
+  badges.unshift(labelBadge(x + 6, Math.max(20, y + 6), phaseHintLabel(context.analysis.wyckoff_phase?.phase), context.palette.color("blue", 0.22), rangeStroke, context.palette.color("text"), 128));
   return { zones, shapes, badges };
 }
 
@@ -1042,8 +1042,9 @@ function wyckoffEventBadge(
   const labelX = clamp(markerX - 34 + (index % 3) * 18, range.x, range.x + range.width - 92);
   const badgeText = `${upper ? "⤓" : "⤒"} ${eventShortLabel(marker)} · ${Math.round(marker.confidence)}`;
   const tone = upper ? "invalidation" : "takeProfit";
+  // 배지는 항상 보여야 하는 핵심 콘텐츠(가이드 토글과 무관) — 배경을 톤 컬러로 살짝 채워 검은 차트 배경과 확실히 대비되게 한다.
   return [
-    `<g class="chartOverlayGuideLabel"><polyline points="${markerX},${markerY} ${markerX},${upper ? range.top : range.bottom} ${labelX + 10},${labelY}" fill="none" stroke="${context.palette.flag(tone, 0.58)}" stroke-width="1" />${labelBadge(labelX, labelY - 11, badgeText, context.palette.color("panel", 0.82), context.palette.flag(tone, 0.86), context.palette.color("text"), 92)}</g>`
+    `<g><polyline points="${markerX},${markerY} ${markerX},${upper ? range.top : range.bottom} ${labelX + 10},${labelY}" fill="none" stroke="${context.palette.flag(tone, 0.7)}" stroke-width="1.2" />${labelBadge(labelX, labelY - 11, badgeText, context.palette.flag(tone, 0.24), context.palette.flag(tone, 0.92), context.palette.color("text"), 96)}</g>`
   ];
 }
 
