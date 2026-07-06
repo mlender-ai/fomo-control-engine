@@ -4245,6 +4245,12 @@ button.actionPlanRow:not(:disabled):hover {
   min-width: 150px;
 }
 
+.scoutArmedStack {
+  display: grid;
+  gap: 4px;
+  min-width: 180px;
+}
+
 .scoutArmedCell span,
 .scoutSetupMuted {
   display: inline-flex;
@@ -4258,6 +4264,10 @@ button.actionPlanRow:not(:disabled):hover {
 
 .scoutArmedCell span {
   color: var(--terminal-warning);
+}
+
+.scoutArmedCell.intent span {
+  color: var(--terminal-cyan);
 }
 
 .scoutArmedCell button {
@@ -4302,6 +4312,123 @@ button.actionPlanRow:not(:disabled):hover {
   display: grid;
   gap: 12px;
   align-content: start;
+}
+
+.entryIntentPanel {
+  align-content: start;
+}
+
+.entryIntentList {
+  display: grid;
+  gap: 6px;
+}
+
+.entryIntentItem {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgba(80, 190, 225, 0.25);
+  border-radius: 5px;
+  background: rgba(80, 190, 225, 0.07);
+  padding: 8px;
+}
+
+.entryIntentItem div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.entryIntentItem strong,
+.entryIntentItem span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.entryIntentItem strong {
+  color: var(--terminal-cyan);
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 12px;
+}
+
+.entryIntentItem span {
+  color: var(--terminal-muted);
+  font-size: 11px;
+}
+
+.entryIntentItem button {
+  border: 1px solid var(--terminal-line);
+  border-radius: 5px;
+  background: rgba(8, 11, 16, 0.5);
+  color: var(--terminal-muted);
+  cursor: pointer;
+  padding: 4px 7px;
+  font-size: 11px;
+}
+
+.entryIntentItem button:hover {
+  border-color: var(--terminal-negative);
+  color: var(--terminal-negative);
+}
+
+.entryIntentForm {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--terminal-line);
+  margin-top: 4px;
+  padding-top: 10px;
+}
+
+.simInputGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.simInputGrid label,
+.entryIntentNote {
+  display: grid;
+  gap: 4px;
+}
+
+.simInputGrid label span,
+.entryIntentNote span {
+  color: var(--terminal-muted);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.simInputGrid input,
+.simInputGrid select,
+.entryIntentNote input {
+  min-height: 32px;
+  border: 1px solid var(--terminal-line-strong);
+  border-radius: 5px;
+  background: #0b0e14;
+  color: var(--terminal-text);
+  padding: 0 9px;
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+}
+
+.entryIntentConditions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.entryIntentConditions label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--terminal-muted);
+  font-size: 11px;
+}
+
+.entryIntentConditions input {
+  accent-color: var(--terminal-amber);
 }
 
 .entrySimulatorPanel {

@@ -260,7 +260,7 @@ class AlertEngine:
             )
 
     def _reply_markup(self, candidate: AlertCandidate) -> dict[str, Any] | None:
-        if candidate.payload.get("kind") == "scout_setup":
+        if candidate.payload.get("kind") in {"scout_setup", "entry_intent"}:
             return inline_keyboard(setup_alert_keyboard(candidate.symbol, candidate.payload.get("direction")))
         if not candidate.position_id or candidate.symbol == "SYSTEM":
             return None

@@ -576,7 +576,25 @@ def scout_scan(limit: int = 5) -> dict[str, Any]:
         **payload,
         "rows": rows[:limit],
         "armed_setups": [setup.model_dump(mode="json") for setup in setups],
+        "entry_intents": [intent.model_dump(mode="json") for intent in runtime.repository.list_entry_intents(limit=200)],
     }
+
+
+def entry_intents(symbol: str | None = None, status: str | None = None) -> dict[str, Any]:
+    return scout_handlers.list_entry_intents(symbol=symbol, status=status)
+
+
+def create_entry_intent(symbol: str, direction: str, zone: str, timeframe: str = "4h") -> dict[str, Any]:
+    lower, upper = _parse_zone(zone)
+    return scout_handlers.create_entry_intent(
+        symbol,
+        scout_handlers.EntryIntentRequest(
+            direction=direction,
+            zone_lower=lower,
+            zone_upper=upper,
+            timeframe=timeframe,
+        ),
+    )
 
 
 def refresh_scout_scan_cache() -> dict[str, Any]:
@@ -689,3 +707,14 @@ def _to_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _parse_zone(value: str) -> tuple[float, float]:
+    parts = [part.strip() for part in value.replace("~", "-").split("-") if part.strip()]
+    if len(parts) == 1:
+        price = float(parts[0])
+        return price * 0.995, price * 1.005
+    if len(parts) >= 2:
+        first, second = float(parts[0]), float(parts[1])
+        return min(first, second), max(first, second)
+    raise ValueError("zone is required")

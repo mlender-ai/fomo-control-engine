@@ -123,3 +123,58 @@ def test_scan_rows_sorted_by_setup_proximity(client: TestClient) -> None:
         assert "long_score" in row and "short_score" in row
         assert "volume_state" in row and "as_of" in row
         assert row["asset_class"] in {"crypto", "stock"}
+
+
+def test_entry_intent_api_creates_single_price_zone_and_cancels(client: TestClient) -> None:
+    created = client.post(
+        "/api/scout/TSLAUSDT/intents",
+        json={
+            "direction": "long",
+            "price": 250,
+            "conditions": ["price_in_zone", "sweep_confirmed"],
+            "tolerance": "tight",
+            "note": "테스트 의도",
+        },
+    )
+    assert created.status_code == 200
+    intent = created.json()["intent"]
+    assert intent["symbol"] == "TSLAUSDT"
+    assert intent["direction"] == "long"
+    assert round(intent["zone_lower"], 2) == 248.75
+    assert round(intent["zone_upper"], 2) == 251.25
+    assert intent["conditions"] == ["price_in_zone", "sweep_confirmed"]
+    assert intent["tolerance_pct"] == 0.5
+    assert intent["expires_at"]
+
+    listed = client.get("/api/scout/intents", params={"symbol": "TSLAUSDT", "status": "active"})
+    assert listed.status_code == 200
+    assert [item["id"] for item in listed.json()["intents"]] == [intent["id"]]
+
+    cancelled = client.post(f"/api/scout/intents/{intent['id']}/cancel")
+    assert cancelled.status_code == 200
+    assert cancelled.json()["intent"]["status"] == "cancelled"
+
+
+def test_entry_intent_api_enforces_per_symbol_cap(client: TestClient) -> None:
+    for index in range(3):
+        response = client.post(
+            "/api/scout/TSLAUSDT/intents",
+            json={
+                "direction": "long",
+                "zone_lower": 240 + index,
+                "zone_upper": 241 + index,
+            },
+        )
+        assert response.status_code == 200
+
+    rejected = client.post(
+        "/api/scout/TSLAUSDT/intents",
+        json={
+            "direction": "long",
+            "zone_lower": 260,
+            "zone_upper": 261,
+        },
+    )
+
+    assert rejected.status_code == 409
+    assert "심볼당 활성 의도" in rejected.json()["detail"]

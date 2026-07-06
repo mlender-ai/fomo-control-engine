@@ -116,6 +116,8 @@ def format_help() -> str:
             "/flow BASED — 펀딩·OI·롱숏비",
             "/brief BASED — 애널리스트 브리핑",
             "/scout — 관심종목 스캔 상위 5",
+            "/intents — 등록한 진입 의도",
+            "/intent TSLA long 240-250 — 진입 의도 등록",
             "/sim BASED long 10 [0.09] — 진입 시뮬레이션",
             "/review — 최근 복기 3건",
             "/calib — 캘리브레이션 스냅샷",
@@ -123,6 +125,30 @@ def format_help() -> str:
             "/mute 2h / /unmute — 알림 일시 무음",
         ]
     )
+
+
+def format_entry_intents(payload: dict[str, Any]) -> str:
+    intents = payload.get("intents") if isinstance(payload.get("intents"), list) else []
+    if not intents:
+        return "등록된 진입 의도가 없습니다."
+    lines = ["<b>진입 의도</b>", "사용자 등록 존 기준 · 알림은 조건 충족 통보입니다.", ""]
+    for intent in intents[:12]:
+        if not isinstance(intent, dict):
+            continue
+        direction = "롱" if intent.get("direction") == "long" else "숏"
+        zone = f"{_price(intent.get('zone_lower'))}–{_price(intent.get('zone_upper'))}"
+        conditions = intent.get("conditions") if isinstance(intent.get("conditions"), list) else []
+        expires = _time(intent.get("expires_at"))
+        lines.append(
+            f"📍 <b>{escape(str(intent.get('symbol') or '-'))}</b> {direction} · {zone} · "
+            f"{escape(str(intent.get('status') or '-'))}"
+        )
+        lines.append(f"조건 {escape(', '.join(map(str, conditions)) or 'price_in_zone')} · 만료 {expires}")
+        note = str(intent.get("note") or "").strip()
+        if note:
+            lines.append(f"메모 {escape(note)}")
+        lines.append("")
+    return "\n".join(lines).strip()
 
 
 def format_positions_summary(payload: dict[str, Any]) -> str:

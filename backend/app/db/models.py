@@ -288,6 +288,41 @@ class ArmedSetup(BaseModel):
     last_seen_at: datetime = Field(default_factory=utc_now)
 
 
+class EntryIntent(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    symbol: str
+    timeframe: str = "4h"
+    direction: Literal["long", "short"]
+    zone_lower: float
+    zone_upper: float
+    conditions: list[
+        Literal[
+            "price_in_zone",
+            "sweep_confirmed",
+            "wyckoff_event",
+            "volume_spike",
+            "briefing_aligned",
+        ]
+    ] = Field(default_factory=lambda: ["price_in_zone"])
+    tolerance: Literal["tight", "normal", "loose"] = "normal"
+    tolerance_pct: float = 1.5
+    status: Literal["active", "triggered", "partial", "invalidated", "expired", "cancelled"] = "active"
+    note: str = ""
+    preview: dict = Field(default_factory=dict)
+    sim_preview_id: UUID | None = None
+    judgment_id: str | None = None
+    condition_state: dict = Field(default_factory=dict)
+    approaching_alerted_at: datetime | None = None
+    partial_alerted_at: datetime | None = None
+    zone_entered_alerted_at: datetime | None = None
+    triggered_at: datetime | None = None
+    invalidated_at: datetime | None = None
+    expires_at: datetime
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+    last_seen_at: datetime = Field(default_factory=utc_now)
+
+
 class PositionMemoUpdate(BaseModel):
     memo: str | None = None
     entry_memo: str | None = None

@@ -19,6 +19,7 @@ from app.db.models import (
     DerivativeDataSnapshot,
     DerivativeMetric,
     EngineParamVersion,
+    EntryIntent,
     EntryScenario,
     JudgmentLedgerEntry,
     JudgmentScore,
@@ -76,6 +77,14 @@ class Repository(Protocol):
     def upsert_armed_setup(self, setup: ArmedSetup) -> ArmedSetup: ...
     def get_armed_setup(self, setup_id: UUID) -> ArmedSetup | None: ...
     def list_armed_setups(self, symbol: str | None = None, status: str | None = None, limit: int = 200) -> list[ArmedSetup]: ...
+    def upsert_entry_intent(self, intent: EntryIntent) -> EntryIntent: ...
+    def get_entry_intent(self, intent_id: UUID) -> EntryIntent | None: ...
+    def list_entry_intents(
+        self,
+        symbol: str | None = None,
+        status: str | None = None,
+        limit: int = 200,
+    ) -> list[EntryIntent]: ...
     def add_trade(self, trade: Trade) -> Trade: ...
     def get_trade(self, trade_id: UUID) -> Trade | None: ...
     def list_trades(self) -> list[Trade]: ...
@@ -147,6 +156,7 @@ class MemoryRepository:
         self.alert_responses: dict[UUID, AlertResponseRecord] = {}
         self.scout_snapshots: dict[UUID, ScoutSnapshot] = {}
         self.armed_setups: dict[UUID, ArmedSetup] = {}
+        self.entry_intents: dict[UUID, EntryIntent] = {}
         self.trades: dict[UUID, Trade] = {}
         self.judgments: dict[UUID, list[JudgmentLedgerEntry]] = {}
         self.judgment_scores: dict[UUID, JudgmentScore] = {}
@@ -293,6 +303,27 @@ class MemoryRepository:
         if status:
             setups = [setup for setup in setups if setup.status == status]
         return sorted(setups, key=lambda item: item.updated_at, reverse=True)[:limit]
+
+    def upsert_entry_intent(self, intent: EntryIntent) -> EntryIntent:
+        normalized = intent.symbol.upper()
+        self.entry_intents[intent.id] = intent.model_copy(update={"symbol": normalized})
+        return self.entry_intents[intent.id]
+
+    def get_entry_intent(self, intent_id: UUID) -> EntryIntent | None:
+        return self.entry_intents.get(intent_id)
+
+    def list_entry_intents(
+        self,
+        symbol: str | None = None,
+        status: str | None = None,
+        limit: int = 200,
+    ) -> list[EntryIntent]:
+        intents = list(self.entry_intents.values())
+        if symbol:
+            intents = [intent for intent in intents if intent.symbol.upper() == symbol.upper()]
+        if status:
+            intents = [intent for intent in intents if intent.status == status]
+        return sorted(intents, key=lambda item: item.updated_at, reverse=True)[:limit]
 
     def add_trade(self, trade: Trade) -> Trade:
         self.trades[trade.id] = trade
@@ -931,6 +962,60 @@ class SQLiteRepository:
         with self._lock, self._connect() as connection:
             rows = connection.execute(query, tuple(params)).fetchall()
         return [ArmedSetup.model_validate_json(row["payload"]) for row in rows]
+
+    def upsert_entry_intent(self, intent: EntryIntent) -> EntryIntent:
+        normalized = intent.symbol.upper()
+        saved = intent.model_copy(update={"symbol": normalized})
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO entry_intents
+                    (id, symbol, timeframe, direction, status, zone_lower, zone_upper, expires_at, updated_at, created_at, payload)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(saved.id),
+                    saved.symbol,
+                    saved.timeframe,
+                    saved.direction,
+                    saved.status,
+                    saved.zone_lower,
+                    saved.zone_upper,
+                    saved.expires_at.isoformat(),
+                    saved.updated_at.isoformat(),
+                    saved.created_at.isoformat(),
+                    _dump_model(saved),
+                ),
+            )
+        return saved
+
+    def get_entry_intent(self, intent_id: UUID) -> EntryIntent | None:
+        with self._lock, self._connect() as connection:
+            row = connection.execute("SELECT payload FROM entry_intents WHERE id = ?", (str(intent_id),)).fetchone()
+        return EntryIntent.model_validate_json(row["payload"]) if row else None
+
+    def list_entry_intents(
+        self,
+        symbol: str | None = None,
+        status: str | None = None,
+        limit: int = 200,
+    ) -> list[EntryIntent]:
+        query = "SELECT payload FROM entry_intents"
+        clauses: list[str] = []
+        params: list[str | int] = []
+        if symbol:
+            clauses.append("symbol = ?")
+            params.append(symbol.upper())
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY updated_at DESC LIMIT ?"
+        params.append(limit)
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(query, tuple(params)).fetchall()
+        return [EntryIntent.model_validate_json(row["payload"]) for row in rows]
 
     def add_trade(self, trade: Trade) -> Trade:
         with self._lock, self._connect() as connection:

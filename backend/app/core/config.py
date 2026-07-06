@@ -324,6 +324,38 @@ class Settings(BaseSettings):
         24.0,
         validation_alias=AliasChoices("FCE_SCOUT_SETUP_SCORE_AFTER_HOURS", "SCOUT_SETUP_SCORE_AFTER_HOURS"),
     )
+    entry_intent_max_per_symbol: int = Field(
+        3,
+        validation_alias=AliasChoices("FCE_ENTRY_INTENT_MAX_PER_SYMBOL", "ENTRY_INTENT_MAX_PER_SYMBOL"),
+    )
+    entry_intent_max_active: int = Field(
+        20,
+        validation_alias=AliasChoices("FCE_ENTRY_INTENT_MAX_ACTIVE", "ENTRY_INTENT_MAX_ACTIVE"),
+    )
+    entry_intent_default_expiry_days: int = Field(
+        14,
+        validation_alias=AliasChoices("FCE_ENTRY_INTENT_DEFAULT_EXPIRY_DAYS", "ENTRY_INTENT_DEFAULT_EXPIRY_DAYS"),
+    )
+    entry_intent_tight_tolerance_pct: float = Field(
+        0.5,
+        validation_alias=AliasChoices("FCE_ENTRY_INTENT_TIGHT_TOLERANCE_PCT", "ENTRY_INTENT_TIGHT_TOLERANCE_PCT"),
+    )
+    entry_intent_normal_tolerance_pct: float = Field(
+        1.5,
+        validation_alias=AliasChoices("FCE_ENTRY_INTENT_NORMAL_TOLERANCE_PCT", "ENTRY_INTENT_NORMAL_TOLERANCE_PCT"),
+    )
+    entry_intent_loose_tolerance_pct: float = Field(
+        3.0,
+        validation_alias=AliasChoices("FCE_ENTRY_INTENT_LOOSE_TOLERANCE_PCT", "ENTRY_INTENT_LOOSE_TOLERANCE_PCT"),
+    )
+    entry_intent_rearm_pct: float = Field(
+        3.0,
+        validation_alias=AliasChoices("FCE_ENTRY_INTENT_REARM_PCT", "ENTRY_INTENT_REARM_PCT"),
+    )
+    entry_intent_score_after_hours: float = Field(
+        24.0,
+        validation_alias=AliasChoices("FCE_ENTRY_INTENT_SCORE_AFTER_HOURS", "ENTRY_INTENT_SCORE_AFTER_HOURS"),
+    )
     worker_backoff_failure_threshold: int = Field(
         3,
         validation_alias=AliasChoices("FCE_WORKER_BACKOFF_FAILURE_THRESHOLD", "WORKER_BACKOFF_FAILURE_THRESHOLD"),
@@ -396,7 +428,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("FCE_TELEGRAM_QUIET_HOURS_TIMEZONE", "TELEGRAM_QUIET_HOURS_TIMEZONE"),
     )
     alert_rules_enabled: str = Field(
-        "trigger_near,invalidation_breach,take_profit_hit,status_worsened,health_drop,liq_proximity,liq_unknown_high_lev,wyckoff_event,data_stall,funding_extreme,oi_divergence,liq_cluster_near,setup_near,setup_triggered,setup_invalidated",
+        "trigger_near,invalidation_breach,take_profit_hit,status_worsened,health_drop,liq_proximity,liq_unknown_high_lev,wyckoff_event,data_stall,funding_extreme,oi_divergence,liq_cluster_near,setup_near,setup_triggered,setup_invalidated,intent_approaching,intent_zone_entered,intent_zone_entered_partial,intent_invalidated",
         validation_alias=AliasChoices("FCE_ALERT_RULES_ENABLED", "ALERT_RULES_ENABLED"),
     )
     alert_trigger_near_pct: float = Field(

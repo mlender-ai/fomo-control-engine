@@ -13,6 +13,7 @@ from app.notify.bot.formatters import (
     format_briefing,
     format_flow,
     format_help,
+    format_entry_intents,
     format_insight,
     format_position_verdict,
     format_positions_summary,
@@ -115,6 +116,12 @@ class TelegramBotSupervisor:
         async def scout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await guarded(update, self._scout, context)
 
+        async def intents(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+            await guarded(update, self._intents, context)
+
+        async def intent(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+            await guarded(update, self._intent, context)
+
         async def sim(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await guarded(update, self._sim, context)
 
@@ -144,6 +151,8 @@ class TelegramBotSupervisor:
         app.add_handler(CommandHandler("flow", flow))
         app.add_handler(CommandHandler("brief", brief))
         app.add_handler(CommandHandler("scout", scout))
+        app.add_handler(CommandHandler("intents", intents))
+        app.add_handler(CommandHandler("intent", intent))
         app.add_handler(CommandHandler("sim", sim))
         app.add_handler(CommandHandler("review", review))
         app.add_handler(CommandHandler("calib", calib))
@@ -214,6 +223,23 @@ class TelegramBotSupervisor:
     async def _scout(self, update: Any, context: Any) -> None:
         payload = await self._run(service.scout_scan)
         await self._reply(update.effective_message, format_scout(payload))
+
+    async def _intents(self, update: Any, context: Any) -> None:
+        symbol = _first_arg(context.args)
+        payload = await self._run(service.entry_intents, symbol, "active")
+        await self._reply(update.effective_message, format_entry_intents(payload))
+
+    async def _intent(self, update: Any, context: Any) -> None:
+        args = list(context.args or [])
+        if len(args) < 3:
+            await self._reply(update.effective_message, "사용법: /intent TSLA long 240-250")
+            return
+        try:
+            payload = await self._run(service.create_entry_intent, args[0], args[1].lower(), args[2])
+        except Exception as exc:
+            await self._reply(update.effective_message, f"진입 의도 등록 실패: {exc}")
+            return
+        await self._reply(update.effective_message, format_entry_intents({"intents": [payload["intent"]]}))
 
     async def _sim(self, update: Any, context: Any) -> None:
         args = list(context.args or [])

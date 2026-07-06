@@ -10,12 +10,12 @@ from __future__ import annotations
 
 import time
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
-from uuid import UUID
+from uuid import UUID, NAMESPACE_URL, uuid5
 
 from fastapi import HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.analyst.briefing import build_analyst_briefing
 from app.services import http_handlers as runtime
@@ -23,6 +23,7 @@ from app.db.models import (
     CatalogSymbol,
     Direction,
     EntryChecklistItem,
+    EntryIntent,
     EntryScenario,
     JudgmentLedgerEntry,
     WatchlistItem,
@@ -37,6 +38,7 @@ from app.positions.engine import direction_aware_score
 from app.positions.simulator import simulate_entry
 from app.review.params import engine_param_snapshot
 from app.scout.monitor import (
+    SCOUT_SENTINEL_POSITION_ID,
     arm_manual_setup,
     disarm_setup,
     scout_rate_budget,
@@ -209,9 +211,11 @@ def scan_watchlist(request: ScanRequest | None = None) -> dict:
             }
         )
     rows.sort(key=lambda row: row.get("setup_proximity_pct") if row.get("setup_proximity_pct") is not None else float("inf"))
+    intents = _repo().list_entry_intents(limit=300)
     return {
         "rows": rows,
         "armed_setups": [setup.model_dump(mode="json") for setup in _repo().list_armed_setups(limit=300)],
+        "entry_intents": [intent.model_dump(mode="json") for intent in intents],
         "scanned_at": utc_now().isoformat(),
         "cache_ttl_seconds": SCAN_CACHE_TTL_SECONDS,
         "count": len(rows),
@@ -301,9 +305,24 @@ def _summary_row(
         "funding_state": funding.get("label") if funding else None,
         "crowding_score": crowding.get("score") if crowding else None,
         "setup_proximity_pct": min(proximity_candidates) if proximity_candidates else None,
+        "entry_intent_distance_pct": _nearest_intent_distance(symbol, mark),
         "mark_price": mark,
         "setup_candidates": setup_candidates_from_analysis(symbol, snapshot.timeframe, analysis, runtime.settings),
     }
+
+
+def _nearest_intent_distance(symbol: str, mark: float | None) -> float | None:
+    if mark is None:
+        return None
+    distances: list[float] = []
+    for intent in _repo().list_entry_intents(symbol=symbol, status="active", limit=20):
+        if intent.zone_lower <= mark <= intent.zone_upper:
+            distances.append(0.0)
+        elif mark < intent.zone_lower:
+            distances.append(abs((intent.zone_lower - mark) / mark) * 100)
+        else:
+            distances.append(abs((mark - intent.zone_upper) / mark) * 100)
+    return round(min(distances), 2) if distances else None
 
 
 def _nearest_liquidity_pool(liquidity: Any, mark: Any) -> dict[str, Any] | None:
@@ -388,6 +407,156 @@ def disarm_scout_setup(setup_id: UUID) -> dict:
     if setup is None:
         raise HTTPException(status_code=404, detail="셋업을 찾을 수 없습니다.")
     return {"setup": setup.model_dump(mode="json")}
+
+
+class EntryIntentRequest(BaseModel):
+    direction: str
+    zone_lower: float | None = None
+    zone_upper: float | None = None
+    price: float | None = None
+    conditions: list[str] = Field(default_factory=lambda: ["price_in_zone"])
+    tolerance: str = "normal"
+    expires_at: datetime | None = None
+    note: str = ""
+    timeframe: str = "4h"
+    leverage: float = 10
+
+
+def list_entry_intents(symbol: str | None = None, status: str | None = None, limit: int = 100) -> dict:
+    intents = _repo().list_entry_intents(symbol=symbol, status=status, limit=min(max(limit, 1), 300))
+    return {"intents": [intent.model_dump(mode="json") for intent in intents]}
+
+
+def create_entry_intent(symbol: str, request: EntryIntentRequest) -> dict:
+    normalized = symbol.strip().upper()
+    if request.direction not in {"long", "short"}:
+        raise HTTPException(status_code=422, detail="direction은 long 또는 short여야 합니다.")
+    lower, upper = _intent_zone(request)
+    if lower <= 0 or upper <= 0 or lower >= upper:
+        raise HTTPException(status_code=422, detail="존 lower/upper는 0보다 크고 lower < upper여야 합니다.")
+    conditions = _intent_conditions(request.conditions)
+    tolerance = _intent_tolerance(request.tolerance)
+    tolerance_pct = _intent_tolerance_pct(tolerance)
+    expires_at = request.expires_at or (utc_now() + timedelta(days=max(1, runtime.settings.entry_intent_default_expiry_days)))
+    if expires_at <= utc_now():
+        raise HTTPException(status_code=422, detail="expires_at은 현재 이후여야 합니다.")
+    active_for_symbol = _repo().list_entry_intents(symbol=normalized, status="active", limit=100)
+    if len(active_for_symbol) >= runtime.settings.entry_intent_max_per_symbol:
+        raise HTTPException(status_code=409, detail=f"심볼당 활성 의도는 {runtime.settings.entry_intent_max_per_symbol}개까지입니다.")
+    active_total = _repo().list_entry_intents(status="active", limit=1000)
+    if len(active_total) >= runtime.settings.entry_intent_max_active:
+        raise HTTPException(status_code=409, detail=f"전체 활성 의도는 {runtime.settings.entry_intent_max_active}개까지입니다.")
+
+    midpoint = (lower + upper) / 2
+    preview: dict[str, Any] = {}
+    try:
+        preview_result = _simulate(
+            SimulateRequest(
+                symbol=normalized,
+                direction=request.direction,
+                entry_price=midpoint,
+                leverage=request.leverage,
+                timeframe=request.timeframe,
+            )
+        )
+        preview = {
+            "entry_price": midpoint,
+            "leverage": request.leverage,
+            "rr_ratio": preview_result.get("rr_ratio"),
+            "invalidation_distance_pct": preview_result.get("invalidation_distance_pct"),
+            "estimated_liquidation_distance_pct": preview_result.get("estimated_liquidation_distance_pct"),
+            "checklist_passed": preview_result.get("checklist_passed"),
+            "checklist_total": preview_result.get("checklist_total"),
+            "verdict_line": preview_result.get("verdict_line"),
+            "briefing_direction_conflict": preview_result.get("briefing_direction_conflict"),
+        }
+    except Exception as exc:
+        preview = {"error": str(exc), "entry_price": midpoint, "leverage": request.leverage}
+
+    now = utc_now()
+    intent_id = uuid5(
+        NAMESPACE_URL,
+        f"fce:entry-intent:{normalized}:{request.timeframe}:{request.direction}:{round(lower, 8)}:{round(upper, 8)}:{expires_at.isoformat()}",
+    )
+    intent = EntryIntent(
+        id=intent_id,
+        symbol=normalized,
+        timeframe=request.timeframe,
+        direction=request.direction,  # type: ignore[arg-type]
+        zone_lower=lower,
+        zone_upper=upper,
+        conditions=conditions,  # type: ignore[arg-type]
+        tolerance=tolerance,  # type: ignore[arg-type]
+        tolerance_pct=tolerance_pct,
+        note=request.note,
+        preview=preview,
+        judgment_id=f"entry_intent:{intent_id}",
+        expires_at=expires_at,
+        created_at=now,
+        updated_at=now,
+        last_seen_at=now,
+    )
+    saved = _repo().upsert_entry_intent(intent)
+    _repo().add_judgment(
+        JudgmentLedgerEntry(
+            judgment_id=f"{saved.judgment_id or f'entry_intent:{saved.id}'}:registered",
+            position_id=SCOUT_SENTINEL_POSITION_ID,
+            source_type="entry_intent",
+            source_id=str(saved.id),
+            as_of=now,
+            type="entry_intent_registered",
+            claim={
+                "symbol": saved.symbol,
+                "direction": saved.direction,
+                "zone_lower": saved.zone_lower,
+                "zone_upper": saved.zone_upper,
+                "conditions": saved.conditions,
+                "expires_at": saved.expires_at.isoformat(),
+            },
+            param_version=engine_param_snapshot(_repo()),
+        )
+    )
+    return {"intent": saved.model_dump(mode="json")}
+
+
+def cancel_entry_intent(intent_id: UUID) -> dict:
+    intent = _repo().get_entry_intent(intent_id)
+    if intent is None:
+        raise HTTPException(status_code=404, detail="진입 의도를 찾을 수 없습니다.")
+    cancelled = intent.model_copy(update={"status": "cancelled", "updated_at": utc_now()})
+    saved = _repo().upsert_entry_intent(cancelled)
+    return {"intent": saved.model_dump(mode="json")}
+
+
+def _intent_zone(request: EntryIntentRequest) -> tuple[float, float]:
+    if request.zone_lower is not None and request.zone_upper is not None:
+        return (min(float(request.zone_lower), float(request.zone_upper)), max(float(request.zone_lower), float(request.zone_upper)))
+    if request.price is None:
+        raise HTTPException(status_code=422, detail="zone_lower/zone_upper 또는 price가 필요합니다.")
+    price = float(request.price)
+    return (price * 0.995, price * 1.005)
+
+
+def _intent_conditions(values: list[str]) -> list[str]:
+    allowed = {"price_in_zone", "sweep_confirmed", "wyckoff_event", "volume_spike", "briefing_aligned"}
+    normalized = [value for value in values if value in allowed]
+    if "price_in_zone" not in normalized:
+        normalized.insert(0, "price_in_zone")
+    return list(dict.fromkeys(normalized))
+
+
+def _intent_tolerance(value: str) -> str:
+    if value in {"tight", "normal", "loose"}:
+        return value
+    return "normal"
+
+
+def _intent_tolerance_pct(value: str) -> float:
+    if value == "tight":
+        return runtime.settings.entry_intent_tight_tolerance_pct
+    if value == "loose":
+        return runtime.settings.entry_intent_loose_tolerance_pct
+    return runtime.settings.entry_intent_normal_tolerance_pct
 
 
 def _nearest_prz_distance_pct(patterns: list[dict[str, Any]], mark: float | None) -> float | None:

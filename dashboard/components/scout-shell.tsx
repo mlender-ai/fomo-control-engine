@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Radar, RefreshCw, Search, Star, Trash2 } from "lucide-react";
+import { MapPin, Radar, RefreshCw, Search, Star, Trash2 } from "lucide-react";
 import { TerminalWarning } from "@/components/terminal";
 import { SymbolAnalysisView, useAnalysisWorkspace } from "@/components/symbol-analysis-view";
 import { EntrySimulator } from "@/components/entry-simulator";
@@ -9,6 +9,7 @@ import {
   api,
   type ArmedSetup,
   type CatalogSymbolInfo,
+  type EntryIntent,
   type ScoutAnalysisResponse,
   type ScoutScanRow,
   type WatchlistEntry
@@ -45,6 +46,7 @@ export function ScoutShell() {
   const [watchlist, setWatchlist] = useState<WatchlistEntry[]>([]);
   const [scanRows, setScanRows] = useState<ScoutScanRow[]>([]);
   const [armedSetups, setArmedSetups] = useState<ArmedSetup[]>([]);
+  const [entryIntents, setEntryIntents] = useState<EntryIntent[]>([]);
   const [scannedAt, setScannedAt] = useState<string>("");
   const [scanning, setScanning] = useState(false);
   const [error, setError] = useState("");
@@ -60,6 +62,8 @@ export function ScoutShell() {
     try {
       const response = await api.watchlist();
       setWatchlist(response.items);
+      const intents = await api.entryIntents(undefined, "active");
+      setEntryIntents(intents.intents);
     } catch (err) {
       setError(err instanceof Error ? err.message : "관심종목을 불러오지 못했습니다.");
     }
@@ -92,6 +96,7 @@ export function ScoutShell() {
       const response = await api.scoutScan({ force });
       setScanRows(response.rows);
       setArmedSetups(response.armed_setups ?? []);
+      setEntryIntents((current) => response.entry_intents ?? current);
       setScannedAt(response.scanned_at);
     } catch (err) {
       setError(err instanceof Error ? err.message : "스캔에 실패했습니다.");
@@ -118,6 +123,7 @@ export function ScoutShell() {
       await loadWatchlist();
       setScanRows((rows) => rows.filter((row) => row.symbol !== symbol));
       setArmedSetups((items) => items.filter((item) => item.symbol !== symbol));
+      setEntryIntents((items) => items.filter((item) => item.symbol !== symbol));
     } catch (err) {
       setError(err instanceof Error ? err.message : "관심종목 삭제에 실패했습니다.");
     }
@@ -156,6 +162,16 @@ export function ScoutShell() {
       setNotice("셋업 알림을 해제했습니다.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "셋업 해제에 실패했습니다.");
+    }
+  }
+
+  async function cancelIntent(intentId: string) {
+    try {
+      const response = await api.cancelEntryIntent(intentId);
+      setEntryIntents((items) => items.map((item) => (item.id === intentId ? response.intent : item)));
+      setNotice("진입 의도를 해제했습니다.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "진입 의도 해제에 실패했습니다.");
     }
   }
 
@@ -255,10 +271,12 @@ export function ScoutShell() {
                     key={row.symbol}
                     row={row}
                     armedSetups={armedSetups.filter((setup) => setup.symbol === row.symbol && setup.status === "armed")}
+                    entryIntents={entryIntents.filter((intent) => intent.symbol === row.symbol && intent.status === "active")}
                     scanReference={scannedAt}
                     onOpen={() => setActiveSymbol(row.symbol)}
                     onRemove={() => void removeSymbol(row.symbol)}
                     onDisarm={disarmSetup}
+                    onCancelIntent={cancelIntent}
                   />
                 ))}
               </tbody>
@@ -292,17 +310,21 @@ export function ScoutShell() {
 function ScanRow({
   row,
   armedSetups,
+  entryIntents,
   scanReference,
   onOpen,
   onRemove,
-  onDisarm
+  onDisarm,
+  onCancelIntent
 }: {
   row: ScoutScanRow;
   armedSetups: ArmedSetup[];
+  entryIntents: EntryIntent[];
   scanReference: string;
   onOpen: () => void;
   onRemove: () => void;
   onDisarm: (setupId: string) => void;
+  onCancelIntent: (intentId: string) => void;
 }) {
   // 렌더 순수성: 벽시계 대신 스캔 완료 시각(scanReference) 대비 나이로 신선도를 판정.
   // as_of가 스캔 시각보다 5분 이상 과거면 캐시에서 나온 오래된 값.
@@ -328,18 +350,38 @@ function ScanRow({
         {row.session?.label ? <small className="sessionMiniBadge">{row.session.label}</small> : null}
       </td>
       <td>
-        {armedSetups.length ? (
-          <div className="scoutArmedCell">
-            <span title={armedSetups[0].basis}>🎯 {armedSetups[0].trigger_label} · {formatPct(armedSetups[0].distance_pct)}</span>
-            <button
-              type="button"
-              onClick={(event) => {
-                event.stopPropagation();
-                onDisarm(armedSetups[0].id);
-              }}
-            >
-              해제
-            </button>
+        {armedSetups.length || entryIntents.length ? (
+          <div className="scoutArmedStack">
+            {entryIntents.slice(0, 1).map((intent) => (
+              <div className="scoutArmedCell intent" key={intent.id}>
+                <span title={`${directionLabel(intent.direction)} ${formatPrice(intent.zone_lower)}-${formatPrice(intent.zone_upper)}`}>
+                  📍 {directionLabel(intent.direction)} 존 · {formatPct(row.entry_intent_distance_pct ?? intentDistanceFromMark(intent, row.mark_price))}
+                </span>
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onCancelIntent(intent.id);
+                  }}
+                >
+                  해제
+                </button>
+              </div>
+            ))}
+            {armedSetups.slice(0, 1).map((setup) => (
+              <div className="scoutArmedCell" key={setup.id}>
+                <span title={setup.basis}>🎯 {setup.trigger_label} · {formatPct(setup.distance_pct)}</span>
+                <button
+                  type="button"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onDisarm(setup.id);
+                  }}
+                >
+                  해제
+                </button>
+              </div>
+            ))}
           </div>
         ) : row.setup_candidates?.length ? (
           <span className="scoutSetupMuted">후보 {row.setup_candidates.length}</span>
@@ -371,15 +413,22 @@ function ScanRow({
 function ScoutSymbolView({ symbol, onBack }: { symbol: string; onBack: () => void }) {
   const workspace = useAnalysisWorkspace();
   const [data, setData] = useState<ScoutAnalysisResponse | null>(null);
+  const [intents, setIntents] = useState<EntryIntent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [timeframe, setTimeframe] = useState("4h");
 
   async function load(force = false) {
     setLoading(true);
     setError("");
     try {
-      setData(await api.scoutAnalysis(symbol, timeframe, force));
+      const [analysisResponse, intentResponse] = await Promise.all([
+        api.scoutAnalysis(symbol, timeframe, force),
+        api.entryIntents(symbol, "active")
+      ]);
+      setData(analysisResponse);
+      setIntents(intentResponse.intents);
     } catch (err) {
       setData(null);
       setError(err instanceof Error ? err.message : "분석 데이터를 불러오지 못했습니다.");
@@ -395,6 +444,28 @@ function ScoutSymbolView({ symbol, onBack }: { symbol: string; onBack: () => voi
 
   const analysis = data?.analysis ?? null;
   const scenarios = analysis?.scenarios ?? null;
+
+  async function createIntent(payload: {
+    direction: "long" | "short";
+    zone_lower?: number | null;
+    zone_upper?: number | null;
+    price?: number | null;
+    conditions?: string[];
+    tolerance?: "tight" | "normal" | "loose";
+    note?: string;
+  }) {
+    setError("");
+    const response = await api.createEntryIntent(symbol, { ...payload, timeframe });
+    setIntents((items) => [response.intent, ...items.filter((item) => item.id !== response.intent.id)]);
+    setNotice("진입 의도를 등록했습니다. 스카우트 워커가 존 접근과 조건 충족을 감시합니다.");
+  }
+
+  async function cancelIntent(intentId: string) {
+    setError("");
+    const response = await api.cancelEntryIntent(intentId);
+    setIntents((items) => items.filter((item) => item.id !== response.intent.id));
+    setNotice("진입 의도를 해제했습니다.");
+  }
 
   return (
     <div className="page positionDetailPage" data-testid="scout-analysis-view">
@@ -422,6 +493,7 @@ function ScoutSymbolView({ symbol, onBack }: { symbol: string; onBack: () => voi
       </header>
 
       {error ? <TerminalWarning tone="error">{error}</TerminalWarning> : null}
+      {notice ? <TerminalWarning tone="info">{notice}</TerminalWarning> : null}
 
       <SymbolAnalysisView
         chartAnalysis={analysis}
@@ -435,12 +507,170 @@ function ScoutSymbolView({ symbol, onBack }: { symbol: string; onBack: () => voi
         gridClassName="positionDetailMain"
         sidePanel={
           <div className="scoutSidePanel">
+            <EntryIntentPanel
+              intents={intents}
+              markPrice={analysis?.mark_price ?? null}
+              onCancel={(intentId) => void cancelIntent(intentId)}
+              onCreate={(payload) => void createIntent(payload)}
+            />
             <EntrySimulator symbol={symbol} markPrice={analysis?.mark_price ?? null} timeframe={timeframe} />
             <ScenarioPanel scenarios={scenarios} asOf={data?.as_of} />
           </div>
         }
       />
     </div>
+  );
+}
+
+function EntryIntentPanel({
+  intents,
+  markPrice,
+  onCreate,
+  onCancel
+}: {
+  intents: EntryIntent[];
+  markPrice: number | null;
+  onCreate: (payload: {
+    direction: "long" | "short";
+    zone_lower?: number | null;
+    zone_upper?: number | null;
+    price?: number | null;
+    conditions?: string[];
+    tolerance?: "tight" | "normal" | "loose";
+    note?: string;
+  }) => void;
+  onCancel: (intentId: string) => void;
+}) {
+  const [direction, setDirection] = useState<"long" | "short">("long");
+  const [zoneLower, setZoneLower] = useState("");
+  const [zoneUpper, setZoneUpper] = useState("");
+  const [tolerance, setTolerance] = useState<"tight" | "normal" | "loose">("normal");
+  const [note, setNote] = useState("");
+  const [conditions, setConditions] = useState<string[]>(["price_in_zone"]);
+  const [submitting, setSubmitting] = useState(false);
+  const [formError, setFormError] = useState("");
+
+  function fillAroundMark() {
+    if (!markPrice) return;
+    setZoneLower((markPrice * 0.995).toPrecision(8));
+    setZoneUpper((markPrice * 1.005).toPrecision(8));
+  }
+
+  function toggleCondition(condition: string) {
+    setConditions((items) => {
+      const next = new Set(items);
+      if (next.has(condition)) next.delete(condition);
+      else next.add(condition);
+      next.add("price_in_zone");
+      return Array.from(next);
+    });
+  }
+
+  async function submit() {
+    const lower = Number(zoneLower);
+    const upper = Number(zoneUpper);
+    setFormError("");
+    if (!Number.isFinite(lower) || !Number.isFinite(upper) || lower <= 0 || upper <= 0 || lower >= upper) {
+      setFormError("존 하단/상단 가격을 올바르게 입력하세요.");
+      return;
+    }
+    setSubmitting(true);
+    try {
+      await onCreate({
+        direction,
+        zone_lower: lower,
+        zone_upper: upper,
+        conditions,
+        tolerance,
+        note
+      });
+      setNote("");
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : "진입 의도 등록에 실패했습니다.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <section className="focusPanel entryIntentPanel" data-testid="entry-intent-panel">
+      <div className="focusPanelHeader">
+        <div>
+          <h2>진입 의도</h2>
+          <p>내가 보고 싶은 가격 존을 등록하고 조건 충족 시 알림을 받습니다.</p>
+        </div>
+        <span>{intents.length}/3</span>
+      </div>
+
+      {intents.length ? (
+        <div className="entryIntentList">
+          {intents.map((intent) => (
+            <div className="entryIntentItem" key={intent.id}>
+              <div>
+                <strong>{directionLabel(intent.direction)} · {formatPrice(intent.zone_lower)}-{formatPrice(intent.zone_upper)}</strong>
+                <span>{intent.conditions.map(conditionLabel).join(" · ")} · {toleranceLabel(intent.tolerance)}</span>
+              </div>
+              <button type="button" onClick={() => onCancel(intent.id)}>해제</button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="terminalEmpty">활성 진입 의도가 없습니다.</div>
+      )}
+
+      <div className="entryIntentForm">
+        <div className="simInputGrid">
+          <label>
+            <span>방향</span>
+            <select value={direction} onChange={(event) => setDirection(event.target.value as "long" | "short")}>
+              <option value="long">롱</option>
+              <option value="short">숏</option>
+            </select>
+          </label>
+          <label>
+            <span>접근 민감도</span>
+            <select value={tolerance} onChange={(event) => setTolerance(event.target.value as "tight" | "normal" | "loose")}>
+              <option value="tight">타이트 0.5%</option>
+              <option value="normal">보통 1.5%</option>
+              <option value="loose">느슨함 3.0%</option>
+            </select>
+          </label>
+          <label>
+            <span>존 하단</span>
+            <input value={zoneLower} onChange={(event) => setZoneLower(event.target.value)} placeholder="240" inputMode="decimal" />
+          </label>
+          <label>
+            <span>존 상단</span>
+            <input value={zoneUpper} onChange={(event) => setZoneUpper(event.target.value)} placeholder="250" inputMode="decimal" />
+          </label>
+        </div>
+        <button className="button secondary" type="button" onClick={fillAroundMark} disabled={!markPrice}>
+          <MapPin size={14} />
+          현재가 ±0.5%
+        </button>
+        <div className="entryIntentConditions">
+          {["price_in_zone", "sweep_confirmed", "wyckoff_event", "volume_spike", "briefing_aligned"].map((condition) => (
+            <label key={condition}>
+              <input
+                checked={conditions.includes(condition)}
+                disabled={condition === "price_in_zone"}
+                onChange={() => toggleCondition(condition)}
+                type="checkbox"
+              />
+              <span>{conditionLabel(condition)}</span>
+            </label>
+          ))}
+        </div>
+        <label className="entryIntentNote">
+          <span>메모</span>
+          <input value={note} onChange={(event) => setNote(event.target.value)} placeholder="예: 실적 전 돌파 실패 확인" />
+        </label>
+        {formError ? <div className="actionPlanWarning">{formError}</div> : null}
+        <button className="button" disabled={submitting || intents.length >= 3} onClick={() => void submit()} type="button">
+          {submitting ? "등록 중" : "의도 등록"}
+        </button>
+      </div>
+    </section>
   );
 }
 
@@ -503,6 +733,34 @@ function ScenarioBlock({ title, scenario }: { title: string; scenario: { invalid
       ) : null}
     </div>
   );
+}
+
+function directionLabel(direction: "long" | "short" | string): string {
+  return direction === "short" ? "숏" : "롱";
+}
+
+function toleranceLabel(tolerance: "tight" | "normal" | "loose" | string): string {
+  if (tolerance === "tight") return "타이트";
+  if (tolerance === "loose") return "느슨함";
+  return "보통";
+}
+
+function conditionLabel(condition: string): string {
+  const labels: Record<string, string> = {
+    price_in_zone: "가격 존 진입",
+    sweep_confirmed: "스윕 확인",
+    wyckoff_event: "와이코프 이벤트",
+    volume_spike: "거래량 급증",
+    briefing_aligned: "브리핑 방향 일치"
+  };
+  return labels[condition] ?? condition;
+}
+
+function intentDistanceFromMark(intent: EntryIntent, markPrice: number | null | undefined): number | null {
+  if (typeof markPrice !== "number" || markPrice <= 0) return null;
+  if (intent.zone_lower <= markPrice && markPrice <= intent.zone_upper) return 0;
+  const target = markPrice < intent.zone_lower ? intent.zone_lower : intent.zone_upper;
+  return Math.abs(((target - markPrice) / markPrice) * 100);
 }
 
 function formatPct(value: number | null | undefined): string {

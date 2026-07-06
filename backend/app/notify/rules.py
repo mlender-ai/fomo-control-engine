@@ -42,6 +42,10 @@ RULE_LABELS: dict[str, str] = {
     "setup_near": "셋업 접근",
     "setup_triggered": "셋업 트리거",
     "setup_invalidated": "셋업 무효화",
+    "intent_approaching": "진입 의도 접근",
+    "intent_zone_entered": "진입 의도 조건 충족",
+    "intent_zone_entered_partial": "진입 의도 부분 충족",
+    "intent_invalidated": "진입 의도 무효화",
 }
 
 RULE_SEVERITY: dict[str, AlertSeverity] = {
@@ -60,6 +64,10 @@ RULE_SEVERITY: dict[str, AlertSeverity] = {
     "setup_near": "info",
     "setup_triggered": "action",
     "setup_invalidated": "info",
+    "intent_approaching": "info",
+    "intent_zone_entered": "action",
+    "intent_zone_entered_partial": "info",
+    "intent_invalidated": "info",
 }
 
 
@@ -876,6 +884,10 @@ def _rule_threshold(rule_id: str, settings: Settings) -> float | int | str | Non
         "setup_near": settings.scout_setup_near_pct,
         "setup_triggered": None,
         "setup_invalidated": None,
+        "intent_approaching": settings.entry_intent_normal_tolerance_pct,
+        "intent_zone_entered": None,
+        "intent_zone_entered_partial": None,
+        "intent_invalidated": None,
     }.get(rule_id)
 
 

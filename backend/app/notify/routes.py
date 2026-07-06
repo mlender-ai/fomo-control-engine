@@ -99,6 +99,8 @@ def _set_threshold(settings, rule_id: str, value: float) -> None:
         settings.alert_wyckoff_min_confidence = int(value)
     elif rule_id == "liq_cluster_near":
         settings.alert_trigger_near_pct = float(value)
+    elif rule_id == "intent_approaching":
+        settings.entry_intent_normal_tolerance_pct = float(value)
 
 
 def _known_rule_order() -> list[str]:
@@ -115,4 +117,11 @@ def _known_rule_order() -> list[str]:
         "funding_extreme",
         "oi_divergence",
         "liq_cluster_near",
+        "setup_near",
+        "setup_triggered",
+        "setup_invalidated",
+        "intent_approaching",
+        "intent_zone_entered",
+        "intent_zone_entered_partial",
+        "intent_invalidated",
     ]

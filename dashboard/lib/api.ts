@@ -624,6 +624,7 @@ export type ScoutScanRow = {
   funding_state?: string | null;
   crowding_score?: number | null;
   setup_proximity_pct?: number | null;
+  entry_intent_distance_pct?: number | null;
   mark_price?: number | null;
   setup_candidates?: Array<Record<string, unknown>>;
 };
@@ -648,9 +649,30 @@ export type ArmedSetup = {
   last_seen_at: string;
 };
 
+export type EntryIntent = {
+  id: string;
+  symbol: string;
+  timeframe: string;
+  direction: "long" | "short";
+  zone_lower: number;
+  zone_upper: number;
+  conditions: Array<"price_in_zone" | "sweep_confirmed" | "wyckoff_event" | "volume_spike" | "briefing_aligned" | string>;
+  tolerance: "tight" | "normal" | "loose";
+  tolerance_pct: number;
+  status: "active" | "triggered" | "partial" | "invalidated" | "expired" | "cancelled";
+  note: string;
+  preview: Record<string, unknown>;
+  condition_state: Record<string, { met?: boolean; label?: string }>;
+  expires_at: string;
+  created_at: string;
+  updated_at: string;
+  last_seen_at: string;
+};
+
 export type ScoutScanResponse = {
   rows: ScoutScanRow[];
   armed_setups?: ArmedSetup[];
+  entry_intents?: EntryIntent[];
   scanned_at: string;
   cache_ttl_seconds: number;
   count: number;
@@ -1332,6 +1354,33 @@ export const api = {
     request<{ setups: ArmedSetup[] }>(`/api/scout/setups${symbol || status ? `?${new URLSearchParams({ ...(symbol ? { symbol } : {}), ...(status ? { status } : {}) }).toString()}` : ""}`),
   disarmScoutSetup: (setupId: string) =>
     request<{ setup: ArmedSetup }>(`/api/scout/setups/${encodeURIComponent(setupId)}/disarm`, {
+      method: "POST"
+    }),
+  entryIntents: (symbol?: string, status?: string) =>
+    request<{ intents: EntryIntent[] }>(
+      `/api/scout/intents${symbol || status ? `?${new URLSearchParams({ ...(symbol ? { symbol } : {}), ...(status ? { status } : {}) }).toString()}` : ""}`
+    ),
+  createEntryIntent: (
+    symbol: string,
+    payload: {
+      direction: "long" | "short";
+      zone_lower?: number | null;
+      zone_upper?: number | null;
+      price?: number | null;
+      conditions?: string[];
+      tolerance?: "tight" | "normal" | "loose";
+      expires_at?: string | null;
+      note?: string;
+      timeframe?: string;
+      leverage?: number;
+    }
+  ) =>
+    request<{ intent: EntryIntent }>(`/api/scout/${encodeURIComponent(symbol)}/intents`, {
+      method: "POST",
+      body: JSON.stringify(payload)
+    }),
+  cancelEntryIntent: (intentId: string) =>
+    request<{ intent: EntryIntent }>(`/api/scout/intents/${encodeURIComponent(intentId)}/cancel`, {
       method: "POST"
     }),
   simulateEntry: (payload: { symbol: string; direction: "long" | "short"; entry_price?: number | null; leverage: number; margin_usdt?: number | null; margin_mode?: string; timeframe?: string }) =>
