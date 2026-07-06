@@ -4,6 +4,8 @@ import random
 
 from app.db.models import DataQuality, MarketCandle, MarketSnapshot, utc_now
 from app.exchange.base import MarketDataProvider
+from app.marketdata.assets import classify_asset_class
+from app.marketdata.sessions import tag_candles_with_sessions
 
 
 BASE_PRICES = {
@@ -12,13 +14,30 @@ BASE_PRICES = {
     "SOLUSDT": 151.3,
     "XRPUSDT": 2.32,
     "DOGEUSDT": 0.172,
+    "TSLAUSDT": 248.6,
+    "NVDAUSDT": 162.4,
+    "MSTRUSDT": 392.1,
+    "PLTRUSDT": 24.7,
+    "QQQUSDT": 560.2,
+    "NBISUSDT": 47.8,
 }
+
+STOCK_LIKE_SYMBOLS = {"TSLAUSDT", "NVDAUSDT", "MSTRUSDT", "PLTRUSDT", "QQQUSDT", "NBISUSDT"}
 
 
 class MockMarketDataProvider(MarketDataProvider):
     def list_contracts(self) -> list[dict]:
         return [
-            {"symbol": symbol, "base_coin": symbol.removesuffix("USDT"), "quote_coin": "USDT", "status": "normal"}
+            {
+                "symbol": symbol,
+                "base_coin": symbol.removesuffix("USDT"),
+                "quote_coin": "USDT",
+                "status": "normal",
+                "asset_class": classify_asset_class(symbol, symbol.removesuffix("USDT"), "USDT", {"isRwa": "YES"} if symbol in STOCK_LIKE_SYMBOLS else {}),
+                "source_category": "mock_rwa" if symbol in STOCK_LIKE_SYMBOLS else "mock_contract",
+                "funding_rate_interval_hours": 8,
+                "raw_metadata": {"isRwa": "YES" if symbol in STOCK_LIKE_SYMBOLS else "NO", "fundInterval": "8"},
+            }
             for symbol in BASE_PRICES
         ]
 
@@ -40,7 +59,10 @@ class MockMarketDataProvider(MarketDataProvider):
             mean_reversion = (base_price - close) / base_price * 0.0018
             shock = rng.uniform(-0.012, 0.012)
             open_price = close
-            close = max(base_price * 0.4, open_price * (1 + wave + drift + mean_reversion + shock))
+            close = max(
+                base_price * 0.4,
+                open_price * (1 + wave + drift + mean_reversion + shock),
+            )
             high = max(open_price, close) * (1 + rng.uniform(0.002, 0.018))
             low = min(open_price, close) * (1 - rng.uniform(0.002, 0.018))
             volume = 1000 + abs(shock) * 90000 + index * 10 + rng.uniform(0, 1200)
@@ -59,6 +81,8 @@ class MockMarketDataProvider(MarketDataProvider):
         first_day = candles[-7].close
         change_24h = ((candles[-1].close - first_day) / first_day) * 100
 
+        asset_class = classify_asset_class(normalized)
+        candles = tag_candles_with_sessions(candles, asset_class)
         return MarketSnapshot(
             symbol=normalized,
             timeframe=timeframe,

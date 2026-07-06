@@ -86,7 +86,12 @@ def _scenario(
             meaning = "숏 시나리오 강화"
         watch_triggers.append({"condition": condition, "meaning": meaning})
     if volume_xray.get("spike_detected"):
-        watch_triggers.append({"condition": "거래량 급증 캔들 출현", "meaning": "캔들 방향과 시나리오 방향이 같은지 확인"})
+        watch_triggers.append(
+            {
+                "condition": "거래량 급증 캔들 출현",
+                "meaning": "캔들 방향과 시나리오 방향이 같은지 확인",
+            }
+        )
 
     return {
         "invalidation": invalidation,

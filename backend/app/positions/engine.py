@@ -1,6 +1,13 @@
 from __future__ import annotations
 
-from app.db.models import Position, PositionEvent, PositionHealthComponents, PositionInsight, PositionSnapshot, Report
+from app.db.models import (
+    Position,
+    PositionEvent,
+    PositionHealthComponents,
+    PositionInsight,
+    PositionSnapshot,
+    Report,
+)
 from app.positions.pnl import resolve_position_pnl_percent
 
 STATUS_LABELS = {
@@ -51,7 +58,10 @@ def calculate_price_distance_from_entry(position: Position, mark_price: float | 
     if mark_price is None or position.entry_price <= 0:
         return None
     side_multiplier = 1 if position.direction == "long" else -1
-    return round(((mark_price - position.entry_price) / position.entry_price) * 100 * side_multiplier, 2)
+    return round(
+        ((mark_price - position.entry_price) / position.entry_price) * 100 * side_multiplier,
+        2,
+    )
 
 
 def drawdown_from_peak(current_pnl: float, previous_snapshots: list[PositionSnapshot]) -> tuple[float, float]:
@@ -63,7 +73,11 @@ def drawdown_from_peak(current_pnl: float, previous_snapshots: list[PositionSnap
     return round(giveback, 2), round(giveback, 2)
 
 
-def build_position_state(position: Position, report: Report, previous_snapshots: list[PositionSnapshot] | None = None) -> dict:
+def build_position_state(
+    position: Position,
+    report: Report,
+    previous_snapshots: list[PositionSnapshot] | None = None,
+) -> dict:
     previous_snapshots = previous_snapshots or []
     mark_price = position.mark_price or position.current_price or report.price
     pnl_result = resolve_position_pnl_percent(position, mark_price)
@@ -145,6 +159,7 @@ def build_position_state(position: Position, report: Report, previous_snapshots:
         },
         "wyckoff": _wyckoff_payload(structure),
         "technical": _technical_payload(indicators, structure, liquidity, position, report),
+        "derivatives": liquidity.get("derivatives", {}) if isinstance(liquidity, dict) else {},
         "risk": {
             "liquidation_distance_pct": liquidation_distance,
             "risk_score": risk_score,
@@ -189,11 +204,7 @@ def build_position_state(position: Position, report: Report, previous_snapshots:
 
 def calculate_health_score(components: PositionHealthComponents) -> int:
     weighted = clamp_score(
-        components.survival * 0.30
-        + components.pnl_state * 0.20
-        + components.thesis_integrity * 0.20
-        + components.structure * 0.20
-        + components.flow * 0.10
+        components.survival * 0.30 + components.pnl_state * 0.20 + components.thesis_integrity * 0.20 + components.structure * 0.20 + components.flow * 0.10
     )
     if components.pnl_state == 0:
         weighted = min(weighted, 25)
@@ -271,7 +282,11 @@ def make_snapshot(position: Position, state: dict) -> PositionSnapshot:
     )
 
 
-def build_events(position: Position, snapshot: PositionSnapshot, previous_snapshot: PositionSnapshot | None = None) -> list[PositionEvent]:
+def build_events(
+    position: Position,
+    snapshot: PositionSnapshot,
+    previous_snapshot: PositionSnapshot | None = None,
+) -> list[PositionEvent]:
     events: list[PositionEvent] = []
     if previous_snapshot is not None:
         score_delta = snapshot.health_score - previous_snapshot.health_score
@@ -284,7 +299,10 @@ def build_events(position: Position, snapshot: PositionSnapshot, previous_snapsh
                     severity=severity,
                     title=f"Health Score {previous_snapshot.health_score} → {snapshot.health_score}",
                     description=f"포지션 상태 점수가 {score_delta:+d}점 변했습니다.",
-                    data={"previous": previous_snapshot.health_score, "current": snapshot.health_score},
+                    data={
+                        "previous": previous_snapshot.health_score,
+                        "current": snapshot.health_score,
+                    },
                 )
             )
         if previous_snapshot.status_label != snapshot.status_label:
@@ -295,7 +313,10 @@ def build_events(position: Position, snapshot: PositionSnapshot, previous_snapsh
                     severity=_severity_from_status(snapshot.analysis_json["position_analysis"]["status"]),
                     title=f"상태 변경: {previous_snapshot.status_label} → {snapshot.status_label}",
                     description="포지션 상태 라벨이 변경되었습니다.",
-                    data={"previous": previous_snapshot.status_label, "current": snapshot.status_label},
+                    data={
+                        "previous": previous_snapshot.status_label,
+                        "current": snapshot.status_label,
+                    },
                 )
             )
     if position.status == "open" and position.liquidation_price is None and position.leverage >= 5:
@@ -334,7 +355,11 @@ def build_events(position: Position, snapshot: PositionSnapshot, previous_snapsh
     return events
 
 
-def render_position_insight(position: Position, snapshot: PositionSnapshot, previous_insight: PositionInsight | None = None) -> str:
+def render_position_insight(
+    position: Position,
+    snapshot: PositionSnapshot,
+    previous_insight: PositionInsight | None = None,
+) -> str:
     analysis = snapshot.analysis_json
     position_analysis = analysis["position_analysis"]
     technical = analysis["technical"]
@@ -366,7 +391,11 @@ def render_position_insight(position: Position, snapshot: PositionSnapshot, prev
     )
 
 
-def make_insight(position: Position, snapshot: PositionSnapshot, previous_insight: PositionInsight | None = None) -> PositionInsight:
+def make_insight(
+    position: Position,
+    snapshot: PositionSnapshot,
+    previous_insight: PositionInsight | None = None,
+) -> PositionInsight:
     return PositionInsight(
         position_id=position.id,
         snapshot_id=snapshot.id,
@@ -396,7 +425,9 @@ def _health_components(
     direction_alignment = current_direction_score
     thesis = _thesis_integrity_score(entry_direction_score, current_direction_score)
     structure_score = _directional_structure_score(position, structure, report.scores.structure, current_direction_score)
-    flow = _flow_score(position, indicators, liquidity)
+    derivative_flow = _derivative_flow_score(position, liquidity.get("derivatives") if isinstance(liquidity, dict) else None)
+    flow = derivative_flow if derivative_flow is not None else _legacy_flow_score(position, indicators, liquidity)
+    formula_version = "health_v2_derivatives" if derivative_flow is not None else "health_v2"
     return PositionHealthComponents(
         survival=survival,
         pnl_state=pnl_state,
@@ -410,6 +441,7 @@ def _health_components(
         pnl_protection=pnl_state,
         liquidation_buffer=survival,
         direction_alignment=direction_alignment,
+        formula_version=formula_version,
     )
 
 
@@ -579,7 +611,70 @@ def direction_aware_score(direction, structure: dict, indicators: dict) -> int:
     return clamp_score(base)
 
 
-def _flow_score(position: Position, indicators: dict, liquidity: dict) -> int:
+def _derivative_flow_score(position: Position, derivatives: dict | None) -> int | None:
+    if not isinstance(derivatives, dict):
+        return None
+    signals = derivatives.get("signals") if isinstance(derivatives.get("signals"), dict) else {}
+    latest = derivatives.get("latest") if isinstance(derivatives.get("latest"), dict) else {}
+    if not signals:
+        return None
+    divergence = signals.get("oi_price_divergence") if isinstance(signals.get("oi_price_divergence"), dict) else None
+    funding = signals.get("funding_state") if isinstance(signals.get("funding_state"), dict) else None
+    crowding = signals.get("crowding_score") if isinstance(signals.get("crowding_score"), dict) else None
+    if divergence is None and funding is None and crowding is None:
+        return None
+    direction = position.direction.value
+    score = 55.0
+
+    if divergence is not None:
+        state = str(divergence.get("state") or "")
+        long_map = {
+            "price_up_oi_up": 18,
+            "price_up_oi_down": 6,
+            "price_down_oi_up": -20,
+            "price_down_oi_down": -8,
+        }
+        short_map = {
+            "price_down_oi_up": 18,
+            "price_down_oi_down": 6,
+            "price_up_oi_up": -20,
+            "price_up_oi_down": -8,
+        }
+        score += (long_map if direction == "long" else short_map).get(state, 0)
+
+    funding_value = _optional_float((funding or {}).get("funding"))
+    funding_state = str((funding or {}).get("state") or "")
+    if funding_value is not None:
+        favorable = (direction == "long" and funding_value < 0) or (direction == "short" and funding_value > 0)
+        adverse = (direction == "long" and funding_value > 0) or (direction == "short" and funding_value < 0)
+        if funding_state == "neutral":
+            score += 5
+        elif funding_state == "overheated":
+            score += 6 if favorable else -12 if adverse else 0
+        elif funding_state == "extreme":
+            score += 10 if favorable else -20 if adverse else 0
+        elif favorable:
+            score += 3
+        elif adverse:
+            score -= 3
+
+    if crowding is not None:
+        crowding_value = _optional_float(crowding.get("score"))
+        crowded_side = _crowded_side(latest.get("long_short_ratio") or latest.get("taker_buy_sell_ratio") or latest.get("top_long_short_ratio"))
+        if crowding_value is not None:
+            if crowding_value >= 70 and crowded_side == direction:
+                score -= 15
+            elif crowding_value >= 70 and crowded_side in {"long", "short"}:
+                score += 8
+            elif crowding_value >= 40 and crowded_side == direction:
+                score -= 6
+            elif crowding_value < 40:
+                score += 4
+
+    return clamp_score(score)
+
+
+def _legacy_flow_score(position: Position, indicators: dict, liquidity: dict) -> int:
     relative_volume = _optional_float(indicators.get("relative_volume")) or 1.0
     macd = _optional_float(indicators.get("macd_histogram")) or 0.0
     last_close = _optional_float(indicators.get("last_close"))
@@ -602,9 +697,17 @@ def _flow_score(position: Position, indicators: dict, liquidity: dict) -> int:
     elif relative_volume < 0.8:
         score -= 6
     funding = str(liquidity.get("funding_rate_state", "neutral"))
-    if position.direction == "long" and funding in {"positive", "bullish", "long_favored"}:
+    if position.direction == "long" and funding in {
+        "positive",
+        "bullish",
+        "long_favored",
+    }:
         score += 4
-    elif position.direction == "short" and funding in {"negative", "bearish", "short_favored"}:
+    elif position.direction == "short" and funding in {
+        "negative",
+        "bearish",
+        "short_favored",
+    }:
         score += 4
     elif funding in {"overheated", "crowded"}:
         score -= 6
@@ -614,6 +717,17 @@ def _flow_score(position: Position, indicators: dict, liquidity: dict) -> int:
     elif open_interest in {"rising", "increasing", "expanding"} and price_delta * side < 0:
         score -= 5
     return clamp_score(score)
+
+
+def _crowded_side(ratio_value) -> str | None:
+    ratio = _optional_float(ratio_value)
+    if ratio is None or ratio <= 0:
+        return None
+    if ratio >= 1.2:
+        return "long"
+    if ratio <= 0.83:
+        return "short"
+    return "balanced"
 
 
 def _interpolate(value: float, left: float, right: float, left_score: float, right_score: float) -> float:
@@ -671,7 +785,13 @@ def _wyckoff_payload(structure: dict) -> dict:
     }
 
 
-def _technical_payload(indicators: dict, structure: dict, liquidity: dict, position: Position, report: Report) -> dict:
+def _technical_payload(
+    indicators: dict,
+    structure: dict,
+    liquidity: dict,
+    position: Position,
+    report: Report,
+) -> dict:
     rsi = float(indicators.get("rsi", 50))
     macd = float(indicators.get("macd_histogram", 0))
     close = float(indicators.get("last_close", report.price))
@@ -723,11 +843,29 @@ def _critical_levels(report: Report, position: Position) -> list[dict]:
             levels.append({**level, "type": "support", "meaning": "이탈 시 진입 논리 약화"})
     for level in structure_levels.get("resistance", [])[:2]:
         if isinstance(level, dict) and level.get("price") is not None:
-            levels.append({**level, "type": "resistance", "meaning": "돌파 실패 시 수익 반납 가능"})
+            levels.append(
+                {
+                    **level,
+                    "type": "resistance",
+                    "meaning": "돌파 실패 시 수익 반납 가능",
+                }
+            )
     if position.planned_stop_price:
-        levels.append({"type": "invalidation", "price": position.planned_stop_price, "meaning": "사용자가 기록한 손절/무효화 기준"})
+        levels.append(
+            {
+                "type": "invalidation",
+                "price": position.planned_stop_price,
+                "meaning": "사용자가 기록한 손절/무효화 기준",
+            }
+        )
     if position.planned_take_profit_price:
-        levels.append({"type": "take_profit", "price": position.planned_take_profit_price, "meaning": "사용자가 기록한 수익 실현 기준"})
+        levels.append(
+            {
+                "type": "take_profit",
+                "price": position.planned_take_profit_price,
+                "meaning": "사용자가 기록한 수익 실현 기준",
+            }
+        )
     return levels
 
 
@@ -757,7 +895,14 @@ def _resistance_status_from_levels(close: float, levels: list[dict]) -> str:
     return "not_near"
 
 
-def _reason_codes(status: str, position: Position, report: Report, liquidation_distance: float | None, thesis_delta: int, drawdown_from_peak: float) -> list[str]:
+def _reason_codes(
+    status: str,
+    position: Position,
+    report: Report,
+    liquidation_distance: float | None,
+    thesis_delta: int,
+    drawdown_from_peak: float,
+) -> list[str]:
     codes = [f"STATUS_{status.upper()}"]
     codes.append("POSITION_PNL_POSITIVE" if position.pnl_percent >= 0 else "POSITION_PNL_NEGATIVE")
     if liquidation_distance is None:

@@ -51,13 +51,7 @@ def calculate_entry_score(
     momentum_score: int,
     risk_score: int,
 ) -> int:
-    score = (
-        structure_score * 0.30
-        + volume_score * 0.25
-        + liquidity_score * 0.20
-        + momentum_score * 0.15
-        + (100 - risk_score) * 0.10
-    )
+    score = structure_score * 0.30 + volume_score * 0.25 + liquidity_score * 0.20 + momentum_score * 0.15 + (100 - risk_score) * 0.10
     return int(round(score))
 
 
@@ -75,7 +69,14 @@ def state_label(entry_score: int, fomo_index: int) -> str:
     return "진입 근거 부족"
 
 
-def build_breakdown(snapshot_price: float, change_24h: float, funding_rate: float, structure: dict, liquidity: dict, indicators: dict) -> tuple[int, ScoreBreakdown]:
+def build_breakdown(
+    snapshot_price: float,
+    change_24h: float,
+    funding_rate: float,
+    structure: dict,
+    liquidity: dict,
+    indicators: dict,
+) -> tuple[int, ScoreBreakdown]:
     volume = score_volume(indicators)
     momentum = score_momentum(indicators)
     risk = score_risk(snapshot_price, indicators)

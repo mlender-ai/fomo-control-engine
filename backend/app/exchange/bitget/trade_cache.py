@@ -2,17 +2,18 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
+from app.db.migrations import run_migrations
+from app.db.sqlite_utils import SQLITE_WRITE_LOCK, connect_sqlite
 from app.exchange.bitget.trades import BitgetTradeFill
 
 
 class BitgetTradeFillCache:
     def __init__(self, database_path: str) -> None:
         self.database_path = database_path
-        self._lock = threading.RLock()
+        self._lock = SQLITE_WRITE_LOCK
         Path(database_path).parent.mkdir(parents=True, exist_ok=True)
         self._init_schema()
 
@@ -23,37 +24,20 @@ class BitgetTradeFillCache:
         return cls(database_url.removeprefix("sqlite:///"))
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path, check_same_thread=False)
-        connection.row_factory = sqlite3.Row
-        return connection
+        return connect_sqlite(self.database_path)
 
     def _init_schema(self) -> None:
         with self._lock, self._connect() as connection:
-            connection.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS bitget_trade_fills (
-                    symbol TEXT NOT NULL,
-                    trade_id TEXT NOT NULL,
-                    timestamp TEXT NOT NULL,
-                    payload TEXT NOT NULL,
-                    fetched_at TEXT NOT NULL,
-                    PRIMARY KEY(symbol, trade_id)
-                );
-                CREATE INDEX IF NOT EXISTS idx_bitget_trade_fills_symbol_timestamp
-                    ON bitget_trade_fills(symbol, timestamp DESC);
+            run_migrations(connection)
 
-                CREATE TABLE IF NOT EXISTS bitget_trade_fill_fetch_state (
-                    symbol TEXT NOT NULL,
-                    timeframe TEXT NOT NULL,
-                    start_at TEXT NOT NULL,
-                    end_at TEXT NOT NULL,
-                    fetched_at TEXT NOT NULL,
-                    PRIMARY KEY(symbol, timeframe)
-                );
-                """
-            )
-
-    def fresh_fills(self, symbol: str, timeframe: str, start_at: datetime, end_at: datetime, max_age_seconds: int) -> list[BitgetTradeFill] | None:
+    def fresh_fills(
+        self,
+        symbol: str,
+        timeframe: str,
+        start_at: datetime,
+        end_at: datetime,
+        max_age_seconds: int,
+    ) -> list[BitgetTradeFill] | None:
         symbol_key = symbol.upper()
         with self._lock, self._connect() as connection:
             state = connection.execute(
@@ -95,7 +79,14 @@ class BitgetTradeFillCache:
             ).fetchall()
         return [BitgetTradeFill.model_validate_json(row["payload"]) for row in rows]
 
-    def store_fills(self, symbol: str, timeframe: str, start_at: datetime, end_at: datetime, fills: list[BitgetTradeFill]) -> None:
+    def store_fills(
+        self,
+        symbol: str,
+        timeframe: str,
+        start_at: datetime,
+        end_at: datetime,
+        fills: list[BitgetTradeFill],
+    ) -> None:
         now = datetime.now(timezone.utc).isoformat()
         symbol_key = symbol.upper()
         with self._lock, self._connect() as connection:

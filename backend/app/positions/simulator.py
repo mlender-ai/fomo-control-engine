@@ -175,46 +175,130 @@ def _build_checklist(
     checklist: list[dict[str, str]] = []
 
     if rr_ratio is None:
-        checklist.append(_item("rr", f"손익비 R:R ≥ {RR_MIN}", "na", "무효화 또는 익절 후보가 없어 R:R 계산 불가"))
+        checklist.append(
+            _item(
+                "rr",
+                f"손익비 R:R ≥ {RR_MIN}",
+                "na",
+                "무효화 또는 익절 후보가 없어 R:R 계산 불가",
+            )
+        )
     elif rr_ratio >= RR_MIN:
         checklist.append(_item("rr", f"손익비 R:R ≥ {RR_MIN}", "pass", f"R:R {rr_ratio}"))
     else:
-        checklist.append(_item("rr", f"손익비 R:R ≥ {RR_MIN}", "fail", f"R:R {rr_ratio} — 보상 대비 위험이 큼"))
+        checklist.append(
+            _item(
+                "rr",
+                f"손익비 R:R ≥ {RR_MIN}",
+                "fail",
+                f"R:R {rr_ratio} — 보상 대비 위험이 큼",
+            )
+        )
 
     if survives is None:
-        checklist.append(_item("survival", "무효화가 추정 청산보다 안쪽", "na", "무효화 또는 청산 추정 불가"))
+        checklist.append(
+            _item(
+                "survival",
+                "무효화가 추정 청산보다 안쪽",
+                "na",
+                "무효화 또는 청산 추정 불가",
+            )
+        )
     elif survives:
-        checklist.append(_item("survival", "무효화가 추정 청산보다 안쪽", "pass", "손절이 청산보다 먼저 걸림"))
+        checklist.append(
+            _item(
+                "survival",
+                "무효화가 추정 청산보다 안쪽",
+                "pass",
+                "손절이 청산보다 먼저 걸림",
+            )
+        )
     else:
-        checklist.append(_item("survival", "무효화가 추정 청산보다 안쪽", "fail", "손절 계획이 청산보다 늦음: 레버리지 과다"))
+        checklist.append(
+            _item(
+                "survival",
+                "무효화가 추정 청산보다 안쪽",
+                "fail",
+                "손절 계획이 청산보다 늦음: 레버리지 과다",
+            )
+        )
 
     level_score = invalidation.get("score") if invalidation else None
     if invalidation is None or invalidation.get("source") == "user":
         note = "사용자 지정 손절" if invalidation and invalidation.get("source") == "user" else "구조 레벨 무효화 없음"
         checklist.append(_item("level_score", f"무효화 근거 레벨 점수 ≥ {LEVEL_SCORE_MIN}", "na", note))
     elif isinstance(level_score, (int, float)) and level_score >= LEVEL_SCORE_MIN:
-        checklist.append(_item("level_score", f"무효화 근거 레벨 점수 ≥ {LEVEL_SCORE_MIN}", "pass", f"레벨 점수 {int(level_score)}"))
+        checklist.append(
+            _item(
+                "level_score",
+                f"무효화 근거 레벨 점수 ≥ {LEVEL_SCORE_MIN}",
+                "pass",
+                f"레벨 점수 {int(level_score)}",
+            )
+        )
     else:
         score_text = int(level_score) if isinstance(level_score, (int, float)) else "-"
-        checklist.append(_item("level_score", f"무효화 근거 레벨 점수 ≥ {LEVEL_SCORE_MIN}", "fail", f"레벨 점수 {score_text} — 근거가 약함"))
+        checklist.append(
+            _item(
+                "level_score",
+                f"무효화 근거 레벨 점수 ≥ {LEVEL_SCORE_MIN}",
+                "fail",
+                f"레벨 점수 {score_text} — 근거가 약함",
+            )
+        )
 
     if htf_conflict:
-        checklist.append(_item("htf", "상위 TF 국면과 방향 비충돌", "fail", "상위 시간프레임 국면이 진입 방향과 충돌"))
+        checklist.append(
+            _item(
+                "htf",
+                "상위 TF 국면과 방향 비충돌",
+                "fail",
+                "상위 시간프레임 국면이 진입 방향과 충돌",
+            )
+        )
     else:
         checklist.append(_item("htf", "상위 TF 국면과 방향 비충돌", "pass", "상위 TF 충돌 없음"))
 
     funding = _to_float(funding_rate)
     if funding is None:
-        checklist.append(_item("funding", "펀딩이 방향에 극단적으로 불리하지 않음", "na", "펀딩 데이터 없음"))
+        checklist.append(
+            _item(
+                "funding",
+                "펀딩이 방향에 극단적으로 불리하지 않음",
+                "na",
+                "펀딩 데이터 없음",
+            )
+        )
     else:
         adverse = (direction == "long" and funding >= FUNDING_ADVERSE_THRESHOLD) or (direction == "short" and funding <= -FUNDING_ADVERSE_THRESHOLD)
         if adverse:
-            checklist.append(_item("funding", "펀딩이 방향에 극단적으로 불리하지 않음", "fail", f"펀딩 {funding:.4%}가 {'롱' if direction == 'long' else '숏'}에 불리"))
+            checklist.append(
+                _item(
+                    "funding",
+                    "펀딩이 방향에 극단적으로 불리하지 않음",
+                    "fail",
+                    f"펀딩 {funding:.4%}가 {'롱' if direction == 'long' else '숏'}에 불리",
+                )
+            )
         else:
-            checklist.append(_item("funding", "펀딩이 방향에 극단적으로 불리하지 않음", "pass", f"펀딩 {funding:.4%}"))
+            checklist.append(
+                _item(
+                    "funding",
+                    "펀딩이 방향에 극단적으로 불리하지 않음",
+                    "pass",
+                    f"펀딩 {funding:.4%}",
+                )
+            )
 
     if volume_state == "drying_up":
-        checklist.append(_item("volume", "거래량이 고갈 상태 아님", "fail", "거래량 고갈 — 돌파/이탈 신뢰도 낮음"))
+        checklist.append(
+            _item(
+                "volume",
+                "거래량이 고갈 상태 아님",
+                "fail",
+                "거래량 고갈 — 돌파/이탈 신뢰도 낮음",
+            )
+        )
     elif volume_state in (None, "data_unavailable"):
         checklist.append(_item("volume", "거래량이 고갈 상태 아님", "na", "거래량 데이터 부족"))
     else:
@@ -227,7 +311,12 @@ def _item(key: str, label: str, status: str, reason: str) -> dict[str, str]:
     return {"key": key, "label": label, "status": status, "reason": reason}
 
 
-def _verdict_line(rr: float | None, invalidation_distance: float | None, liq_distance: float | None, htf_conflict: bool) -> str:
+def _verdict_line(
+    rr: float | None,
+    invalidation_distance: float | None,
+    liq_distance: float | None,
+    htf_conflict: bool,
+) -> str:
     parts = []
     parts.append(f"R:R {rr}" if rr is not None else "R:R -")
     parts.append(f"무효화 {invalidation_distance:.1f}%" if invalidation_distance is not None else "무효화 -")

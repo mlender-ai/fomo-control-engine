@@ -1,9 +1,9 @@
 "use client";
 
-import { RefreshCw, TestTube2, UploadCloud } from "lucide-react";
+import { RefreshCw, Send, TestTube2, UploadCloud } from "lucide-react";
 import { useEffect, useState } from "react";
 import { TerminalMetric, TerminalPanel, TerminalTable, TerminalWarning } from "@/components/terminal";
-import { api, type BitgetConnectionTest, type SystemStatus } from "@/lib/api";
+import { api, type AlertSettings, type BitgetConnectionTest, type SystemStatus } from "@/lib/api";
 import { DEFAULT_DENSITY, loadDensity, saveDensity, type Density } from "@/lib/density";
 
 type ShortcutRow = {
@@ -26,8 +26,10 @@ const shortcuts: ShortcutRow[] = [
 
 export function SettingsShell() {
   const [status, setStatus] = useState<SystemStatus | null>(null);
+  const [alertSettings, setAlertSettings] = useState<AlertSettings | null>(null);
   const [connection, setConnection] = useState<BitgetConnectionTest | null>(null);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
   const [density, setDensity] = useState<Density>(DEFAULT_DENSITY);
@@ -45,7 +47,9 @@ export function SettingsShell() {
     setError("");
     setLoading(true);
     try {
-      setStatus(await api.systemStatus());
+      const [system, alerts] = await Promise.all([api.systemStatus(), api.alertSettings()]);
+      setStatus(system);
+      setAlertSettings(alerts);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load settings");
     } finally {
@@ -82,6 +86,51 @@ export function SettingsShell() {
     }
   }
 
+  async function updateAlertRule(ruleId: string, patch: { enabled?: boolean; threshold?: number | null }) {
+    setBusy(`alert:${ruleId}`);
+    setError("");
+    setNotice("");
+    try {
+      const next = await api.updateAlertSettings({ rules: { [ruleId]: patch } });
+      setAlertSettings(next);
+      setNotice("알림 설정이 저장되었습니다.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update alert settings");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function updateQuietHours(patch: { quiet_hours_enabled?: boolean; quiet_hours_start?: string; quiet_hours_end?: string; daily_summary_time?: string }) {
+    setBusy("quiet");
+    setError("");
+    setNotice("");
+    try {
+      const next = await api.updateAlertSettings(patch);
+      setAlertSettings(next);
+      setNotice("무음 시간 설정이 저장되었습니다.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update quiet hours");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function sendTestAlert() {
+    setBusy("test-alert");
+    setError("");
+    setNotice("");
+    try {
+      const result = await api.sendTestAlert();
+      setNotice(result.sent > 0 ? `테스트 알림 ${result.sent}건을 발송했습니다.` : result.configured ? "Telegram 발송이 실패했습니다. 백엔드 로그를 확인하세요." : "Telegram 토큰 또는 chat_id가 설정되지 않았습니다.");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to send test alert");
+    } finally {
+      setBusy("");
+    }
+  }
+
   return (
     <div className="page">
       <header className="pageHeader">
@@ -97,6 +146,7 @@ export function SettingsShell() {
       </header>
 
       {error ? <TerminalWarning tone="error">{error}</TerminalWarning> : null}
+      {notice ? <TerminalWarning tone="info">{notice}</TerminalWarning> : null}
 
       <section className="grid four">
         <TerminalMetric label="Environment" value={status?.environment ?? "-"} tone="neutral" />
@@ -116,6 +166,97 @@ export function SettingsShell() {
           </button>
           <small>{density === "simple" ? "신뢰도는 강/중/약으로, 이벤트는 최근 2개만 표시합니다." : "신뢰도 숫자와 이벤트를 모두 표시합니다."}</small>
         </div>
+      </TerminalPanel>
+
+      <TerminalPanel
+        title="Telegram 알림"
+        subtitle="판단이 필요한 순간만 발송하고, 야간에는 critical 외 알림을 아침 요약으로 묶습니다"
+        status={alertSettings?.telegram.configured ? "ok" : "warning"}
+        actions={
+          <button className="button secondary" onClick={sendTestAlert} disabled={busy === "test-alert"}>
+            <Send size={16} />
+            테스트 발송
+          </button>
+        }
+      >
+        <div className="statusGrid">
+          <StatusItem label="Telegram" value={alertSettings?.telegram.configured ? "configured" : "missing"} tone={alertSettings?.telegram.configured ? "ok" : "muted"} />
+          <StatusItem label="Chat IDs" value={String(alertSettings?.telegram.chat_ids_configured ?? "-")} tone="muted" />
+          <StatusItem label="Quiet Hours" value={alertSettings?.telegram.quiet_hours_enabled ? `${alertSettings.telegram.quiet_hours_start}-${alertSettings.telegram.quiet_hours_end}` : "off"} tone="muted" />
+          <StatusItem label="Morning Summary" value={alertSettings?.telegram.daily_summary_time ?? "-"} tone="muted" />
+        </div>
+        {alertSettings ? (
+          <div className="alertSettingsGrid">
+            <label className="alertQuietToggle">
+              <input
+                type="checkbox"
+                checked={alertSettings.telegram.quiet_hours_enabled}
+                onChange={(event) => updateQuietHours({ quiet_hours_enabled: event.currentTarget.checked })}
+                disabled={busy === "quiet"}
+              />
+              야간 무음 사용
+            </label>
+            <input
+              aria-label="무음 시작"
+              type="time"
+              value={alertSettings.telegram.quiet_hours_start}
+              onChange={(event) => setAlertSettings({ ...alertSettings, telegram: { ...alertSettings.telegram, quiet_hours_start: event.currentTarget.value } })}
+              onBlur={(event) => updateQuietHours({ quiet_hours_start: event.currentTarget.value })}
+            />
+            <input
+              aria-label="무음 종료"
+              type="time"
+              value={alertSettings.telegram.quiet_hours_end}
+              onChange={(event) => setAlertSettings({ ...alertSettings, telegram: { ...alertSettings.telegram, quiet_hours_end: event.currentTarget.value } })}
+              onBlur={(event) => updateQuietHours({ quiet_hours_end: event.currentTarget.value })}
+            />
+            <input
+              aria-label="아침 요약"
+              type="time"
+              value={alertSettings.telegram.daily_summary_time}
+              onChange={(event) => setAlertSettings({ ...alertSettings, telegram: { ...alertSettings.telegram, daily_summary_time: event.currentTarget.value } })}
+              onBlur={(event) => updateQuietHours({ daily_summary_time: event.currentTarget.value })}
+            />
+          </div>
+        ) : null}
+        <div className="alertRuleList">
+          {alertSettings?.rules.map((rule) => (
+            <div className={`alertRuleItem ${rule.severity}`} key={rule.id}>
+              <div>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={rule.enabled}
+                    onChange={(event) => updateAlertRule(rule.id, { enabled: event.currentTarget.checked })}
+                    disabled={busy === `alert:${rule.id}`}
+                  />
+                  <strong>{rule.label}</strong>
+                </label>
+                <span>{severityLabel(rule.severity)} · 쿨다운 {rule.cooldown_minutes}분</span>
+              </div>
+              {rule.threshold !== null ? (
+                <input
+                  aria-label={`${rule.label} 임계값`}
+                  type="number"
+                  step="0.1"
+                  value={rule.threshold}
+                  onChange={(event) =>
+                    setAlertSettings({
+                      ...alertSettings,
+                      rules: alertSettings.rules.map((item) => (item.id === rule.id ? { ...item, threshold: Number(event.currentTarget.value) } : item))
+                    })
+                  }
+                  onBlur={(event) => updateAlertRule(rule.id, { threshold: Number(event.currentTarget.value) })}
+                />
+              ) : (
+                <span className="alertRuleFixed">조건형</span>
+              )}
+            </div>
+          ))}
+        </div>
+        <TerminalWarning tone="info">
+          Critical은 무효화 이탈·청산 접근만 사용합니다. 모든 메시지는 스냅샷 숫자와 액션 플랜 근거만 인용합니다.
+        </TerminalWarning>
       </TerminalPanel>
 
       <section className="grid two">
@@ -188,4 +329,11 @@ function StatusItem({ label, value, tone }: { label: string; value: string; tone
       <strong>{value}</strong>
     </div>
   );
+}
+
+function severityLabel(severity: string) {
+  if (severity === "critical") return "critical";
+  if (severity === "warn") return "warn";
+  if (severity === "action") return "action";
+  return "info";
 }

@@ -39,6 +39,8 @@ class MarketCandle(BaseModel):
     close: float
     volume: float
     quote_volume: float | None = None
+    session: str | None = None
+    is_regular_session: bool | None = None
 
 
 class DataQuality(BaseModel):
@@ -216,6 +218,76 @@ class PositionEvent(BaseModel):
     created_at: datetime = Field(default_factory=utc_now)
 
 
+class AlertRecord(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    rule_id: str
+    position_id: UUID | None = None
+    symbol: str = ""
+    severity: Literal["info", "action", "warn", "critical"]
+    fired_at: datetime = Field(default_factory=utc_now)
+    payload: dict = Field(default_factory=dict)
+    delivered: bool = False
+    acked: bool = False
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class AlertResponseRecord(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    alert_id: UUID
+    position_id: UUID
+    rule_id: str
+    symbol: str = ""
+    response: Literal["closed_full", "reduced", "added", "held", "stop_moved"]
+    detected_at: datetime = Field(default_factory=utc_now)
+    price_at_response: float | None = None
+    quantity_at_alert: float | None = None
+    quantity_at_response: float | None = None
+    planned_stop_at_alert: float | None = None
+    planned_stop_at_response: float | None = None
+    outcome: Literal["response_good", "response_costly", "inconclusive"] = "inconclusive"
+    result_detail: str = ""
+    metrics: dict = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class ScoutSnapshot(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    symbol: str
+    timeframe: str = "4h"
+    as_of: datetime = Field(default_factory=utc_now)
+    mark_price: float | None = None
+    setup_proximity_pct: float | None = None
+    summary: dict = Field(default_factory=dict)
+    analysis: dict = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class ArmedSetup(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    symbol: str
+    timeframe: str = "4h"
+    source: Literal["auto", "manual"] = "auto"
+    setup_type: str
+    direction: Literal["long", "short"] | None = None
+    trigger_price: float | None = None
+    trigger_label: str
+    trigger_condition: str
+    distance_pct: float | None = None
+    confidence: int | None = None
+    basis: str = ""
+    status: Literal["armed", "triggered", "invalidated", "disarmed"] = "armed"
+    preview: dict = Field(default_factory=dict)
+    snapshot_id: UUID | None = None
+    judgment_id: str | None = None
+    linked_scenario_id: UUID | None = None
+    setup_near_alerted_at: datetime | None = None
+    triggered_at: datetime | None = None
+    invalidated_at: datetime | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+    last_seen_at: datetime = Field(default_factory=utc_now)
+
+
 class PositionMemoUpdate(BaseModel):
     memo: str | None = None
     entry_memo: str | None = None
@@ -265,6 +337,7 @@ class JudgmentLedgerEntry(BaseModel):
     type: str
     claim: dict = Field(default_factory=dict)
     confidence: int | None = None
+    param_version: dict = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=utc_now)
 
 
@@ -279,6 +352,7 @@ class JudgmentScore(BaseModel):
     outcome: Literal["correct", "wrong", "whipsaw", "untested"]
     detail: str
     metrics: dict = Field(default_factory=dict)
+    param_version: dict = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=utc_now)
 
 
@@ -294,6 +368,17 @@ class CalibrationSuggestion(BaseModel):
     updated_at: datetime = Field(default_factory=utc_now)
 
 
+class EngineParamVersion(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    param: str
+    old_value: float | int | str | bool | None = None
+    new_value: float | int | str | bool
+    suggestion_id: UUID | None = None
+    status: Literal["active", "superseded"] = "active"
+    approved_at: datetime = Field(default_factory=utc_now)
+    created_at: datetime = Field(default_factory=utc_now)
+
+
 class MarketSnapshotRecord(BaseModel):
     id: UUID = Field(default_factory=uuid4)
     symbol: str
@@ -306,6 +391,80 @@ class MarketSnapshotRecord(BaseModel):
     indicators: dict
     scores: dict
     reason_codes: list[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class DerivativeDataSnapshot(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    symbol: str
+    provider: str
+    tier: Literal["bitget_public", "coinglass"]
+    as_of: datetime = Field(default_factory=utc_now)
+    open_interest: float | None = None
+    open_interest_value: float | None = None
+    open_interest_change_pct: float | None = None
+    funding_rate: float | None = None
+    funding_rate_interval_hours: int | None = None
+    next_funding_time: datetime | None = None
+    long_short_ratio: float | None = None
+    long_account_ratio: float | None = None
+    short_account_ratio: float | None = None
+    taker_buy_sell_ratio: float | None = None
+    top_long_short_ratio: float | None = None
+    oi_weighted_funding_rate: float | None = None
+    liquidation_clusters: list[dict] = Field(default_factory=list)
+    data_quality: dict = Field(default_factory=dict)
+    source_status: Literal["ok", "partial", "locked", "error"] = "ok"
+    notes: list[str] = Field(default_factory=list)
+    raw_json: dict = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class DerivativeMetric(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    symbol: str
+    source: Literal["bitget", "coinglass"]
+    tier: Literal["bitget_public", "coinglass"]
+    as_of: datetime = Field(default_factory=utc_now)
+    open_interest: float | None = None
+    open_interest_value: float | None = None
+    oi_change_pct: float | None = None
+    funding: float | None = None
+    funding_interval_hours: int | None = None
+    funding_next: datetime | None = None
+    taker_ls: float | None = None
+    top_ls: float | None = None
+    long_account_ratio: float | None = None
+    short_account_ratio: float | None = None
+    oi_weighted_funding: float | None = None
+    source_status: Literal["ok", "partial", "locked", "error"] = "ok"
+    data_quality: dict = Field(default_factory=dict)
+    coverage: dict = Field(default_factory=dict)
+    notes: list[str] = Field(default_factory=list)
+    raw_json: dict = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class LiquidationEvent(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    symbol: str
+    source: Literal["coinglass"]
+    interval: str
+    bucket_start: datetime
+    long_liquidation_usd: float = 0.0
+    short_liquidation_usd: float = 0.0
+    source_status: Literal["ok", "partial", "locked", "error"] = "ok"
+    data_quality: dict = Field(default_factory=dict)
+    raw_json: dict = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class DatabaseMaintenanceEvent(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    event_type: Literal["migration", "backup", "retention", "error"]
+    status: Literal["ok", "skipped", "error"]
+    message: str = ""
+    details: dict = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=utc_now)
 
 
@@ -444,6 +603,7 @@ class WatchlistItem(BaseModel):
     added_at: datetime = Field(default_factory=utc_now)
     note: str = ""
     default_timeframe: str = "4h"
+    asset_class: Literal["crypto", "stock", "index", "unknown"] = "unknown"
 
 
 class CatalogSymbol(BaseModel):
@@ -451,6 +611,10 @@ class CatalogSymbol(BaseModel):
     base_coin: str = ""
     quote_coin: str = ""
     status: str = ""
+    asset_class: Literal["crypto", "stock", "index", "unknown"] = "unknown"
+    source_category: str = ""
+    funding_rate_interval_hours: int | None = None
+    raw_metadata: dict = Field(default_factory=dict)
     maintenance_margin_rate: float | None = None
     taker_fee_rate: float | None = None
     updated_at: datetime = Field(default_factory=utc_now)
@@ -488,5 +652,11 @@ class ValidationRunRequest(BaseModel):
     timeframe: str = "4h"
     start: datetime | None = None
     end: datetime | None = None
-    params: dict = Field(default_factory=lambda: {"entry_score_min": 75, "risk_score_max": 60, "fomo_index_max": 70})
+    params: dict = Field(
+        default_factory=lambda: {
+            "entry_score_min": 75,
+            "risk_score_max": 60,
+            "fomo_index_max": 70,
+        }
+    )
     validation: dict = Field(default_factory=dict)

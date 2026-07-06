@@ -7,7 +7,6 @@ import { VolumeProfilePanel } from "@/components/position/VolumeProfilePanel";
 import { VolumeXrayPanel } from "@/components/position/VolumeXrayPanel";
 import {
   DEFAULT_LAYER_STATE,
-  focusedTaLayer,
   isTaLayer,
   loadLayerState,
   saveLayerState,
@@ -34,6 +33,7 @@ import {
   yesNoLabel
 } from "@/lib/labels/marketStateLabels";
 import type {
+  AnalystBriefing,
   LivePositionPayload,
   PositionActionPlan,
   PositionChartAnalysis,
@@ -43,10 +43,12 @@ import type {
 
 export type MetricTone = "positive" | "negative" | "warning" | "neutral" | "info" | "agent";
 
-export type EvidenceModuleId = "wyckoff" | "harmonic" | "volume" | "indicators" | "risk" | "history";
+export type EvidenceModuleId = "briefing" | "wyckoff" | "liquidity" | "harmonic" | "volume" | "indicators" | "risk" | "history";
 
 const MODULE_LAYER: Record<EvidenceModuleId, TaFocusLayer | null> = {
+  briefing: null,
   wyckoff: "wyckoff",
+  liquidity: "liquidity",
   harmonic: "harmonic",
   volume: "volume_profile",
   indicators: "indicators",
@@ -87,13 +89,12 @@ export function useAnalysisWorkspace(): AnalysisWorkspace {
   function handleToggleLayer(id: ChartLayerId, additive: boolean) {
     const next = toggleLayer(layers, id, additive);
     setLayers(next);
-    if (isTaLayer(id) && next.ta.includes(id) && focusedTaLayer(next) === id) {
+    if (isTaLayer(id)) {
       const moduleId = moduleForLayer(id);
-      if (moduleId) {
+      if (moduleId && next.ta.includes(id)) {
         setOpenModule(moduleId);
-        window.setTimeout(() => {
-          document.getElementById(`evidence-${moduleId}`)?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-        }, 0);
+      } else if (moduleId && openModule === moduleId) {
+        setOpenModule(null);
       }
     }
   }
@@ -106,7 +107,9 @@ export function useAnalysisWorkspace(): AnalysisWorkspace {
       return;
     }
     setOpenModule(id);
-    if (layer) setLayers((current) => ({ ...current, ta: [layer] }));
+    if (layer) {
+      setLayers((current) => toggleLayer(current, layer, true));
+    }
   }
 
   return { layers, highlightPrice, setHighlightPrice, openModule, handleToggleLayer, handleModuleToggle, density };
@@ -121,6 +124,7 @@ export function SymbolAnalysisView({
   trendSummary,
   plan,
   payload,
+  analystBriefing,
   sidePanel,
   workspace,
   gridClassName = "positionDetailMain",
@@ -133,6 +137,7 @@ export function SymbolAnalysisView({
   trendSummary: string;
   plan: PositionActionPlan | null;
   payload?: LivePositionPayload;
+  analystBriefing?: AnalystBriefing | null;
   sidePanel: ReactNode;
   workspace: AnalysisWorkspace;
   gridClassName?: string;
@@ -152,11 +157,13 @@ export function SymbolAnalysisView({
           onToggleLayer={workspace.handleToggleLayer}
           highlightPrice={workspace.highlightPrice}
           positionOverlay={chartOverlayFromPayload(payload)}
+          density={workspace.density}
         />
         {sidePanel}
       </section>
       <EvidenceAccordion
         payload={payload}
+        analystBriefing={analystBriefing ?? payload?.analyst_briefing ?? null}
         chartAnalysis={chartAnalysis}
         openModule={workspace.openModule}
         onModuleToggle={workspace.handleModuleToggle}
@@ -218,6 +225,7 @@ function wyckoffSummaryFrom(payload: LivePositionPayload | undefined, chartAnaly
 
 export function EvidenceAccordion({
   payload,
+  analystBriefing,
   chartAnalysis,
   openModule,
   onModuleToggle,
@@ -225,6 +233,7 @@ export function EvidenceAccordion({
   historyExtras
 }: {
   payload?: LivePositionPayload;
+  analystBriefing?: AnalystBriefing | null;
   chartAnalysis: PositionChartAnalysis | null;
   openModule: EvidenceModuleId | null;
   onModuleToggle: (id: EvidenceModuleId) => void;
@@ -235,6 +244,14 @@ export function EvidenceAccordion({
   const direction = payload?.position.direction ?? "long";
   const wyckoffEvents = splitWyckoffEvents(chartAnalysis?.wyckoff_markers ?? [], chartAnalysis?.wyckoff_markers_low_confidence);
   const modules: Array<{ id: EvidenceModuleId; title: string; badge: string; content: ReactNode }> = [];
+  if (analystBriefing) {
+    modules.push({
+      id: "briefing",
+      title: "브리핑",
+      badge: analystBriefing.confluence.stance_label,
+      content: <AnalystBriefingEvidence briefing={analystBriefing} />
+    });
+  }
   if (wyckoff) {
     modules.push({
       id: "wyckoff",
@@ -245,6 +262,12 @@ export function EvidenceAccordion({
       content: <WyckoffEvidence wyckoff={wyckoff} chartAnalysis={chartAnalysis} direction={direction} density={density} />
     });
   }
+  modules.push({
+    id: "liquidity",
+    title: "유동성",
+    badge: liquidityBadge(chartAnalysis, density),
+    content: <LiquidityEvidence chartAnalysis={chartAnalysis} density={density} />
+  });
   modules.push({
     id: "harmonic",
     title: "하모닉",
@@ -292,7 +315,7 @@ export function EvidenceAccordion({
     <section className="evidenceAccordion" aria-label="판단 근거">
       <div className="evidenceAccordionHeader">
         <strong>판단 근거</strong>
-        <span>펼치면 차트가 해당 분석 레이어로 전환됩니다.</span>
+        <span>펼치면 해당 분석 레이어를 차트에 함께 표시합니다.</span>
       </div>
       {modules.map((module) => (
         <details className="evidenceSection" id={`evidence-${module.id}`} key={module.id} open={openModule === module.id}>
@@ -309,6 +332,55 @@ export function EvidenceAccordion({
         </details>
       ))}
     </section>
+  );
+}
+
+function AnalystBriefingEvidence({ briefing }: { briefing: AnalystBriefing }) {
+  const confluence = briefing.confluence;
+  const strongest = [...confluence.long_evidence, ...confluence.short_evidence]
+    .sort((left, right) => (right.score ?? 0) - (left.score ?? 0))
+    .slice(0, 3);
+  const counter = confluence.counter_evidence.slice(0, 2);
+  return (
+    <div className="analystBriefingEvidence">
+      <div className="tabMetricLayout compact">
+        <PositionHeaderMetric label="스탠스" value={confluence.stance_label} tone={confluence.stance === "conflicted" ? "warning" : confluence.stance === "insufficient" ? "neutral" : "info"} />
+        <PositionHeaderMetric label="종합" value={`${confluence.composite_score}/100`} tone="info" />
+        <PositionHeaderMetric label="롱/숏" value={`${confluence.long_score} / ${confluence.short_score}`} />
+        <PositionHeaderMetric label="증거" value={`${confluence.evidence_count}개`} />
+      </div>
+
+      <div className="briefingColumns">
+        <div className="tabLevelsList">
+          <strong>근거</strong>
+          {strongest.length ? strongest.map((item, index) => (
+            <div key={`evidence-${item.engine}-${index}`}>
+              <span>{plainifyTaText(item.claim)}</span>
+              <em>{item.direction === "long" ? "롱 근거" : item.direction === "short" ? "숏 근거" : "중립"} · {item.score}</em>
+              <p>{item.engine} · 신뢰도 {confidenceLabel(item.confidence, "detailed")}</p>
+            </div>
+          )) : <p>유효 근거가 3개 미만이라 브리핑을 보류합니다.</p>}
+        </div>
+        <div className="tabLevelsList">
+          <strong>반대 근거</strong>
+          {counter.length ? counter.map((item, index) => (
+            <div key={`counter-${item.engine}-${index}`}>
+              <span>{plainifyTaText(item.claim)}</span>
+              <em>{item.direction === "long" ? "롱 근거" : item.direction === "short" ? "숏 근거" : "중립"} · {item.score}</em>
+              <p>{item.engine} · 신뢰도 {confidenceLabel(item.confidence, "detailed")}</p>
+            </div>
+          )) : <p>반대 근거가 없으면 방향 브리핑을 보류합니다.</p>}
+        </div>
+      </div>
+
+      <div className="briefingScenarioList">
+        <strong>조건부 시나리오</strong>
+        {briefing.scenario.map((line) => <span key={line}>{plainifyTaText(line)}</span>)}
+      </div>
+      <p className="tabExplanation">
+        {briefing.hit_rates.length ? briefing.hit_rates.join(" · ") : "근거별 실측 적중률은 표본이 충분할 때만 표시합니다."}
+      </p>
+    </div>
   );
 }
 
@@ -366,8 +438,101 @@ function WyckoffEvidence({
           </div>
         </details>
       ) : null}
+      {chartAnalysis?.wyckoff?.["liquidity_crosscheck"] ? (
+        <div className="wyckoffEventList">
+          {liquidityCrosscheckLabels(chartAnalysis.wyckoff["liquidity_crosscheck"]).map((label) => (
+            <span key={label}>{label}</span>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
+}
+
+function LiquidityEvidence({ chartAnalysis, density }: { chartAnalysis: PositionChartAnalysis | null; density: Density }) {
+  const liquidity = chartAnalysis?.liquidity;
+  if (!liquidity) {
+    return <div className="terminalEmpty">유동성 구조 데이터가 준비되면 표시됩니다.</div>;
+  }
+  const pools = liquidity.pools
+    .filter((pool) => !pool.swept)
+    .sort((left, right) => (right.score - left.score) || (right.touch_count - left.touch_count))
+    .slice(0, density === "simple" ? 2 : 8);
+  const sweeps = [...liquidity.sweeps, ...liquidity.htf_range_sweeps]
+    .filter((sweep) => sweep.confirmed && (density === "detailed" || sweep.grade === "Strong"))
+    .slice(0, density === "simple" ? 4 : 8);
+  const shift = liquidity.structure_shift;
+  const range = liquidity.dealing_range;
+  return (
+    <div className="tabRiskGrid">
+      <div className="tabLevelsList">
+        <strong title={taPlainTooltip("LiquidityPool")}>{taShortLabel("LiquidityPool")}</strong>
+        {pools.length ? pools.map((pool) => (
+          <div key={pool.id}>
+            <span>{liquidityPoolEvidenceLabel(pool)}</span>
+            <em>{formatPrice(pool.price)}</em>
+            <p>{pool.grade} · 터치 {pool.touch_count} · 점수 {pool.score}</p>
+          </div>
+        )) : <p>미스윕 유동성 풀이 충분하지 않습니다.</p>}
+      </div>
+      <div className="tabLevelsList">
+        <strong title={taPlainTooltip("Sweep")}>{taShortLabel("Sweep")}</strong>
+        {sweeps.length ? sweeps.map((sweep) => (
+          <div key={sweep.id}>
+            <span>{liquiditySweepEvidenceLabel(sweep)}</span>
+            <em>{formatPrice(sweep.price)}</em>
+            <p>{sweep.grade} · 신뢰도 {confidenceLabel(sweep.confidence, density)} · 거래량 {sweep.volume_ratio.toFixed(2)}배</p>
+          </div>
+        )) : <p>확정 Strong 스윕이 아직 없습니다.</p>}
+      </div>
+      <div className="tabMetricLayout compact">
+        <PositionHeaderMetric
+          label={shift.event === "CHoCH" ? taShortLabel("CHoCH") : taShortLabel("BOS")}
+          title={taPlainTooltip(shift.event === "CHoCH" ? "CHoCH" : "BOS")}
+          value={shift.event && typeof shift.level === "number" ? `${shift.label ?? shift.event} · ${formatPrice(shift.level)}` : "돌파 없음"}
+          tone={shift.event === "CHoCH" ? "warning" : shift.event === "BOS" ? "info" : "neutral"}
+        />
+        <PositionHeaderMetric
+          label={range?.zone?.includes("premium") ? taShortLabel("Premium") : range?.zone?.includes("discount") ? taShortLabel("Discount") : "균형 위치"}
+          title={taPlainTooltip(range?.zone?.includes("premium") ? "Premium" : range?.zone?.includes("discount") ? "Discount" : "Range")}
+          value={range ? `${range.label} · ${range.position_pct.toFixed(1)}%` : "범위 부족"}
+        />
+      </div>
+    </div>
+  );
+}
+
+function liquidityBadge(chartAnalysis: PositionChartAnalysis | null, density: Density): string {
+  const liquidity = chartAnalysis?.liquidity;
+  if (!liquidity) return "데이터 대기";
+  const unswept = liquidity.pools.filter((pool) => !pool.swept).length;
+  const strong = [...liquidity.sweeps, ...liquidity.htf_range_sweeps].filter((sweep) => sweep.confirmed && sweep.grade === "Strong").length;
+  if (density === "simple") return strong ? `Strong 스윕 ${strong}개` : `미스윕 풀 ${Math.min(unswept, 2)}개`;
+  return `풀 ${unswept}개 · 확정 스윕 ${liquidity.sweeps.length + liquidity.htf_range_sweeps.length}개`;
+}
+
+function liquidityPoolEvidenceLabel(pool: PositionChartAnalysis["liquidity"]["pools"][number]): string {
+  if (pool.kind === "eqh") return `상단 풀(EQH ${pool.touch_count}터치)`;
+  if (pool.kind === "eql") return `하단 풀(EQL ${pool.touch_count}터치)`;
+  if (pool.kind === "old_high") return `상단 풀(전고 ${pool.touch_count}터치)`;
+  if (pool.kind === "old_low") return `하단 풀(전저 ${pool.touch_count}터치)`;
+  return pool.label;
+}
+
+function liquiditySweepEvidenceLabel(sweep: PositionChartAnalysis["liquidity"]["sweeps"][number]): string {
+  return sweep.side === "buy_side" ? "고점 스윕" : "저점 스윕";
+}
+
+function liquidityCrosscheckLabels(value: unknown): string[] {
+  const payload = value as { confirmations?: Array<Record<string, unknown>> } | null;
+  if (!payload?.confirmations?.length) return [];
+  return payload.confirmations
+    .map((item) => {
+      const bonus = typeof item.liquidity_confirmation === "number" ? item.liquidity_confirmation : null;
+      const grade = item.sweep_grade ? String(item.sweep_grade) : "스윕";
+      return bonus ? `${grade} 스윕 확인 +${bonus}` : `${grade} 스윕 확인`;
+    })
+    .slice(0, 3);
 }
 
 function HarmonicEvidence({ chartAnalysis, density }: { chartAnalysis: PositionChartAnalysis | null; density: Density }) {

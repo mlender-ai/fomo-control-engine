@@ -9,8 +9,17 @@ def run_validation(trades: list[Trade], request: ValidationRunRequest) -> Valida
     filtered = _filter_trades(trades, request)
     returns = [trade.pnl_percent / 100 for trade in filtered]
     summary = _summary(returns, filtered)
-    mc = monte_carlo(returns, request.validation.get("monte_carlo", {}).get("n_simulations", 1000), request.validation.get("monte_carlo", {}).get("seed", 42))
-    boot = bootstrap_sharpe(returns, request.validation.get("bootstrap", {}).get("n_bootstrap", 1000), request.validation.get("bootstrap", {}).get("confidence", 0.95), request.validation.get("bootstrap", {}).get("seed", 42))
+    mc = monte_carlo(
+        returns,
+        request.validation.get("monte_carlo", {}).get("n_simulations", 1000),
+        request.validation.get("monte_carlo", {}).get("seed", 42),
+    )
+    boot = bootstrap_sharpe(
+        returns,
+        request.validation.get("bootstrap", {}).get("n_bootstrap", 1000),
+        request.validation.get("bootstrap", {}).get("confidence", 0.95),
+        request.validation.get("bootstrap", {}).get("seed", 42),
+    )
     wf = walk_forward(returns, request.validation.get("walk_forward", {}).get("n_windows", 5))
     warnings = _warnings(summary, boot, wf, mc) + _schema_warnings(request)
     return ValidationRun(
@@ -35,7 +44,11 @@ def run_validation(trades: list[Trade], request: ValidationRunRequest) -> Valida
 
 def monte_carlo(returns: list[float], n_simulations: int = 1000, seed: int = 42) -> dict:
     if not returns:
-        return {"n_simulations": n_simulations, "p_value_sharpe": 1.0, "median_total_return": 0}
+        return {
+            "n_simulations": n_simulations,
+            "p_value_sharpe": 1.0,
+            "median_total_return": 0,
+        }
     rng = random.Random(seed)
     totals = []
     observed = sum(returns)
@@ -43,10 +56,19 @@ def monte_carlo(returns: list[float], n_simulations: int = 1000, seed: int = 42)
         sample = [rng.choice(returns) for _ in returns]
         totals.append(sum(sample))
     better = sum(1 for total in totals if total >= observed)
-    return {"n_simulations": n_simulations, "p_value_sharpe": round(better / n_simulations, 4), "median_total_return": round(sorted(totals)[len(totals) // 2], 4)}
+    return {
+        "n_simulations": n_simulations,
+        "p_value_sharpe": round(better / n_simulations, 4),
+        "median_total_return": round(sorted(totals)[len(totals) // 2], 4),
+    }
 
 
-def bootstrap_sharpe(returns: list[float], n_bootstrap: int = 1000, confidence: float = 0.95, seed: int = 42) -> dict:
+def bootstrap_sharpe(
+    returns: list[float],
+    n_bootstrap: int = 1000,
+    confidence: float = 0.95,
+    seed: int = 42,
+) -> dict:
     if len(returns) < 2:
         return {"sharpe_ci": [0, 0], "confidence": confidence}
     rng = random.Random(seed)
@@ -57,7 +79,13 @@ def bootstrap_sharpe(returns: list[float], n_bootstrap: int = 1000, confidence: 
     sharpes.sort()
     low_index = int(((1 - confidence) / 2) * len(sharpes))
     high_index = int((1 - (1 - confidence) / 2) * len(sharpes)) - 1
-    return {"sharpe_ci": [round(sharpes[low_index], 4), round(sharpes[max(low_index, high_index)], 4)], "confidence": confidence}
+    return {
+        "sharpe_ci": [
+            round(sharpes[low_index], 4),
+            round(sharpes[max(low_index, high_index)], 4),
+        ],
+        "confidence": confidence,
+    }
 
 
 def walk_forward(returns: list[float], n_windows: int = 5) -> dict:
@@ -67,8 +95,18 @@ def walk_forward(returns: list[float], n_windows: int = 5) -> dict:
     windows = []
     for index in range(0, len(returns), size):
         chunk = returns[index : index + size]
-        windows.append({"index": len(windows) + 1, "trades": len(chunk), "total_return": round(sum(chunk), 4), "positive": sum(chunk) > 0})
-    return {"windows": windows, "consistency_rate": round(sum(1 for window in windows if window["positive"]) / len(windows), 2)}
+        windows.append(
+            {
+                "index": len(windows) + 1,
+                "trades": len(chunk),
+                "total_return": round(sum(chunk), 4),
+                "positive": sum(chunk) > 0,
+            }
+        )
+    return {
+        "windows": windows,
+        "consistency_rate": round(sum(1 for window in windows if window["positive"]) / len(windows), 2),
+    }
 
 
 def _filter_trades(trades: list[Trade], request: ValidationRunRequest) -> list[Trade]:
@@ -93,8 +131,14 @@ def _summary(returns: list[float], trades: list[Trade]) -> dict:
         "max_drawdown": round(_max_drawdown(returns), 4),
         "sharpe": round(_sharpe(returns), 4),
         "sortino": round(_sortino(returns), 4),
-        "calmar": round((sum(returns) / abs(_max_drawdown(returns))) if _max_drawdown(returns) else 0, 4),
-        "recovery_factor": round((sum(returns) / abs(_max_drawdown(returns))) if _max_drawdown(returns) else 0, 4),
+        "calmar": round(
+            (sum(returns) / abs(_max_drawdown(returns))) if _max_drawdown(returns) else 0,
+            4,
+        ),
+        "recovery_factor": round(
+            (sum(returns) / abs(_max_drawdown(returns))) if _max_drawdown(returns) else 0,
+            4,
+        ),
         "expectancy": round(mean(returns), 4) if returns else 0,
     }
 

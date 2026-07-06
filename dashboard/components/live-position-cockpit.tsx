@@ -75,9 +75,9 @@ export function LivePositionCockpit() {
   }
 
   useEffect(() => {
-    void load(true);
+    void load(false);
     const interval = window.setInterval(() => {
-      void load(true);
+      void load(false);
     }, LIVE_POSITION_SYNC_INTERVAL_SECONDS * 1000);
     return () => window.clearInterval(interval);
   }, []);
@@ -155,23 +155,24 @@ export function LivePositionCockpit() {
     }
   }
 
-  async function loadSelectedChart(positionId: string) {
-    setSelectedChartLoading(true);
+  async function loadSelectedChart(positionId: string, showSpinner = true) {
+    if (showSpinner) setSelectedChartLoading(true);
     setSelectedChartError("");
     try {
       setSelectedChartAnalysis(await api.positionChartAnalysis(positionId, "4h"));
     } catch (err) {
-      setSelectedChartAnalysis(null);
+      if (showSpinner) setSelectedChartAnalysis(null);
       setSelectedChartError(err instanceof Error ? err.message : "차트 분석 데이터를 불러오지 못했습니다.");
     } finally {
-      setSelectedChartLoading(false);
+      if (showSpinner) setSelectedChartLoading(false);
     }
   }
 
   useEffect(() => {
     if (!selected?.position.id) return;
     void loadSelectedDetail(selected.position.id);
-    void loadSelectedChart(selected.position.id);
+    const hasCurrentChart = selectedChartAnalysis?.position_id === selected.position.id;
+    void loadSelectedChart(selected.position.id, !hasCurrentChart);
   }, [selected?.position.id, data?.timestamp]);
 
   useEffect(() => {
@@ -264,6 +265,7 @@ export function LivePositionCockpit() {
                 trendSummary={trendLabel(selectedPayload.state.analysis.technical.trend)}
                 plan={actionPlanForPayload(selectedPayload)}
                 payload={selectedPayload}
+                analystBriefing={selectedPayload.analyst_briefing ?? null}
                 workspace={workspace}
                 gridClassName="cockpitMainGrid"
                 sidePanel={
@@ -300,12 +302,13 @@ function PositionStrip({
 }) {
   const sortedPositions = [...positions].sort((left, right) => right.state.severity_rank - left.state.severity_rank);
   return (
-    <section className="positionStrip" aria-label="보유 포지션">
+    <section className="positionStrip" aria-label="보유 포지션" data-testid="position-strip">
       {sortedPositions.map((item) => {
         const trigger = nearestActionTrigger(item);
         return (
           <button
             className={`positionStripCard severity-${item.state.severity_rank} ${item.position.id === selectedId ? "selected" : ""}`}
+            data-testid="position-card"
             key={item.position.id}
             onClick={() => onSelect(item.position.id)}
             title={riskRewardSummary(item)}
@@ -345,7 +348,7 @@ function HealthGaugeRing({ score, severity }: { score: number; severity: number 
   const circumference = 2 * Math.PI * radius;
   const progress = clamp(score, 0, 100);
   return (
-    <span className={`healthGaugeRing severity-${severity}`} aria-label={`건강도 ${score}`}>
+    <span className={`healthGaugeRing severity-${severity}`} aria-label={`건강도 ${score}`} data-testid="health-gauge">
       <svg viewBox="0 0 40 40" aria-hidden="true">
         <circle cx="20" cy="20" r={radius} className="healthGaugeTrack" />
         <circle
@@ -389,7 +392,7 @@ function PositionMiniSparkline({
   const path = values.map((value, index) => `${index === 0 ? "M" : "L"} ${x(index).toFixed(1)} ${y(value).toFixed(1)}`).join(" ");
   const entryY = y(payload.position.entry_price);
   return (
-    <svg className="positionSparkline" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="최근 48캔들 위치 요약">
+    <svg className="positionSparkline" data-testid="position-sparkline" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="최근 48캔들 위치 요약">
       <line className="sparkEntry" x1="0" x2={width} y1={entryY} y2={entryY} />
       {invalidation !== null ? <line className="sparkTick sparkInvalidation" x1={width - 18} x2={width} y1={y(invalidation)} y2={y(invalidation)} /> : null}
       {takeProfit !== null ? <line className="sparkTick sparkTakeProfit" x1={width - 18} x2={width} y1={y(takeProfit)} y2={y(takeProfit)} /> : null}
@@ -413,12 +416,16 @@ function PositionVerdictBar({
   // 벽시계 대신 최신 분석 시각(state.as_of) 대비 나이로 신선도를 판정 (렌더 순수성 유지)
   const ageMinutes = asOf ? (new Date(payload.state.as_of).getTime() - asOf.getTime()) / 60000 : null;
   const freshness = freshnessCountdownLabel(ageMinutes);
-  const StatusIcon = severityIcon(state.severity_rank);
+  const statusIcon = state.severity_rank >= 3
+    ? <AlertTriangle size={26} aria-hidden="true" />
+    : state.severity_rank >= 1
+      ? <Activity size={26} aria-hidden="true" />
+      : <ShieldCheck size={26} aria-hidden="true" />;
   return (
-    <section className={`verdictBar status-${state.status} severity-${state.severity_rank}`}>
+    <section className={`verdictBar status-${state.status} severity-${state.severity_rank}`} data-testid="verdict-bar">
       <div className="verdictHero">
         <div className="verdictStatusIcon">
-          <StatusIcon size={26} aria-hidden="true" />
+          {statusIcon}
         </div>
         <div className="verdictHeroMain">
           <div className="verdictTopRow">
@@ -466,7 +473,7 @@ function TriggerProximityMeter({ payload }: { payload: LivePositionPayload }) {
   const invalidationLeft = clamp(((invalidationPrice - min) / Math.max(max - min, 1e-12)) * 100, 0, 100);
   const targetLeft = clamp(((takeProfitPrice - min) / Math.max(max - min, 1e-12)) * 100, 0, 100);
   return (
-    <div className="triggerMeter" aria-label="무효화와 1차 익절 사이 현재가 위치">
+    <div className="triggerMeter" aria-label="무효화와 1차 익절 사이 현재가 위치" data-testid="trigger-meter">
       <div className="triggerMeterTrack">
         <span className="triggerMeterRisk" style={{ left: `${Math.min(invalidationLeft, currentLeft)}%`, width: `${Math.abs(currentLeft - invalidationLeft)}%` }} />
         <span className="triggerMeterReward" style={{ left: `${Math.min(targetLeft, currentLeft)}%`, width: `${Math.abs(targetLeft - currentLeft)}%` }} />
@@ -500,7 +507,7 @@ function ActionPlanPanel({
   const rows = actionPlanRows(plan);
   const liquidationWarning = typeof plan?.liquidation?.warning === "string" ? plan.liquidation.warning : "";
   return (
-    <section className="focusPanel actionPlanPanel">
+    <section className="focusPanel actionPlanPanel" data-testid="action-plan">
       <div className="focusPanelHeader">
         <div>
           <h2>액션 플랜</h2>
@@ -534,11 +541,45 @@ function ActionPlanPanel({
         <div className="terminalEmpty">액션 플랜을 만들 가격 근거가 부족합니다.</div>
       )}
       {liquidationWarning ? <div className="actionPlanWarning">{liquidationWarning}</div> : null}
+      <DerivativeEvidenceCards payload={payload} />
       <details className="planInsightDetails">
         <summary>해설 보기 · {insightSummaryHint(payload)}</summary>
         <InsightEvidence payload={payload} onCreateInsight={onCreateInsight} busy={busy} />
       </details>
     </section>
+  );
+}
+
+function DerivativeEvidenceCards({ payload }: { payload: LivePositionPayload }) {
+  const derivatives = payload.state.analysis.derivatives;
+  const latest = derivatives?.latest;
+  const signals = derivatives?.signals;
+  if (!latest) return null;
+  const coinglass = derivatives?.coinglass;
+  const sourceLabel = coinglass?.source_status === "ok" ? `${latest.provider ?? "bitget"} + Coinglass` : latest.provider ?? "bitget";
+  return (
+    <div className="derivativeEvidenceGrid">
+      <div className="derivativeEvidenceCard">
+        <span>수급 기준</span>
+        <strong>{derivatives?.as_of ? new Date(derivatives.as_of).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }) : "-"}</strong>
+        <em>출처 {sourceLabel}</em>
+      </div>
+      <div className="derivativeEvidenceCard">
+        <span>OI 24h</span>
+        <strong>{formatNullablePct(latest.open_interest_change_pct)}</strong>
+        <em>{signals?.oi_price_divergence?.label ?? "표본 부족"}</em>
+      </div>
+      <div className="derivativeEvidenceCard">
+        <span>펀딩</span>
+        <strong>{signals?.funding_state?.label ?? "표본 부족"}</strong>
+        <em>{formatFunding(latest.funding_rate)}</em>
+      </div>
+      <div className={`derivativeEvidenceCard ${coinglass?.source_status === "locked" ? "locked" : ""}`}>
+        <span>청산 밀집대</span>
+        <strong>{coinglass?.source_status === "ok" ? `${signals?.liquidation_clusters?.length ?? 0}개 추정` : "Coinglass 연결 필요"}</strong>
+        <em>추정 모델 · 확정 아님</em>
+      </div>
+    </div>
   );
 }
 
@@ -637,16 +678,16 @@ export function PositionDetailShell({ positionId }: { positionId: string }) {
     }
   }
 
-  async function loadChart(nextTimeframe = timeframe) {
+  async function loadChart(nextTimeframe = timeframe, showSpinner = true) {
     setChartError("");
-    setChartLoading(true);
+    if (showSpinner) setChartLoading(true);
     try {
       setChartAnalysis(await api.positionChartAnalysis(positionId, nextTimeframe));
     } catch (err) {
-      setChartAnalysis(null);
+      if (showSpinner) setChartAnalysis(null);
       setChartError(err instanceof Error ? err.message : "차트 분석 데이터를 불러오지 못했습니다.");
     } finally {
-      setChartLoading(false);
+      if (showSpinner) setChartLoading(false);
     }
   }
 
@@ -655,7 +696,8 @@ export function PositionDetailShell({ positionId }: { positionId: string }) {
   }, [positionId]);
 
   useEffect(() => {
-    void loadChart(timeframe);
+    const hasCurrentChart = chartAnalysis?.position_id === positionId && chartAnalysis.timeframe === timeframe;
+    void loadChart(timeframe, !hasCurrentChart);
   }, [positionId, timeframe]);
 
   async function analyze() {
@@ -859,6 +901,7 @@ export function PositionDetailShell({ positionId }: { positionId: string }) {
         trendSummary={trendLabel(detail.state.analysis.technical.trend)}
         plan={actionPlanForPayload(detail)}
         payload={detail}
+        analystBriefing={detail.analyst_briefing ?? null}
         workspace={workspace}
         gridClassName="positionDetailMain"
         historyExtras={recordForms}
@@ -1073,12 +1116,6 @@ function freshnessCountdownLabel(ageMinutes: number | null): string {
   return `만료 ${Math.abs(remaining)}분 지남 · 갱신 권장`;
 }
 
-function severityIcon(severityRank: number) {
-  if (severityRank >= 3) return AlertTriangle;
-  if (severityRank >= 1) return Activity;
-  return ShieldCheck;
-}
-
 /** 백엔드 headline_action과 동일 규칙의 클라이언트 폴백: 현재가에서 가장 가까운 트리거 1개. */
 function deriveHeadlineAction(plan: PositionActionPlan | null, direction: "long" | "short"): string | null {
   if (!plan) return null;
@@ -1174,6 +1211,16 @@ function insightSummaryHint(payload: LivePositionPayload): string {
 
 function formatNullablePrice(value: number | null): string {
   return value === null ? "-" : formatPrice(value);
+}
+
+function formatNullablePct(value: number | null | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "표본 부족";
+  return signedPercent(value);
+}
+
+function formatFunding(value: number | null | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "-";
+  return `${value > 0 ? "+" : ""}${(value * 100).toFixed(4)}%`;
 }
 
 function formatDistance(value: number | null): string {

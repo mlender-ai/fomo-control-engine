@@ -164,6 +164,7 @@ export type PositionState = {
       break_of_structure: boolean;
       higher_low: boolean;
     };
+    derivatives?: DerivativesContext;
     risk: {
       liquidation_distance_pct: number | null;
       risk_score: number;
@@ -253,6 +254,58 @@ export type PositionActionPlan = {
   headline_action?: string | null;
 };
 
+export type AnalystEvidence = {
+  engine: string;
+  claim: string;
+  direction: "long" | "short" | "neutral" | string;
+  weight: number;
+  confidence: number;
+  as_of: string | null;
+  score?: number;
+  source?: string;
+  calibration?: {
+    sample_size: number;
+    accuracy_pct: number | null;
+    factor: number;
+    applied: boolean;
+  };
+  stale?: boolean;
+  stale_minutes?: number | null;
+};
+
+export type AnalystConfluence = {
+  symbol: string;
+  timeframe: string;
+  generated_at: string;
+  data_as_of: string | null;
+  max_engine_age_minutes: number | null;
+  stance: "long_leaning" | "short_leaning" | "conflicted" | "insufficient" | string;
+  stance_label: string;
+  composite_score: number;
+  long_score: number;
+  short_score: number;
+  long_evidence: AnalystEvidence[];
+  short_evidence: AnalystEvidence[];
+  counter_evidence: AnalystEvidence[];
+  evidence_count: number;
+  neutral_evidence?: AnalystEvidence[];
+  calibration_policy?: Record<string, unknown>;
+};
+
+export type AnalystBriefing = {
+  symbol: string;
+  timeframe: string;
+  context: "pre_entry" | "position" | string;
+  briefing_source: "deterministic" | "llm" | string;
+  confluence: AnalystConfluence;
+  scenario: string[];
+  hit_rates: string[];
+  text: string;
+  llm_text: string | null;
+  llm_source: string;
+  warnings: string[];
+};
+
 export type InsightStatus = {
   has_insight: boolean;
   is_stale: boolean;
@@ -300,6 +353,7 @@ export type LivePositionPayload = {
   state: PositionState;
   latest_snapshot: PositionSnapshot;
   action_plan?: PositionActionPlan | null;
+  analyst_briefing?: AnalystBriefing | null;
   latest_insight: PositionInsight | null;
   insight_status: InsightStatus;
   recent_events: PositionEvent[];
@@ -327,6 +381,8 @@ export type ChartCandle = {
   low: number;
   close: number;
   volume: number;
+  session?: string | null;
+  is_regular_session?: boolean | null;
 };
 
 export type ChartPriceLevel = {
@@ -378,6 +434,85 @@ export type CvdPoint = {
   method: "trade_fills" | string;
 };
 
+export type LiquidityPool = {
+  id: string;
+  price: number;
+  kind: "eqh" | "eql" | "old_high" | "old_low" | string;
+  touch_count: number;
+  touches?: number;
+  first_seen: string;
+  last_touch_at: string;
+  swept: boolean;
+  swept_at: string | null;
+  score: number;
+  side: "buy_side" | "sell_side" | string;
+  grade: "Weak" | "Mid" | "Strong" | string;
+  label: string;
+};
+
+export type LiquiditySweep = {
+  id: string;
+  type: "liquidity_sweep" | "htf_range_sweep" | string;
+  side: "buy_side" | "sell_side" | string;
+  pool_id: string;
+  pool_kind: string;
+  pool_price: number;
+  price: number;
+  wick_extreme: number;
+  time: string;
+  timestamp: number;
+  return_at: string;
+  return_candles: number;
+  depth_pct: number;
+  depth_atr: number;
+  volume_ratio: number;
+  volume_confirmed: boolean;
+  confirmed: boolean;
+  status: "confirmed" | "unconfirmed" | string;
+  confidence: number;
+  grade: "Weak" | "Mid" | "Strong" | string;
+  expected_move: "up" | "down" | string;
+  wyckoff_equivalent: "spring_candidate" | "utad_candidate" | string;
+  label: string;
+  basis: string;
+  components: Record<string, number>;
+};
+
+export type LiquidityStructureShift = {
+  state: string;
+  event: "BOS" | "CHoCH" | null | string;
+  direction?: "up" | "down" | string;
+  level?: number;
+  close?: number;
+  trend_before?: string;
+  label?: string;
+};
+
+export type LiquidityDealingRange = {
+  source: string;
+  high: number;
+  low: number;
+  midpoint: number;
+  position_pct: number;
+  zone: "deep_premium" | "premium" | "equilibrium" | "discount" | "deep_discount" | string;
+  label: string;
+} | null;
+
+export type LiquidityContext = {
+  method: string;
+  as_of: string | null;
+  reference_price: number | null;
+  pools: LiquidityPool[];
+  sweeps: LiquiditySweep[];
+  rejected_sweeps: LiquiditySweep[];
+  htf_range_sweeps: LiquiditySweep[];
+  structure_shift: LiquidityStructureShift;
+  dealing_range: LiquidityDealingRange;
+  wyckoff_crosscheck: Record<string, unknown>;
+  limits: Record<string, unknown>;
+  notes: string[];
+};
+
 export type WyckoffMarker = {
   id?: string;
   time: number;
@@ -391,6 +526,8 @@ export type WyckoffMarker = {
     return_speed: number;
     volume_confirmation: number;
     level_strength: number;
+    liquidity_confirmation?: number;
+    [key: string]: number | undefined;
   };
   level_price?: number;
   level_kind?: "support" | "resistance" | string;
@@ -436,6 +573,9 @@ export type CatalogSymbolInfo = {
   base_coin: string;
   quote_coin: string;
   status: string;
+  asset_class: "crypto" | "stock" | "index" | "unknown";
+  source_category?: string;
+  funding_rate_interval_hours?: number | null;
   updated_at: string;
 };
 
@@ -444,10 +584,18 @@ export type WatchlistEntry = {
   added_at: string;
   note: string;
   default_timeframe: string;
+  asset_class: "crypto" | "stock" | "index" | "unknown";
 };
 
 export type ScoutScanRow = {
   symbol: string;
+  asset_class?: "crypto" | "stock" | "index" | "unknown";
+  session?: {
+    state?: string;
+    label?: string;
+    next_open_at?: string | null;
+    seconds_until_open?: number | null;
+  } | null;
   timeframe: string;
   as_of?: string;
   note?: string;
@@ -459,18 +607,54 @@ export type ScoutScanRow = {
   harmonic_active?: boolean;
   prz_distance_pct?: number | null;
   nearest_level_distance_pct?: number | null;
+  liquidity_nearest_pool?: {
+    price: number;
+    distance_pct: number;
+    label: string;
+    kind?: string;
+    side?: string;
+    touch_count?: number;
+    score?: number;
+    grade?: string;
+  } | null;
+  liquidity_pool_distance_pct?: number | null;
   volume_state?: string;
   change_24h?: number;
   funding_rate?: number;
+  funding_state?: string | null;
+  crowding_score?: number | null;
   setup_proximity_pct?: number | null;
   mark_price?: number | null;
+  setup_candidates?: Array<Record<string, unknown>>;
+};
+
+export type ArmedSetup = {
+  id: string;
+  symbol: string;
+  timeframe: string;
+  source: "auto" | "manual";
+  setup_type: string;
+  direction: "long" | "short" | null;
+  trigger_price: number | null;
+  trigger_label: string;
+  trigger_condition: string;
+  distance_pct: number | null;
+  confidence: number | null;
+  basis: string;
+  status: "armed" | "triggered" | "invalidated" | "disarmed";
+  preview: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+  last_seen_at: string;
 };
 
 export type ScoutScanResponse = {
   rows: ScoutScanRow[];
+  armed_setups?: ArmedSetup[];
   scanned_at: string;
   cache_ttl_seconds: number;
   count: number;
+  rate_budget?: Record<string, unknown>;
 };
 
 export type ScoutAnalysisResponse = {
@@ -480,6 +664,7 @@ export type ScoutAnalysisResponse = {
   cache_age_seconds: number;
   analysis: PositionChartAnalysis;
   summary: ScoutScanRow;
+  analyst_briefing?: AnalystBriefing | null;
 };
 
 export type EntryChecklistItem = {
@@ -516,6 +701,8 @@ export type EntrySimulation = {
   checklist_total: number;
   verdict_line: string;
   analysis_as_of?: string;
+  analyst_briefing?: AnalystBriefing | null;
+  briefing_direction_conflict?: boolean;
 };
 
 export type EntryScenario = {
@@ -590,10 +777,104 @@ export type HarmonicPrz = {
   basis: string;
 };
 
+export type DerivativeMetric = {
+  id?: string;
+  symbol: string;
+  source: "bitget" | "coinglass" | string;
+  tier: "bitget_public" | "coinglass" | string;
+  as_of: string;
+  open_interest: number | null;
+  open_interest_value: number | null;
+  oi_change_pct: number | null;
+  funding: number | null;
+  funding_next: string | null;
+  taker_ls: number | null;
+  top_ls: number | null;
+  long_account_ratio: number | null;
+  short_account_ratio: number | null;
+  oi_weighted_funding: number | null;
+  source_status: "ok" | "partial" | "locked" | "error" | string;
+  coverage: Record<string, unknown>;
+  notes: string[];
+};
+
+export type DerivativeSnapshot = {
+  symbol: string;
+  provider?: string;
+  tier: "bitget_public" | "coinglass" | string;
+  as_of: string;
+  open_interest: number | null;
+  open_interest_value: number | null;
+  open_interest_change_pct: number | null;
+  funding_rate: number | null;
+  next_funding_time: string | null;
+  long_short_ratio: number | null;
+  long_account_ratio: number | null;
+  short_account_ratio: number | null;
+  taker_buy_sell_ratio: number | null;
+  top_long_short_ratio: number | null;
+  oi_weighted_funding_rate: number | null;
+  liquidation_clusters: Array<Record<string, unknown>>;
+  source_status: "ok" | "partial" | "locked" | "error" | string;
+  notes: string[];
+};
+
+export type DerivativeSignals = {
+  as_of: string | null;
+  coverage: {
+    metric_samples: number;
+    liquidation_samples: number;
+    sources?: string[];
+  };
+  oi_price_divergence: {
+    state: string;
+    label: string;
+    meaning: string;
+    price_change_pct: number;
+    oi_change_pct: number;
+  } | null;
+  funding_state: {
+    state: "neutral" | "overheated" | "extreme" | null | string;
+    label: string;
+    funding: number;
+    abs_percentile_30d?: number;
+    sample_size: number;
+    required_samples?: number;
+  } | null;
+  crowding_score: {
+    score: number;
+    components: Record<string, number>;
+    label: string;
+    formula: string;
+  } | null;
+  liquidation_clusters: Array<Record<string, unknown>>;
+};
+
+export type DerivativesContext = {
+  symbol?: string;
+  as_of: string | null;
+  latest: DerivativeSnapshot | null;
+  coinglass: DerivativeSnapshot | null;
+  signals: DerivativeSignals;
+  metrics?: DerivativeMetric[];
+  liquidation_events?: Array<Record<string, unknown>>;
+  source_status?: string;
+};
+
 export type PositionChartAnalysis = {
   position_id: string;
   symbol: string;
   timeframe: string;
+  asset_class?: "crypto" | "stock" | "index" | "unknown";
+  session?: {
+    asset_class?: string;
+    state?: string;
+    label?: string;
+    timezone?: string;
+    is_trading_session?: boolean;
+    next_open_at?: string | null;
+    seconds_until_open?: number | null;
+  };
   direction: "long" | "short";
   entry_price: number;
   mark_price: number;
@@ -649,6 +930,8 @@ export type PositionChartAnalysis = {
     cvd: CvdPoint[];
     notes: string[];
   };
+  liquidity: LiquidityContext;
+  derivatives?: DerivativesContext;
   wyckoff: Record<string, unknown>;
   wyckoff_range: WyckoffRange | null;
   wyckoff_phase: WyckoffPhase;
@@ -666,6 +949,8 @@ export type PositionChartAnalysis = {
   harmonic_prz: HarmonicPrz[];
   data_quality: {
     candles: number;
+    analysis_candles?: number;
+    session_excluded_candles?: number;
     source: string;
     estimated_volume_profile: boolean;
     volume_profile_method: string;
@@ -756,12 +1041,34 @@ export type CalibrationSuggestion = {
   updated_at: string;
 };
 
+export type EngineParamVersion = {
+  id: string;
+  param: string;
+  old_value: unknown;
+  new_value: unknown;
+  suggestion_id: string | null;
+  status: "active" | "superseded";
+  approved_at: string;
+  created_at: string;
+};
+
 export type CalibrationSummary = {
   generated_at: string;
+  sample_floor?: number;
   totals: Record<string, unknown>;
   invalidation: Record<string, unknown>;
   take_profit: Record<string, unknown>;
+  judgment_types?: Record<string, Record<string, unknown>>;
+  confidence_curve?: Array<Record<string, unknown>>;
+  level_quality?: Record<string, Array<Record<string, unknown>>>;
+  score_contexts?: Record<string, number>;
+  alert_response_summary?: Record<string, unknown>;
+  scout_setup_summary?: Record<string, unknown>;
+  briefing_performance?: Record<string, unknown>;
   wyckoff_confidence: Array<Record<string, unknown>>;
+  suggestion_status_counts?: Record<string, number>;
+  weekly_report?: Record<string, unknown>;
+  engine_params?: EngineParamVersion[];
   suggestions: CalibrationSuggestion[];
   sample_warning: string;
 };
@@ -778,6 +1085,7 @@ export type SystemStatus = {
   status: string;
   service: string;
   environment: string;
+  demo_mode?: boolean;
   market_data_provider: string;
   database: string;
   database_url: string;
@@ -810,9 +1118,49 @@ export type BitgetSyncResult = {
   created: number;
   updated: number;
   missing_from_exchange: number;
+  auto_closed: number;
+  exit_record_errors: Array<{ position_id: string; symbol: string; error: string }>;
+  open_count?: number;
+  needs_exit_record_count?: number;
   positions?: LivePositionPayload[];
   timestamp?: string;
   error?: string;
+};
+
+export type AlertRuleSetting = {
+  id: string;
+  label: string;
+  severity: "info" | "action" | "warn" | "critical";
+  enabled: boolean;
+  threshold: number | null;
+  cooldown_minutes: number;
+};
+
+export type AlertSettings = {
+  telegram: {
+    configured: boolean;
+    alerts_enabled: boolean;
+    quiet_hours_enabled: boolean;
+    quiet_hours_start: string;
+    quiet_hours_end: string;
+    quiet_hours_timezone: string;
+    daily_summary_time: string;
+    chat_ids_configured: number;
+  };
+  rules: AlertRuleSetting[];
+};
+
+export type AlertSettingsUpdate = {
+  rules?: Record<string, { enabled?: boolean; threshold?: number | null }>;
+  quiet_hours_enabled?: boolean;
+  quiet_hours_start?: string;
+  quiet_hours_end?: string;
+  daily_summary_time?: string;
+};
+
+export type AlertTestResult = {
+  configured: boolean;
+  sent: number;
 };
 
 export type RuleCheckSummary = {
@@ -910,6 +1258,16 @@ export const api = {
     request<BitgetSyncResult>("/api/account/bitget/sync-positions", {
       method: "POST"
     }),
+  alertSettings: () => request<AlertSettings>("/api/alerts/settings"),
+  updateAlertSettings: (payload: AlertSettingsUpdate) =>
+    request<AlertSettings>("/api/alerts/settings", {
+      method: "PATCH",
+      body: JSON.stringify(payload)
+    }),
+  sendTestAlert: () =>
+    request<AlertTestResult>("/api/alerts/test", {
+      method: "POST"
+    }),
   livePositions: () => request<LivePositionsResponse>("/api/live/positions"),
   syncLivePositions: () =>
     request<BitgetSyncResult>("/api/live/positions/sync", {
@@ -961,10 +1319,20 @@ export const api = {
     }),
   scoutAnalysis: (symbol: string, timeframe = "4h", force = false) =>
     request<ScoutAnalysisResponse>(`/api/scout/${encodeURIComponent(symbol)}/analysis?timeframe=${encodeURIComponent(timeframe)}&force=${force}`),
+  scoutBriefing: (symbol: string, timeframe = "4h", force = false) =>
+    request<{ symbol: string; timeframe: string; as_of: string; analyst_briefing: AnalystBriefing }>(
+      `/api/scout/${encodeURIComponent(symbol)}/briefing?timeframe=${encodeURIComponent(timeframe)}&force=${force}`
+    ),
   scoutScan: (payload: { timeframe?: string | null; force?: boolean } = {}) =>
     request<ScoutScanResponse>("/api/scout/scan", {
       method: "POST",
       body: JSON.stringify(payload)
+    }),
+  scoutSetups: (symbol?: string, status?: string) =>
+    request<{ setups: ArmedSetup[] }>(`/api/scout/setups${symbol || status ? `?${new URLSearchParams({ ...(symbol ? { symbol } : {}), ...(status ? { status } : {}) }).toString()}` : ""}`),
+  disarmScoutSetup: (setupId: string) =>
+    request<{ setup: ArmedSetup }>(`/api/scout/setups/${encodeURIComponent(setupId)}/disarm`, {
+      method: "POST"
     }),
   simulateEntry: (payload: { symbol: string; direction: "long" | "short"; entry_price?: number | null; leverage: number; margin_usdt?: number | null; margin_mode?: string; timeframe?: string }) =>
     request<EntrySimulation>("/api/scout/simulate", {
@@ -1021,6 +1389,7 @@ export const api = {
     }),
   tradeTimeline: (tradeId: string) => request<TradeTimeline>(`/api/trades/${tradeId}/timeline`),
   reviewCalibration: () => request<CalibrationSummary>("/api/review/calibration"),
+  reviewWeeklyCalibration: () => request<Record<string, unknown>>("/api/review/calibration/weekly"),
   approveCalibrationSuggestion: (suggestionId: string) =>
     request<CalibrationSuggestion>(`/api/review/calibration/suggestions/${suggestionId}/approve`, {
       method: "POST"

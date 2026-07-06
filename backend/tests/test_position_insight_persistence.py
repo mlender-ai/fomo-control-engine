@@ -8,14 +8,20 @@ def test_position_insight_persistence_keeps_latest_first() -> None:
         position_id="11111111-1111-4111-8111-111111111111",
         health_score=71,
         status_label="관찰 필요",
-        input_json={"position": {"symbol": "BTCUSDT"}, "chart": {"critical_support": 100}},
+        input_json={
+            "position": {"symbol": "BTCUSDT"},
+            "chart": {"critical_support": 100},
+        },
         insight_text="first insight",
     )
     second = PositionInsight(
         position_id=first.position_id,
         health_score=68,
         status_label="진입 논리 약화",
-        input_json={"position": {"symbol": "BTCUSDT"}, "chart": {"critical_support": 98}},
+        input_json={
+            "position": {"symbol": "BTCUSDT"},
+            "chart": {"critical_support": 98},
+        },
         insight_text="second insight",
     )
 

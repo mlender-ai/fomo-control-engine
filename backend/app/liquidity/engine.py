@@ -7,7 +7,15 @@ def analyze_liquidity(snapshot: MarketSnapshot) -> dict:
     upper_liquidity = 58 + min(25, max(0, snapshot.open_interest_change * 1.7))
     lower_liquidity = 55 + min(20, max(0, -snapshot.open_interest_change * 1.5))
     funding_penalty = 12 if snapshot.funding_rate > 0.018 else 0
-    score = int(max(0, min(100, (upper_liquidity * 0.55 + lower_liquidity * 0.25 + (80 if funding_neutral else 48) * 0.2) - funding_penalty)))
+    score = int(
+        max(
+            0,
+            min(
+                100,
+                (upper_liquidity * 0.55 + lower_liquidity * 0.25 + (80 if funding_neutral else 48) * 0.2) - funding_penalty,
+            ),
+        )
+    )
 
     return {
         "liquidity_score": score,
@@ -17,4 +25,3 @@ def analyze_liquidity(snapshot: MarketSnapshot) -> dict:
         "open_interest_change": "increasing" if oi_positive else "decreasing",
         "funding_rate_state": "neutral" if funding_neutral else "heated" if snapshot.funding_rate > 0 else "negative",
     }
-

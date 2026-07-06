@@ -1,7 +1,11 @@
 from datetime import datetime, timedelta, timezone
 
 from app.db.models import Direction, MarketCandle, MarketSnapshot, Position
-from app.exchange.bitget.trades import aggregate_trade_buckets, cvd_series_from_buckets, parse_trade_fill
+from app.exchange.bitget.trades import (
+    aggregate_trade_buckets,
+    cvd_series_from_buckets,
+    parse_trade_fill,
+)
 from app.positions.chart_analysis import PositionContext, build_chart_analysis
 
 
@@ -31,9 +35,39 @@ def test_bitget_trade_fill_parser_normalizes_side_and_timestamp() -> None:
 def test_trade_buckets_and_cvd_are_aggregated_by_candle() -> None:
     candles = [_candle(index) for index in range(4)]
     fills = [
-        parse_trade_fill({"tradeId": "1", "price": "101", "size": "3", "side": "Buy", "ts": _ms(candles[1].timestamp + timedelta(minutes=5)), "symbol": "BTCUSDT"}, "BTCUSDT"),
-        parse_trade_fill({"tradeId": "2", "price": "102", "size": "1", "side": "Sell", "ts": _ms(candles[1].timestamp + timedelta(minutes=10)), "symbol": "BTCUSDT"}, "BTCUSDT"),
-        parse_trade_fill({"tradeId": "3", "price": "103", "size": "2", "side": "Sell", "ts": _ms(candles[2].timestamp + timedelta(minutes=1)), "symbol": "BTCUSDT"}, "BTCUSDT"),
+        parse_trade_fill(
+            {
+                "tradeId": "1",
+                "price": "101",
+                "size": "3",
+                "side": "Buy",
+                "ts": _ms(candles[1].timestamp + timedelta(minutes=5)),
+                "symbol": "BTCUSDT",
+            },
+            "BTCUSDT",
+        ),
+        parse_trade_fill(
+            {
+                "tradeId": "2",
+                "price": "102",
+                "size": "1",
+                "side": "Sell",
+                "ts": _ms(candles[1].timestamp + timedelta(minutes=10)),
+                "symbol": "BTCUSDT",
+            },
+            "BTCUSDT",
+        ),
+        parse_trade_fill(
+            {
+                "tradeId": "3",
+                "price": "103",
+                "size": "2",
+                "side": "Sell",
+                "ts": _ms(candles[2].timestamp + timedelta(minutes=1)),
+                "symbol": "BTCUSDT",
+            },
+            "BTCUSDT",
+        ),
     ]
 
     buckets = aggregate_trade_buckets(fills, candles, "4h")
@@ -52,8 +86,22 @@ def test_trade_buckets_and_cvd_are_aggregated_by_candle() -> None:
 
 def test_uncovered_volume_profile_bins_do_not_expose_fake_buy_sell() -> None:
     candles = [_candle(index) for index in range(120)]
-    snapshot = MarketSnapshot(symbol="BTCUSDT", timeframe="4h", price=110.0, change_24h=0.0, funding_rate=0.0, open_interest_change=0.0, candles=candles)
-    position = Position(symbol="BTCUSDT", direction=Direction.long, entry_price=100.0, quantity=1.0, mark_price=110.0)
+    snapshot = MarketSnapshot(
+        symbol="BTCUSDT",
+        timeframe="4h",
+        price=110.0,
+        change_24h=0.0,
+        funding_rate=0.0,
+        open_interest_change=0.0,
+        candles=candles,
+    )
+    position = Position(
+        symbol="BTCUSDT",
+        direction=Direction.long,
+        entry_price=100.0,
+        quantity=1.0,
+        mark_price=110.0,
+    )
 
     analysis = build_chart_analysis(snapshot, PositionContext.from_position(position))
 
@@ -67,21 +115,70 @@ def test_uncovered_volume_profile_bins_do_not_expose_fake_buy_sell() -> None:
 def test_trade_fill_volume_profile_exposes_real_delta_only_for_covered_bins() -> None:
     candles = [_candle(index) for index in range(120)]
     fills = [
-        {"trade_id": "1", "symbol": "BTCUSDT", "price": 108.0, "size": 4.0, "side": "buy", "timestamp": candles[-2].timestamp},
-        {"trade_id": "2", "symbol": "BTCUSDT", "price": 108.2, "size": 1.5, "side": "sell", "timestamp": candles[-2].timestamp + timedelta(minutes=1)},
+        {
+            "trade_id": "1",
+            "symbol": "BTCUSDT",
+            "price": 108.0,
+            "size": 4.0,
+            "side": "buy",
+            "timestamp": candles[-2].timestamp,
+        },
+        {
+            "trade_id": "2",
+            "symbol": "BTCUSDT",
+            "price": 108.2,
+            "size": 1.5,
+            "side": "sell",
+            "timestamp": candles[-2].timestamp + timedelta(minutes=1),
+        },
     ]
     trade_flow = {
         "method": "trade_fills",
         "source": "unit_test",
         "data_available": True,
-        "coverage": {"from": candles[-3].timestamp.isoformat(), "to": (candles[-1].timestamp + timedelta(hours=4)).isoformat(), "fills": 2, "buckets": 1},
+        "coverage": {
+            "from": candles[-3].timestamp.isoformat(),
+            "to": (candles[-1].timestamp + timedelta(hours=4)).isoformat(),
+            "fills": 2,
+            "buckets": 1,
+        },
         "fills": fills,
-        "buckets": [{"time": int(candles[-2].timestamp.timestamp()), "buy_volume": 4.0, "sell_volume": 1.5, "delta": 2.5, "trades": 2, "method": "trade_fills"}],
-        "cvd": [{"time": int(candles[-2].timestamp.timestamp()), "value": 2.5, "delta": 2.5, "method": "trade_fills"}],
+        "buckets": [
+            {
+                "time": int(candles[-2].timestamp.timestamp()),
+                "buy_volume": 4.0,
+                "sell_volume": 1.5,
+                "delta": 2.5,
+                "trades": 2,
+                "method": "trade_fills",
+            }
+        ],
+        "cvd": [
+            {
+                "time": int(candles[-2].timestamp.timestamp()),
+                "value": 2.5,
+                "delta": 2.5,
+                "method": "trade_fills",
+            }
+        ],
         "notes": [],
     }
-    snapshot = MarketSnapshot(symbol="BTCUSDT", timeframe="4h", price=110.0, change_24h=0.0, funding_rate=0.0, open_interest_change=0.0, candles=candles)
-    position = Position(symbol="BTCUSDT", direction=Direction.long, entry_price=100.0, quantity=1.0, mark_price=110.0)
+    snapshot = MarketSnapshot(
+        symbol="BTCUSDT",
+        timeframe="4h",
+        price=110.0,
+        change_24h=0.0,
+        funding_rate=0.0,
+        open_interest_change=0.0,
+        candles=candles,
+    )
+    position = Position(
+        symbol="BTCUSDT",
+        direction=Direction.long,
+        entry_price=100.0,
+        quantity=1.0,
+        mark_price=110.0,
+    )
 
     analysis = build_chart_analysis(snapshot, PositionContext.from_position(position), trade_flow)
     trade_bins = [item for item in analysis["volume_profile"]["bins"] if item["method"] in {"trade_fills", "mixed"}]

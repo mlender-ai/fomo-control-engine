@@ -9,6 +9,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "scan:design-tokens": "node scripts/scan-design-tokens.mjs",
+    "test:e2e": "playwright test tests/e2e-smoke.spec.ts tests/chart-visual-regression.spec.ts",
     "test:chart-visual": "playwright test tests/chart-visual-regression.spec.ts",
     "astryx": "node node_modules/@astryxdesign/cli/bin/astryx.mjs"
   },

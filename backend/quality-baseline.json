@@ -1,0 +1,36 @@
+{
+  "coverage": {
+    "total_min_percent": 70.0,
+    "core_min_percent": 80.0,
+    "core_paths": [
+      "app/positions/",
+      "app/structure/",
+      "app/review/",
+      "app/marketdata/signals.py",
+      "app/notify/rules.py"
+    ],
+    "known_core_files_below_80": {
+      "app/review/engine.py": "65%",
+      "app/review/alert_responses.py": "67%",
+      "app/marketdata/signals.py": "70%",
+      "app/notify/rules.py": "74%"
+    }
+  },
+  "exception_comments": {
+    "patterns": [
+      "type: ignore",
+      "noqa",
+      "ts-ignore",
+      "eslint-disable"
+    ],
+    "allowed_count": 4
+  },
+  "mypy": {
+    "paths": [
+      "app/services",
+      "app/marketdata",
+      "app/notify"
+    ],
+    "allowed_error_count": 44
+  }
+}

@@ -1,3 +1,30 @@
+from datetime import timedelta
+
+from app.api.deps import configure_runtime
+from app.db.models import MarketSnapshot, utc_now
+from app.db.repository import MemoryRepository
+from app.exchange.bitget.client import BitgetClient
+from app.exchange.bitget.provider import BitgetMarketDataProvider
+from app.exchange.bitget.schemas import BitgetPosition
+from app.exchange.mock import MockMarketDataProvider
+
+
+class SyncClosingBitgetProvider(BitgetMarketDataProvider):
+    def __init__(self) -> None:
+        super().__init__(BitgetClient(api_key="key", api_secret="secret", passphrase="passphrase"))
+        self.positions: list[BitgetPosition] = []
+        self.snapshots = MockMarketDataProvider()
+
+    def get_snapshot(self, symbol: str, timeframe: str = "4h") -> MarketSnapshot:
+        return self.snapshots.get_snapshot(symbol, timeframe)
+
+    def get_positions(self) -> list[BitgetPosition]:
+        return self.positions
+
+    def get_trade_flow(self, symbol: str, timeframe: str, candles: list) -> dict | None:
+        return None
+
+
 def test_live_position_analysis_insight_memo_and_exit_flow(client) -> None:
     report_response = client.post("/api/reports", json={"symbol": "BTCUSDT", "timeframe": "4h"})
     report = report_response.json()
@@ -120,3 +147,50 @@ def test_live_position_chart_analysis_contract(client) -> None:
     assert payload["volume_xray"]["method"] == "data_unavailable"
     assert isinstance(payload["volume_xray"]["notes"], list)
     assert isinstance(payload["wyckoff_markers"], list)
+
+
+def test_bitget_sync_auto_records_missing_position_exit(client) -> None:
+    repo = MemoryRepository()
+    provider = SyncClosingBitgetProvider()
+    provider.positions = [
+        BitgetPosition(
+            symbol="PLTRUSDT",
+            hold_side="long",
+            margin_coin="USDT",
+            total=2,
+            leverage=3,
+            open_price_avg=100,
+            mark_price=112,
+            unrealized_pl=24,
+            margin_size=200,
+            created_at=utc_now() - timedelta(hours=4),
+        )
+    ]
+    configure_runtime(repo=repo, provider=provider)
+
+    first_sync = client.post("/api/live/positions/sync")
+    assert first_sync.status_code == 200
+    assert first_sync.json()["created"] == 1
+
+    provider.positions = []
+    second_sync = client.post("/api/live/positions/sync")
+    assert second_sync.status_code == 200
+    sync_payload = second_sync.json()
+    assert sync_payload["missing_from_exchange"] == 1
+    assert sync_payload["auto_closed"] == 1
+    assert sync_payload["positions"] == []
+    assert sync_payload["open_count"] == 0
+
+    positions = client.get("/api/positions").json()
+    assert positions[0]["symbol"] == "PLTRUSDT"
+    assert positions[0]["status"] == "closed"
+
+    trades = client.get("/api/trades").json()
+    assert len(trades) == 1
+    assert trades[0]["symbol"] == "PLTRUSDT"
+    assert trades[0]["exit_price"] == 112
+    assert "Bitget read-only sync" in trades[0]["exit_reason"]
+
+    live = client.get("/api/live/positions").json()
+    assert live["positions"] == []
+    assert live["open_count"] == 0

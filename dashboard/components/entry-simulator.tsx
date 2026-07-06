@@ -75,7 +75,7 @@ export function EntrySimulator({ symbol, markPrice, timeframe }: { symbol: strin
   }
 
   return (
-    <section className="focusPanel entrySimulatorPanel">
+    <section className="focusPanel entrySimulatorPanel" data-testid="entry-simulator">
       <div className="focusPanelHeader">
         <div>
           <h2>진입 시뮬레이션</h2>
@@ -110,7 +110,7 @@ export function EntrySimulator({ symbol, markPrice, timeframe }: { symbol: strin
             </select>
           </label>
         </div>
-        <button className="button" onClick={() => void runSimulation()} disabled={loading} type="button">
+        <button className="button" data-testid="simulator-run" onClick={() => void runSimulation()} disabled={loading} type="button">
           <Calculator size={16} />
           {loading ? "계산 중" : "시뮬레이션"}
         </button>
@@ -126,8 +126,22 @@ export function EntrySimulator({ symbol, markPrice, timeframe }: { symbol: strin
 
 function SimulationResult({ sim, onSave, saving }: { sim: EntrySimulation; onSave: () => void; saving: boolean }) {
   return (
-    <div className="simResult">
+    <div className="simResult" data-testid="simulator-result">
       <div className={`simVerdict ${sim.htf_conflict ? "warn" : ""}`}>{sim.verdict_line}</div>
+
+      {sim.briefing_direction_conflict ? (
+        <div className="simDangerBanner">
+          <CircleAlert size={16} />
+          브리핑 스탠스와 반대 방향 시뮬레이션입니다. 반대 근거와 무효화 조건을 먼저 확인하세요.
+        </div>
+      ) : null}
+
+      {sim.analyst_briefing ? (
+        <div className="simBriefingLine">
+          <strong>브리핑</strong>
+          <span>{sim.analyst_briefing.confluence.stance_label} · 종합 {sim.analyst_briefing.confluence.composite_score}/100 · 반대 근거 {sim.analyst_briefing.confluence.counter_evidence.length}개</span>
+        </div>
+      ) : null}
 
       {sim.survives_to_invalidation === false ? (
         <div className="simDangerBanner">
@@ -152,7 +166,7 @@ function SimulationResult({ sim, onSave, saving }: { sim: EntrySimulation; onSav
         <SimMetric label="방향 점수" value={sim.direction_score === null ? "-" : `${sim.direction_score}/100`} tone="info" />
       </div>
 
-      <div className="simChecklist">
+      <div className="simChecklist" data-testid="simulator-checklist">
         <div className="simChecklistHeader">
           <strong>진입 체크리스트</strong>
           <span>체크 {sim.checklist_passed}/{sim.checklist_total} 통과</span>

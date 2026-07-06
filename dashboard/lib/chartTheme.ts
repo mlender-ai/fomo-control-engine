@@ -11,7 +11,7 @@ export type ChartTone =
   | "panel";
 
 export type ChartFlagKind = "entry" | "mark" | "invalidation" | "takeProfit" | "watch" | "liquidation" | "poc" | "valueArea";
-export type ChartZoneKind = "support" | "resistance" | "profit" | "risk" | "prz" | "range" | "neutral";
+export type ChartZoneKind = "support" | "resistance" | "profit" | "risk" | "prz" | "liquidity" | "liquidationCluster" | "range" | "neutral";
 export type ChartStrokeKind = "major" | "minor" | "scenario";
 
 const toneVar: Record<ChartTone, string> = {
@@ -43,6 +43,8 @@ export const chartTheme = {
     profit: color("green", 0.1),
     risk: color("red", 0.1),
     prz: (forming = false) => color("purple", forming ? 0.06 : 0.18),
+    liquidity: (score = 50) => color("amber", scoreOpacity(score)),
+    liquidationCluster: color("purple", 0.12),
     range: color("neutral", 0.08),
     neutral: color("neutral", 0.08)
   },
@@ -83,6 +85,8 @@ export function createChartPalette(root: Element): ResolvedChartPalette {
       if (kind === "profit") return colorFrom("green", alpha ?? 0.1);
       if (kind === "risk") return colorFrom("red", alpha ?? 0.1);
       if (kind === "prz") return colorFrom("purple", alpha ?? 0.18);
+      if (kind === "liquidity") return colorFrom("amber", alpha ?? scoreOpacity(score ?? 50));
+      if (kind === "liquidationCluster") return colorFrom("purple", alpha ?? 0.12);
       return colorFrom("neutral", alpha ?? 0.08);
     }
   };
@@ -107,6 +111,8 @@ export function zoneColor(kind: ChartZoneKind, alpha?: number, score?: number): 
   if (kind === "profit") return color("green", alpha ?? 0.1);
   if (kind === "risk") return color("red", alpha ?? 0.1);
   if (kind === "prz") return color("purple", alpha ?? 0.18);
+  if (kind === "liquidity") return color("amber", alpha ?? scoreOpacity(score ?? 50));
+  if (kind === "liquidationCluster") return color("purple", alpha ?? 0.12);
   return color("neutral", alpha ?? 0.08);
 }
 

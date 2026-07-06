@@ -63,16 +63,30 @@ def analyze_wyckoff(
 ) -> dict:
     ordered = sorted(candles, key=lambda candle: candle.timestamp)
     if len(ordered) < 30:
-        return _empty_result("undetermined", "데이터가 부족해 와이코프 국면을 억지로 판정하지 않았습니다.", timeframe=timeframe)
+        return _empty_result(
+            "undetermined",
+            "데이터가 부족해 와이코프 국면을 억지로 판정하지 않았습니다.",
+            timeframe=timeframe,
+        )
 
     atr = _atr(ordered)
     mark_price = ordered[-1].close
     normalized_levels = _normalize_levels(levels if levels is not None else detect_structure_levels(ordered, mark_price))
     trading_range = _detect_trading_range(ordered, normalized_levels, atr)
-    trend = _trend_payload(ordered, {"twenty_close": _rolling_mean([candle.close for candle in ordered], 20), "relative_volume": _relative_volume(ordered)})
+    trend = _trend_payload(
+        ordered,
+        {
+            "twenty_close": _rolling_mean([candle.close for candle in ordered], 20),
+            "relative_volume": _relative_volume(ordered),
+        },
+    )
 
     if trading_range is None:
-        result = _empty_result("trending", "명확한 거래 박스가 없어 Spring/UTAD 이벤트 감지를 보류했습니다.", timeframe=timeframe)
+        result = _empty_result(
+            "trending",
+            "명확한 거래 박스가 없어 Spring/UTAD 이벤트 감지를 보류했습니다.",
+            timeframe=timeframe,
+        )
         result["trend"] = trend
         if include_mtf:
             result["mtf"] = _mtf_payload(ordered, None, result)
@@ -161,27 +175,181 @@ def _detect_events(candles: list[MarketCandle], trading_range: TradingRange, tra
     for index, candle in enumerate(recent):
         previous = recent[index - 1] if index > 0 else candle
         if _selling_climax(candle, support, avg_volume, atr):
-            events.append(_event("selling_climax", "SC", "accumulation", candle, candle.low, support, atr, avg_volume, trade_flow, "sell", bars_to_return=4))
+            events.append(
+                _event(
+                    "selling_climax",
+                    "SC",
+                    "accumulation",
+                    candle,
+                    candle.low,
+                    support,
+                    atr,
+                    avg_volume,
+                    trade_flow,
+                    "sell",
+                    bars_to_return=4,
+                )
+            )
         if _buying_climax(candle, resistance, avg_volume, atr):
-            events.append(_event("buying_climax", "BC", "distribution", candle, candle.high, resistance, atr, avg_volume, trade_flow, "buy", bars_to_return=4))
+            events.append(
+                _event(
+                    "buying_climax",
+                    "BC",
+                    "distribution",
+                    candle,
+                    candle.high,
+                    resistance,
+                    atr,
+                    avg_volume,
+                    trade_flow,
+                    "buy",
+                    bars_to_return=4,
+                )
+            )
         if candle.low <= support.price + atr * 0.5 and candle.close >= midpoint and candle.volume >= avg_volume * 1.1:
-            events.append(_event("automatic_rally", "AR", "accumulation", candle, candle.close, support, atr, avg_volume, trade_flow, "buy", bars_to_return=2))
+            events.append(
+                _event(
+                    "automatic_rally",
+                    "AR",
+                    "accumulation",
+                    candle,
+                    candle.close,
+                    support,
+                    atr,
+                    avg_volume,
+                    trade_flow,
+                    "buy",
+                    bars_to_return=2,
+                )
+            )
         if candle.high >= resistance.price - atr * 0.5 and candle.close <= midpoint and candle.volume >= avg_volume * 1.1:
-            events.append(_event("automatic_reaction", "AR", "distribution", candle, candle.close, resistance, atr, avg_volume, trade_flow, "sell", bars_to_return=2))
+            events.append(
+                _event(
+                    "automatic_reaction",
+                    "AR",
+                    "distribution",
+                    candle,
+                    candle.close,
+                    resistance,
+                    atr,
+                    avg_volume,
+                    trade_flow,
+                    "sell",
+                    bars_to_return=2,
+                )
+            )
         if support.price <= candle.low <= support.price + atr * 0.45 and candle.volume <= avg_volume * 1.05:
-            events.append(_event("secondary_test", "ST", "accumulation", candle, candle.low, support, atr, avg_volume, trade_flow, "buy", bars_to_return=3))
+            events.append(
+                _event(
+                    "secondary_test",
+                    "ST",
+                    "accumulation",
+                    candle,
+                    candle.low,
+                    support,
+                    atr,
+                    avg_volume,
+                    trade_flow,
+                    "buy",
+                    bars_to_return=3,
+                )
+            )
         if resistance.price - atr * 0.45 <= candle.high <= resistance.price and candle.volume <= avg_volume * 1.05:
-            events.append(_event("secondary_test", "ST", "distribution", candle, candle.high, resistance, atr, avg_volume, trade_flow, "sell", bars_to_return=3))
+            events.append(
+                _event(
+                    "secondary_test",
+                    "ST",
+                    "distribution",
+                    candle,
+                    candle.high,
+                    resistance,
+                    atr,
+                    avg_volume,
+                    trade_flow,
+                    "sell",
+                    bars_to_return=3,
+                )
+            )
         if candle.low < support.price - threshold and candle.close > support.price:
-            events.append(_event("spring_candidate", "Spring", "accumulation", candle, candle.low, support, atr, avg_volume, trade_flow, "buy", bars_to_return=0))
+            events.append(
+                _event(
+                    "spring_candidate",
+                    "Spring",
+                    "accumulation",
+                    candle,
+                    candle.low,
+                    support,
+                    atr,
+                    avg_volume,
+                    trade_flow,
+                    "buy",
+                    bars_to_return=0,
+                )
+            )
         if candle.high > resistance.price + threshold and candle.close < resistance.price:
-            events.append(_event("utad_candidate", "UTAD", "distribution", candle, candle.high, resistance, atr, avg_volume, trade_flow, "sell", bars_to_return=0))
+            events.append(
+                _event(
+                    "utad_candidate",
+                    "UTAD",
+                    "distribution",
+                    candle,
+                    candle.high,
+                    resistance,
+                    atr,
+                    avg_volume,
+                    trade_flow,
+                    "sell",
+                    bars_to_return=0,
+                )
+            )
         if candle.close > resistance.price + threshold and candle.volume >= avg_volume * 1.1:
-            events.append(_event("sos_confirmed", "SOS", "accumulation", candle, candle.close, resistance, atr, avg_volume, trade_flow, "buy", bars_to_return=0))
+            events.append(
+                _event(
+                    "sos_confirmed",
+                    "SOS",
+                    "accumulation",
+                    candle,
+                    candle.close,
+                    resistance,
+                    atr,
+                    avg_volume,
+                    trade_flow,
+                    "buy",
+                    bars_to_return=0,
+                )
+            )
         if candle.close < support.price - threshold and candle.volume >= avg_volume * 1.1:
-            events.append(_event("sow_confirmed", "SOW", "distribution", candle, candle.close, support, atr, avg_volume, trade_flow, "sell", bars_to_return=0))
+            events.append(
+                _event(
+                    "sow_confirmed",
+                    "SOW",
+                    "distribution",
+                    candle,
+                    candle.close,
+                    support,
+                    atr,
+                    avg_volume,
+                    trade_flow,
+                    "sell",
+                    bars_to_return=0,
+                )
+            )
         if support.price <= candle.low <= support.price + threshold * 1.5 and candle.close > previous.close and candle.volume <= avg_volume * 0.95:
-            events.append(_event("test_candidate", "Test", "accumulation", candle, candle.low, support, atr, avg_volume, trade_flow, "buy", bars_to_return=0))
+            events.append(
+                _event(
+                    "test_candidate",
+                    "Test",
+                    "accumulation",
+                    candle,
+                    candle.low,
+                    support,
+                    atr,
+                    avg_volume,
+                    trade_flow,
+                    "buy",
+                    bars_to_return=0,
+                )
+            )
 
     events = _dedupe_events(events)
     events.extend(_derived_retest_events(candles, events, trading_range, avg_volume, trade_flow))
@@ -201,26 +369,71 @@ def _derived_retest_events(
     threshold = max(trading_range.atr * 0.35, candles[-1].close * 0.0025)
     recent_by_time = {_timestamp(candle): candle for candle in candles[-RANGE_LOOKBACK:]}
     for event in events:
-        start_index = next((index for index, candle in enumerate(candles) if _timestamp(candle) == event["time"]), None)
+        start_index = next(
+            (index for index, candle in enumerate(candles) if _timestamp(candle) == event["time"]),
+            None,
+        )
         if start_index is None:
             continue
         followup = candles[start_index + 1 : start_index + 8]
         if event["type"] == "sos_confirmed":
             for candle in followup:
                 if abs(candle.low - trading_range.resistance.price) <= threshold and candle.close >= trading_range.resistance.price:
-                    derived.append(_event("lps_candidate", "LPS", "accumulation", candle, candle.low, trading_range.resistance, trading_range.atr, avg_volume, trade_flow, "buy", bars_to_return=1))
+                    derived.append(
+                        _event(
+                            "lps_candidate",
+                            "LPS",
+                            "accumulation",
+                            candle,
+                            candle.low,
+                            trading_range.resistance,
+                            trading_range.atr,
+                            avg_volume,
+                            trade_flow,
+                            "buy",
+                            bars_to_return=1,
+                        )
+                    )
                     break
         if event["type"] == "sow_confirmed":
             for candle in followup:
                 if abs(candle.high - trading_range.support.price) <= threshold and candle.close <= trading_range.support.price:
-                    derived.append(_event("lpsy_candidate", "LPSY", "distribution", candle, candle.high, trading_range.support, trading_range.atr, avg_volume, trade_flow, "sell", bars_to_return=1))
+                    derived.append(
+                        _event(
+                            "lpsy_candidate",
+                            "LPSY",
+                            "distribution",
+                            candle,
+                            candle.high,
+                            trading_range.support,
+                            trading_range.atr,
+                            avg_volume,
+                            trade_flow,
+                            "sell",
+                            bars_to_return=1,
+                        )
+                    )
                     break
         if event["type"] == "spring_candidate":
             for candle in followup:
                 if candle.low >= trading_range.support.price and candle.close > candle.open and candle.volume <= avg_volume * 1.1:
                     key = _timestamp(candle)
                     if key not in by_time and key in recent_by_time:
-                        derived.append(_event("test_candidate", "Test", "accumulation", candle, candle.low, trading_range.support, trading_range.atr, avg_volume, trade_flow, "buy", bars_to_return=1))
+                        derived.append(
+                            _event(
+                                "test_candidate",
+                                "Test",
+                                "accumulation",
+                                candle,
+                                candle.low,
+                                trading_range.support,
+                                trading_range.atr,
+                                avg_volume,
+                                trade_flow,
+                                "buy",
+                                bars_to_return=1,
+                            )
+                        )
                     break
     return derived
 
@@ -273,7 +486,11 @@ def _phase_from_events(events: list[dict]) -> dict:
         return _distribution_phase(distribution_events)
     if best_accumulation > best_distribution + 8:
         return _accumulation_phase(accumulation_events)
-    return {"phase": "undetermined", "side": "neutral", "evidence_event_ids": [event["id"] for event in events[-3:]]}
+    return {
+        "phase": "undetermined",
+        "side": "neutral",
+        "evidence_event_ids": [event["id"] for event in events[-3:]],
+    }
 
 
 def _accumulation_phase(events: list[dict]) -> dict:
@@ -288,7 +505,11 @@ def _accumulation_phase(events: list[dict]) -> dict:
         phase = "accumulation_phase_a"
     else:
         phase = "undetermined"
-    return {"phase": phase, "side": "accumulation" if phase != "undetermined" else "neutral", "evidence_event_ids": [event["id"] for event in events[-4:]]}
+    return {
+        "phase": phase,
+        "side": "accumulation" if phase != "undetermined" else "neutral",
+        "evidence_event_ids": [event["id"] for event in events[-4:]],
+    }
 
 
 def _distribution_phase(events: list[dict]) -> dict:
@@ -303,7 +524,11 @@ def _distribution_phase(events: list[dict]) -> dict:
         phase = "distribution_phase_a"
     else:
         phase = "undetermined"
-    return {"phase": phase, "side": "distribution" if phase != "undetermined" else "neutral", "evidence_event_ids": [event["id"] for event in events[-4:]]}
+    return {
+        "phase": phase,
+        "side": "distribution" if phase != "undetermined" else "neutral",
+        "evidence_event_ids": [event["id"] for event in events[-4:]],
+    }
 
 
 def _side_scores(events: list[dict]) -> tuple[int, int]:
@@ -321,10 +546,18 @@ def _score_side(primary: list[dict], opposing: list[dict]) -> int:
     return _clamp(35 + best * 0.55 + count_boost - opposing_best * 0.18)
 
 
-def _mtf_payload(candles: list[MarketCandle], levels: dict[str, list[WyckoffLevel]] | None, lower_result: dict) -> dict:
+def _mtf_payload(
+    candles: list[MarketCandle],
+    levels: dict[str, list[WyckoffLevel]] | None,
+    lower_result: dict,
+) -> dict:
     daily = _aggregate_daily(candles)
     if len(daily) < 30:
-        return {"htf_phase": "undetermined", "htf_trend": _trend_payload(candles, {})["direction"], "alignment": "neutral"}
+        return {
+            "htf_phase": "undetermined",
+            "htf_trend": _trend_payload(candles, {})["direction"],
+            "alignment": "neutral",
+        }
     htf = analyze_wyckoff(daily, levels=None, timeframe="1d", include_mtf=False)
     htf_phase = htf.get("phase", "undetermined")
     htf_trend = htf.get("trend", {}).get("direction", _trend_payload(daily, {})["direction"])
@@ -346,7 +579,13 @@ def _alignment(lower_side: str, htf_side: str, htf_trend: str) -> str:
 
 def _trend_payload(candles: list[MarketCandle], indicators: dict) -> dict:
     if len(candles) < 28:
-        return {"direction": "neutral", "higher_low": False, "lower_high": False, "break_of_structure": False, "breakdown_structure": False}
+        return {
+            "direction": "neutral",
+            "higher_low": False,
+            "lower_high": False,
+            "break_of_structure": False,
+            "breakdown_structure": False,
+        }
     recent_lows = [candle.low for candle in candles[-12:]]
     prior_lows = [candle.low for candle in candles[-28:-12]]
     recent_highs = [candle.high for candle in candles[-12:]]
@@ -451,7 +690,10 @@ def _trade_delta_component(candle: MarketCandle, trade_flow: dict | None, expect
     if not isinstance(buckets, list):
         return None
     candle_time = _timestamp(candle)
-    bucket = next((item for item in buckets if isinstance(item, dict) and int(item.get("time", -1)) == candle_time), None)
+    bucket = next(
+        (item for item in buckets if isinstance(item, dict) and int(item.get("time", -1)) == candle_time),
+        None,
+    )
     if bucket is None:
         return None
     buy = _optional_float(bucket.get("buy_volume")) or 0.0
@@ -580,7 +822,13 @@ def _empty_result(phase: str, comment: str, *, timeframe: str) -> dict:
         "lpsy_candidate": False,
         "structure_comment": comment,
         "mtf": {"htf_phase": None, "htf_trend": None, "alignment": "neutral"},
-        "trend": {"direction": "neutral", "higher_low": False, "lower_high": False, "break_of_structure": False, "breakdown_structure": False},
+        "trend": {
+            "direction": "neutral",
+            "higher_low": False,
+            "lower_high": False,
+            "break_of_structure": False,
+            "breakdown_structure": False,
+        },
     }
 
 
@@ -607,7 +855,13 @@ def _atr(candles: list[MarketCandle], period: int = 14) -> float:
     ranges: list[float] = []
     previous_close = candles[0].close
     for candle in candles[1:]:
-        ranges.append(max(candle.high - candle.low, abs(candle.high - previous_close), abs(candle.low - previous_close)))
+        ranges.append(
+            max(
+                candle.high - candle.low,
+                abs(candle.high - previous_close),
+                abs(candle.low - previous_close),
+            )
+        )
         previous_close = candle.close
     window = ranges[-period:] if len(ranges) >= period else ranges
     return max(mean(window), candles[-1].close * 0.0001) if window else candles[-1].close * 0.01

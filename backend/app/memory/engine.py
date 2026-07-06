@@ -44,6 +44,10 @@ def memory_from_validation(run_id: UUID, symbol: str, summary: dict, warnings: l
         memory_type="monitoring_lesson",
         source_research_run_id=None,
         summary=f"Validation run {run_id} produced win rate {summary.get('win_rate', 0):.2f} with {len(warnings)} warning(s).",
-        evidence={"validation_run_id": str(run_id), "summary": summary, "warnings": warnings},
+        evidence={
+            "validation_run_id": str(run_id),
+            "summary": summary,
+            "warnings": warnings,
+        },
         weight=1.0,
     )

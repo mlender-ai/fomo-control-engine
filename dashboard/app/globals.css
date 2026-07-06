@@ -250,6 +250,16 @@ h3 {
   white-space: nowrap;
 }
 
+.terminalProviderStrip .demoModeBadge {
+  border: 1px solid rgba(250, 204, 21, 0.55);
+  background: rgba(250, 204, 21, 0.12);
+  color: #facc15;
+  border-radius: 4px;
+  padding: 2px 7px;
+  font: 800 11px/1 "SF Mono", Monaco, Consolas, monospace;
+  letter-spacing: 0;
+}
+
 .terminalProviderStrip time {
   color: var(--terminal-amber);
   white-space: nowrap;
@@ -1587,6 +1597,51 @@ h3 {
   padding: 8px 10px;
 }
 
+.derivativeEvidenceGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.derivativeEvidenceCard {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  border: 1px solid rgba(107, 192, 255, 0.18);
+  border-radius: 5px;
+  background: rgba(107, 192, 255, 0.045);
+  padding: 9px 10px;
+}
+
+.derivativeEvidenceCard span {
+  color: var(--terminal-muted);
+  font-size: 11px;
+}
+
+.derivativeEvidenceCard strong,
+.derivativeEvidenceCard em {
+  overflow: hidden;
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.derivativeEvidenceCard strong {
+  color: var(--terminal-text);
+  font-size: 12px;
+}
+
+.derivativeEvidenceCard em {
+  color: var(--terminal-muted);
+  font-size: 11px;
+}
+
+.derivativeEvidenceCard.locked {
+  border-color: rgba(240, 184, 64, 0.24);
+  background: rgba(240, 184, 64, 0.055);
+}
+
 .tabTextBlock summary {
   cursor: pointer;
   color: var(--terminal-text);
@@ -1664,6 +1719,37 @@ h3 {
   line-height: 1.42;
 }
 
+.analystBriefingEvidence {
+  display: grid;
+  gap: 10px;
+}
+
+.briefingColumns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.briefingScenarioList {
+  display: grid;
+  gap: 7px;
+  border: 1px solid var(--terminal-line);
+  border-radius: 5px;
+  background: rgba(8, 11, 16, 0.34);
+  padding: 10px;
+}
+
+.briefingScenarioList strong {
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.briefingScenarioList span {
+  color: #d8dee8;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .timelineTab {
   display: grid;
   gap: 10px;
@@ -1717,10 +1803,27 @@ h3 {
 }
 
 .positionChartPanel {
+  position: relative;
   display: grid;
   gap: 12px;
   min-width: 0;
   padding: 16px;
+}
+
+.chartRefreshingBadge {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 5;
+  border: 1px solid rgba(var(--chart-cyan-rgb), 0.34);
+  border-radius: 5px;
+  background: rgba(var(--chart-panel-rgb), 0.78);
+  color: var(--terminal-cyan);
+  padding: 4px 8px;
+  font-family: var(--fce-font-number);
+  font-size: 10px;
+  font-weight: 750;
+  pointer-events: none;
 }
 
 .positionChartHeader,
@@ -1760,17 +1863,19 @@ h3 {
 }
 
 .chartGuideButton {
-  display: grid;
-  width: 28px;
+  display: inline-grid;
+  min-width: 42px;
   height: 28px;
   place-items: center;
   border: 1px solid var(--terminal-line);
-  border-radius: 999px;
+  border-radius: 6px;
   background: rgba(var(--chart-neutral-rgb), 0.08);
   color: var(--terminal-muted);
   cursor: pointer;
   font-family: var(--fce-font-number);
+  font-size: 11px;
   font-weight: 800;
+  padding: 0 9px;
 }
 
 .chartGuideButton:hover,
@@ -1817,6 +1922,10 @@ h3 {
   pointer-events: none;
 }
 
+.positionChartCanvasFrame:not(.showOverlayGuides) .chartOverlayGuideLabel {
+  display: none;
+}
+
 .chartGuideLayer {
   position: absolute;
   inset: 0;
@@ -1828,12 +1937,12 @@ h3 {
   position: absolute;
   display: grid;
   gap: 4px;
-  max-width: 245px;
+  max-width: 196px;
   border: 1px solid rgba(var(--chart-amber-rgb), 0.42);
-  border-radius: var(--fce-radius-md);
-  background: rgba(var(--chart-panel-rgb), 0.82);
+  border-radius: 6px;
+  background: rgba(var(--chart-panel-rgb), 0.76);
   color: var(--terminal-text);
-  padding: 9px 10px;
+  padding: 7px 8px;
   box-shadow: var(--terminal-shadow);
 }
 
@@ -1847,13 +1956,13 @@ h3 {
 
 .chartGuideCallout strong {
   color: var(--terminal-amber);
-  font-size: var(--fce-type-sm);
+  font-size: 11px;
 }
 
 .chartGuideCallout span {
   color: var(--terminal-muted);
-  font-size: var(--fce-type-sm);
-  line-height: 1.45;
+  font-size: 10px;
+  line-height: 1.4;
 }
 
 .chartGuideLayer .callout-1 {
@@ -3530,6 +3639,91 @@ button.actionPlanRow:not(:disabled):hover {
   font-size: 11px;
 }
 
+.alertSettingsGrid {
+  display: grid;
+  grid-template-columns: minmax(160px, 1fr) repeat(3, minmax(110px, 140px));
+  gap: 8px;
+  margin: 14px 0;
+}
+
+.alertQuietToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--terminal-line);
+  border-radius: 5px;
+  background: rgba(12, 16, 24, 0.72);
+  color: var(--terminal-text);
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.alertRuleList {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.alertRuleItem {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) 120px;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--terminal-line);
+  border-radius: 5px;
+  background: rgba(12, 16, 24, 0.64);
+  padding: 10px;
+}
+
+.alertRuleItem.critical {
+  border-color: rgba(255, 91, 91, 0.35);
+}
+
+.alertRuleItem.warn {
+  border-color: rgba(240, 184, 64, 0.34);
+}
+
+.alertRuleItem.action {
+  border-color: rgba(87, 217, 129, 0.28);
+}
+
+.alertRuleItem label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--terminal-text);
+}
+
+.alertRuleItem strong {
+  font-size: 13px;
+}
+
+.alertRuleItem span {
+  display: block;
+  margin-top: 4px;
+  color: var(--terminal-muted);
+  font-size: 11px;
+}
+
+.alertRuleItem input[type="number"],
+.alertSettingsGrid input[type="time"] {
+  width: 100%;
+  border: 1px solid var(--terminal-line);
+  border-radius: 5px;
+  background: rgba(2, 5, 9, 0.88);
+  color: var(--terminal-text);
+  padding: 8px 10px;
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 12px;
+}
+
+.alertRuleFixed {
+  justify-self: end;
+  color: var(--terminal-muted);
+  font-size: 12px;
+}
+
 .archivedNotice {
   display: grid;
   justify-items: center;
@@ -3615,6 +3809,10 @@ button.actionPlanRow:not(:disabled):hover {
   .selectedPositionMetrics,
   .tabMetricLayout {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .derivativeEvidenceGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .actionPlanRow {
@@ -3710,6 +3908,7 @@ button.actionPlanRow:not(:disabled):hover {
     .technicalSummaryGrid,
     .healthBarRow,
     .levelRow,
+    .derivativeEvidenceGrid,
     .memoPriceGrid {
     grid-template-columns: 1fr;
   }
@@ -3847,6 +4046,9 @@ button.actionPlanRow:not(:disabled):hover {
 }
 
 .scoutSearchResults span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   color: var(--terminal-muted);
   font-size: 11px;
 }
@@ -3864,6 +4066,63 @@ button.actionPlanRow:not(:disabled):hover {
   padding: 9px 12px;
   font-size: 12px;
   line-height: 1.5;
+}
+
+.assetClassTabs {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.assetClassTabs button {
+  border: 1px solid var(--terminal-line);
+  border-radius: 5px;
+  background: rgba(8, 11, 16, 0.45);
+  color: var(--terminal-muted);
+  cursor: pointer;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.assetClassTabs button.active,
+.assetClassTabs button:hover {
+  border-color: var(--terminal-amber);
+  color: var(--terminal-amber);
+}
+
+.assetClassBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 42px;
+  border: 1px solid var(--terminal-line);
+  border-radius: 999px;
+  background: rgba(8, 11, 16, 0.45);
+  color: var(--terminal-muted);
+  padding: 2px 7px;
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.assetClassBadge.asset-crypto {
+  border-color: rgba(87, 210, 130, 0.35);
+  color: var(--terminal-positive);
+}
+
+.assetClassBadge.asset-stock,
+.assetClassBadge.asset-index {
+  border-color: rgba(80, 190, 225, 0.35);
+  color: var(--terminal-cyan);
+}
+
+.sessionMiniBadge {
+  display: block;
+  margin-top: 4px;
+  color: var(--terminal-muted);
+  font-size: 10px;
 }
 
 .scoutTableWrap {
@@ -3960,6 +4219,12 @@ button.actionPlanRow:not(:disabled):hover {
   font-size: 12px;
 }
 
+.scoutWatchChips em {
+  color: var(--terminal-muted);
+  font-size: 10px;
+  font-style: normal;
+}
+
 .scoutWatchChips button {
   border: 0;
   background: transparent;
@@ -3971,6 +4236,43 @@ button.actionPlanRow:not(:disabled):hover {
 
 .scoutWatchChips button:hover {
   color: var(--terminal-negative);
+}
+
+.scoutArmedCell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 150px;
+}
+
+.scoutArmedCell span,
+.scoutSetupMuted {
+  display: inline-flex;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--terminal-muted);
+  font-size: 12px;
+}
+
+.scoutArmedCell span {
+  color: var(--terminal-warning);
+}
+
+.scoutArmedCell button {
+  border: 1px solid var(--terminal-line);
+  border-radius: 5px;
+  background: rgba(8, 11, 16, 0.55);
+  color: var(--terminal-muted);
+  padding: 3px 6px;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.scoutArmedCell button:hover {
+  color: var(--terminal-text);
+  border-color: var(--terminal-warning);
 }
 
 .scenarioBlock {
@@ -4113,6 +4415,27 @@ button.actionPlanRow:not(:disabled):hover {
   font-size: 12px;
 }
 
+.simBriefingLine {
+  display: grid;
+  gap: 5px;
+  border: 1px solid rgba(98, 207, 232, 0.28);
+  border-radius: 5px;
+  background: rgba(98, 207, 232, 0.06);
+  padding: 9px 11px;
+}
+
+.simBriefingLine strong {
+  color: var(--terminal-cyan);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.simBriefingLine span {
+  color: #d8dee8;
+  font-size: 12px;
+  line-height: 1.42;
+}
+
 .simMetricGrid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -4252,6 +4575,261 @@ button.actionPlanRow:not(:disabled):hover {
   display: flex;
   gap: 8px;
   flex-shrink: 0;
+}
+
+.calibrationBlock {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+  border-top: 1px solid var(--terminal-line);
+  padding-top: 12px;
+}
+
+.terminalMetaRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  color: var(--terminal-muted);
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 11px;
+}
+
+.terminalMetaRow strong {
+  color: var(--terminal-text);
+  font-family: var(--font-sans);
+  font-size: 12px;
+}
+
+.compactList {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding-left: 16px;
+  color: var(--terminal-text);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.terminalEmpty.compact {
+  padding: 8px;
+  font-size: 12px;
+}
+
+.confidenceCurve {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+  gap: 8px;
+}
+
+.confidenceBucket {
+  display: grid;
+  gap: 3px;
+  border: 1px solid var(--terminal-line);
+  border-radius: 6px;
+  background: rgba(13, 18, 26, 0.68);
+  padding: 8px;
+}
+
+.confidenceBucket span,
+.confidenceBucket small {
+  color: var(--terminal-muted);
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 11px;
+}
+
+.calibrationTable {
+  display: grid;
+  gap: 10px;
+}
+
+.calibrationScoreRow {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) minmax(120px, 180px) minmax(86px, auto);
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--terminal-line);
+  border-radius: 8px;
+  background: rgba(13, 18, 26, 0.62);
+  padding: 10px 12px;
+}
+
+.calibrationScoreRow div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.calibrationScoreRow strong {
+  color: var(--terminal-text);
+  font-size: 13px;
+}
+
+.calibrationScoreRow span {
+  color: var(--terminal-muted);
+  font-size: 11px;
+}
+
+.calibrationScoreRow b {
+  color: var(--terminal-text);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  justify-self: end;
+  text-align: right;
+}
+
+.stackBar {
+  display: flex;
+  height: 10px;
+  overflow: hidden;
+  border: 1px solid var(--terminal-line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.stackBar span {
+  min-width: 1px;
+}
+
+.stackBar .correct {
+  background: var(--terminal-positive);
+}
+
+.stackBar .wrong {
+  background: var(--terminal-negative);
+}
+
+.stackBar .whipsaw {
+  background: var(--terminal-warning);
+}
+
+.stackBar .untested {
+  background: var(--terminal-muted);
+}
+
+.confidenceChart {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) 1fr;
+  align-items: center;
+  gap: 16px;
+}
+
+.confidenceChart svg {
+  width: 100%;
+  aspect-ratio: 1;
+  border: 1px solid var(--terminal-line);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.24);
+}
+
+.confidenceChart .ideal {
+  stroke: var(--terminal-muted);
+  stroke-dasharray: 3 4;
+  stroke-width: 1.2;
+}
+
+.confidenceChart .point {
+  fill: var(--terminal-accent);
+  stroke: rgba(255, 255, 255, 0.72);
+  stroke-width: 0.8;
+}
+
+.confidenceChart .point.overconfident {
+  fill: var(--terminal-negative);
+}
+
+.confidenceChart .point.underconfident {
+  fill: var(--terminal-warning);
+}
+
+.confidenceChart .point.insufficient_sample {
+  fill: var(--terminal-muted);
+}
+
+.confidenceLegend {
+  display: grid;
+  gap: 6px;
+  color: var(--terminal-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.calibrationWeekly {
+  display: grid;
+  gap: 12px;
+}
+
+.calibrationWeekly p {
+  margin: 0;
+  color: var(--terminal-text);
+  font-size: 13px;
+}
+
+.compactGrid {
+  gap: 10px;
+}
+
+.calibrationMiniBox {
+  display: grid;
+  gap: 6px;
+  border: 1px solid var(--terminal-line);
+  border-radius: 8px;
+  background: rgba(13, 18, 26, 0.58);
+  padding: 10px;
+}
+
+.calibrationMiniBox strong {
+  color: var(--terminal-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.calibrationMiniBox span {
+  color: var(--terminal-text);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.alertResponseSummary {
+  display: grid;
+  gap: 12px;
+}
+
+.alertResponseSummary p,
+.alertResponseSummary small {
+  margin: 0;
+  color: var(--terminal-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+@media (max-width: 900px) {
+  .calibrationScoreRow,
+  .confidenceChart {
+    grid-template-columns: 1fr;
+  }
+
+  .calibrationScoreRow b {
+    justify-self: start;
+    text-align: left;
+  }
+}
+
+.confidenceBucket strong {
+  color: var(--terminal-text);
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+  font-size: 14px;
+}
+
+.confidenceBucket.state-aligned {
+  border-color: rgba(105, 226, 138, 0.3);
+}
+
+.confidenceBucket.state-overconfident {
+  border-color: rgba(255, 99, 99, 0.38);
+}
+
+.confidenceBucket.state-underconfident {
+  border-color: rgba(73, 208, 255, 0.34);
 }
 
 @media (max-width: 760px) {

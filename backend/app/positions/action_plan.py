@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.core.config import get_settings
 from app.db.models import Position, PositionSnapshot
 
 
@@ -14,6 +15,8 @@ def build_action_plan(position: Position, snapshot: PositionSnapshot, chart_anal
     volume_profile = chart_analysis.get("volume_profile", {})
     volume_xray = chart_analysis.get("volume_xray", {})
     harmonic_patterns = chart_analysis.get("harmonic_patterns", [])
+    derivatives = chart_analysis.get("derivatives", {})
+    liquidity = chart_analysis.get("liquidity", {})
     candles = chart_analysis.get("candles", [])
     direction = position.direction.value
 
@@ -22,8 +25,20 @@ def build_action_plan(position: Position, snapshot: PositionSnapshot, chart_anal
     if invalidation is None:
         invalidation = engine_invalidation
 
-    take_profit = _take_profit_targets(position, mark_price, support, resistance, volume_profile, candles, harmonic_patterns)
-    watch_triggers = _watch_triggers(position, mark_price, volume_profile, volume_xray)
+    take_profit = _take_profit_targets(
+        position,
+        mark_price,
+        support,
+        resistance,
+        volume_profile,
+        candles,
+        harmonic_patterns,
+        derivatives,
+    )
+    invalidation = _with_liquidity_confluence(invalidation, liquidity)
+    engine_invalidation = _with_liquidity_confluence(engine_invalidation, liquidity)
+    take_profit = [_with_liquidity_confluence(item, liquidity) for item in take_profit]
+    watch_triggers = _watch_triggers(position, mark_price, volume_profile, volume_xray, derivatives)
 
     return {
         "as_of": snapshot.as_of.isoformat(),
@@ -89,6 +104,9 @@ def _engine_invalidation(
         source = support[0] if direction == "long" and support else resistance[0] if direction == "short" and resistance else None
     if not source or source.get("price") is None:
         return None
+    min_score = get_settings().min_invalidation_level_score
+    if isinstance(source.get("score"), (int, float)) and float(source["score"]) < min_score:
+        return None
     action = "이탈 시 손절 검토" if direction == "long" else "돌파 시 손절 검토"
     return {
         "price": source["price"],
@@ -106,6 +124,7 @@ def _take_profit_targets(
     volume_profile: dict[str, Any],
     candles: list[dict[str, Any]],
     harmonic_patterns: list[dict[str, Any]],
+    derivatives: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     direction = position.direction.value
     targets: list[dict[str, Any]] = []
@@ -121,6 +140,9 @@ def _take_profit_targets(
         )
 
     for item in _harmonic_targets(position, mark_price, harmonic_patterns):
+        targets.append(item)
+
+    for item in _liquidation_cluster_targets(position, mark_price, derivatives):
         targets.append(item)
 
     level_targets = resistance if direction == "long" else support
@@ -166,13 +188,20 @@ def _take_profit_targets(
     return _dedupe_price_items(targets)[:3]
 
 
-def _harmonic_targets(position: Position, mark_price: float | None, harmonic_patterns: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def _harmonic_targets(
+    position: Position,
+    mark_price: float | None,
+    harmonic_patterns: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     if not isinstance(harmonic_patterns, list):
         return []
     direction = position.direction.value
     target_direction = "bearish" if direction == "long" else "bullish"
     targets: list[dict[str, Any]] = []
-    for pattern in sorted(_valid_harmonic_patterns(harmonic_patterns), key=lambda item: -int(item.get("confidence", 0))):
+    for pattern in sorted(
+        _valid_harmonic_patterns(harmonic_patterns),
+        key=lambda item: -int(item.get("confidence", 0)),
+    ):
         if pattern.get("direction") != target_direction:
             continue
         prz = pattern.get("prz")
@@ -214,7 +243,13 @@ _VOLUME_STATE_LABELS = {
 }
 
 
-def _watch_triggers(position: Position, mark_price: float | None, volume_profile: dict[str, Any], volume_xray: dict[str, Any]) -> list[dict[str, str]]:
+def _watch_triggers(
+    position: Position,
+    mark_price: float | None,
+    volume_profile: dict[str, Any],
+    volume_xray: dict[str, Any],
+    derivatives: dict[str, Any] | None = None,
+) -> list[dict[str, str]]:
     triggers: list[dict[str, str]] = []
     poc = volume_profile.get("poc_price")
     if poc is not None and mark_price is not None:
@@ -227,11 +262,155 @@ def _watch_triggers(position: Position, mark_price: float | None, volume_profile
         triggers.append({"condition": condition, "meaning": meaning})
     volume_state = volume_xray.get("volume_state")
     if volume_xray.get("spike_detected"):
-        triggers.append({"condition": "거래량 급증 캔들 출현", "meaning": "포지션 방향과 캔들 방향이 같은지 확인"})
+        triggers.append(
+            {
+                "condition": "거래량 급증 캔들 출현",
+                "meaning": "포지션 방향과 캔들 방향이 같은지 확인",
+            }
+        )
     if volume_state:
         state_label = _VOLUME_STATE_LABELS.get(str(volume_state), str(volume_state))
-        triggers.append({"condition": f"거래량 상태: {state_label}", "meaning": "거래량 변화가 포지션 방향과 정렬되는지 확인"})
+        triggers.append(
+            {
+                "condition": f"거래량 상태: {state_label}",
+                "meaning": "거래량 변화가 포지션 방향과 정렬되는지 확인",
+            }
+        )
+    derivative_triggers = _derivative_watch_triggers(position, mark_price, derivatives)
+    return (derivative_triggers + triggers)[:3]
+
+
+def _derivative_watch_triggers(position: Position, mark_price: float | None, derivatives: dict[str, Any] | None) -> list[dict[str, str]]:
+    if not isinstance(derivatives, dict):
+        return []
+    signals = derivatives.get("signals") if isinstance(derivatives.get("signals"), dict) else {}
+    latest = derivatives.get("latest") if isinstance(derivatives.get("latest"), dict) else {}
+    triggers: list[dict[str, str]] = []
+    funding = signals.get("funding_state") if isinstance(signals.get("funding_state"), dict) else None
+    funding_value = _optional_float((funding or {}).get("funding"))
+    direction = position.direction.value
+    if funding and funding.get("state") == "extreme" and funding_value is not None:
+        adverse = (direction == "long" and funding_value > 0) or (direction == "short" and funding_value < 0)
+        if adverse:
+            side = "롱" if direction == "long" else "숏"
+            triggers.append(
+                {
+                    "condition": f"펀딩 극단({_format_funding(funding_value)}/8h) 지속",
+                    "meaning": f"{side} 쏠림 청산 리스크 감시",
+                }
+            )
+    divergence = signals.get("oi_price_divergence") if isinstance(signals.get("oi_price_divergence"), dict) else None
+    if divergence:
+        state = str(divergence.get("state") or "")
+        adverse_states = {
+            "long": {"price_down_oi_up", "price_down_oi_down"},
+            "short": {"price_up_oi_up", "price_up_oi_down"},
+        }
+        if state in adverse_states.get(direction, set()):
+            oi = _optional_float(divergence.get("oi_change_pct"))
+            condition = f"OI 24h {_format_signed_pct(oi)} + {divergence.get('label', '가격/OI 역행')}"
+            triggers.append({"condition": condition, "meaning": "포지션 방향과 수급이 맞는지 확인"})
+    for cluster in _liquidation_clusters(derivatives):
+        price = _optional_float(cluster.get("price") or cluster.get("mid") or cluster.get("level"))
+        if price is None or mark_price is None or mark_price <= 0:
+            continue
+        distance = ((price - mark_price) / mark_price) * 100
+        if abs(distance) > 3:
+            continue
+        side = "상방" if distance > 0 else "하방"
+        triggers.append(
+            {
+                "condition": f"{side} {abs(distance):.1f}% 청산 밀집대 추정 {_format_price(price)}",
+                "meaning": "도달 시 변동성 확대 가능성 감시",
+            }
+        )
+    if latest.get("source_status") == "locked":
+        return triggers
     return triggers[:3]
+
+
+def _liquidation_cluster_targets(position: Position, mark_price: float | None, derivatives: dict[str, Any] | None) -> list[dict[str, Any]]:
+    targets: list[dict[str, Any]] = []
+    if mark_price is None:
+        return targets
+    for cluster in _liquidation_clusters(derivatives):
+        price = _optional_float(cluster.get("price") or cluster.get("mid") or cluster.get("level"))
+        if price is None or not _is_favorable_target(price, mark_price, position.direction.value):
+            continue
+        targets.append(
+            _plan_item(
+                position=position,
+                price=price,
+                mark_price=mark_price,
+                basis="청산 밀집대 추정 · Coinglass(liq_cluster)",
+                action="도달 시 변동성 확대 가능, 부분 익절 검토",
+            )
+        )
+    return targets[:2]
+
+
+def _with_liquidity_confluence(item: dict[str, Any] | None, liquidity: Any) -> dict[str, Any] | None:
+    if item is None or not isinstance(liquidity, dict):
+        return item
+    price = _optional_float(item.get("price"))
+    if price is None:
+        return item
+    pool = _nearest_liquidity_pool(price, liquidity)
+    if pool is None:
+        return item
+    label = _liquidity_pool_basis(pool)
+    basis = str(item.get("basis") or "")
+    if label in basis:
+        return item
+    return {**item, "basis": f"{basis} + {label}" if basis else label}
+
+
+def _nearest_liquidity_pool(price: float, liquidity: dict[str, Any]) -> dict[str, Any] | None:
+    pools = liquidity.get("pools")
+    if not isinstance(pools, list):
+        return None
+    candidates: list[tuple[float, dict[str, Any]]] = []
+    tolerance = max(abs(price) * 0.003, 1e-8)
+    for pool in pools:
+        if not isinstance(pool, dict) or pool.get("swept"):
+            continue
+        pool_price = _optional_float(pool.get("price"))
+        if pool_price is None:
+            continue
+        distance = abs(pool_price - price)
+        if distance <= tolerance:
+            candidates.append((distance, pool))
+    if not candidates:
+        return None
+    return min(candidates, key=lambda item: item[0])[1]
+
+
+def _liquidity_pool_basis(pool: dict[str, Any]) -> str:
+    touches = pool.get("touch_count") or pool.get("touches") or 1
+    kind = str(pool.get("kind") or "")
+    if kind == "eqh":
+        return f"상단 풀(EQH {touches}터치)"
+    if kind == "eql":
+        return f"하단 풀(EQL {touches}터치)"
+    if kind == "old_high":
+        return f"상단 풀(전고 {touches}터치)"
+    if kind == "old_low":
+        return f"하단 풀(전저 {touches}터치)"
+    label = pool.get("label")
+    return str(label or "유동성 풀")
+
+
+def _liquidation_clusters(derivatives: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if not isinstance(derivatives, dict):
+        return []
+    coinglass = derivatives.get("coinglass") if isinstance(derivatives.get("coinglass"), dict) else {}
+    if coinglass.get("source_status") != "ok":
+        return []
+    signals = derivatives.get("signals") if isinstance(derivatives.get("signals"), dict) else {}
+    clusters = signals.get("liquidation_clusters")
+    if not isinstance(clusters, list):
+        return []
+    return [cluster for cluster in clusters if isinstance(cluster, dict)]
 
 
 def _liquidation(position: Position) -> dict[str, Any]:
@@ -307,3 +486,22 @@ def _format_price(value: Any) -> str:
     if isinstance(value, (int, float)):
         return f"{value:.8f}".rstrip("0").rstrip(".")
     return str(value)
+
+
+def _optional_float(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _format_signed_pct(value: float | None) -> str:
+    if value is None:
+        return "표본 부족"
+    return f"{value:+.2f}%"
+
+
+def _format_funding(value: float) -> str:
+    return f"{value * 100:+.4f}%"

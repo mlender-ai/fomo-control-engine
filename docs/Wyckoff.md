@@ -30,7 +30,7 @@ Distribution side:
 
 ## Confidence Formula
 
-`confidence = depth_significance + return_speed + volume_confirmation + level_strength`
+`confidence = depth_significance + return_speed + volume_confirmation + level_strength + liquidity_confirmation`
 
 각 컴포넌트 범위:
 
@@ -38,8 +38,11 @@ Distribution side:
 - `return_speed` 0-25: 박스 안으로 복귀하거나 리테스트가 확인되는 속도
 - `volume_confirmation` 0-25: 실체결 delta가 있으면 방향 정렬, 없으면 상대 거래량
 - `level_strength` 0-20: 구조 레벨 엔진의 level score x 0.2
+- `liquidity_confirmation` 0-15: WO-FCE-28 유동성 스윕 교차 확인. Weak +10, Mid +12, Strong +15
 
 UI와 API는 `components`를 함께 제공해야 한다. `62`, `58` 같은 고정 신뢰도 값은 사용하지 않는다.
+
+`liquidity_confirmation`은 동일 캔들 또는 동일 경계에서 Spring/UTAD와 스윕이 같은 가격 행동을 설명할 때만 추가한다. 이 경우 UI는 와이코프 이벤트를 1차 표기로 유지하고, 스윕은 근거 상세로만 표기한다.
 
 ## Phase
 

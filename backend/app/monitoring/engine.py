@@ -1,5 +1,8 @@
 from app.db.models import MonitoringLog, Position, Report
-from app.positions.pnl import calculate_computed_pnl_percent, resolve_position_pnl_percent
+from app.positions.pnl import (
+    calculate_computed_pnl_percent,
+    resolve_position_pnl_percent,
+)
 
 
 def calculate_pnl(position: Position, current_price: float) -> float:

@@ -3,10 +3,13 @@ from app.exchange.base import MarketDataProvider
 from app.exchange.bitget.client import BitgetClient
 from app.exchange.bitget.trade_cache import BitgetTradeFillCache
 from app.exchange.bitget.provider import BitgetMarketDataProvider
+from app.demo.provider import FakeBitgetProvider
 from app.exchange.mock import MockMarketDataProvider
 
 
 def create_market_data_provider(settings: Settings) -> MarketDataProvider:
+    if settings.demo_mode:
+        return FakeBitgetProvider()
     provider = settings.market_data_provider.strip().lower()
     if provider == "mock":
         return MockMarketDataProvider()

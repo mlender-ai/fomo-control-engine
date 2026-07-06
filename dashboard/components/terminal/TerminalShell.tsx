@@ -3,7 +3,7 @@
 import { AppShell } from "@astryxdesign/core/AppShell";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type SystemStatus } from "@/lib/api";
+import { API_BASE_URL, api, type SystemStatus } from "@/lib/api";
 import { TerminalCommandPalette } from "./TerminalCommandPalette";
 import { TerminalSideNav } from "./TerminalSideNav";
 import { TerminalTopBar } from "./TerminalTopBar";
@@ -15,6 +15,7 @@ const routeShortcuts: Record<string, string> = {
   s: "/scout",
   t: "/trades",
   h: "/trades",
+  c: "/calibration",
   ",": "/settings"
 };
 
@@ -22,6 +23,7 @@ export function TerminalShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const [status, setStatus] = useState<SystemStatus | null>(null);
+  const [workerStatus, setWorkerStatus] = useState<WorkerStatus | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [notice, setNotice] = useState("");
   const [currentTime, setCurrentTime] = useState("");
@@ -29,9 +31,12 @@ export function TerminalShell({ children }: { children: React.ReactNode }) {
 
   const loadStatus = useCallback(async () => {
     try {
-      setStatus(await api.systemStatus());
+      const [system, worker] = await Promise.all([api.systemStatus(), fetchWorkerStatus()]);
+      setStatus(system);
+      setWorkerStatus(worker);
     } catch {
       setStatus(null);
+      setWorkerStatus(null);
     }
   }, []);
 
@@ -71,7 +76,7 @@ export function TerminalShell({ children }: { children: React.ReactNode }) {
       }
       if (event.key.toLowerCase() === "g") {
         routeModeRef.current = true;
-        setNotice("이동 모드: P 포지션 관제 · T 거래 복기 · , 설정");
+        setNotice("이동 모드: P 포지션 관제 · T 거래 복기 · C 판단 성적표 · , 설정");
         return;
       }
       if (routeModeRef.current) {
@@ -104,6 +109,7 @@ export function TerminalShell({ children }: { children: React.ReactNode }) {
       topNav={
         <TerminalTopBar
           status={status}
+          workerStatus={workerStatus}
           pathname={pathname}
           currentTime={currentTime}
           onCommand={() => setPaletteOpen(true)}
@@ -122,6 +128,33 @@ export function TerminalShell({ children }: { children: React.ReactNode }) {
       <TerminalCommandPalette isOpen={paletteOpen} onOpenChange={setPaletteOpen} onNotice={setNotice} />
     </AppShell>
   );
+}
+
+export type WorkerStatus = {
+  status: string;
+  scheduler_running?: boolean;
+  jobs?: Record<
+    string,
+    {
+      status?: string;
+      runs?: number;
+      failures?: number;
+      consecutive_failures?: number;
+      skipped?: number;
+      last_success_at?: string | null;
+      next_run_at?: string | null;
+      current_interval_seconds?: number;
+      last_error?: string | null;
+    }
+  >;
+};
+
+async function fetchWorkerStatus(): Promise<WorkerStatus> {
+  const response = await fetch(`${API_BASE_URL}/api/system/worker`, { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error("worker status unavailable");
+  }
+  return response.json();
 }
 
 function isTypingTarget(target: EventTarget | null): boolean {

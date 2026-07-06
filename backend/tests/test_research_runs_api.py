@@ -1,5 +1,8 @@
 def test_research_run_creation_stores_seven_agent_outputs(client) -> None:
-    response = client.post("/api/research-runs", json={"symbol": "BTCUSDT", "timeframe": "4h", "mode": "entry_review"})
+    response = client.post(
+        "/api/research-runs",
+        json={"symbol": "BTCUSDT", "timeframe": "4h", "mode": "entry_review"},
+    )
 
     assert response.status_code == 200
     payload = response.json()

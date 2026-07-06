@@ -30,4 +30,3 @@ def test_sqlite_repository_persists_reports_and_positions(tmp_path) -> None:
     assert latest.id == report.id
     assert len(positions) == 1
     assert positions[0].entry_report_id == report.id
-

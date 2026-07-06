@@ -86,9 +86,18 @@ export function TradeHistoryShell() {
               <TerminalMetric label="무효화 적중률" value={metricPercent(calibration.invalidation, "accuracy_pct")} delta={`${metricNumber(calibration.invalidation, "total")} samples`} tone={metricTone(calibration.invalidation)} />
               <TerminalMetric label="익절 도달률" value={metricPercent(calibration.take_profit, "reach_rate_pct")} delta={`${metricNumber(calibration.take_profit, "total")} targets`} tone="warning" />
             </div>
+            <CalibrationWeeklyReport calibration={calibration} />
+            <ConfidenceCurve rows={calibration.confidence_curve ?? []} />
           </TerminalPanel>
 
           <TerminalPanel title="파라미터 조정 제안" subtitle="자동 적용 없이 승인/거절만 기록합니다" status={calibration.suggestions.length ? "warning" : "neutral"}>
+            {calibration.suggestion_status_counts ? (
+              <div className="terminalMetaRow">
+                <span>대기 {calibration.suggestion_status_counts.pending ?? 0}</span>
+                <span>승인 {calibration.suggestion_status_counts.approved ?? 0}</span>
+                <span>거절 {calibration.suggestion_status_counts.rejected ?? 0}</span>
+              </div>
+            ) : null}
             {calibration.suggestions.length ? (
               <div className="eventTimeline">
                 {calibration.suggestions.map((suggestion) => (
@@ -352,6 +361,60 @@ function summarizeTrades(trades: Trade[]) {
   return { totalPnl, averagePnl, winRate };
 }
 
+function CalibrationWeeklyReport({ calibration }: { calibration: CalibrationSummary }) {
+  const weekly = calibration.weekly_report;
+  if (!weekly) {
+    return null;
+  }
+  const totals = asRecord(weekly.totals);
+  const highlights = Array.isArray(weekly.highlights) ? weekly.highlights.map(String).slice(0, 3) : [];
+  return (
+    <div className="calibrationBlock">
+      <div className="terminalMetaRow">
+        <strong>주간 성적표</strong>
+        <span>검증 {metricNumber(totals, "tested")}</span>
+        <span>적중률 {metricPercent(totals, "accuracy_pct")}</span>
+      </div>
+      {highlights.length ? (
+        <ul className="compactList">
+          {highlights.map((item) => (
+            <li key={item}>{item}</li>
+          ))}
+        </ul>
+      ) : (
+        <div className="terminalEmpty compact">최근 7일 표본이 아직 충분하지 않습니다.</div>
+      )}
+    </div>
+  );
+}
+
+function ConfidenceCurve({ rows }: { rows: Array<Record<string, unknown>> }) {
+  if (!rows.length) {
+    return (
+      <div className="calibrationBlock">
+        <div className="terminalEmpty compact">신뢰도 곡선은 confidence가 있는 판단 표본이 쌓이면 표시됩니다.</div>
+      </div>
+    );
+  }
+  return (
+    <div className="calibrationBlock">
+      <div className="terminalMetaRow">
+        <strong>신뢰도 곡선</strong>
+        <span>N&lt;10 결론 보류</span>
+      </div>
+      <div className="confidenceCurve">
+        {rows.slice(0, 8).map((row) => (
+          <div className={`confidenceBucket state-${String(row.calibration_state ?? "insufficient_sample")}`} key={String(row.bucket)}>
+            <span>{String(row.bucket)}</span>
+            <strong>{metricPercent(row, "accuracy_pct")}</strong>
+            <small>N={metricNumber(row, "tested")} · {String(row.conclusion ?? "표본 부족")}</small>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function metricNumber(bucket: Record<string, unknown>, key: string) {
   const value = bucket[key];
   return typeof value === "number" ? String(value) : "-";
@@ -405,7 +468,9 @@ function judgmentTypeLabel(type: string) {
     invalidation: "무효화",
     take_profit: "익절 후보",
     wyckoff_event: "와이코프",
-    harmonic_prz: "하모닉 PRZ"
+    liquidity_sweep: "유동성 스윕",
+    harmonic_prz: "하모닉 PRZ",
+    analyst_briefing: "브리핑 스탠스"
   };
   return labels[type] ?? type;
 }
@@ -444,4 +509,8 @@ function claimPrice(score: JudgmentScore) {
     return `${formatPrice(low)}~${formatPrice(high)}`;
   }
   return "-";
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
 }

@@ -1,4 +1,4 @@
-export type TaFocusLayer = "levels" | "volume_profile" | "wyckoff" | "harmonic" | "indicators";
+export type TaFocusLayer = "levels" | "volume_profile" | "wyckoff" | "liquidity" | "harmonic" | "indicators";
 export type ChartLayerId = "plan" | "scenario" | "flow" | TaFocusLayer;
 
 export type ChartLayerState = {
@@ -17,8 +17,9 @@ export const DEFAULT_LAYER_STATE: ChartLayerState = {
 
 export const CHART_LAYER_DEFS: Array<{ id: ChartLayerId; label: string; description: string }> = [
   { id: "plan", label: "플랜", description: "무효화·익절 박스와 가격 플래그" },
-  { id: "scenario", label: "시나리오", description: "예측이 아닌 조건 경로 가이드" },
+  { id: "scenario", label: "조건 경로", description: "현재가에서 감시·익절·무효화로 이어지는 확인선. 예측 아님" },
   { id: "levels", label: "레벨", description: "구조 지지/저항 존 (점수 상위 3+3)" },
+  { id: "liquidity", label: "유동성", description: "동일 고저점·전고전저 풀과 확정 스윕" },
   { id: "volume_profile", label: "볼륨", description: "볼륨 프로파일 · 최다 거래 가격(POC)" },
   { id: "wyckoff", label: "와이코프", description: "국면 박스와 이벤트 마커" },
   { id: "harmonic", label: "하모닉", description: "패턴 구조와 반전 후보 구간(PRZ)" },
@@ -26,7 +27,7 @@ export const CHART_LAYER_DEFS: Array<{ id: ChartLayerId; label: string; descript
   { id: "indicators", label: "지표", description: "볼린저 밴드" }
 ];
 
-export const TA_FOCUS_LAYERS: TaFocusLayer[] = ["levels", "volume_profile", "wyckoff", "harmonic", "indicators"];
+export const TA_FOCUS_LAYERS: TaFocusLayer[] = ["levels", "volume_profile", "wyckoff", "liquidity", "harmonic", "indicators"];
 
 export function isTaLayer(id: ChartLayerId): id is TaFocusLayer {
   return (TA_FOCUS_LAYERS as string[]).includes(id);
@@ -39,18 +40,24 @@ export function layerActive(state: ChartLayerState, id: ChartLayerId): boolean {
   return state.ta.includes(id);
 }
 
-/** 포커스 모드: TA 레이어는 상호 배타. additive(shift-클릭) = 비교 모드로 다중 선택. */
+/** 모든 차트 레이어는 독립 토글이다. 여러 근거를 같은 차트 위에 겹쳐 볼 수 있다. */
 export function toggleLayer(state: ChartLayerState, id: ChartLayerId, additive = false): ChartLayerState {
+  void additive;
   if (id === "plan") return { ...state, plan: !state.plan };
   if (id === "scenario") return { ...state, scenario: !state.scenario };
   if (id === "flow") return { ...state, flow: !state.flow };
   if (state.ta.includes(id)) {
     return { ...state, ta: state.ta.filter((layer) => layer !== id) };
   }
-  return { ...state, ta: additive ? [...state.ta, id] : [id] };
+  const exclusivePair: Partial<Record<TaFocusLayer, TaFocusLayer[]>> = {
+    liquidity: ["wyckoff"],
+    wyckoff: ["liquidity"]
+  };
+  const blocked = exclusivePair[id] ?? [];
+  return { ...state, ta: [...state.ta.filter((layer) => !blocked.includes(layer)), id] };
 }
 
-/** 아코디언 동기화용 단일 포커스 TA (비교 모드에서는 첫 번째). */
+/** 아코디언 동기화용 대표 TA 레이어. */
 export function focusedTaLayer(state: ChartLayerState): TaFocusLayer | null {
   return state.ta[0] ?? null;
 }

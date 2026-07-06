@@ -41,4 +41,3 @@ def test_sign_bitget_request_with_query_changes_signature() -> None:
         request_path="/api/v2/mix/position/all-position",
         query_string="productType=USDT-FUTURES&marginCoin=USDT",
     )
-

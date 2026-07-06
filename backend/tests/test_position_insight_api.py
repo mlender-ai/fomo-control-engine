@@ -1,7 +1,7 @@
 from datetime import timedelta
 from uuid import UUID
 
-from app.api import routes
+from app.services import http_handlers as routes
 
 
 def test_position_insight_api_generates_structured_saved_insight(client) -> None:
@@ -46,7 +46,15 @@ def test_position_insight_api_generates_structured_saved_insight(client) -> None
     assert insight["fallback_reason"] == "openai_api_key_missing"
     assert "invalidation" in insight["action_plan"]
     assert "📍 BTCUSDT LONG 포지션 상태" in insight["insight_text"]
-    for section in ["현재 상태:", "수익/리스크:", "차트 구조:", "와이코프/기술적 분석:", "진입 논리:", "주의할 가격:", "제 의견:"]:
+    for section in [
+        "현재 상태:",
+        "수익/리스크:",
+        "차트 구조:",
+        "와이코프/기술적 분석:",
+        "진입 논리:",
+        "주의할 가격:",
+        "제 의견:",
+    ]:
         assert section in insight["insight_text"]
     assert "매수하세요" not in insight["insight_text"]
     assert "매도하세요" not in insight["insight_text"]

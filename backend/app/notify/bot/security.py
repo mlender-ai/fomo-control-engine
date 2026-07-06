@@ -7,4 +7,3 @@ class ChatGuard:
 
     def is_allowed(self, chat_id: int | None) -> bool:
         return chat_id is not None and chat_id in self.allowed_chat_ids
-

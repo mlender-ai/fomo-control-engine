@@ -185,7 +185,21 @@ export const VOLUME_STATE_GLOSSARY: Record<VolumeStateTerm, TaGlossaryEntry> = {
   }
 };
 
-export type MarketStructureTerm = "PRZ" | "POC" | "VAH" | "VAL" | "CVD" | "RR" | "ActionFlag" | "Range";
+export type MarketStructureTerm =
+  | "PRZ"
+  | "POC"
+  | "VAH"
+  | "VAL"
+  | "CVD"
+  | "RR"
+  | "ActionFlag"
+  | "Range"
+  | "LiquidityPool"
+  | "Sweep"
+  | "BOS"
+  | "CHoCH"
+  | "Premium"
+  | "Discount";
 
 export const MARKET_STRUCTURE_GLOSSARY: Record<MarketStructureTerm, TaGlossaryEntry> = {
   PRZ: {
@@ -227,6 +241,71 @@ export const MARKET_STRUCTURE_GLOSSARY: Record<MarketStructureTerm, TaGlossaryEn
     term: "Range",
     short: "가격 레인지",
     plain: "가격이 일정한 상단과 하단 사이에 머문 구간. 경계 반응을 확인합니다"
+  },
+  LiquidityPool: {
+    term: "liquidity pool",
+    short: "유동성 풀",
+    plain: "손절 주문이 몰려 있을 것으로 추정되는 가격대. 동일 고점/저점, 전고/전저를 기준으로 계산합니다",
+    action_hint: { long: "아래쪽 풀은 무효화 근거 후보, 위쪽 풀은 익절 반응 확인", short: "위쪽 풀은 무효화 근거 후보, 아래쪽 풀은 익절 반응 확인" }
+  },
+  Sweep: {
+    term: "sweep",
+    short: "스윕",
+    plain: "그 가격대를 찔렀다가 되돌아온 움직임. 깊게 찌르고 빠르게 복귀할수록 반전 근거로서 신뢰도를 높게 봅니다",
+    action_hint: { long: "저점 Strong 스윕은 롱 근거 후보, 고점 Strong 스윕은 롱 논리 점검", short: "고점 Strong 스윕은 숏 근거 후보, 저점 Strong 스윕은 숏 논리 점검" }
+  },
+  BOS: {
+    term: "BOS",
+    short: "구조 지속 돌파",
+    plain: "기존 추세 방향의 최근 스윙 경계를 몸통 종가로 돌파한 상태. 추세 지속 근거 후보입니다"
+  },
+  CHoCH: {
+    term: "CHoCH",
+    short: "구조 전환 후보",
+    plain: "기존 추세와 반대 방향의 스윙 경계를 몸통 종가로 돌파한 상태. 추세 전환 가능성을 점검합니다"
+  },
+  Premium: {
+    term: "premium",
+    short: "프리미엄 구간",
+    plain: "활성 레인지의 상단 절반. 롱은 익절/리스크를, 숏은 반응 근거를 확인하는 구간입니다"
+  },
+  Discount: {
+    term: "discount",
+    short: "디스카운트 구간",
+    plain: "활성 레인지의 하단 절반. 롱은 반응 근거를, 숏은 익절/리스크를 확인하는 구간입니다"
+  }
+};
+
+export type DerivativeTerm = "OI" | "Funding" | "LongShortRatio" | "LiquidationCluster" | "Crowding";
+
+export const DERIVATIVE_GLOSSARY: Record<DerivativeTerm, TaGlossaryEntry> = {
+  OI: {
+    term: "OI",
+    short: "미결제약정",
+    plain: "아직 청산되지 않은 선물 포지션 규모. 가격 변화와 함께 늘거나 줄어드는 방향을 확인합니다",
+    action_hint: { long: "가격 상승과 함께 늘면 수급 정렬 후보", short: "가격 하락과 함께 늘면 수급 정렬 후보" }
+  },
+  Funding: {
+    term: "Funding",
+    short: "펀딩비",
+    plain: "롱과 숏 사이에 주기적으로 교환되는 비용. 한쪽으로 극단화되면 포지션 쏠림을 경계합니다",
+    action_hint: { long: "양수 과열은 롱 쏠림 비용 확인", short: "음수 과열은 숏 쏠림 비용 확인" }
+  },
+  LongShortRatio: {
+    term: "LongShortRatio",
+    short: "롱숏비",
+    plain: "계정 수 기준 롱과 숏 비중. 어느 방향 참여자가 더 많은지 보는 보조 수급 지표"
+  },
+  LiquidationCluster: {
+    term: "LiquidationCluster",
+    short: "청산 밀집대",
+    plain: "강제 청산이 몰려 있을 것으로 추정되는 가격대. 도달 시 급변동 가능성이 있으나 추정 모델입니다",
+    action_hint: { long: "위쪽 밀집대 도달 시 익절/변동성 확인", short: "아래쪽 밀집대 도달 시 익절/변동성 확인" }
+  },
+  Crowding: {
+    term: "Crowding",
+    short: "쏠림",
+    plain: "펀딩비, 롱숏비, OI 변화를 결합한 0~100 보조 점수. 높을수록 한쪽으로 붐빈 상태를 뜻합니다"
   }
 };
 
@@ -243,6 +322,7 @@ const ALL_GLOSSARIES: Record<string, TaGlossaryEntry> = {
   ...HARMONIC_PATTERN_GLOSSARY,
   ...VOLUME_STATE_GLOSSARY,
   ...MARKET_STRUCTURE_GLOSSARY,
+  ...DERIVATIVE_GLOSSARY,
   ...STRENGTH_GLOSSARY
 };
 

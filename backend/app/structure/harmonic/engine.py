@@ -90,6 +90,7 @@ def detect_harmonic_patterns(
     volume_profile: dict | None = None,
     atr_multiplier: float = 2.0,
     min_confidence: int = 55,
+    tolerance_multiplier: float = 1.0,
 ) -> dict[str, Any]:
     ordered = sorted(candles, key=lambda candle: candle.timestamp)
     pivots = extract_zigzag_pivots(ordered, atr_multiplier=atr_multiplier, max_pivots=24)
@@ -100,18 +101,30 @@ def detect_harmonic_patterns(
     for start in range(max(0, len(recent) - 8), max(0, len(recent) - 4)):
         candidate = recent[start : start + 5]
         if len(candidate) == 5:
-            patterns.extend(_match_completed(candidate, atr, levels, volume_profile))
+            patterns.extend(_match_completed(candidate, atr, levels, volume_profile, tolerance_multiplier))
 
     for start in range(max(0, len(recent) - 7), max(0, len(recent) - 3)):
         candidate = recent[start : start + 4]
         if len(candidate) == 4:
-            patterns.extend(_match_forming(candidate, ordered[-1], atr, levels, volume_profile))
+            patterns.extend(
+                _match_forming(
+                    candidate,
+                    ordered[-1],
+                    atr,
+                    levels,
+                    volume_profile,
+                    tolerance_multiplier,
+                )
+            )
 
     filtered = [pattern for pattern in patterns if pattern["confidence"] >= min_confidence]
     filtered = _dedupe_patterns(filtered)
     return {
         "pivots": [pivot.model_dump() for pivot in recent],
-        "patterns": sorted(filtered, key=lambda item: (-item["confidence"], item["status"], item["name"]))[:8],
+        "patterns": sorted(
+            filtered,
+            key=lambda item: (-item["confidence"], item["status"], item["name"]),
+        )[:8],
         "min_confidence": min_confidence,
         "atr_multiplier": atr_multiplier,
     }
@@ -122,6 +135,7 @@ def _match_completed(
     atr: float,
     levels: dict[str, list[Any]] | None,
     volume_profile: dict | None,
+    tolerance_multiplier: float,
 ) -> list[dict[str, Any]]:
     if not _alternating(pivots):
         return []
@@ -135,20 +149,37 @@ def _match_completed(
         if not _basic_shape_valid(direction, x, a, b, c, d):
             continue
         if spec.name == "abcd":
-            ratio_results = [_rule_result(spec.b, ratios["c_ab"]), _rule_result(spec.c, ratios["cd_bc"]), _rule_result(spec.abcd, ratios["cd_ab"])]
+            ratio_results = [
+                _rule_result(spec.b, ratios["c_ab"], tolerance_multiplier),
+                _rule_result(spec.c, ratios["cd_bc"], tolerance_multiplier),
+                _rule_result(spec.abcd, ratios["cd_ab"], tolerance_multiplier),
+            ]
         else:
             ratio_results = [
-                _rule_result(spec.b, ratios["b_xa"]),
-                _rule_result(spec.c, ratios["c_ab"]),
-                _rule_result(spec.d_xa, ratios["d_xa"]),
-                _rule_result(spec.bc_projection, ratios["cd_bc"]),
+                _rule_result(spec.b, ratios["b_xa"], tolerance_multiplier),
+                _rule_result(spec.c, ratios["c_ab"], tolerance_multiplier),
+                _rule_result(spec.d_xa, ratios["d_xa"], tolerance_multiplier),
+                _rule_result(spec.bc_projection, ratios["cd_bc"], tolerance_multiplier),
             ]
         if any(result["miss"] > 1 for result in ratio_results):
             continue
         prz = _project_prz(spec, direction, x, a, b, c, atr)
         if not _price_near_prz(d.price, prz, atr):
             continue
-        patterns.append(_pattern_payload(spec, direction, "completed", pivots, ratios, ratio_results, prz, atr, levels, volume_profile))
+        patterns.append(
+            _pattern_payload(
+                spec,
+                direction,
+                "completed",
+                pivots,
+                ratios,
+                ratio_results,
+                prz,
+                atr,
+                levels,
+                volume_profile,
+            )
+        )
     return patterns
 
 
@@ -158,6 +189,7 @@ def _match_forming(
     atr: float,
     levels: dict[str, list[Any]] | None,
     volume_profile: dict | None,
+    tolerance_multiplier: float,
 ) -> list[dict[str, Any]]:
     if not _alternating(pivots):
         return []
@@ -166,17 +198,38 @@ def _match_forming(
     if expected_direction is None:
         return []
     ratios = _ratios_without_d(x, a, b, c)
-    pseudo_d = ZigZagPivot(index=len(pivots), time=int(last_candle.timestamp.timestamp()), price=last_candle.close, kind="low" if expected_direction == "bullish" else "high")
+    pseudo_d = ZigZagPivot(
+        index=len(pivots),
+        time=int(last_candle.timestamp.timestamp()),
+        price=last_candle.close,
+        kind="low" if expected_direction == "bullish" else "high",
+    )
     patterns: list[dict[str, Any]] = []
     for spec in PATTERN_SPECS:
         if spec.name == "abcd":
-            ratio_results = [_rule_result(spec.b, ratios["c_ab"])]
+            ratio_results = [_rule_result(spec.b, ratios["c_ab"], tolerance_multiplier)]
         else:
-            ratio_results = [_rule_result(spec.b, ratios["b_xa"]), _rule_result(spec.c, ratios["c_ab"])]
+            ratio_results = [
+                _rule_result(spec.b, ratios["b_xa"], tolerance_multiplier),
+                _rule_result(spec.c, ratios["c_ab"], tolerance_multiplier),
+            ]
         if any(result["miss"] > 1 for result in ratio_results):
             continue
         prz = _project_prz(spec, expected_direction, x, a, b, c, atr)
-        patterns.append(_pattern_payload(spec, expected_direction, "forming", [x, a, b, c, pseudo_d], ratios, ratio_results, prz, atr, levels, volume_profile))
+        patterns.append(
+            _pattern_payload(
+                spec,
+                expected_direction,
+                "forming",
+                [x, a, b, c, pseudo_d],
+                ratios,
+                ratio_results,
+                prz,
+                atr,
+                levels,
+                volume_profile,
+            )
+        )
     return patterns
 
 
@@ -236,7 +289,15 @@ def _ratios_without_d(x: ZigZagPivot, a: ZigZagPivot, b: ZigZagPivot, c: ZigZagP
     }
 
 
-def _project_prz(spec: HarmonicSpec, direction: PatternDirection, x: ZigZagPivot, a: ZigZagPivot, b: ZigZagPivot, c: ZigZagPivot, atr: float) -> dict[str, float]:
+def _project_prz(
+    spec: HarmonicSpec,
+    direction: PatternDirection,
+    x: ZigZagPivot,
+    a: ZigZagPivot,
+    b: ZigZagPivot,
+    c: ZigZagPivot,
+    atr: float,
+) -> dict[str, float]:
     projections: list[float] = []
     xa = abs(a.price - x.price)
     bc = abs(c.price - b.price)
@@ -259,7 +320,11 @@ def _project_prz(spec: HarmonicSpec, direction: PatternDirection, x: ZigZagPivot
     low = min(projections)
     high = max(projections)
     padding = max(atr * 0.12, abs(high - low) * 0.12)
-    return {"low": round(low - padding, 8), "high": round(high + padding, 8), "mid": round(mean(projections), 8)}
+    return {
+        "low": round(low - padding, 8),
+        "high": round(high + padding, 8),
+        "mid": round(mean(projections), 8),
+    }
 
 
 def _rule_projection_ratios(rule: RatioRule) -> list[float]:
@@ -270,21 +335,27 @@ def _rule_projection_ratios(rule: RatioRule) -> list[float]:
     return [1.0]
 
 
-def _rule_result(rule: RatioRule | None, value: float | None) -> dict[str, Any]:
+def _rule_result(rule: RatioRule | None, value: float | None, tolerance_multiplier: float = 1.0) -> dict[str, Any]:
     if rule is None or value is None:
         return {"name": "n/a", "value": value, "target": None, "miss": 0.0}
+    tolerance = max(0.0001, rule.tolerance * max(0.1, tolerance_multiplier))
     if rule.center is not None:
-        miss = abs(value - rule.center) / rule.tolerance if rule.tolerance else 0.0
-        target = f"{rule.center:.3f} ± {rule.tolerance:.3f}"
+        miss = abs(value - rule.center) / tolerance
+        target = f"{rule.center:.3f} ± {tolerance:.3f}"
     else:
         low = rule.low if rule.low is not None else value
         high = rule.high if rule.high is not None else value
         if low <= value <= high:
             miss = 0.0
         else:
-            miss = min(abs(value - low), abs(value - high)) / rule.tolerance if rule.tolerance else 0.0
+            miss = min(abs(value - low), abs(value - high)) / tolerance
         target = f"{low:.3f}-{high:.3f}"
-    return {"name": rule.name, "value": round(value, 4), "target": target, "miss": round(min(2.0, miss), 4)}
+    return {
+        "name": rule.name,
+        "value": round(value, 4),
+        "target": target,
+        "miss": round(min(2.0, miss), 4),
+    }
 
 
 def _ratio_score(results: list[dict[str, Any]]) -> int:
@@ -294,7 +365,13 @@ def _ratio_score(results: list[dict[str, Any]]) -> int:
     return _clamp(50 * (1 - average_miss))
 
 
-def _confluence_score(prz: dict[str, float], direction: PatternDirection, levels: dict[str, list[Any]] | None, volume_profile: dict | None, atr: float) -> dict[str, Any]:
+def _confluence_score(
+    prz: dict[str, float],
+    direction: PatternDirection,
+    levels: dict[str, list[Any]] | None,
+    volume_profile: dict | None,
+    atr: float,
+) -> dict[str, Any]:
     sources: list[str] = []
     score = 0
     zone_low = prz["low"] - atr * 0.35
@@ -308,7 +385,11 @@ def _confluence_score(prz: dict[str, float], direction: PatternDirection, levels
         score = max(score, min(20, round(level_score * 0.25)))
         sources.append(_level_name(level, "지지" if level_side == "support" else "저항"))
         break
-    for key, label in [("poc_price", "POC"), ("value_area_high", "VAH"), ("value_area_low", "VAL")]:
+    for key, label in [
+        ("poc_price", "POC"),
+        ("value_area_high", "VAH"),
+        ("value_area_low", "VAL"),
+    ]:
         price = _optional_float(volume_profile.get(key) if isinstance(volume_profile, dict) else None)
         if price is not None and zone_low <= price <= zone_high:
             score += 8
@@ -337,7 +418,14 @@ def _price_near_prz(price: float, prz: dict[str, float], atr: float) -> bool:
     return prz["low"] - atr * 0.45 <= price <= prz["high"] + atr * 0.45
 
 
-def _basic_shape_valid(direction: PatternDirection, x: ZigZagPivot, a: ZigZagPivot, b: ZigZagPivot, c: ZigZagPivot, d: ZigZagPivot) -> bool:
+def _basic_shape_valid(
+    direction: PatternDirection,
+    x: ZigZagPivot,
+    a: ZigZagPivot,
+    b: ZigZagPivot,
+    c: ZigZagPivot,
+    d: ZigZagPivot,
+) -> bool:
     if direction == "bullish":
         return x.kind == "low" and a.kind == "high" and b.kind == "low" and c.kind == "high" and d.kind == "low"
     return x.kind == "high" and a.kind == "low" and b.kind == "high" and c.kind == "low" and d.kind == "high"
@@ -363,7 +451,11 @@ def _points_payload(pivots: list[ZigZagPivot]) -> list[dict[str, Any]]:
 def _dedupe_patterns(patterns: list[dict[str, Any]]) -> list[dict[str, Any]]:
     best: dict[tuple[str, str, int], dict[str, Any]] = {}
     for pattern in patterns:
-        key = (pattern["name"], pattern["direction"], int(pattern["points"][-1]["time"]))
+        key = (
+            pattern["name"],
+            pattern["direction"],
+            int(pattern["points"][-1]["time"]),
+        )
         previous = best.get(key)
         if previous is None:
             best[key] = pattern
@@ -410,7 +502,13 @@ def _atr(candles: list[MarketCandle], period: int = 14) -> float:
     ranges: list[float] = []
     previous_close = candles[0].close
     for candle in candles[1:]:
-        ranges.append(max(candle.high - candle.low, abs(candle.high - previous_close), abs(candle.low - previous_close)))
+        ranges.append(
+            max(
+                candle.high - candle.low,
+                abs(candle.high - previous_close),
+                abs(candle.low - previous_close),
+            )
+        )
         previous_close = candle.close
     window = ranges[-period:] if len(ranges) >= period else ranges
     return max(mean(window), candles[-1].close * 0.0001) if window else candles[-1].close * 0.01

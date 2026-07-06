@@ -9,14 +9,16 @@ runtime 리포지토리/프로바이더는 routes 모듈 전역을 그대로 공
 from __future__ import annotations
 
 import time
+import logging
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException
+from fastapi import HTTPException
 from pydantic import BaseModel
 
-from app.api import routes as runtime
+from app.analyst.briefing import build_analyst_briefing
+from app.services import http_handlers as runtime
 from app.db.models import (
     CatalogSymbol,
     Direction,
@@ -26,14 +28,22 @@ from app.db.models import (
     WatchlistItem,
     utc_now,
 )
+from app.derivatives.context import derivative_context_for_chart
 from app.exchange.bitget.provider import BitgetMarketDataProvider
 from app.indicators.engine import calculate_indicators
+from app.marketdata.assets import classify_asset_class
 from app.positions.chart_analysis import build_chart_analysis
 from app.positions.engine import direction_aware_score
 from app.positions.simulator import simulate_entry
+from app.review.params import engine_param_snapshot
+from app.scout.monitor import (
+    arm_manual_setup,
+    disarm_setup,
+    scout_rate_budget,
+    setup_candidates_from_analysis,
+)
 from app.structure.wyckoff.engine import analyze_structure
 
-router = APIRouter()
 
 SCENARIO_MATCH_WINDOW_HOURS = 72
 SCENARIO_SLIPPAGE_FLAG_PCT = 1.5
@@ -42,6 +52,7 @@ SCAN_CACHE_TTL_SECONDS = 300  # 심볼+타임프레임당 최소 재계산 간�
 CATALOG_REFRESH_SECONDS = 86400  # 카탈로그 일 1회 갱신
 
 _ANALYSIS_CACHE: dict[tuple[str, str], dict[str, Any]] = {}
+logger = logging.getLogger(__name__)
 
 
 class WatchlistRequest(BaseModel):
@@ -65,7 +76,11 @@ def reset_scout_cache() -> None:
 def _ensure_catalog() -> None:
     repo = _repo()
     updated_at = repo.symbol_catalog_updated_at()
-    if updated_at is not None and (utc_now() - updated_at).total_seconds() < CATALOG_REFRESH_SECONDS:
+    if (
+        updated_at is not None
+        and (utc_now() - updated_at).total_seconds() < CATALOG_REFRESH_SECONDS
+        and not _catalog_has_stale_asset_classes(repo)
+    ):
         return
     lister = getattr(_provider(), "list_contracts", None)
     if lister is None:
@@ -77,44 +92,55 @@ def _ensure_catalog() -> None:
         return
     if not contracts:
         return
-    repo.replace_symbol_catalog(
-        [
+    catalog: list[CatalogSymbol] = []
+    for item in contracts:
+        asset_class = item.get("asset_class") or classify_asset_class(
+            item["symbol"],
+            item.get("base_coin", ""),
+            item.get("quote_coin", ""),
+            item.get("raw_metadata") if isinstance(item.get("raw_metadata"), dict) else item,
+        )
+        if asset_class == "unknown":
+            logger.warning("symbol asset class unknown", extra={"symbol": item.get("symbol")})
+        catalog.append(
             CatalogSymbol(
                 symbol=item["symbol"],
                 base_coin=item.get("base_coin", ""),
                 quote_coin=item.get("quote_coin", ""),
                 status=item.get("status", ""),
+                asset_class=asset_class,
+                source_category=item.get("source_category", ""),
+                funding_rate_interval_hours=item.get("funding_rate_interval_hours"),
+                raw_metadata=item.get("raw_metadata") if isinstance(item.get("raw_metadata"), dict) else {},
                 maintenance_margin_rate=item.get("maintenance_margin_rate"),
                 taker_fee_rate=item.get("taker_fee_rate"),
             )
-            for item in contracts
-        ]
-    )
+        )
+    repo.replace_symbol_catalog(catalog)
 
 
-@router.get("/api/symbols")
 def search_symbols(query: str = "", limit: int = 20) -> dict:
     _ensure_catalog()
     symbols = _repo().search_symbols(query, min(max(limit, 1), 50))
-    return {"symbols": [item.model_dump(mode="json") for item in symbols]}
+    return {"symbols": [_resolve_catalog_asset_class(item).model_dump(mode="json") for item in symbols]}
 
 
-@router.get("/api/watchlist")
 def list_watchlist() -> dict:
     return {"items": [item.model_dump(mode="json") for item in _repo().list_watchlist()]}
 
 
-@router.post("/api/watchlist")
 def add_watchlist_item(request: WatchlistRequest) -> dict:
     symbol = request.symbol.strip().upper()
     if not symbol:
         raise HTTPException(status_code=422, detail="symbol이 비어 있습니다.")
-    item = WatchlistItem(symbol=symbol, note=request.note, default_timeframe=request.default_timeframe)
+    _ensure_catalog()
+    catalog = next((item for item in _repo().search_symbols(symbol, 20) if item.symbol.upper() == symbol), None)
+    asset_class = catalog.asset_class if catalog and catalog.asset_class != "unknown" else classify_asset_class(symbol)
+    item = WatchlistItem(symbol=symbol, note=request.note, default_timeframe=request.default_timeframe, asset_class=asset_class)
     _repo().upsert_watchlist_item(item)
     return {"item": item.model_dump(mode="json")}
 
 
-@router.delete("/api/watchlist/{symbol}")
 def remove_watchlist_item(symbol: str) -> dict:
     removed = _repo().remove_watchlist_item(symbol)
     if not removed:
@@ -122,9 +148,24 @@ def remove_watchlist_item(symbol: str) -> dict:
     return {"removed": symbol.upper()}
 
 
-@router.get("/api/scout/{symbol}/analysis")
+def _catalog_has_stale_asset_classes(repo: Any) -> bool:
+    for probe in ("TSLA", "MSTR", "QQQ"):
+        for item in repo.search_symbols(probe, 5):
+            if item.symbol.upper().endswith("USDT") and item.asset_class == "unknown":
+                return True
+    return False
+
+
+def _resolve_catalog_asset_class(item: CatalogSymbol) -> CatalogSymbol:
+    if item.asset_class != "unknown":
+        return item
+    asset_class = classify_asset_class(item.symbol, item.base_coin, item.quote_coin, item.raw_metadata)
+    return item.model_copy(update={"asset_class": asset_class})
+
+
 def scout_analysis(symbol: str, timeframe: str = "4h", force: bool = False) -> dict:
     entry = _analysis_entry(symbol, timeframe, force=force, include_trade_flow=True)
+    briefing = _briefing_for_entry(symbol, timeframe, entry, action_plan=None, context="pre_entry")
     return {
         "symbol": symbol.upper(),
         "timeframe": timeframe,
@@ -132,7 +173,14 @@ def scout_analysis(symbol: str, timeframe: str = "4h", force: bool = False) -> d
         "cache_age_seconds": round(time.monotonic() - entry["cached_at_monotonic"], 1),
         "analysis": entry["analysis"],
         "summary": entry["summary"],
+        "analyst_briefing": briefing,
     }
+
+
+def scout_briefing(symbol: str, timeframe: str = "4h", force: bool = False) -> dict:
+    entry = _analysis_entry(symbol, timeframe, force=force, include_trade_flow=True)
+    briefing = _briefing_for_entry(symbol, timeframe, entry, action_plan=None, context="pre_entry")
+    return {"symbol": symbol.upper(), "timeframe": timeframe, "as_of": entry["as_of"], "analyst_briefing": briefing}
 
 
 class ScanRequest(BaseModel):
@@ -140,7 +188,6 @@ class ScanRequest(BaseModel):
     force: bool = False
 
 
-@router.post("/api/scout/scan")
 def scan_watchlist(request: ScanRequest | None = None) -> dict:
     request = request or ScanRequest()
     items = _repo().list_watchlist()
@@ -150,15 +197,25 @@ def scan_watchlist(request: ScanRequest | None = None) -> dict:
         try:
             entry = _analysis_entry(item.symbol, timeframe, force=request.force, include_trade_flow=False)
         except Exception as exc:
-            rows.append({"symbol": item.symbol, "timeframe": timeframe, "error": str(exc)})
+            rows.append({"symbol": item.symbol, "timeframe": timeframe, "asset_class": item.asset_class, "error": str(exc)})
             continue
-        rows.append({**entry["summary"], "timeframe": timeframe, "as_of": entry["as_of"], "note": item.note})
+        rows.append(
+            {
+                **entry["summary"],
+                "timeframe": timeframe,
+                "as_of": entry["as_of"],
+                "note": item.note,
+                "asset_class": entry["summary"].get("asset_class") or item.asset_class,
+            }
+        )
     rows.sort(key=lambda row: row.get("setup_proximity_pct") if row.get("setup_proximity_pct") is not None else float("inf"))
     return {
         "rows": rows,
+        "armed_setups": [setup.model_dump(mode="json") for setup in _repo().list_armed_setups(limit=300)],
         "scanned_at": utc_now().isoformat(),
         "cache_ttl_seconds": SCAN_CACHE_TTL_SECONDS,
         "count": len(rows),
+        "rate_budget": scout_rate_budget(runtime.settings, len(items)),
     }
 
 
@@ -177,12 +234,13 @@ def _analysis_entry(symbol: str, timeframe: str, force: bool, include_trade_flow
     if include_trade_flow and isinstance(provider, BitgetMarketDataProvider):
         trade_flow = provider.get_trade_flow(symbol, timeframe, snapshot.candles)
     try:
-        analysis = build_chart_analysis(snapshot, None, trade_flow)
+        derivatives = _derivative_context(symbol)
+        analysis = build_chart_analysis(snapshot, None, trade_flow, derivatives=derivatives)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     entry = {
         "analysis": analysis,
-        "summary": _summary_row(symbol, snapshot, analysis),
+        "summary": _summary_row(symbol, snapshot, analysis, derivatives),
         "as_of": utc_now().isoformat(),
         "cached_at_monotonic": now,
     }
@@ -190,7 +248,19 @@ def _analysis_entry(symbol: str, timeframe: str, force: bool, include_trade_flow
     return entry
 
 
-def _summary_row(symbol: str, snapshot, analysis: dict[str, Any]) -> dict[str, Any]:
+def _derivative_context(symbol: str) -> dict[str, Any]:
+    try:
+        return derivative_context_for_chart(_repo(), runtime.settings, symbol)
+    except Exception:
+        return {}
+
+
+def _summary_row(
+    symbol: str,
+    snapshot,
+    analysis: dict[str, Any],
+    derivatives: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     indicators = calculate_indicators(snapshot)
     structure = analyze_structure(snapshot, indicators)
     mark = analysis.get("mark_price")
@@ -200,23 +270,124 @@ def _summary_row(symbol: str, snapshot, analysis: dict[str, Any]) -> dict[str, A
 
     prz_distance = _nearest_prz_distance_pct(analysis.get("harmonic_patterns", []), mark)
     level_distance = _nearest_level_distance_pct(analysis.get("price_levels", {}), mark)
-    proximity_candidates = [value for value in (prz_distance, level_distance) if value is not None]
+    liquidity_pool = _nearest_liquidity_pool(analysis.get("liquidity", {}), mark)
+    liquidity_distance = liquidity_pool.get("distance_pct") if liquidity_pool else None
+    proximity_candidates = [value for value in (prz_distance, level_distance, liquidity_distance) if value is not None]
 
+    signals = derivatives.get("signals") if isinstance(derivatives, dict) and isinstance(derivatives.get("signals"), dict) else {}
+    crowding = signals.get("crowding_score") if isinstance(signals.get("crowding_score"), dict) else None
+    funding = signals.get("funding_state") if isinstance(signals.get("funding_state"), dict) else None
     return {
         "symbol": symbol.upper(),
+        "asset_class": analysis.get("asset_class") or classify_asset_class(symbol),
+        "session": analysis.get("session"),
         "long_score": direction_aware_score("long", structure, indicators),
         "short_score": direction_aware_score("short", structure, indicators),
         "wyckoff_phase": analysis.get("wyckoff_phase", {}).get("phase", "undetermined"),
-        "top_event": {"label": top_event.get("label"), "confidence": top_event.get("confidence")} if top_event else None,
+        "top_event": {
+            "label": top_event.get("label"),
+            "confidence": top_event.get("confidence"),
+        }
+        if top_event
+        else None,
         "harmonic_active": bool(analysis.get("harmonic_patterns")),
         "prz_distance_pct": prz_distance,
         "nearest_level_distance_pct": level_distance,
+        "liquidity_nearest_pool": liquidity_pool,
+        "liquidity_pool_distance_pct": liquidity_distance,
         "volume_state": analysis.get("volume_xray", {}).get("volume_state", "data_unavailable"),
         "change_24h": snapshot.change_24h,
         "funding_rate": snapshot.funding_rate,
+        "funding_state": funding.get("label") if funding else None,
+        "crowding_score": crowding.get("score") if crowding else None,
         "setup_proximity_pct": min(proximity_candidates) if proximity_candidates else None,
         "mark_price": mark,
+        "setup_candidates": setup_candidates_from_analysis(symbol, snapshot.timeframe, analysis, runtime.settings),
     }
+
+
+def _nearest_liquidity_pool(liquidity: Any, mark: Any) -> dict[str, Any] | None:
+    if not isinstance(liquidity, dict) or not isinstance(mark, (int, float)) or mark <= 0:
+        return None
+    pools = liquidity.get("pools")
+    if not isinstance(pools, list):
+        return None
+    candidates: list[tuple[float, dict[str, Any]]] = []
+    for pool in pools:
+        if not isinstance(pool, dict) or pool.get("swept"):
+            continue
+        price = pool.get("price")
+        if not isinstance(price, (int, float)) or price <= 0:
+            continue
+        distance = abs((price - mark) / mark) * 100
+        label = _liquidity_pool_label(pool)
+        candidates.append(
+            (
+                distance,
+                {
+                    "price": price,
+                    "distance_pct": round(distance, 2),
+                    "label": label,
+                    "kind": pool.get("kind"),
+                    "side": pool.get("side"),
+                    "touch_count": pool.get("touch_count") or pool.get("touches") or 1,
+                    "score": pool.get("score"),
+                    "grade": pool.get("grade"),
+                },
+            )
+        )
+    if not candidates:
+        return None
+    return min(candidates, key=lambda item: item[0])[1]
+
+
+def _liquidity_pool_label(pool: dict[str, Any]) -> str:
+    touches = pool.get("touch_count") or pool.get("touches") or 1
+    kind = str(pool.get("kind") or "")
+    if kind == "eqh":
+        return f"상단 풀(EQH {touches}터치)"
+    if kind == "eql":
+        return f"하단 풀(EQL {touches}터치)"
+    if kind == "old_high":
+        return f"상단 풀(전고 {touches}터치)"
+    if kind == "old_low":
+        return f"하단 풀(전저 {touches}터치)"
+    return str(pool.get("label") or "유동성 풀")
+
+
+class ManualSetupRequest(BaseModel):
+    trigger_price: float
+    label: str = "수동 감시"
+    condition: str = "가격 접근 시 반응 확인"
+    direction: str | None = None
+    timeframe: str = "4h"
+
+
+def list_scout_setups(symbol: str | None = None, status: str | None = None, limit: int = 100) -> dict:
+    setups = _repo().list_armed_setups(symbol=symbol, status=status, limit=min(max(limit, 1), 300))
+    return {"setups": [setup.model_dump(mode="json") for setup in setups]}
+
+
+def create_manual_setup(symbol: str, request: ManualSetupRequest) -> dict:
+    if request.trigger_price <= 0:
+        raise HTTPException(status_code=422, detail="trigger_price는 0보다 커야 합니다.")
+    setup = arm_manual_setup(
+        _repo(),
+        symbol=symbol,
+        timeframe=request.timeframe,
+        trigger_price=request.trigger_price,
+        label=request.label,
+        condition=request.condition,
+        direction=request.direction,
+    )
+    return {"setup": setup.model_dump(mode="json")}
+
+
+def disarm_scout_setup(setup_id: UUID) -> dict:
+    setup = disarm_setup(_repo(), setup_id)
+    if setup is None:
+        raise HTTPException(status_code=404, detail="셋업을 찾을 수 없습니다.")
+    return {"setup": setup.model_dump(mode="json")}
 
 
 def _nearest_prz_distance_pct(patterns: list[dict[str, Any]], mark: float | None) -> float | None:
@@ -287,10 +458,36 @@ def _simulate(request: SimulateRequest) -> dict[str, Any]:
         direction_score=direction_score,
     )
     result["analysis_as_of"] = entry["as_of"]
+    briefing = _briefing_for_entry(symbol, request.timeframe, entry, action_plan=result.get("action_plan"), context="pre_entry")
+    result["analyst_briefing"] = briefing
+    result["briefing_direction_conflict"] = _briefing_direction_conflict(briefing, request.direction)
     return result
 
 
-@router.post("/api/scout/simulate")
+def _briefing_for_entry(
+    symbol: str,
+    timeframe: str,
+    entry: dict[str, Any],
+    *,
+    action_plan: dict[str, Any] | None,
+    context: str,
+) -> dict[str, Any]:
+    return build_analyst_briefing(
+        symbol=symbol,
+        timeframe=timeframe,
+        analysis=entry["analysis"],
+        action_plan=action_plan,
+        calibration_scores=_repo().list_judgment_scores(limit=2000),
+        context=context,
+    )
+
+
+def _briefing_direction_conflict(briefing: dict[str, Any], direction: str) -> bool:
+    confluence = briefing.get("confluence") if isinstance(briefing.get("confluence"), dict) else {}
+    stance = confluence.get("stance")
+    return bool((direction == "long" and stance == "short_leaning") or (direction == "short" and stance == "long_leaning"))
+
+
 def simulate(request: SimulateRequest) -> dict:
     return _simulate(request)
 
@@ -314,7 +511,6 @@ class SaveScenarioRequest(BaseModel):
     note: str = ""
 
 
-@router.post("/api/scout/scenarios")
 def save_scenario(request: SaveScenarioRequest) -> dict:
     sim = _simulate(SimulateRequest(**request.model_dump()))
     scenario = EntryScenario(
@@ -336,13 +532,11 @@ def save_scenario(request: SaveScenarioRequest) -> dict:
     return {"scenario": scenario.model_dump(mode="json")}
 
 
-@router.get("/api/scout/scenarios")
 def list_scenarios(symbol: str | None = None, limit: int = 50) -> dict:
     items = _repo().list_entry_scenarios(symbol, min(max(limit, 1), 100))
     return {"scenarios": [item.model_dump(mode="json") for item in items]}
 
 
-@router.get("/api/scout/match/{position_id}")
 def match_scenario(position_id: UUID) -> dict:
     """열린 포지션에 연결 가능한 최근 시나리오를 읽기 시점에 탐색한다(자동 확정 아님)."""
     position = _repo().get_position(position_id)
@@ -350,7 +544,11 @@ def match_scenario(position_id: UUID) -> dict:
         raise HTTPException(status_code=404, detail="포지션을 찾을 수 없습니다.")
     if position.scenario_id is not None:
         linked = _repo().get_entry_scenario(position.scenario_id)
-        return {"already_linked": True, "scenario": linked.model_dump(mode="json") if linked else None, "suggestion": None}
+        return {
+            "already_linked": True,
+            "scenario": linked.model_dump(mode="json") if linked else None,
+            "suggestion": None,
+        }
     scenario = _repo().find_matching_scenario(position.symbol, position.direction.value, SCENARIO_MATCH_WINDOW_HOURS)
     if scenario is None:
         return {"already_linked": False, "scenario": None, "suggestion": None}
@@ -374,7 +572,6 @@ class LinkScenarioRequest(BaseModel):
     apply_prefill: bool = True
 
 
-@router.post("/api/scout/scenarios/{scenario_id}/link")
 def link_scenario(scenario_id: UUID, request: LinkScenarioRequest) -> dict:
     repo = _repo()
     scenario = repo.get_entry_scenario(scenario_id)
@@ -418,6 +615,7 @@ def link_scenario(scenario_id: UUID, request: LinkScenarioRequest) -> dict:
 def _register_scenario_judgments(scenario: EntryScenario, position) -> None:
     repo = _repo()
     as_of = scenario.analysis_as_of or scenario.created_at
+    params = engine_param_snapshot(repo)
     entries: list[JudgmentLedgerEntry] = []
     stop_price = _plan_price(scenario.action_plan, "invalidation")
     if stop_price is not None:
@@ -429,7 +627,12 @@ def _register_scenario_judgments(scenario: EntryScenario, position) -> None:
                 source_id=str(scenario.id),
                 as_of=as_of,
                 type="planned_invalidation",
-                claim={"price": stop_price, "planned_entry": scenario.entry_price, "actual_entry": position.entry_price},
+                claim={
+                    "price": stop_price,
+                    "planned_entry": scenario.entry_price,
+                    "actual_entry": position.entry_price,
+                },
+                param_version=params,
             )
         )
     tp_price = _plan_price(scenario.action_plan, "take_profit")
@@ -443,6 +646,7 @@ def _register_scenario_judgments(scenario: EntryScenario, position) -> None:
                 as_of=as_of,
                 type="planned_take_profit",
                 claim={"price": tp_price},
+                param_version=params,
             )
         )
     slippage = _slippage_pct(scenario.entry_price, position.entry_price, position.direction.value)
@@ -462,6 +666,7 @@ def _register_scenario_judgments(scenario: EntryScenario, position) -> None:
                 "slippage_pct": slippage,
                 "slippage_flag": slippage is not None and abs(slippage) > SCENARIO_SLIPPAGE_FLAG_PCT,
             },
+            param_version=params,
         )
     )
     for entry in entries:

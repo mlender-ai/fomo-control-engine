@@ -170,6 +170,7 @@ const phraseLabels: Record<string, string> = {
 
 const sourceLabels: Record<string, string> = {
   bitget: "Bitget",
+  demo: "Demo",
   mock: "Mock",
   live: "Live",
   loading: "확인 중"

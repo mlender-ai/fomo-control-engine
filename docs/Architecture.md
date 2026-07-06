@@ -1,73 +1,109 @@
 # Architecture
 
+FOMO Control Engine은 자동매매 봇이 아니라 read-only 포지션 관제와 진입 전 스카우트 판단을 기록하는 로컬 엔진이다. 주문 실행 경로는 없다.
+
+## Runtime Flow
+
 ```text
-MarketDataProvider
-  -> Indicator Engine
-  -> Wyckoff Structure Engine
-  -> Liquidity Engine
-  -> Scoring Engine
-  -> Report Engine
-  -> Agentic Research Orchestrator
-  -> Shadow / Validation / Decision Memory
-  -> FastAPI
+Exchange / Market Data
+  -> Providers
+  -> Indicator / Structure / Derivatives Engines
+  -> Position / Scout / Review Services
+  -> Repository
+  -> FastAPI Routers / Worker / Telegram Bot
   -> Next.js Dashboard
-  -> Entry / Monitoring / Exit / Review
 ```
 
-## Backend
+## Backend Module Map
 
-- `app/exchange/base.py`: exchange data boundary
-- `app/exchange/mock.py`: local mock provider
-- `app/exchange/bitget/signer.py`: HMAC SHA256 request signing
-- `app/exchange/bitget/client.py`: async public/private GET client
-- `app/exchange/bitget/provider.py`: live Bitget market data and read-only positions provider
-- `app/exchange/factory.py`: `mock` / `bitget` provider switch
-- `app/db/repository.py`: memory and SQLite repositories
+### API Layer
+
+라우터는 요청 파싱, 서비스/핸들러 호출, 응답 직렬화만 담당한다. 판단 계산, 점수 계산, 알림 판정, DB 보존 정책은 라우터에 두지 않는다.
+
+- `app/api/router_system.py`: health, system status, Bitget connection test
+- `app/api/router_positions.py`: positions, live positions, snapshots, insights, exits
+- `app/api/router_scout.py`: symbols, watchlist, scout scan, setup arming, simulator, scenarios
+- `app/api/router_review.py`: trades, journal timeline, calibration, parameter suggestions
+- `app/api/router_marketdata.py`: reports, market summary, research runs, liquidity/shadow/validation/memory legacy surfaces
+- `app/api/deps.py`: shared runtime replacement hook for tests and local dependency swapping
+
+### Service Layer
+
+- `app/services/http_handlers.py`: legacy HTTP handler logic retained behind split routers. New work should migrate domain logic out of this file into focused services instead of growing it.
+- `app/services/scout_handlers.py`: pre-entry scout handler logic behind `router_scout.py`.
+- `app/services/runtime.py`: worker/bot-facing service facade. Worker, bot, and routes must share service functions instead of duplicating judgment logic.
+
+### Domain Engines
+
+- `app/exchange`: provider boundary and Bitget read-only integration
+- `app/marketdata`: derivative providers and market data signal helpers
 - `app/indicators`: RSI, MACD, Bollinger Bands, ATR, RVOL
-- `app/structure/wyckoff`: probabilistic market structure interpretation
-- `app/liquidity`: OI/Funding/liquidity score logic
-- `app/scoring`: deterministic Entry Opportunity Score and FOMO Index
-- `app/report`: JSON-to-natural-language report rendering
-- `app/agents`: deterministic agent contracts and research-run orchestration
-- `app/shadow`: completed-trade pattern extraction and Shadow Account comparison
-- `app/validation`: Monte Carlo, Bootstrap Sharpe CI, and Walk Forward checks
-- `app/memory`: decision memory creation from trades, shadow profiles, and validation runs
-- `app/monitoring`: position state comparison
-- `app/review`: trade review rendering
+- `app/structure/levels`: structural support/resistance level engine
+- `app/structure/liquidity`: liquidity pools, sweep detection, BOS/CHoCH-style structure shifts, Wyckoff cross-checks
+- `app/structure/wyckoff`: deterministic Wyckoff event/phase interpretation
+- `app/structure/harmonic`: ZigZag and harmonic PRZ detection
+- `app/positions`: health score, position state, action plans, chart analysis, insights, simulator
+- `app/scout`: setup arming, setup alert candidates, pre-entry setup scoring
+- `app/notify`: alert rules, Telegram sender, interactive bot, notification settings
+- `app/review`: trade review, judgment scoring, calibration, alert-response review
+- `app/derivatives`: derivatives API surface and context assembly
+- `app/db`: repository, migrations, backup, retention
+- `app/worker`: APScheduler jobs, heartbeat, daemon lifecycle
 
-## Dashboard
+### Legacy / Auxiliary Domains
 
-- Home: market summary, top candidates, warnings, latest report
-- Ticker detail: score breakdown, report, raw indicators
-- Positions: manual position entry, monitoring, exit
-- Research: agentic research runs, Bull/Bear confidence, recent decision memory
-- Shadow: extracted Shadow Account profile and profile history
-- Validation: validation run history and warnings
-- Journal: completed trades and review text
+These modules are still imported or tested, so they are not archived in WO-FCE-25:
+
+| Module | Currently Imported | Latest Role Through Phase C | WO-FCE-25 Decision |
+|---|---:|---|---|
+| `app/agents` | yes | deterministic research-run checklist and historical research run surface | keep, but do not call it “LLM agent” unless upgraded |
+| `app/shadow` | yes | shadow profile extraction/comparison APIs and tests | keep |
+| `app/validation` | yes | Monte Carlo, Bootstrap Sharpe CI, Walk Forward APIs and tests | keep |
+| `app/memory` | yes | decision memory records from trades/shadow/validation | keep |
+| `app/liquidity` | yes | report liquidity scoring and liquidation analysis endpoint | keep |
+
+Archive rule: move a module to `_archive/` only after a separate approval that includes import status, product role, and replacement path.
+
+## Layering Rules
+
+1. `api/*` imports `services/*` or handler modules.
+2. `services/*` may import `db`, `exchange`, `positions`, `scout`, `review`, `notify`, and domain engines.
+3. Domain engines must not import `api`.
+4. Worker and Telegram bot call `services/runtime.py`, not route modules.
+5. URL paths and response schemas are API contracts. Router split work must pass tests without frontend changes.
+6. New feature placement:
+   - Position state or live cockpit logic: `app/positions` + `router_positions.py`
+   - Pre-entry setup/scout logic: `app/scout` + `services/scout_handlers.py` + `router_scout.py`
+   - Alerts/Telegram: `app/notify`
+   - Calibration/review: `app/review` + `router_review.py`
+   - Derivatives/OI/funding/liquidation data: `app/marketdata`, `app/derivatives`
+
+## Import Cycle Guard
+
+Run this before merging backend structural changes:
+
+```bash
+cd backend
+python3 scripts/check_import_cycles.py
+```
+
+The script parses `app/` imports and fails if an internal import cycle is introduced.
 
 ## Bitget Integration Rule
 
 The application depends on `MarketDataProvider`, not on Bitget directly. Choose the provider with `FCE_MARKET_DATA_PROVIDER`.
 
 - `mock`: deterministic local snapshots for tests and UI development
-- `bitget`: public read-only futures market data from Bitget
+- `bitget`: public/read-only futures market data and read-only position sync
 
-Bitget endpoints used in v0.4:
-
-- `GET /api/v2/mix/market/candles`
-- `GET /api/v2/mix/market/ticker`
-- `GET /api/v2/mix/market/current-fund-rate`
-- `GET /api/v2/mix/market/open-interest`
-- `GET /api/v2/mix/position/all-position`
-
-Order placement is intentionally absent.
+Bitget endpoints used include public candles/ticker/funding/OI plus read-only position endpoints. Order placement is intentionally absent.
 
 ## Persistence
 
-Default persistence is SQLite. v0.4 persists reports, positions, monitoring logs, trades, market snapshots, research runs, agent outputs, shadow profiles, decision memories, and validation runs.
+Default persistence is SQLite:
 
 ```text
 FCE_DATABASE_URL=sqlite:///./fomo_control_engine.db
 ```
 
-Tests use `memory://` or temporary SQLite files so score and API flow tests are isolated.
+Schema changes must go through `app/db/migrations/`. Runtime maintenance is handled by backup and retention jobs in `app/db/maintenance.py`.

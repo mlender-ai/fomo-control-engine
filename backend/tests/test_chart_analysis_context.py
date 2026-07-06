@@ -58,8 +58,11 @@ def test_position_mode_output_matches_pre_refactor_fixture() -> None:
     payload["position_id"] = "FIXED"
 
     expected = json.loads(FIXTURE.read_text())
-    actual = json.loads(json.dumps(payload, sort_keys=True, default=str))
+    actual = json.loads(json.dumps(_without_phase_l_fields(payload), sort_keys=True, default=str))
     assert actual == expected
+
+    assert payload["liquidity"]["method"] == "deterministic_ohlcv_liquidity_v2"
+    assert "pools" in payload["liquidity"]
 
 
 def test_scout_mode_omits_position_fields_and_adds_scenarios() -> None:
@@ -88,6 +91,56 @@ def test_scout_mode_omits_position_fields_and_adds_scenarios() -> None:
 
 
 def test_position_mode_has_no_scenarios_key() -> None:
-    position = Position(symbol="TESTUSDT", direction=Direction.long, entry_price=104.0, quantity=1.0, leverage=5, mark_price=110.0)
+    position = Position(
+        symbol="TESTUSDT",
+        direction=Direction.long,
+        entry_price=104.0,
+        quantity=1.0,
+        leverage=5,
+        mark_price=110.0,
+    )
     payload = build_chart_analysis(_snapshot(), PositionContext.from_position(position), None)
     assert "scenarios" not in payload
+
+
+def _without_phase_l_fields(payload: dict) -> dict:
+    cleaned = json.loads(json.dumps(payload, sort_keys=True, default=str))
+    cleaned.pop("asset_class", None)
+    cleaned.pop("session", None)
+    data_quality = cleaned.get("data_quality")
+    if isinstance(data_quality, dict):
+        data_quality.pop("analysis_candles", None)
+        data_quality.pop("session_excluded_candles", None)
+    for candle in cleaned.get("candles", []) if isinstance(cleaned.get("candles"), list) else []:
+        if isinstance(candle, dict):
+            candle.pop("session", None)
+            candle.pop("is_regular_session", None)
+    cleaned.pop("liquidity", None)
+    wyckoff = cleaned.get("wyckoff")
+    if isinstance(wyckoff, dict):
+        wyckoff.pop("liquidity_crosscheck", None)
+        for event in wyckoff.get("events", []) if isinstance(wyckoff.get("events"), list) else []:
+            if isinstance(event, dict):
+                event.pop("liquidity_crosscheck", None)
+                event.pop("display_label", None)
+                components = event.get("components")
+                if isinstance(components, dict):
+                    components.pop("liquidity_confirmation", None)
+    for key in ("wyckoff_markers", "wyckoff_markers_low_confidence"):
+        for event in cleaned.get(key, []) if isinstance(cleaned.get(key), list) else []:
+            if isinstance(event, dict):
+                event.pop("liquidity_crosscheck", None)
+                event.pop("display_label", None)
+                components = event.get("components")
+                if isinstance(components, dict):
+                    components.pop("liquidity_confirmation", None)
+    phase = cleaned.get("wyckoff_phase")
+    if isinstance(phase, dict):
+        for event in phase.get("phase_evidence", []) if isinstance(phase.get("phase_evidence"), list) else []:
+            if isinstance(event, dict):
+                event.pop("liquidity_crosscheck", None)
+                event.pop("display_label", None)
+                components = event.get("components")
+                if isinstance(components, dict):
+                    components.pop("liquidity_confirmation", None)
+    return cleaned

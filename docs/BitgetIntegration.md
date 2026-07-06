@@ -46,7 +46,7 @@ curl -X POST http://127.0.0.1:8875/api/account/bitget/sync-positions
 curl http://127.0.0.1:8875/api/account/bitget/positions
 ```
 
-Sync creates or updates internal positions with `source=bitget`. Positions that disappear from Bitget are marked `missing_from_exchange`; they are not automatically closed.
+Sync creates or updates internal positions with `source=bitget`. Positions that disappear from Bitget open-position data are treated as exchange-side exits: the app creates an internal trade review record, closes the internal position, and uses the last received mark/current price as the review exit price. This is still read-only bookkeeping and does not submit an exchange order.
 
 ## Endpoints Used
 
@@ -57,4 +57,3 @@ Sync creates or updates internal positions with `source=bitget`. Positions that 
 - `GET /api/v2/mix/position/all-position`
 
 No order or withdrawal endpoints are used.
-

@@ -2,7 +2,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-ALLOWED_CALLBACK_ACTIONS = {"detail", "plan", "insight", "refresh", "list"}
+ALLOWED_CALLBACK_ACTIONS = {
+    "detail",
+    "plan",
+    "insight",
+    "flow",
+    "brief",
+    "regen_insight",
+    "refresh",
+    "list",
+    "scout",
+    "status",
+    "sim",
+}
 
 
 @dataclass(frozen=True)
@@ -27,4 +39,3 @@ def parse_callback(value: str | None) -> BotCallback | None:
     if action not in ALLOWED_CALLBACK_ACTIONS:
         return None
     return BotCallback(action=action, symbol=symbol)
-

@@ -13,9 +13,20 @@ import {
   type Time
 } from "lightweight-charts";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { ChartCandle, ChartPriceLevel, PositionActionPlan, PositionActionPlanItem, PositionChartAnalysis, PositionWatchTrigger, WyckoffMarker } from "@/lib/api";
+import type {
+  ChartCandle,
+  ChartPriceLevel,
+  LiquidityPool,
+  LiquiditySweep,
+  PositionActionPlan,
+  PositionActionPlanItem,
+  PositionChartAnalysis,
+  PositionWatchTrigger,
+  WyckoffMarker
+} from "@/lib/api";
 import { CHART_LAYER_DEFS, layerActive, type ChartLayerId, type ChartLayerState } from "@/lib/chartLayers";
 import { chartTheme, createChartPalette, type ResolvedChartPalette } from "@/lib/chartTheme";
+import type { Density } from "@/lib/density";
 import { formatPrice } from "@/lib/format";
 import { localizeMarketCodes, phaseHintLabel, sourceLabel, timeframeLabel } from "@/lib/labels/marketStateLabels";
 import { splitWyckoffEvents, taGlossaryEntry, taShortLabel } from "@/lib/labels/taGlossary";
@@ -25,6 +36,7 @@ import { VolumePanel } from "./VolumePanel";
 
 const LABEL_MERGE_PX = 8;
 const AXIS_GUTTER = 82;
+const GUIDE_STORAGE_KEY = "fce.chartGuide.enabled";
 
 export function PositionCandlestickChart({
   analysis,
@@ -33,7 +45,8 @@ export function PositionCandlestickChart({
   layers,
   onToggleLayer,
   highlightPrice = null,
-  positionOverlay = null
+  positionOverlay = null,
+  density = "simple"
 }: {
   analysis: PositionChartAnalysis;
   trendSummary: string;
@@ -42,6 +55,7 @@ export function PositionCandlestickChart({
   onToggleLayer: (id: ChartLayerId, additive: boolean) => void;
   highlightPrice?: number | null;
   positionOverlay?: PositionChartOverlay | null;
+  density?: Density;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const overlayRef = useRef<SVGSVGElement | null>(null);
@@ -68,15 +82,13 @@ export function PositionCandlestickChart({
   }, [analysis.position_id, analysis.timeframe]);
 
   useEffect(() => {
-    const key = chartGuideStorageKey(guideLayer);
-    setGuideOpen(window.localStorage.getItem(key) !== "dismissed");
-  }, [guideLayer]);
+    setGuideOpen(window.localStorage.getItem(GUIDE_STORAGE_KEY) === "true");
+  }, []);
 
   function toggleGuide() {
-    const key = chartGuideStorageKey(guideLayer);
     setGuideOpen((current) => {
       const next = !current;
-      if (!next) window.localStorage.setItem(key, "dismissed");
+      window.localStorage.setItem(GUIDE_STORAGE_KEY, String(next));
       return next;
     });
   }
@@ -214,6 +226,34 @@ export function PositionCandlestickChart({
           }))
         );
       }
+      const oiPoints = derivativeSeriesPoints(analysis, "open_interest");
+      if (oiPoints.length) {
+        const oiSeries = chart.addSeries(LineSeries, {
+          priceScaleId: "oi",
+          color: palette.color("purple", 0.78),
+          lineWidth: 1,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false
+        });
+        oiSeries.priceScale().applyOptions({
+          scaleMargins: { top: 0.64, bottom: 0.22 }
+        });
+        oiSeries.setData(oiPoints);
+      }
+      const fundingPoints = derivativeFundingPoints(analysis, palette);
+      if (fundingPoints.length) {
+        const fundingSeries = chart.addSeries(HistogramSeries, {
+          priceScaleId: "funding",
+          priceFormat: { type: "price", precision: 4, minMove: 0.0001 },
+          priceLineVisible: false,
+          lastValueVisible: false
+        });
+        fundingSeries.priceScale().applyOptions({
+          scaleMargins: { top: 0.88, bottom: 0.02 }
+        });
+        fundingSeries.setData(fundingPoints);
+      }
     }
 
     if (layers.ta.includes("indicators")) {
@@ -290,7 +330,7 @@ export function PositionCandlestickChart({
 
     chart.timeScale().fitContent();
     chart.timeScale().applyOptions({ rightOffset: 18 });
-    const drawOverlay = () => renderTaOverlay(overlay, container, candleSeries, chart, analysis, plan, layers, activeHarmonic, positionOverlay, highlightPrice, palette);
+    const drawOverlay = () => renderTaOverlay(overlay, container, candleSeries, chart, analysis, plan, layers, activeHarmonic, positionOverlay, highlightPrice, palette, density);
     window.setTimeout(drawOverlay, 0);
     chart.timeScale().subscribeVisibleLogicalRangeChange(drawOverlay);
     const resizeObserver = new ResizeObserver(drawOverlay);
@@ -300,7 +340,7 @@ export function PositionCandlestickChart({
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(drawOverlay);
       chart.remove();
     };
-  }, [analysis, averageVolume, priceLines, plan, layers, highlightPrice, activeHarmonic, positionOverlay, validation]);
+  }, [analysis, averageVolume, priceLines, plan, layers, highlightPrice, activeHarmonic, positionOverlay, validation, density]);
 
   if (!validation.valid) {
     return (
@@ -317,12 +357,19 @@ export function PositionCandlestickChart({
       <div className="positionChartHeader">
         <div>
           <h2>{analysis.symbol} 차트</h2>
-          <p>{timeframeLabel(analysis.timeframe)} · {sourceLabel(analysis.data_quality.source)} · 마지막 캔들: {lastCandle ? formatKoreanDateTime(lastCandle.time) : "-"}</p>
+          <p>
+            {timeframeLabel(analysis.timeframe)} · {sourceLabel(analysis.data_quality.source)} · {assetClassLabel(analysis.asset_class)}
+            {analysis.session?.label ? ` · ${analysis.session.label}` : ""}
+            {typeof analysis.data_quality.session_excluded_candles === "number" && analysis.data_quality.session_excluded_candles > 0
+              ? ` · 휴장 제외 ${analysis.data_quality.session_excluded_candles}개`
+              : ""}
+            {" · "}마지막 캔들: {lastCandle ? formatKoreanDateTime(lastCandle.time) : "-"}
+          </p>
         </div>
         <div className="positionChartHeaderActions">
           <span className="positionChartTrendPill">{trendSummary}</span>
-          <button className={`chartGuideButton ${guideOpen ? "active" : ""}`} onClick={toggleGuide} type="button" aria-pressed={guideOpen} title="차트 읽기">
-            ?
+          <button className={`chartGuideButton ${guideOpen ? "active" : ""}`} onClick={toggleGuide} type="button" aria-pressed={guideOpen} title="해설 오버레이 켜기/끄기">
+            해설
           </button>
         </div>
       </div>
@@ -331,15 +378,16 @@ export function PositionCandlestickChart({
           <button
             aria-pressed={layerActive(layers, layer.id)}
             className={layerActive(layers, layer.id) ? "active" : ""}
+            data-testid={`chart-layer-${layer.id}`}
             key={layer.id}
-            onClick={(event) => onToggleLayer(layer.id, event.shiftKey)}
-            title={`${layer.description} (shift-클릭: 비교 모드)`}
+            onClick={() => onToggleLayer(layer.id, true)}
+            title={layer.description}
             type="button"
           >
             {layer.label}
           </button>
         ))}
-        <small>shift-클릭으로 TA 레이어 비교</small>
+        <small>여러 레이어 동시 선택 가능 · 해설은 별도 토글</small>
       </div>
       {harmonicFocused ? (
         <div className="harmonicNav">
@@ -361,9 +409,9 @@ export function PositionCandlestickChart({
         <strong>캔들 정보</strong>
         <span>시가·고가·저가·종가·거래량</span>
       </div>
-      <div className="positionChartCanvasFrame">
-        <div className="positionChartCanvas" ref={containerRef} />
-        <svg className="volumeProfileOverlay" ref={overlayRef} aria-hidden="true" />
+      <div className={`positionChartCanvasFrame ${guideOpen ? "showOverlayGuides" : ""}`} data-testid="chart-canvas-frame">
+        <div className="positionChartCanvas" data-testid="chart-canvas" ref={containerRef} />
+        <svg className="volumeProfileOverlay" data-testid="chart-overlay" ref={overlayRef} aria-hidden="true" />
         {guideOpen ? <ChartGuideLayer layer={guideLayer} /> : null}
       </div>
       {layers.flow ? <VolumePanel analysis={analysis} averageVolume={averageVolume} /> : null}
@@ -373,18 +421,22 @@ export function PositionCandlestickChart({
 
 type LabeledPriceLine = ChartPriceLine & { title: string };
 
-type GuideLayer = "plan" | "wyckoff" | "harmonic" | "flow" | "levels";
+type GuideLayer = "plan" | "wyckoff" | "liquidity" | "harmonic" | "flow" | "levels";
 
 function activeGuideLayer(layers: ChartLayerState): GuideLayer {
   if (layers.ta.includes("wyckoff")) return "wyckoff";
+  if (layers.ta.includes("liquidity")) return "liquidity";
   if (layers.ta.includes("harmonic")) return "harmonic";
   if (layers.flow || layers.ta.includes("volume_profile")) return "flow";
   if (layers.ta.includes("levels")) return "levels";
   return "plan";
 }
 
-function chartGuideStorageKey(layer: GuideLayer): string {
-  return `fce.chartGuide.dismissed.${layer}`;
+function assetClassLabel(assetClass?: string | null): string {
+  if (assetClass === "stock") return "주식 퍼프";
+  if (assetClass === "index") return "지수 퍼프";
+  if (assetClass === "crypto") return "크립토";
+  return "자산 미분류";
 }
 
 function ChartGuideLayer({ layer }: { layer: GuideLayer }) {
@@ -407,6 +459,7 @@ function ChartGuideLayer({ layer }: { layer: GuideLayer }) {
 
 function guideTermsForLayer(layer: GuideLayer): string[] {
   if (layer === "wyckoff") return ["Range", "Spring", "UTAD"];
+  if (layer === "liquidity") return ["LiquidityPool", "Sweep", "CHoCH"];
   if (layer === "harmonic") return ["PRZ", "ActionFlag"];
   if (layer === "flow") return ["POC", "CVD"];
   if (layer === "levels") return ["strong", "POC"];
@@ -546,7 +599,8 @@ function renderTaOverlay(
   activeHarmonic: PositionChartAnalysis["harmonic_patterns"][number] | null,
   positionOverlay: PositionChartOverlay | null,
   highlightPrice: number | null,
-  palette: ResolvedChartPalette
+  palette: ResolvedChartPalette,
+  density: Density
 ) {
   if (!svg) return;
   const width = container.clientWidth;
@@ -556,10 +610,16 @@ function renderTaOverlay(
   const shapes: string[] = [];
   const badges: string[] = [];
   const right = overlayRight(width);
-  const context: OverlayContext = { series, chart, analysis, plan, layers, positionOverlay, highlightPrice, palette, width, height, right };
+  const context: OverlayContext = { series, chart, analysis, plan, layers, positionOverlay, highlightPrice, palette, width, height, right, density };
 
   if (layers.ta.includes("levels")) {
     zones.push(...structureZoneNodes(context));
+  }
+  if (layers.ta.includes("liquidity")) {
+    const liquidity = liquidityOverlayNodes(context);
+    zones.push(...liquidity.zones);
+    shapes.push(...liquidity.shapes);
+    badges.push(...liquidity.badges);
   }
   if (layers.ta.includes("wyckoff")) {
     const wyckoff = wyckoffOverlayNodes(context);
@@ -569,6 +629,9 @@ function renderTaOverlay(
   }
   if (layers.ta.includes("volume_profile")) {
     shapes.push(...volumeProfileNodes(context));
+  }
+  if (layers.flow) {
+    zones.push(...liquidationClusterNodes(context));
   }
   if (layers.ta.includes("harmonic") && activeHarmonic) {
     const harmonic = harmonicPatternNodes(context, activeHarmonic);
@@ -602,6 +665,7 @@ type OverlayContext = {
   width: number;
   height: number;
   right: number;
+  density: Density;
 };
 
 type OverlayGroup = { zones: string[]; shapes: string[]; badges: string[] };
@@ -621,29 +685,32 @@ type NumericPlanItem = PositionActionPlanItem & { price: number };
 
 function riskRewardBoxNodes(context: OverlayContext): string[] {
   const entry = context.positionOverlay?.entryPrice ?? context.analysis.entry_price;
+  const mark = context.positionOverlay?.markPrice ?? context.analysis.mark_price;
   const invalidation = planInvalidation(context.plan, context.analysis);
   const target = firstTakeProfit(context.plan);
-  if (!Number.isFinite(entry) || !invalidation || !target) return [];
+  if (!Number.isFinite(entry) || !Number.isFinite(mark) || !invalidation || !target) return [];
   const entryY = context.series.priceToCoordinate(entry);
+  const markY = context.series.priceToCoordinate(mark);
   const invalidationY = context.series.priceToCoordinate(invalidation.price);
   const targetY = context.series.priceToCoordinate(target.price);
-  if (entryY === null || invalidationY === null || targetY === null) return [];
+  if (entryY === null || markY === null || invalidationY === null || targetY === null) return [];
   const lastX = context.chart.timeScale().timeToCoordinate(context.analysis.candles.at(-1)?.time as Time);
   const x = Math.max(18, Math.min(context.right - 130, (lastX ?? context.right * 0.7) + 8));
   const width = Math.max(74, context.right - x);
-  const riskY = Math.min(entryY, invalidationY);
-  const riskHeight = Math.max(3, Math.abs(invalidationY - entryY));
-  const profitY = Math.min(entryY, targetY);
-  const profitHeight = Math.max(3, Math.abs(targetY - entryY));
-  const riskPct = directionDistancePct(invalidation.price, entry, context.analysis.direction);
-  const profitPct = directionDistancePct(target.price, entry, context.analysis.direction);
+  const riskY = Math.min(markY, invalidationY);
+  const riskHeight = Math.max(3, Math.abs(invalidationY - markY));
+  const profitY = Math.min(markY, targetY);
+  const profitHeight = Math.max(3, Math.abs(targetY - markY));
+  const riskPct = directionDistancePct(invalidation.price, mark, context.analysis.direction);
+  const profitPct = directionDistancePct(target.price, mark, context.analysis.direction);
   const rr = riskPct < 0 && profitPct > 0 ? profitPct / Math.abs(riskPct) : null;
-  const label = `${formatSignedPercent(profitPct)} / ${formatSignedPercent(riskPct)}${rr ? ` · R:R ${rr.toFixed(1)}` : ""}`;
+  const label = `현재 기준 ${formatSignedPercent(profitPct)} / ${formatSignedPercent(riskPct)}${rr ? ` · R:R ${rr.toFixed(1)}` : ""}`;
   return [
     `<rect x="${x}" y="${profitY}" width="${width}" height="${profitHeight}" fill="${context.palette.zone("profit")}" />`,
     `<rect x="${x}" y="${riskY}" width="${width}" height="${riskHeight}" fill="${context.palette.zone("risk")}" />`,
-    `<line x1="${x}" x2="${context.right}" y1="${entryY}" y2="${entryY}" stroke="${context.palette.flag("entry", 0.78)}" stroke-width="${chartTheme.stroke.major.width}" />`,
-    labelBadge(context.right - 142, Math.max(18, profitY - 26), label, context.palette.color("panel", 0.82), context.palette.flag("takeProfit", 0.88), context.palette.color("text"), 136)
+    `<line x1="${x}" x2="${context.right}" y1="${entryY}" y2="${entryY}" stroke="${context.palette.flag("entry", 0.54)}" stroke-width="1" stroke-dasharray="${chartTheme.stroke.minor.dash}" />`,
+    `<line x1="${x}" x2="${context.right}" y1="${markY}" y2="${markY}" stroke="${context.palette.flag("mark", 0.72)}" stroke-width="${chartTheme.stroke.major.width}" />`,
+    labelBadge(context.right - 154, Math.max(18, Math.min(profitY, riskY) - 26), label, context.palette.color("panel", 0.82), context.palette.flag("takeProfit", 0.88), context.palette.color("text"), 148)
   ];
 }
 
@@ -651,14 +718,15 @@ function priceFlagNodes(context: OverlayContext): string[] {
   const flags = stackFlags(actionPriceFlags(context), context.height, context.series);
   return flags.map((flag) => {
     const highlighted = context.highlightPrice !== null && Math.abs(flag.price - context.highlightPrice) <= Math.abs(flag.price) * 1e-9 + 1e-12;
-    const width = Math.max(78, Math.min(158, flag.label.length * 8 + 18 + (highlighted ? 18 : 0)));
-    const x = context.right + 5 - (highlighted ? 10 : 0);
+    const displayLabel = truncateSvgLabel(flag.label, highlighted ? 18 : 15);
+    const width = Math.max(62, Math.min(124, displayLabel.length * 7 + 16 + (highlighted ? 10 : 0)));
+    const x = context.right + 4 - (highlighted ? 6 : 0);
     const fill = context.palette.flag(flag.kind, highlighted ? 1 : 0.92);
     const stroke = context.palette.color("text", highlighted ? 0.8 : 0.24);
     const text = flag.kind === "mark" ? context.palette.color("panel") : context.palette.color("panel");
     return [
-      `<rect x="${x}" y="${flag.y - 12}" width="${width}" height="24" rx="5" fill="${fill}" stroke="${stroke}" stroke-width="${highlighted ? 2 : 1}" />`,
-      `<text x="${x + 8}" y="${flag.y + 4}" fill="${text}" font-size="${highlighted ? 12 : 11}" font-weight="${highlighted ? 700 : 600}" font-family="SF Mono, Monaco, Consolas, monospace">${escapeSvgText(flag.label)}</text>`
+      `<rect x="${x}" y="${flag.y - 10}" width="${width}" height="20" rx="4" fill="${fill}" stroke="${stroke}" stroke-width="${highlighted ? 1.6 : 1}" />`,
+      `<text x="${x + 7}" y="${flag.y + 3.5}" fill="${text}" font-size="${highlighted ? 10.5 : 9.5}" font-weight="${highlighted ? 750 : 650}" font-family="SF Mono, Monaco, Consolas, monospace">${escapeSvgText(displayLabel)}</text>`
     ].join("");
   });
 }
@@ -668,6 +736,131 @@ function structureZoneNodes(context: OverlayContext): string[] {
   const support = context.analysis.price_levels.support.slice(0, 3).map((level, index) => levelZoneNode(context, level, index, "support", atr));
   const resistance = context.analysis.price_levels.resistance.slice(0, 3).map((level, index) => levelZoneNode(context, level, index, "resistance", atr));
   return [...support, ...resistance].flat();
+}
+
+function liquidityOverlayNodes(context: OverlayContext): OverlayGroup {
+  const liquidity = context.analysis.liquidity;
+  if (!liquidity) return { zones: [], shapes: [], badges: [] };
+  const zones = [
+    ...dealingRangeNodes(context),
+    ...visibleLiquidityPools(liquidity.pools, context.density).flatMap((pool) => liquidityPoolZoneNode(context, pool))
+  ];
+  const sweeps = visibleLiquiditySweeps([...(liquidity.sweeps ?? []), ...(liquidity.htf_range_sweeps ?? [])], context.density);
+  const badges = sweeps.flatMap((sweep, index) => liquiditySweepBadgeNode(context, sweep, index));
+  const shapes = [
+    ...sweeps.flatMap((sweep) => liquiditySweepLeaderNode(context, sweep)),
+    ...structureShiftNodes(context)
+  ];
+  if (!zones.length && !badges.length && !shapes.length) return { zones: [], shapes: [], badges: [] };
+  return {
+    zones: [`<g data-testid="liquidity-layer">`, ...zones, "</g>"],
+    shapes,
+    badges
+  };
+}
+
+function visibleLiquidityPools(pools: LiquidityPool[], density: Density): LiquidityPool[] {
+  const unswept = pools
+    .filter((pool) => !pool.swept)
+    .sort((left, right) => (right.score - left.score) || (right.touch_count - left.touch_count));
+  if (density === "simple") return unswept.slice(0, 2);
+  return unswept.slice(0, 12);
+}
+
+function visibleLiquiditySweeps(sweeps: LiquiditySweep[], density: Density): LiquiditySweep[] {
+  const confirmed = sweeps
+    .filter((sweep) => sweep.confirmed)
+    .sort((left, right) => (right.timestamp - left.timestamp) || (right.confidence - left.confidence));
+  if (density === "simple") return confirmed.filter((sweep) => sweep.grade === "Strong").slice(0, 4);
+  return confirmed.filter((sweep) => sweep.grade !== "Weak").slice(0, 8);
+}
+
+function liquidityPoolZoneNode(context: OverlayContext, pool: LiquidityPool): string[] {
+  const atr = averageTrueRange(context.analysis.candles);
+  const band = Math.max(atr * 0.12, pool.price * 0.0008);
+  const y1 = context.series.priceToCoordinate(pool.price + band);
+  const y2 = context.series.priceToCoordinate(pool.price - band);
+  if (y1 === null || y2 === null) return [];
+  const touch = firstTouchCandle(context.analysis.candles, pool.price, band, pool.first_seen);
+  const x1 = touch ? context.chart.timeScale().timeToCoordinate(touch.time as Time) : null;
+  if (x1 === null) return [];
+  const y = Math.min(y1, y2);
+  const height = Math.max(4, Math.abs(y2 - y1));
+  const width = Math.max(18, context.right - x1);
+  const buySide = pool.side === "buy_side";
+  const fill = context.palette.color(buySide ? "amber" : "teal", Math.min(0.28, 0.1 + pool.score / 520));
+  const stroke = context.palette.color(buySide ? "amber" : "teal", Math.min(0.78, 0.32 + pool.score / 210));
+  const label = liquidityPoolLabel(pool);
+  return [
+    `<rect data-testid="liquidity-pool-zone" x="${x1}" y="${y}" width="${width}" height="${height}" rx="3" fill="${fill}" stroke="${stroke}" stroke-width="1" />`,
+    labelBadge(x1 + 5, Math.max(16, y - 19), label, context.palette.color("panel", 0.78), stroke, context.palette.color("text"), 108)
+  ];
+}
+
+function dealingRangeNodes(context: OverlayContext): string[] {
+  const range = context.analysis.liquidity.dealing_range;
+  if (!range) return [];
+  const top = context.series.priceToCoordinate(range.high);
+  const mid = context.series.priceToCoordinate(range.midpoint);
+  const bottom = context.series.priceToCoordinate(range.low);
+  if (top === null || mid === null || bottom === null) return [];
+  const yTop = Math.min(top, bottom);
+  const yBottom = Math.max(top, bottom);
+  const x = 0;
+  const width = Math.max(18, context.right);
+  const premiumY = Math.min(top, mid);
+  const discountY = Math.min(mid, bottom);
+  return [
+    `<rect x="${x}" y="${premiumY}" width="${width}" height="${Math.max(3, Math.abs(mid - top))}" fill="${context.palette.color("amber", 0.045)}" />`,
+    `<rect x="${x}" y="${discountY}" width="${width}" height="${Math.max(3, Math.abs(bottom - mid))}" fill="${context.palette.color("teal", 0.045)}" />`,
+    `<line x1="${x}" x2="${width}" y1="${mid}" y2="${mid}" stroke="${context.palette.color("neutral", 0.42)}" stroke-width="1" stroke-dasharray="${chartTheme.stroke.minor.dash}" />`,
+    labelBadge(10, Math.max(16, yTop + 8), "프리미엄", context.palette.color("panel", 0.52), context.palette.color("amber", 0.4), context.palette.color("muted"), 76),
+    labelBadge(10, Math.min(context.height - 28, yBottom - 28), "디스카운트", context.palette.color("panel", 0.52), context.palette.color("teal", 0.4), context.palette.color("muted"), 82)
+  ];
+}
+
+function liquiditySweepLeaderNode(context: OverlayContext, sweep: LiquiditySweep): string[] {
+  const x = context.chart.timeScale().timeToCoordinate(sweep.timestamp as Time);
+  const poolY = context.series.priceToCoordinate(sweep.pool_price ?? sweep.price);
+  const wickY = context.series.priceToCoordinate(sweep.wick_extreme ?? sweep.price);
+  if (x === null || poolY === null || wickY === null) return [];
+  const tone = sweep.side === "buy_side" ? "invalidation" : "takeProfit";
+  return [
+    `<line data-testid="liquidity-sweep-line" x1="${x}" x2="${x}" y1="${wickY}" y2="${poolY}" stroke="${context.palette.flag(tone, 0.76)}" stroke-width="1.4" />`,
+    `<circle cx="${x}" cy="${wickY}" r="3.5" fill="${context.palette.flag(tone, 0.92)}" stroke="${context.palette.color("text", 0.84)}" stroke-width="1" />`
+  ];
+}
+
+function liquiditySweepBadgeNode(context: OverlayContext, sweep: LiquiditySweep, index: number): string[] {
+  const x = context.chart.timeScale().timeToCoordinate(sweep.timestamp as Time);
+  const y = context.series.priceToCoordinate(sweep.pool_price ?? sweep.price);
+  if (x === null || y === null) return [];
+  const buySide = sweep.side === "buy_side";
+  const tone = buySide ? "invalidation" : "takeProfit";
+  const label = liquiditySweepLabel(sweep);
+  const offsetX = buySide ? -94 : 8;
+  const labelX = clamp(x + offsetX + (index % 2) * 12, 4, context.right - 112);
+  const labelY = clamp(y + (buySide ? -30 : 12) + (index % 2) * 14, 16, context.height - 28);
+  return [
+    `<g data-testid="liquidity-sweep-badge"><polyline points="${x},${y} ${labelX + 8},${labelY + 10}" fill="none" stroke="${context.palette.flag(tone, 0.5)}" stroke-width="1" stroke-dasharray="3 3" />${labelBadge(labelX, labelY, label, context.palette.color("panel", 0.84), context.palette.flag(tone, 0.86), context.palette.color("text"), 112)}</g>`
+  ];
+}
+
+function structureShiftNodes(context: OverlayContext): string[] {
+  const shift = context.analysis.liquidity.structure_shift;
+  if (!shift?.event || typeof shift.level !== "number") return [];
+  const y = context.series.priceToCoordinate(shift.level);
+  if (y === null) return [];
+  const recentX = context.chart.timeScale().timeToCoordinate(context.analysis.candles.at(-1)?.time as Time) ?? context.right - 120;
+  const x1 = clamp(recentX - 116, 8, context.right - 136);
+  const x2 = clamp(recentX + 12, x1 + 42, context.right - 12);
+  const isChoCh = shift.event === "CHoCH";
+  const stroke = context.palette.flag(isChoCh ? "watch" : "entry", isChoCh ? 0.92 : 0.72);
+  const label = isChoCh ? "구조 전환 후보(CHoCH)" : "구조 지속 돌파(BOS)";
+  return [
+    `<line data-testid="liquidity-structure-line" x1="${x1}" x2="${x2}" y1="${y}" y2="${y}" stroke="${stroke}" stroke-width="${isChoCh ? 2 : 1.4}" />`,
+    labelBadge(x1, clamp(y - 26, 16, context.height - 28), label, context.palette.color("panel", 0.78), stroke, context.palette.color("text"), isChoCh ? 126 : 118)
+  ];
 }
 
 function levelZoneNode(context: OverlayContext, level: ChartPriceLevel, index: number, kind: "support" | "resistance", atr: number): string[] {
@@ -692,33 +885,56 @@ function levelZoneNode(context: OverlayContext, level: ChartPriceLevel, index: n
 function wyckoffOverlayNodes(context: OverlayContext): OverlayGroup {
   const range = context.analysis.wyckoff_range;
   if (!range) return { zones: [], shapes: [], badges: [] };
-  const top = context.series.priceToCoordinate(range.resistance.price);
-  const bottom = context.series.priceToCoordinate(range.support.price);
-  const x1 = context.chart.timeScale().timeToCoordinate(range.start_time as Time);
-  const x2 = context.chart.timeScale().timeToCoordinate(range.end_time as Time);
-  if (top === null || bottom === null || x1 === null || x2 === null) return { zones: [], shapes: [], badges: [] };
+  // 레인지 경계가 현재 보이는 범위 밖이면 price/timeToCoordinate가 null을 준다.
+  // 통째로 숨기지 말고 차트 가장자리로 clamp해 — 스크롤/줌 위치와 무관하게 와이코프 구조가 항상 보이도록.
+  const markCoord = context.series.priceToCoordinate(context.analysis.mark_price);
+  const top = context.series.priceToCoordinate(range.resistance.price)
+    ?? (markCoord !== null && range.resistance.price >= context.analysis.mark_price ? 0 : context.height);
+  const bottom = context.series.priceToCoordinate(range.support.price)
+    ?? (markCoord !== null && range.support.price <= context.analysis.mark_price ? context.height : 0);
+  const rawX1 = context.chart.timeScale().timeToCoordinate(range.start_time as Time);
+  const rawX2 = context.chart.timeScale().timeToCoordinate(range.end_time as Time);
+  if (rawX1 === null && rawX2 === null) return { zones: [], shapes: [], badges: [] };
+  const x1 = rawX1 ?? 0;
+  const x2 = rawX2 ?? context.width;
   const x = Math.min(x1, x2);
   const width = Math.max(12, Math.abs(x2 - x1));
   const y = Math.min(top, bottom);
   const height = Math.max(8, Math.abs(bottom - top));
+  // 와이코프 구조는 시안(blue) 톤으로 통일 — 하모닉(보라)·플랜(적/녹)과 구분되고 배경에서 또렷하게.
+  const rangeStroke = context.palette.color("blue", 0.85);
   const zones = [
-    `<rect x="${x}" y="${y}" width="${width}" height="${height}" rx="3" fill="${context.palette.zone("range")}" stroke="${context.palette.color("neutral", 0.3)}" stroke-width="1" />`,
-    `<line x1="${x}" x2="${x + width}" y1="${top}" y2="${top}" stroke="${context.palette.color("neutral", 0.58)}" stroke-width="${chartTheme.stroke.major.width}" />`,
-    `<line x1="${x}" x2="${x + width}" y1="${bottom}" y2="${bottom}" stroke="${context.palette.color("neutral", 0.58)}" stroke-width="${chartTheme.stroke.major.width}" />`
+    `<rect x="${x}" y="${y}" width="${width}" height="${height}" rx="3" fill="${context.palette.color("blue", 0.13)}" stroke="${context.palette.color("blue", 0.7)}" stroke-width="1.5" />`,
+    `<line x1="${x}" x2="${x + width}" y1="${top}" y2="${top}" stroke="${rangeStroke}" stroke-width="2.5" />`,
+    `<line x1="${x}" x2="${x + width}" y1="${bottom}" y2="${bottom}" stroke="${rangeStroke}" stroke-width="2.5" />`
   ];
   const phaseLabels = ["A", "B", "C", "D", "E"];
   const shapes = phaseLabels.flatMap((label, index) => {
     const phaseX = x + (width / phaseLabels.length) * index;
-    const labelX = phaseX + width / phaseLabels.length / 2 - 5;
+    const labelX = phaseX + width / phaseLabels.length / 2 - 8;
     return [
-      index > 0 ? `<line x1="${phaseX}" x2="${phaseX}" y1="${y}" y2="${y + height}" stroke="${context.palette.color("neutral", 0.28)}" stroke-width="1" />` : "",
-      `<text x="${labelX}" y="${Math.max(14, y - 8)}" fill="${context.palette.color("muted", 0.86)}" font-size="11" font-family="SF Mono, Monaco, Consolas, monospace">Phase ${label}</text>`
+      index > 0 ? `<line x1="${phaseX}" x2="${phaseX}" y1="${y}" y2="${y + height}" stroke="${context.palette.color("blue", 0.32)}" stroke-width="1" stroke-dasharray="4 4" />` : "",
+      `<text class="chartOverlayGuideLabel" x="${labelX}" y="${Math.max(12, y - 6)}" fill="${context.palette.color("blue", 0.82)}" font-size="10" font-family="SF Mono, Monaco, Consolas, monospace">Phase ${label}</text>`
     ];
   });
   const events = splitWyckoffEvents(context.analysis.wyckoff_markers, context.analysis.wyckoff_markers_low_confidence).events;
+  shapes.push(...events.flatMap((marker) => wyckoffEventMarker(context, marker)));
   const badges = events.flatMap((marker, index) => wyckoffEventBadge(context, marker, { top, bottom, x, width }, index));
-  badges.unshift(labelBadge(x + 8, Math.max(18, y + 10), phaseHintLabel(context.analysis.wyckoff_phase?.phase), context.palette.color("panel", 0.62), context.palette.color("neutral", 0.54), context.palette.color("text"), 132));
+  // 국면 배지: 레인지 좌상단에 시안 톤으로 또렷하게
+  badges.unshift(labelBadge(x + 6, Math.max(20, y + 6), phaseHintLabel(context.analysis.wyckoff_phase?.phase), context.palette.color("blue", 0.22), rangeStroke, context.palette.color("text"), 128, "chartOverlayGuideLabel"));
   return { zones, shapes, badges };
+}
+
+function wyckoffEventMarker(context: OverlayContext, marker: WyckoffMarker): string[] {
+  const markerX = context.chart.timeScale().timeToCoordinate(marker.time as Time);
+  const markerY = context.series.priceToCoordinate(marker.price);
+  if (markerX === null || markerY === null) return [];
+  const upper = marker.side === "distribution" || marker.type.includes("utad") || marker.type.includes("sow");
+  const tone = upper ? "invalidation" : "takeProfit";
+  const label = `${eventShortLabel(marker)} · ${Math.round(marker.confidence)}`;
+  return [
+    `<g><circle cx="${markerX}" cy="${markerY}" r="5" fill="${context.palette.flag(tone, 0.95)}" stroke="${context.palette.color("text", 0.92)}" stroke-width="1.4" /><title>${escapeSvgText(label)}</title></g>`
+  ];
 }
 
 function wyckoffEventBadge(
@@ -734,10 +950,9 @@ function wyckoffEventBadge(
   const labelY = upper ? range.top - 28 - (index % 2) * 16 : range.bottom + 18 + (index % 2) * 16;
   const labelX = clamp(markerX - 34 + (index % 3) * 18, range.x, range.x + range.width - 92);
   const badgeText = `${upper ? "⤓" : "⤒"} ${eventShortLabel(marker)} · ${Math.round(marker.confidence)}`;
-  const tone = upper ? "invalidation" : "entry";
+  const tone = upper ? "invalidation" : "takeProfit";
   return [
-    `<polyline points="${markerX},${markerY} ${markerX},${upper ? range.top : range.bottom} ${labelX + 10},${labelY}" fill="none" stroke="${context.palette.flag(tone, 0.58)}" stroke-width="1" />`,
-    labelBadge(labelX, labelY - 12, badgeText, context.palette.color("panel", 0.82), context.palette.flag(tone, 0.86), context.palette.color("text"), 94)
+    `<g class="chartOverlayGuideLabel"><polyline points="${markerX},${markerY} ${markerX},${upper ? range.top : range.bottom} ${labelX + 10},${labelY}" fill="none" stroke="${context.palette.flag(tone, 0.58)}" stroke-width="1" />${labelBadge(labelX, labelY - 11, badgeText, context.palette.color("panel", 0.82), context.palette.flag(tone, 0.86), context.palette.color("text"), 92)}</g>`
   ];
 }
 
@@ -837,51 +1052,78 @@ function volumeProfileNodes(context: OverlayContext): string[] {
   return nodes;
 }
 
+function liquidationClusterNodes(context: OverlayContext): string[] {
+  const derivatives = context.analysis.derivatives;
+  const coinglass = derivatives?.coinglass;
+  if (coinglass?.source_status !== "ok") return [];
+  const clusters = derivatives?.signals?.liquidation_clusters ?? [];
+  const nodes: string[] = [];
+  for (const cluster of clusters) {
+    const price = numericClusterPrice(cluster);
+    if (price === null) continue;
+    const band = Math.max(averageTrueRange(context.analysis.candles) * 0.2, price * 0.0015);
+    const y1 = context.series.priceToCoordinate(price + band);
+    const y2 = context.series.priceToCoordinate(price - band);
+    if (y1 === null || y2 === null) continue;
+    const y = Math.min(y1, y2);
+    const height = Math.max(4, Math.abs(y2 - y1));
+    const x = Math.max(18, context.right - 190);
+    nodes.push(`<rect x="${x}" y="${y}" width="${Math.max(20, context.right - x)}" height="${height}" rx="3" fill="${context.palette.zone("liquidationCluster", 0.14)}" stroke="${context.palette.color("purple", 0.52)}" stroke-width="1" />`);
+    nodes.push(labelBadge(x + 6, Math.max(16, y - 20), `청산 밀집대 추정 ${formatPrice(price)}`, context.palette.color("panel", 0.78), context.palette.color("purple", 0.78), context.palette.color("text"), 138));
+  }
+  return nodes;
+}
+
 function scenarioPathNodes(context: OverlayContext): string[] {
   const mark = context.analysis.mark_price;
   const target = firstTakeProfit(context.plan);
   const invalidation = planInvalidation(context.plan, context.analysis);
   if (!target || !invalidation) return [];
-  const watchPrice = firstWatchPrice(context.plan?.watch_triggers) ?? midPrice(mark, target.price);
-  const startY = context.series.priceToCoordinate(mark);
-  const watchY = context.series.priceToCoordinate(watchPrice);
-  const targetY = context.series.priceToCoordinate(target.price);
-  const invalidationY = context.series.priceToCoordinate(invalidation.price);
-  if (startY === null || watchY === null || targetY === null || invalidationY === null) return [];
-  const x0 = Math.max(22, context.right - 280);
-  const x1 = Math.max(22, context.right - 168);
-  const x2 = Math.max(22, context.right - 48);
-  const stroke = context.palette.color("neutral", 0.72);
-  const dash = chartTheme.stroke.scenario.dash;
+  const watchPrice = firstWatchPrice(context.plan?.watch_triggers);
+  const x = Math.max(18, context.right - 248);
+  const y = 24;
+  const width = Math.min(226, Math.max(172, context.right - x - 8));
+  const rows = [
+    { label: "익절 후보", value: target.price, tone: "takeProfit" as const, pct: directionDistancePct(target.price, mark, context.analysis.direction) },
+    { label: "무효화", value: invalidation.price, tone: "invalidation" as const, pct: directionDistancePct(invalidation.price, mark, context.analysis.direction) },
+    ...(watchPrice ? [{ label: "감시 가격", value: watchPrice, tone: "watch" as const, pct: directionDistancePct(watchPrice, mark, context.analysis.direction) }] : [])
+  ];
+  const height = 38 + rows.length * 18;
   return [
-    labelBadge(x0, Math.max(18, Math.min(startY, watchY, targetY, invalidationY) - 30), "시나리오 · 예측 아님", context.palette.color("panel", 0.78), context.palette.color("neutral", 0.72), context.palette.color("text"), 132),
-    `<polyline points="${x0},${startY} ${x1},${watchY} ${x2},${targetY}" fill="none" stroke="${context.palette.flag("takeProfit", 0.58)}" stroke-width="${chartTheme.stroke.scenario.width}" stroke-dasharray="${dash}" />`,
-    `<polyline points="${x0},${startY} ${x1},${watchY} ${x2},${invalidationY}" fill="none" stroke="${stroke}" stroke-width="${chartTheme.stroke.scenario.width}" stroke-dasharray="${dash}" />`
+    `<g><rect x="${x}" y="${y}" width="${width}" height="${height}" rx="6" fill="${context.palette.color("panel", 0.74)}" stroke="${context.palette.color("neutral", 0.54)}" stroke-width="1" />`,
+    `<text x="${x + 10}" y="${y + 17}" fill="${context.palette.color("text", 0.9)}" font-size="10.5" font-weight="750" font-family="SF Mono, Monaco, Consolas, monospace">조건 경로 · 예측 아님</text>`,
+    `<text x="${x + 10}" y="${y + 33}" fill="${context.palette.color("muted", 0.86)}" font-size="9.5" font-family="SF Mono, Monaco, Consolas, monospace">현재 ${escapeSvgText(formatPrice(mark))} 기준</text>`,
+    ...rows.map((row, index) => {
+      const rowY = y + 52 + index * 18;
+      const text = `${row.label} ${formatPrice(row.value)} ${formatSignedPercent(row.pct)}`;
+      return [
+        `<circle cx="${x + 12}" cy="${rowY - 3}" r="3" fill="${context.palette.flag(row.tone, 0.88)}" />`,
+        `<text x="${x + 22}" y="${rowY}" fill="${context.palette.color("text", 0.9)}" font-size="9.5" font-family="SF Mono, Monaco, Consolas, monospace">${escapeSvgText(truncateSvgLabel(text, 24))}</text>`
+      ].join("");
+    }),
+    "</g>"
   ];
 }
 
 function positionOverlayNodes(context: OverlayContext, position: PositionChartOverlay): string[] {
   const y = context.series.priceToCoordinate(position.entryPrice);
   if (y === null || y < 18 || y > context.height - 42) return [];
-  const labelX = 118;
-  const labelY = Math.max(28, Math.min(context.height - 58, y - 18));
+  const labelX = 110;
+  const labelY = Math.max(24, Math.min(context.height - 42, y - 12));
   const sideLabel = position.direction === "long" ? "롱" : "숏";
-  const pnlText = position.pnlAmount === null
-    ? formatSignedPercent(position.pnlPercent)
-    : `${formatSignedNumber(position.pnlAmount)} USDT (${formatSignedPercent(position.pnlPercent)})`;
+  const pnlText = formatSignedPercent(position.pnlPercent);
   const pnlColor = context.palette.flag(position.pnlPercent >= 0 ? "takeProfit" : "invalidation");
-  const quantityText = formatCompactQuantity(position.quantity);
-  const tagWidth = Math.max(70, Math.min(128, quantityText.length * 11 + 30));
-  const pnlWidth = Math.max(176, Math.min(310, pnlText.length * 9 + 34));
-  const sideWidth = 82;
-  const totalWidth = sideWidth + tagWidth + pnlWidth;
+  const sideWidth = 56;
+  const pnlWidth = Math.max(58, Math.min(86, pnlText.length * 7 + 18));
+  const totalWidth = sideWidth + pnlWidth;
+  const amountText = position.pnlAmount === null ? "손익 금액 미수신" : `${formatSignedNumber(position.pnlAmount)} USDT`;
+  const detailText = `${formatCompactQuantity(position.quantity)} · ${amountText} · 진입 ${formatPrice(position.entryPrice)}`;
   const nodes = [
-    `<rect x="${labelX}" y="${labelY}" width="${totalWidth}" height="34" rx="6" fill="${context.palette.color("panel", 0.72)}" stroke="${context.palette.flag("entry", 0.9)}" stroke-width="1.2" />`,
-    `<rect x="${labelX}" y="${labelY}" width="${sideWidth}" height="34" rx="6" fill="${context.palette.flag("entry", 0.92)}" />`,
-    `<text x="${labelX + 12}" y="${labelY + 22}" fill="${context.palette.color("panel")}" font-size="12" font-weight="700" font-family="SF Mono, Monaco, Consolas, monospace">${sideLabel} ${position.leverage}x</text>`,
-    `<text x="${labelX + sideWidth + 14}" y="${labelY + 22}" fill="${context.palette.color("text", 0.92)}" font-size="13" font-family="SF Mono, Monaco, Consolas, monospace">${escapeSvgText(quantityText)}</text>`,
-    `<text x="${labelX + sideWidth + tagWidth + 14}" y="${labelY + 22}" fill="${pnlColor}" font-size="13" font-family="SF Mono, Monaco, Consolas, monospace">${escapeSvgText(pnlText)}</text>`,
-    `<text x="${Math.min(context.right - 88, labelX + totalWidth + 12)}" y="${labelY + 22}" fill="${context.palette.color("text", 0.76)}" font-size="11" font-family="SF Mono, Monaco, Consolas, monospace">진입 ${escapeSvgText(formatPrice(position.entryPrice))}</text>`
+    `<g><rect x="${labelX}" y="${labelY}" width="${totalWidth}" height="24" rx="5" fill="${context.palette.color("panel", 0.68)}" stroke="${context.palette.flag("entry", 0.84)}" stroke-width="1" />`,
+    `<rect x="${labelX}" y="${labelY}" width="${sideWidth}" height="24" rx="5" fill="${context.palette.flag("entry", 0.92)}" />`,
+    `<text x="${labelX + 8}" y="${labelY + 16}" fill="${context.palette.color("panel")}" font-size="10.5" font-weight="750" font-family="SF Mono, Monaco, Consolas, monospace">${sideLabel} ${position.leverage}x</text>`,
+    `<text x="${labelX + sideWidth + 9}" y="${labelY + 16}" fill="${pnlColor}" font-size="10.5" font-weight="750" font-family="SF Mono, Monaco, Consolas, monospace">${escapeSvgText(pnlText)}</text>`,
+    `<title>${escapeSvgText(detailText)}</title></g>`
   ];
   const openedTime = position.openedAt ? Math.floor(new Date(position.openedAt).getTime() / 1000) : null;
   const entryCandle = openedTime ? nearestCandleAtOrAfter(context.analysis.candles, openedTime) : null;
@@ -973,8 +1215,34 @@ function directionDistancePct(price: number, entry: number, direction: "long" | 
   return direction === "long" ? raw : -raw;
 }
 
-function midPrice(left: number, right: number): number {
-  return (left + right) / 2;
+function derivativeSeriesPoints(analysis: PositionChartAnalysis, field: "open_interest"): Array<{ time: Time; value: number }> {
+  return (analysis.derivatives?.metrics ?? [])
+    .filter((metric) => metric.source === "bitget" && typeof metric[field] === "number")
+    .map((metric) => ({ time: Math.floor(new Date(metric.as_of).getTime() / 1000) as Time, value: metric[field] as number }))
+    .sort((left, right) => Number(left.time) - Number(right.time));
+}
+
+function derivativeFundingPoints(analysis: PositionChartAnalysis, palette: ResolvedChartPalette): HistogramData[] {
+  return (analysis.derivatives?.metrics ?? [])
+    .filter((metric) => metric.source === "bitget" && typeof metric.funding === "number")
+    .map((metric) => {
+      const value = (metric.funding as number) * 100;
+      return {
+        time: Math.floor(new Date(metric.as_of).getTime() / 1000) as Time,
+        value,
+        color: value >= 0 ? palette.color("green", 0.36) : palette.color("red", 0.36)
+      };
+    })
+    .sort((left, right) => Number(left.time) - Number(right.time));
+}
+
+function numericClusterPrice(cluster: Record<string, unknown>): number | null {
+  for (const key of ["price", "mid", "level"]) {
+    const value = cluster[key];
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string" && Number.isFinite(Number(value))) return Number(value);
+  }
+  return null;
 }
 
 function averageTrueRange(candles: ChartCandle[], period = 14): number {
@@ -995,13 +1263,21 @@ function firstTouchCandle(candles: ChartCandle[], price: number, band: number, f
   return nearestCandleAtOrAfter(candles, fallbackTime);
 }
 
-function labelBadge(x: number, y: number, text: string, fill: string, stroke: string, textColor: string, width?: number): string {
-  const safeText = escapeSvgText(text);
-  const rectWidth = width ?? Math.max(54, Math.min(190, safeText.length * 7.2 + 16));
+function labelBadge(x: number, y: number, text: string, fill: string, stroke: string, textColor: string, width?: number, className?: string): string {
+  const displayText = truncateSvgLabel(text, width && width <= 96 ? 14 : 22);
+  const safeText = escapeSvgText(displayText);
+  const rectWidth = width ?? Math.max(48, Math.min(150, displayText.length * 6.8 + 14));
+  const openGroup = className ? `<g class="${className}">` : "<g>";
   return [
-    `<rect x="${x}" y="${y}" width="${rectWidth}" height="22" rx="5" fill="${fill}" stroke="${stroke}" stroke-width="1" />`,
-    `<text x="${x + 8}" y="${y + 15}" fill="${textColor}" font-size="10.5" font-family="SF Mono, Monaco, Consolas, monospace">${safeText}</text>`
+    openGroup,
+    `<rect x="${x}" y="${y}" width="${rectWidth}" height="20" rx="4" fill="${fill}" stroke="${stroke}" stroke-width="1" />`,
+    `<text x="${x + 7}" y="${y + 13.5}" fill="${textColor}" font-size="9.5" font-family="SF Mono, Monaco, Consolas, monospace">${safeText}</text>`,
+    "</g>"
   ].join("");
+}
+
+function truncateSvgLabel(text: string, maxLength: number): string {
+  return text.length > maxLength ? `${text.slice(0, Math.max(1, maxLength - 1))}…` : text;
 }
 
 function eventShortLabel(marker: WyckoffMarker): string {
@@ -1011,6 +1287,27 @@ function eventShortLabel(marker: WyckoffMarker): string {
     .replace("스프링 후보", "스프링")
     .replace("거래량 급증", "급증")
     .replace("클라이맥스 후보", "클라이맥스");
+}
+
+function liquidityPoolLabel(pool: LiquidityPool): string {
+  const side = pool.side === "buy_side" ? "상단 풀" : "하단 풀";
+  const kind = pool.kind === "eqh"
+    ? "EQH"
+    : pool.kind === "eql"
+      ? "EQL"
+      : pool.kind === "old_high"
+        ? "전고"
+        : pool.kind === "old_low"
+          ? "전저"
+          : String(pool.kind).toUpperCase();
+  const touches = pool.touch_count ?? pool.touches ?? 1;
+  return `${side}(${kind} ${touches}터치)`;
+}
+
+function liquiditySweepLabel(sweep: LiquiditySweep): string {
+  const side = sweep.side === "buy_side" ? "고점 스윕" : "저점 스윕";
+  const arrow = sweep.side === "buy_side" ? "⇧" : "⇩";
+  return `${arrow} ${side} · ${sweep.grade}`;
 }
 
 function clamp(value: number, min: number, max: number): number {

@@ -20,4 +20,3 @@ def test_market_summary_uses_configured_watchlist(client) -> None:
     payload = response.json()
     assert len(payload["reports"]) >= 5
     assert payload["market_data_provider"] in {"mock", "bitget"}
-

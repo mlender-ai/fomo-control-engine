@@ -1,6 +1,13 @@
 from datetime import datetime, timedelta, timezone
 
-from app.db.models import Direction, MarketCandle, MarketSnapshot, Position, Report, ScoreBreakdown
+from app.db.models import (
+    Direction,
+    MarketCandle,
+    MarketSnapshot,
+    Position,
+    Report,
+    ScoreBreakdown,
+)
 from app.positions.chart_analysis import PositionContext, build_chart_analysis
 from app.positions.engine import build_position_state
 from app.structure.levels.engine import detect_structure_levels
@@ -30,8 +37,23 @@ def test_short_position_invalidation_uses_structural_resistance() -> None:
     candles = [_flat_candle(index, close=100.0, low=96.0, high=104.0, volume=650.0) for index in range(120)]
     for index, high in [(45, 110.0), (72, 110.2), (95, 109.9)]:
         candles[index] = _flat_candle(index, close=101.0, low=97.8, high=high, volume=2600.0)
-    snapshot = MarketSnapshot(symbol="BTCUSDT", timeframe="4h", price=100.0, change_24h=0.0, funding_rate=0.0, open_interest_change=0.0, candles=candles)
-    position = Position(symbol="BTCUSDT", direction=Direction.short, entry_price=103.0, quantity=1.0, leverage=5, mark_price=100.0)
+    snapshot = MarketSnapshot(
+        symbol="BTCUSDT",
+        timeframe="4h",
+        price=100.0,
+        change_24h=0.0,
+        funding_rate=0.0,
+        open_interest_change=0.0,
+        candles=candles,
+    )
+    position = Position(
+        symbol="BTCUSDT",
+        direction=Direction.short,
+        entry_price=103.0,
+        quantity=1.0,
+        leverage=5,
+        mark_price=100.0,
+    )
 
     analysis = build_chart_analysis(snapshot, PositionContext.from_position(position))
     invalidation = analysis["price_levels"]["invalidation"][0]
@@ -48,7 +70,15 @@ def test_critical_levels_do_not_relabel_bollinger_bands_as_support_resistance() 
         "support": [_level_payload(price=95.0, kind="support")],
         "resistance": [_level_payload(price=123.0, kind="resistance")],
     }
-    position = Position(symbol="BTCUSDT", direction=Direction.long, entry_price=100.0, quantity=0.5, leverage=2, current_price=110.0, liquidation_price=80.0)
+    position = Position(
+        symbol="BTCUSDT",
+        direction=Direction.long,
+        entry_price=100.0,
+        quantity=0.5,
+        leverage=2,
+        current_price=110.0,
+        liquidation_price=80.0,
+    )
 
     state = build_position_state(position, report, [])
     prices = {level["price"] for level in state["analysis"]["risk"]["critical_levels"]}
@@ -93,10 +123,23 @@ def _report() -> Report:
                 "atr": 2.8,
             },
             "structure": {
-                "trend": {"direction": "neutral_to_bullish", "higher_low": True, "break_of_structure": False},
-                "wyckoff": {"accumulation_score": 54, "distribution_score": 24, "phase_hint": "neutral_range", "spring_candidate": False, "sos_confirmed": False},
+                "trend": {
+                    "direction": "neutral_to_bullish",
+                    "higher_low": True,
+                    "break_of_structure": False,
+                },
+                "wyckoff": {
+                    "accumulation_score": 54,
+                    "distribution_score": 24,
+                    "phase_hint": "neutral_range",
+                    "spring_candidate": False,
+                    "sos_confirmed": False,
+                },
             },
-            "liquidity": {"open_interest_change": "stable", "funding_rate_state": "neutral"},
+            "liquidity": {
+                "open_interest_change": "stable",
+                "funding_rate_state": "neutral",
+            },
         },
         report="deterministic report",
         provider="mock",

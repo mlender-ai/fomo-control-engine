@@ -1,4 +1,11 @@
-from app.scoring.engine import calculate_entry_score, score_fomo, score_momentum, score_risk, score_volume, state_label
+from app.scoring.engine import (
+    calculate_entry_score,
+    score_fomo,
+    score_momentum,
+    score_risk,
+    score_volume,
+    state_label,
+)
 
 
 def test_entry_score_uses_inverse_risk_weight() -> None:
@@ -34,4 +41,3 @@ def test_score_helpers_are_bounded() -> None:
 def test_state_label_prioritizes_fomo_warning_when_score_is_not_strong() -> None:
     assert state_label(entry_score=63, fomo_index=82) == "FOMO 경고"
     assert state_label(entry_score=88, fomo_index=82) == "강한 진입 후보군"
-

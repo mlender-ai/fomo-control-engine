@@ -1,5 +1,10 @@
 from app.db.models import Direction, Position, Report, ScoreBreakdown
-from app.positions.engine import build_position_state, calculate_liquidation_distance, make_insight, make_snapshot
+from app.positions.engine import (
+    build_position_state,
+    calculate_liquidation_distance,
+    make_insight,
+    make_snapshot,
+)
 
 
 def _report(entry_score: int = 86, risk: int = 18) -> Report:
@@ -51,6 +56,47 @@ def _report(entry_score: int = 86, risk: int = 18) -> Report:
         report="deterministic report",
         provider="mock",
     )
+
+
+def _report_with_derivatives(derivatives: dict) -> Report:
+    report = _report()
+    report.raw_json["liquidity"]["derivatives"] = derivatives
+    return report
+
+
+def _derivatives_payload(
+    *,
+    divergence: str,
+    funding: float,
+    funding_state: str,
+    ratio: float,
+    crowding: float,
+) -> dict:
+    return {
+        "as_of": "2026-07-06T01:00:00+00:00",
+        "latest": {
+            "provider": "bitget",
+            "as_of": "2026-07-06T01:00:00+00:00",
+            "funding_rate": funding,
+            "open_interest_change_pct": 4.0,
+            "long_short_ratio": ratio,
+        },
+        "signals": {
+            "oi_price_divergence": {
+                "state": divergence,
+                "label": divergence,
+                "price_change_pct": 3.0,
+                "oi_change_pct": 4.0,
+            },
+            "funding_state": {
+                "state": funding_state,
+                "label": funding_state,
+                "funding": funding,
+                "percentile": 95,
+            },
+            "crowding_score": {"score": crowding, "label": "쏠림"},
+        },
+    }
 
 
 def test_position_state_classifies_healthy_when_thesis_and_risk_are_intact() -> None:
@@ -244,6 +290,98 @@ def test_high_leverage_position_without_liquidation_price_is_explicit() -> None:
 
     assert state["status"] in {"watch", "thesis_weakening", "critical"}
     assert "LIQUIDATION_PRICE_MISSING_HIGH_LEVERAGE" in state["analysis"]["reason_codes"]
+
+
+def test_derivative_flow_scores_long_alignment_and_adverse_crowding() -> None:
+    position = Position(
+        symbol="BTCUSDT",
+        direction=Direction.long,
+        entry_price=100.0,
+        quantity=0.5,
+        leverage=3,
+        current_price=105.0,
+        liquidation_price=80.0,
+        entry_score=84,
+    )
+    aligned = build_position_state(
+        position,
+        _report_with_derivatives(
+            _derivatives_payload(
+                divergence="price_up_oi_up",
+                funding=0.0,
+                funding_state="neutral",
+                ratio=1.0,
+                crowding=30,
+            )
+        ),
+        [],
+    )
+    adverse = build_position_state(
+        position,
+        _report_with_derivatives(
+            _derivatives_payload(
+                divergence="price_down_oi_up",
+                funding=0.0012,
+                funding_state="extreme",
+                ratio=1.45,
+                crowding=82,
+            )
+        ),
+        [],
+    )
+
+    aligned_flow = aligned["score_json"]["health_components"]["flow"]
+    adverse_flow = adverse["score_json"]["health_components"]["flow"]
+    assert aligned["score_json"]["health_components"]["formula_version"] == "health_v2_derivatives"
+    assert adverse["score_json"]["health_components"]["formula_version"] == "health_v2_derivatives"
+    assert aligned_flow >= 80
+    assert adverse_flow <= 10
+    assert aligned_flow - adverse_flow >= 70
+
+
+def test_derivative_flow_scores_short_alignment_and_adverse_crowding() -> None:
+    position = Position(
+        symbol="BTCUSDT",
+        direction=Direction.short,
+        entry_price=100.0,
+        quantity=0.5,
+        leverage=3,
+        current_price=95.0,
+        liquidation_price=125.0,
+        entry_score=84,
+    )
+    aligned = build_position_state(
+        position,
+        _report_with_derivatives(
+            _derivatives_payload(
+                divergence="price_down_oi_up",
+                funding=0.0012,
+                funding_state="extreme",
+                ratio=1.45,
+                crowding=82,
+            )
+        ),
+        [],
+    )
+    adverse = build_position_state(
+        position,
+        _report_with_derivatives(
+            _derivatives_payload(
+                divergence="price_up_oi_up",
+                funding=-0.0012,
+                funding_state="extreme",
+                ratio=0.74,
+                crowding=82,
+            )
+        ),
+        [],
+    )
+
+    aligned_flow = aligned["score_json"]["health_components"]["flow"]
+    adverse_flow = adverse["score_json"]["health_components"]["flow"]
+    assert aligned_flow >= 85
+    assert adverse_flow <= 10
+    assert aligned_flow - adverse_flow >= 75
 
 
 def test_position_insight_explains_snapshot_without_recalculating_scores() -> None:

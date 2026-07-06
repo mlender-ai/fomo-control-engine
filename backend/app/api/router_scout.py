@@ -1,0 +1,21 @@
+from fastapi import APIRouter
+
+from app.services import scout_handlers as handlers
+
+router = APIRouter()
+
+router.add_api_route("/api/symbols", handlers.search_symbols, methods=["GET"])
+router.add_api_route("/api/watchlist", handlers.list_watchlist, methods=["GET"])
+router.add_api_route("/api/watchlist", handlers.add_watchlist_item, methods=["POST"])
+router.add_api_route("/api/watchlist/{symbol}", handlers.remove_watchlist_item, methods=["DELETE"])
+router.add_api_route("/api/scout/{symbol}/analysis", handlers.scout_analysis, methods=["GET"])
+router.add_api_route("/api/scout/{symbol}/briefing", handlers.scout_briefing, methods=["GET"])
+router.add_api_route("/api/scout/scan", handlers.scan_watchlist, methods=["POST"])
+router.add_api_route("/api/scout/setups", handlers.list_scout_setups, methods=["GET"])
+router.add_api_route("/api/scout/{symbol}/setups", handlers.create_manual_setup, methods=["POST"])
+router.add_api_route("/api/scout/setups/{setup_id}/disarm", handlers.disarm_scout_setup, methods=["POST"])
+router.add_api_route("/api/scout/simulate", handlers.simulate, methods=["POST"])
+router.add_api_route("/api/scout/scenarios", handlers.save_scenario, methods=["POST"])
+router.add_api_route("/api/scout/scenarios", handlers.list_scenarios, methods=["GET"])
+router.add_api_route("/api/scout/match/{position_id}", handlers.match_scenario, methods=["GET"])
+router.add_api_route("/api/scout/scenarios/{scenario_id}/link", handlers.link_scenario, methods=["POST"])

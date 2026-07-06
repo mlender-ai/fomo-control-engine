@@ -13,4 +13,3 @@ def test_system_status(client) -> None:
     assert payload["service"] == "fomo-control-engine"
     assert payload["market_data_provider"] in {"mock", "bitget"}
     assert "BTCUSDT" in payload["default_symbols"]
-

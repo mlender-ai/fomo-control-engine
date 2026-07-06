@@ -1,8 +1,5 @@
-from uuid import UUID
-
 from app.agents.contracts import AgentInput, AgentName, AgentResult, Stance
 from app.db.models import AgentOutput, MarketSnapshotRecord, ResearchRun, Report
-from app.indicators.engine import calculate_indicators
 
 
 def create_research_run(repo, report: Report, memories: list[dict] | None = None) -> tuple[ResearchRun, list[AgentOutput]]:
@@ -231,7 +228,10 @@ def _risk(agent_input: AgentInput) -> AgentResult:
             "max_risk_per_trade_pct": 0.5 if level == "high" else 1.0,
             "suggested_position_mode": "small_probe" if level != "low" else "small_or_split",
             "stop_logic": "진입 전 무효화 가격을 정하고, ATR 변동성 확대 시 사이즈를 줄입니다.",
-            "do_not_enter_if": ["손절 기준이 없음", "레버리지를 높여 손실을 만회하려는 상태"],
+            "do_not_enter_if": [
+                "손절 기준이 없음",
+                "레버리지를 높여 손실을 만회하려는 상태",
+            ],
         },
         text_output=text,
     )

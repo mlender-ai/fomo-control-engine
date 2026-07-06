@@ -5,11 +5,26 @@ from urllib.parse import urlencode
 
 import httpx
 
-from app.exchange.bitget.errors import BitgetAPIError, BitgetNotConfiguredError, BitgetPermissionError
+from app.exchange.bitget.errors import (
+    BitgetAPIError,
+    BitgetNotConfiguredError,
+    BitgetPermissionError,
+)
 from app.exchange.bitget.signer import get_timestamp_ms, sign_bitget_request
 
 
-PRIVATE_PERMISSION_CODES = {"40037", "40038", "40039", "40040", "40041", "40043", "40044", "40045", "40046", "40047"}
+PRIVATE_PERMISSION_CODES = {
+    "40037",
+    "40038",
+    "40039",
+    "40040",
+    "40041",
+    "40043",
+    "40044",
+    "40045",
+    "40046",
+    "40047",
+}
 
 
 class BitgetClient:
@@ -76,7 +91,11 @@ class BitgetClient:
                     message = str(payload.get("msg", "unknown Bitget error"))
                     if private and code in PRIVATE_PERMISSION_CODES:
                         raise BitgetPermissionError(code, _safe_message(message), payload=_safe_payload(payload))
-                    raise BitgetAPIError(code or "unknown", _safe_message(message), payload=_safe_payload(payload))
+                    raise BitgetAPIError(
+                        code or "unknown",
+                        _safe_message(message),
+                        payload=_safe_payload(payload),
+                    )
                 return payload
             except (httpx.TimeoutException, httpx.NetworkError) as exc:
                 last_error = exc

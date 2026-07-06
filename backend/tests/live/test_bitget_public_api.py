@@ -18,4 +18,3 @@ def test_live_bitget_public_snapshot() -> None:
     assert snapshot.symbol == "BTCUSDT"
     assert snapshot.provider == "bitget"
     assert snapshot.data_quality.candles >= 30
-

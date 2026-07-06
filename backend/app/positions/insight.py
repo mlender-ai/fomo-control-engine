@@ -167,7 +167,11 @@ def generate_position_insight_text(
     if not api_key.strip():
         return template_text, "template", "openai_api_key_missing"
     prompt = build_position_insight_prompt(
-        json.dumps({"position_state": input_json, "action_plan": action_plan}, ensure_ascii=False, sort_keys=True)
+        json.dumps(
+            {"position_state": input_json, "action_plan": action_plan},
+            ensure_ascii=False,
+            sort_keys=True,
+        )
     )
     try:
         output = llm_client(prompt, model) if llm_client else call_openai_insight(prompt, api_key, model)
@@ -184,7 +188,10 @@ def call_openai_insight(prompt: str, api_key: str, model: str) -> str:
     require_openai_api_key(api_key)
     response = httpx.post(
         "https://api.openai.com/v1/responses",
-        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
         json={
             "model": model,
             "input": prompt,
@@ -279,7 +286,10 @@ def _previous_snapshot(snapshot: PositionSnapshot, snapshots: list[PositionSnaps
 
 
 def _entry_snapshot(snapshot: PositionSnapshot, snapshots: list[PositionSnapshot]) -> PositionSnapshot | None:
-    ordered = sorted([item for item in snapshots if item.id != snapshot.id], key=lambda item: item.created_at)
+    ordered = sorted(
+        [item for item in snapshots if item.id != snapshot.id],
+        key=lambda item: item.created_at,
+    )
     return ordered[0] if ordered else None
 
 
@@ -357,10 +367,7 @@ def _chart_line(direction: str, chart: dict[str, Any]) -> str:
         focus = f"롱 기준으로는 {_format_price(support)} 지지 유지가 가장 중요합니다."
     else:
         focus = f"숏 기준으로는 {_format_price(resistance)} 저항 유지가 가장 중요합니다."
-    return (
-        f"현재 추세는 {trend}로 분류됩니다. 지지 상태는 {chart.get('support_status')}, "
-        f"저항 상태는 {chart.get('resistance_status')}입니다. {focus}"
-    )
+    return f"현재 추세는 {trend}로 분류됩니다. 지지 상태는 {chart.get('support_status')}, 저항 상태는 {chart.get('resistance_status')}입니다. {focus}"
 
 
 def _wyckoff_line(wyckoff: dict[str, Any], technical: dict[str, Any], volume_profile: dict[str, Any]) -> str:
@@ -381,7 +388,11 @@ def _wyckoff_line(wyckoff: dict[str, Any], technical: dict[str, Any], volume_pro
     )
 
 
-def _entry_line(entry_context: dict[str, Any], health: dict[str, Any], previous_insight: PositionInsight | None) -> str:
+def _entry_line(
+    entry_context: dict[str, Any],
+    health: dict[str, Any],
+    previous_insight: PositionInsight | None,
+) -> str:
     memo = entry_context.get("entry_memo")
     entry_direction_score = entry_context.get("entry_direction_score")
     current_direction_score = entry_context.get("current_direction_score")

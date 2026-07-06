@@ -1,5 +1,7 @@
 # FOMO Control Engine
 
+[![CI](https://github.com/mlender-ai/fomo-control-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/mlender-ai/fomo-control-engine/actions/workflows/ci.yml)
+
 FOMO Control Engine is a personal live position intelligence cockpit. It does not place trades or promise signals. It tracks the user's real open positions, calculates deterministic position state JSON, and explains whether the original thesis, risk, chart structure, and exit review data still make sense.
 
 ## Current MVP Scope
@@ -116,7 +118,7 @@ npm run astryx -- component --list --detail brief
 - V0.4 is read-only for exchange integrations.
 - Bitget API keys must be read-only and provided through environment variables.
 - No automatic buy or sell execution is included.
-- `record-exit` only writes an internal trade review record. It does not submit an exchange order.
+- `record-exit` and exchange-missing auto-close only write internal trade review records. They do not submit exchange orders.
 - Scores are deterministic. LLM usage, when added later, must only transform computed JSON into natural language.
 - Position insight output explains a fixed score snapshot. It does not recalculate price, score, or order intent.
 

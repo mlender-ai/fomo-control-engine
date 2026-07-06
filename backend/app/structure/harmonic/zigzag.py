@@ -76,7 +76,12 @@ def extract_zigzag_pivots(candles: list[MarketCandle], atr_multiplier: float = 2
 
 
 def _pivot(index: int, price: float, kind: str, candles: list[MarketCandle]) -> ZigZagPivot:
-    return ZigZagPivot(index=index, time=int(candles[index].timestamp.timestamp()), price=price, kind=kind)
+    return ZigZagPivot(
+        index=index,
+        time=int(candles[index].timestamp.timestamp()),
+        price=price,
+        kind=kind,
+    )
 
 
 def _normalize_pivots(pivots: list[ZigZagPivot]) -> list[ZigZagPivot]:
@@ -102,7 +107,13 @@ def _atr(candles: list[MarketCandle], period: int = 14) -> float:
     ranges: list[float] = []
     previous_close = candles[0].close
     for candle in candles[1:]:
-        ranges.append(max(candle.high - candle.low, abs(candle.high - previous_close), abs(candle.low - previous_close)))
+        ranges.append(
+            max(
+                candle.high - candle.low,
+                abs(candle.high - previous_close),
+                abs(candle.low - previous_close),
+            )
+        )
         previous_close = candle.close
     window = ranges[-period:] if len(ranges) >= period else ranges
     return max(mean(window), candles[-1].close * 0.0001) if window else candles[-1].close * 0.01

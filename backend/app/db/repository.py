@@ -2,20 +2,27 @@ from __future__ import annotations
 
 import json
 import sqlite3
-import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Protocol
 from uuid import UUID
 
 from app.db.models import (
-    CatalogSymbol,
-    EntryScenario,
     AgentOutput,
+    AlertRecord,
+    AlertResponseRecord,
+    ArmedSetup,
     CalibrationSuggestion,
+    CatalogSymbol,
+    DatabaseMaintenanceEvent,
     DecisionMemory,
+    DerivativeDataSnapshot,
+    DerivativeMetric,
+    EngineParamVersion,
+    EntryScenario,
     JudgmentLedgerEntry,
     JudgmentScore,
+    LiquidationEvent,
     MarketSnapshotRecord,
     MonitoringLog,
     Position,
@@ -25,12 +32,15 @@ from app.db.models import (
     PositionStatus,
     Report,
     ResearchRun,
+    ScoutSnapshot,
     ShadowProfile,
     Trade,
     ValidationRun,
     WatchlistItem,
     utc_now,
 )
+from app.db.sqlite_utils import SQLITE_WRITE_LOCK, connect_sqlite
+from app.db.migrations import run_migrations
 
 
 class Repository(Protocol):
@@ -50,17 +60,54 @@ class Repository(Protocol):
     def list_position_insights(self, position_id: UUID, limit: int = 20) -> list[PositionInsight]: ...
     def add_position_event(self, event: PositionEvent) -> PositionEvent: ...
     def list_position_events(self, position_id: UUID, limit: int = 50) -> list[PositionEvent]: ...
+    def add_alert(self, alert: AlertRecord) -> AlertRecord: ...
+    def list_alerts(self, position_id: UUID | None = None, limit: int = 100) -> list[AlertRecord]: ...
+    def add_alert_response(self, response: AlertResponseRecord) -> AlertResponseRecord: ...
+    def get_alert_response(self, alert_id: UUID) -> AlertResponseRecord | None: ...
+    def list_alert_responses(
+        self,
+        position_id: UUID | None = None,
+        rule_id: str | None = None,
+        limit: int = 200,
+    ) -> list[AlertResponseRecord]: ...
+    def add_scout_snapshot(self, snapshot: ScoutSnapshot) -> ScoutSnapshot: ...
+    def list_scout_snapshots(self, symbol: str | None = None, limit: int = 100) -> list[ScoutSnapshot]: ...
+    def latest_scout_snapshot(self, symbol: str, timeframe: str | None = None) -> ScoutSnapshot | None: ...
+    def upsert_armed_setup(self, setup: ArmedSetup) -> ArmedSetup: ...
+    def get_armed_setup(self, setup_id: UUID) -> ArmedSetup | None: ...
+    def list_armed_setups(self, symbol: str | None = None, status: str | None = None, limit: int = 200) -> list[ArmedSetup]: ...
     def add_trade(self, trade: Trade) -> Trade: ...
     def get_trade(self, trade_id: UUID) -> Trade | None: ...
     def list_trades(self) -> list[Trade]: ...
     def add_judgment(self, judgment: JudgmentLedgerEntry) -> JudgmentLedgerEntry: ...
     def list_judgments(self, position_id: UUID, limit: int = 200) -> list[JudgmentLedgerEntry]: ...
     def add_judgment_score(self, score: JudgmentScore) -> JudgmentScore: ...
-    def list_judgment_scores(self, position_id: UUID | None = None, trade_id: UUID | None = None, limit: int = 500) -> list[JudgmentScore]: ...
+    def list_judgment_scores(
+        self,
+        position_id: UUID | None = None,
+        trade_id: UUID | None = None,
+        limit: int = 500,
+    ) -> list[JudgmentScore]: ...
     def add_calibration_suggestion(self, suggestion: CalibrationSuggestion) -> CalibrationSuggestion: ...
     def get_calibration_suggestion(self, suggestion_id: UUID) -> CalibrationSuggestion | None: ...
     def list_calibration_suggestions(self, status: str | None = None, limit: int = 50) -> list[CalibrationSuggestion]: ...
+    def add_engine_param_version(self, version: EngineParamVersion) -> EngineParamVersion: ...
+    def latest_engine_param(self, param: str) -> EngineParamVersion | None: ...
+    def list_engine_params(self, limit: int = 100) -> list[EngineParamVersion]: ...
     def add_market_snapshot(self, snapshot: MarketSnapshotRecord) -> MarketSnapshotRecord: ...
+    def add_derivative_snapshot(self, snapshot: DerivativeDataSnapshot) -> DerivativeDataSnapshot: ...
+    def list_derivative_snapshots(self, symbol: str | None = None, provider: str | None = None, limit: int = 100) -> list[DerivativeDataSnapshot]: ...
+    def latest_derivative_snapshot(self, symbol: str, provider: str | None = None) -> DerivativeDataSnapshot | None: ...
+    def delete_derivative_snapshots_before(self, cutoff: datetime) -> int: ...
+    def add_derivative_metric(self, metric: DerivativeMetric) -> DerivativeMetric: ...
+    def list_derivative_metrics(self, symbol: str | None = None, source: str | None = None, limit: int = 100) -> list[DerivativeMetric]: ...
+    def latest_derivative_metric(self, symbol: str, source: str | None = None) -> DerivativeMetric | None: ...
+    def delete_derivative_metrics_before(self, cutoff: datetime) -> int: ...
+    def add_liquidation_event(self, event: LiquidationEvent) -> LiquidationEvent: ...
+    def list_liquidation_events(self, symbol: str | None = None, source: str | None = None, limit: int = 100) -> list[LiquidationEvent]: ...
+    def delete_liquidation_events_before(self, cutoff: datetime) -> int: ...
+    def add_database_maintenance_event(self, event: DatabaseMaintenanceEvent) -> DatabaseMaintenanceEvent: ...
+    def list_database_maintenance_events(self, event_type: str | None = None, limit: int = 50) -> list[DatabaseMaintenanceEvent]: ...
     def add_research_run(self, run: ResearchRun) -> ResearchRun: ...
     def get_research_run(self, run_id: UUID) -> ResearchRun | None: ...
     def list_research_runs(self, symbol: str | None = None, limit: int = 20) -> list[ResearchRun]: ...
@@ -96,11 +143,20 @@ class MemoryRepository:
         self.position_snapshots: dict[UUID, list[PositionSnapshot]] = {}
         self.position_insights: dict[UUID, list[PositionInsight]] = {}
         self.position_events: dict[UUID, list[PositionEvent]] = {}
+        self.alerts: dict[UUID, AlertRecord] = {}
+        self.alert_responses: dict[UUID, AlertResponseRecord] = {}
+        self.scout_snapshots: dict[UUID, ScoutSnapshot] = {}
+        self.armed_setups: dict[UUID, ArmedSetup] = {}
         self.trades: dict[UUID, Trade] = {}
         self.judgments: dict[UUID, list[JudgmentLedgerEntry]] = {}
         self.judgment_scores: dict[UUID, JudgmentScore] = {}
         self.calibration_suggestions: dict[UUID, CalibrationSuggestion] = {}
+        self.engine_params: dict[UUID, EngineParamVersion] = {}
         self.market_snapshots: dict[UUID, MarketSnapshotRecord] = {}
+        self.derivative_snapshots: dict[UUID, DerivativeDataSnapshot] = {}
+        self.derivative_metrics: dict[UUID, DerivativeMetric] = {}
+        self.liquidation_events: dict[UUID, LiquidationEvent] = {}
+        self.database_maintenance_events: dict[UUID, DatabaseMaintenanceEvent] = {}
         self.research_runs: dict[UUID, ResearchRun] = {}
         self.agent_outputs: dict[UUID, list[AgentOutput]] = {}
         self.shadow_profiles: dict[str, ShadowProfile] = {}
@@ -171,6 +227,73 @@ class MemoryRepository:
     def list_position_events(self, position_id: UUID, limit: int = 50) -> list[PositionEvent]:
         return self.position_events.get(position_id, [])[:limit]
 
+    def add_alert(self, alert: AlertRecord) -> AlertRecord:
+        self.alerts[alert.id] = alert
+        return alert
+
+    def list_alerts(self, position_id: UUID | None = None, limit: int = 100) -> list[AlertRecord]:
+        alerts = list(self.alerts.values())
+        if position_id is not None:
+            alerts = [alert for alert in alerts if alert.position_id == position_id]
+        return sorted(alerts, key=lambda item: item.fired_at, reverse=True)[:limit]
+
+    def add_alert_response(self, response: AlertResponseRecord) -> AlertResponseRecord:
+        existing = self.get_alert_response(response.alert_id)
+        if existing is not None and existing.id != response.id:
+            self.alert_responses.pop(existing.id, None)
+        self.alert_responses[response.id] = response
+        return response
+
+    def get_alert_response(self, alert_id: UUID) -> AlertResponseRecord | None:
+        return next(
+            (response for response in self.alert_responses.values() if response.alert_id == alert_id),
+            None,
+        )
+
+    def list_alert_responses(
+        self,
+        position_id: UUID | None = None,
+        rule_id: str | None = None,
+        limit: int = 200,
+    ) -> list[AlertResponseRecord]:
+        responses = list(self.alert_responses.values())
+        if position_id is not None:
+            responses = [response for response in responses if response.position_id == position_id]
+        if rule_id is not None:
+            responses = [response for response in responses if response.rule_id == rule_id]
+        return sorted(responses, key=lambda item: item.detected_at, reverse=True)[:limit]
+
+    def add_scout_snapshot(self, snapshot: ScoutSnapshot) -> ScoutSnapshot:
+        self.scout_snapshots[snapshot.id] = snapshot
+        return snapshot
+
+    def list_scout_snapshots(self, symbol: str | None = None, limit: int = 100) -> list[ScoutSnapshot]:
+        snapshots = list(self.scout_snapshots.values())
+        if symbol:
+            snapshots = [snapshot for snapshot in snapshots if snapshot.symbol.upper() == symbol.upper()]
+        return sorted(snapshots, key=lambda item: item.as_of, reverse=True)[:limit]
+
+    def latest_scout_snapshot(self, symbol: str, timeframe: str | None = None) -> ScoutSnapshot | None:
+        snapshots = self.list_scout_snapshots(symbol=symbol, limit=500)
+        if timeframe:
+            snapshots = [snapshot for snapshot in snapshots if snapshot.timeframe == timeframe]
+        return snapshots[0] if snapshots else None
+
+    def upsert_armed_setup(self, setup: ArmedSetup) -> ArmedSetup:
+        self.armed_setups[setup.id] = setup
+        return setup
+
+    def get_armed_setup(self, setup_id: UUID) -> ArmedSetup | None:
+        return self.armed_setups.get(setup_id)
+
+    def list_armed_setups(self, symbol: str | None = None, status: str | None = None, limit: int = 200) -> list[ArmedSetup]:
+        setups = list(self.armed_setups.values())
+        if symbol:
+            setups = [setup for setup in setups if setup.symbol.upper() == symbol.upper()]
+        if status:
+            setups = [setup for setup in setups if setup.status == status]
+        return sorted(setups, key=lambda item: item.updated_at, reverse=True)[:limit]
+
     def add_trade(self, trade: Trade) -> Trade:
         self.trades[trade.id] = trade
         return trade
@@ -189,13 +312,22 @@ class MemoryRepository:
         return judgment
 
     def list_judgments(self, position_id: UUID, limit: int = 200) -> list[JudgmentLedgerEntry]:
-        return sorted(self.judgments.get(position_id, []), key=lambda item: item.as_of, reverse=True)[:limit]
+        return sorted(
+            self.judgments.get(position_id, []),
+            key=lambda item: item.as_of,
+            reverse=True,
+        )[:limit]
 
     def add_judgment_score(self, score: JudgmentScore) -> JudgmentScore:
         self.judgment_scores[score.id] = score
         return score
 
-    def list_judgment_scores(self, position_id: UUID | None = None, trade_id: UUID | None = None, limit: int = 500) -> list[JudgmentScore]:
+    def list_judgment_scores(
+        self,
+        position_id: UUID | None = None,
+        trade_id: UUID | None = None,
+        limit: int = 500,
+    ) -> list[JudgmentScore]:
         scores = list(self.judgment_scores.values())
         if position_id is not None:
             scores = [score for score in scores if score.position_id == position_id]
@@ -216,9 +348,97 @@ class MemoryRepository:
             suggestions = [suggestion for suggestion in suggestions if suggestion.status == status]
         return sorted(suggestions, key=lambda item: item.created_at, reverse=True)[:limit]
 
+    def add_engine_param_version(self, version: EngineParamVersion) -> EngineParamVersion:
+        for key, existing in list(self.engine_params.items()):
+            if existing.param == version.param and existing.status == "active" and existing.id != version.id:
+                self.engine_params[key] = existing.model_copy(update={"status": "superseded"})
+        self.engine_params[version.id] = version
+        return version
+
+    def latest_engine_param(self, param: str) -> EngineParamVersion | None:
+        versions = [version for version in self.engine_params.values() if version.param == param and version.status == "active"]
+        if not versions:
+            return None
+        return sorted(versions, key=lambda item: item.approved_at, reverse=True)[0]
+
+    def list_engine_params(self, limit: int = 100) -> list[EngineParamVersion]:
+        return sorted(self.engine_params.values(), key=lambda item: item.approved_at, reverse=True)[:limit]
+
     def add_market_snapshot(self, snapshot: MarketSnapshotRecord) -> MarketSnapshotRecord:
         self.market_snapshots[snapshot.id] = snapshot
         return snapshot
+
+    def add_derivative_snapshot(self, snapshot: DerivativeDataSnapshot) -> DerivativeDataSnapshot:
+        self.derivative_snapshots[snapshot.id] = snapshot
+        return snapshot
+
+    def list_derivative_snapshots(self, symbol: str | None = None, provider: str | None = None, limit: int = 100) -> list[DerivativeDataSnapshot]:
+        snapshots = list(self.derivative_snapshots.values())
+        if symbol:
+            snapshots = [snapshot for snapshot in snapshots if snapshot.symbol.upper() == symbol.upper()]
+        if provider:
+            snapshots = [snapshot for snapshot in snapshots if snapshot.provider == provider]
+        return sorted(snapshots, key=lambda item: item.created_at, reverse=True)[:limit]
+
+    def latest_derivative_snapshot(self, symbol: str, provider: str | None = None) -> DerivativeDataSnapshot | None:
+        snapshots = self.list_derivative_snapshots(symbol=symbol, provider=provider, limit=1)
+        return snapshots[0] if snapshots else None
+
+    def delete_derivative_snapshots_before(self, cutoff: datetime) -> int:
+        ids = [snapshot_id for snapshot_id, snapshot in self.derivative_snapshots.items() if snapshot.as_of < cutoff]
+        for snapshot_id in ids:
+            self.derivative_snapshots.pop(snapshot_id, None)
+        return len(ids)
+
+    def add_derivative_metric(self, metric: DerivativeMetric) -> DerivativeMetric:
+        self.derivative_metrics[metric.id] = metric
+        return metric
+
+    def list_derivative_metrics(self, symbol: str | None = None, source: str | None = None, limit: int = 100) -> list[DerivativeMetric]:
+        metrics = list(self.derivative_metrics.values())
+        if symbol:
+            metrics = [metric for metric in metrics if metric.symbol.upper() == symbol.upper()]
+        if source:
+            metrics = [metric for metric in metrics if metric.source == source]
+        return sorted(metrics, key=lambda item: item.as_of, reverse=True)[:limit]
+
+    def latest_derivative_metric(self, symbol: str, source: str | None = None) -> DerivativeMetric | None:
+        metrics = self.list_derivative_metrics(symbol=symbol, source=source, limit=1)
+        return metrics[0] if metrics else None
+
+    def delete_derivative_metrics_before(self, cutoff: datetime) -> int:
+        ids = [metric_id for metric_id, metric in self.derivative_metrics.items() if metric.as_of < cutoff]
+        for metric_id in ids:
+            self.derivative_metrics.pop(metric_id, None)
+        return len(ids)
+
+    def add_liquidation_event(self, event: LiquidationEvent) -> LiquidationEvent:
+        self.liquidation_events[event.id] = event
+        return event
+
+    def list_liquidation_events(self, symbol: str | None = None, source: str | None = None, limit: int = 100) -> list[LiquidationEvent]:
+        events = list(self.liquidation_events.values())
+        if symbol:
+            events = [event for event in events if event.symbol.upper() == symbol.upper()]
+        if source:
+            events = [event for event in events if event.source == source]
+        return sorted(events, key=lambda item: item.bucket_start, reverse=True)[:limit]
+
+    def delete_liquidation_events_before(self, cutoff: datetime) -> int:
+        ids = [event_id for event_id, event in self.liquidation_events.items() if event.bucket_start < cutoff]
+        for event_id in ids:
+            self.liquidation_events.pop(event_id, None)
+        return len(ids)
+
+    def add_database_maintenance_event(self, event: DatabaseMaintenanceEvent) -> DatabaseMaintenanceEvent:
+        self.database_maintenance_events[event.id] = event
+        return event
+
+    def list_database_maintenance_events(self, event_type: str | None = None, limit: int = 50) -> list[DatabaseMaintenanceEvent]:
+        events = list(self.database_maintenance_events.values())
+        if event_type:
+            events = [event for event in events if event.event_type == event_type]
+        return sorted(events, key=lambda item: item.created_at, reverse=True)[:limit]
 
     def add_research_run(self, run: ResearchRun) -> ResearchRun:
         self.research_runs[run.id] = run
@@ -238,7 +458,10 @@ class MemoryRepository:
         return output
 
     def list_agent_outputs(self, research_run_id: UUID) -> list[AgentOutput]:
-        return sorted(self.agent_outputs.get(research_run_id, []), key=lambda item: item.created_at)
+        return sorted(
+            self.agent_outputs.get(research_run_id, []),
+            key=lambda item: item.created_at,
+        )
 
     def add_shadow_profile(self, profile: ShadowProfile) -> ShadowProfile:
         self.shadow_profiles[profile.shadow_id] = profile
@@ -248,7 +471,11 @@ class MemoryRepository:
         return self.shadow_profiles.get(shadow_id)
 
     def list_shadow_profiles(self, limit: int = 20) -> list[ShadowProfile]:
-        return sorted(self.shadow_profiles.values(), key=lambda item: item.created_at, reverse=True)[:limit]
+        return sorted(
+            self.shadow_profiles.values(),
+            key=lambda item: item.created_at,
+            reverse=True,
+        )[:limit]
 
     def add_decision_memory(self, memory: DecisionMemory) -> DecisionMemory:
         self.decision_memories[memory.id] = memory
@@ -268,13 +495,18 @@ class MemoryRepository:
         return self.validation_runs.get(run_id)
 
     def list_validation_runs(self, limit: int = 20) -> list[ValidationRun]:
-        return sorted(self.validation_runs.values(), key=lambda item: item.created_at, reverse=True)[:limit]
+        return sorted(
+            self.validation_runs.values(),
+            key=lambda item: item.created_at,
+            reverse=True,
+        )[:limit]
 
     def list_watchlist(self) -> list[WatchlistItem]:
         return sorted(self.watchlist.values(), key=lambda item: item.added_at, reverse=True)
 
     def upsert_watchlist_item(self, item: WatchlistItem) -> WatchlistItem:
-        self.watchlist[item.symbol.upper()] = item
+        normalized = item.symbol.upper()
+        self.watchlist[normalized] = item.model_copy(update={"symbol": normalized})
         return item
 
     def remove_watchlist_item(self, symbol: str) -> bool:
@@ -286,7 +518,18 @@ class MemoryRepository:
 
     def search_symbols(self, query: str, limit: int = 20) -> list[CatalogSymbol]:
         needle = query.strip().upper()
-        matches = [item for symbol, item in self.symbol_catalog.items() if needle in symbol] if needle else list(self.symbol_catalog.values())
+        matches = (
+            [
+                item
+                for symbol, item in self.symbol_catalog.items()
+                if needle in symbol
+                or needle in item.base_coin.upper()
+                or needle in item.quote_coin.upper()
+                or needle in item.asset_class.upper()
+            ]
+            if needle
+            else list(self.symbol_catalog.values())
+        )
         return sorted(matches, key=lambda item: (len(item.symbol), item.symbol))[:limit]
 
     def symbol_catalog_updated_at(self) -> datetime | None:
@@ -314,10 +557,7 @@ class MemoryRepository:
         candidates = [
             item
             for item in self.entry_scenarios.values()
-            if item.symbol.upper() == symbol.upper()
-            and item.direction.value == direction
-            and item.linked_position_id is None
-            and item.created_at >= cutoff
+            if item.symbol.upper() == symbol.upper() and item.direction.value == direction and item.linked_position_id is None and item.created_at >= cutoff
         ]
         return max(candidates, key=lambda item: item.created_at, default=None)
 
@@ -333,209 +573,16 @@ class MemoryRepository:
 class SQLiteRepository:
     def __init__(self, database_path: str) -> None:
         self.database_path = database_path
-        self._lock = threading.RLock()
+        self._lock = SQLITE_WRITE_LOCK
         Path(database_path).parent.mkdir(parents=True, exist_ok=True)
         self._init_schema()
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self.database_path, check_same_thread=False)
-        connection.row_factory = sqlite3.Row
-        return connection
+        return connect_sqlite(self.database_path)
 
     def _init_schema(self) -> None:
         with self._lock, self._connect() as connection:
-            connection.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS reports (
-                    id TEXT PRIMARY KEY,
-                    symbol TEXT NOT NULL,
-                    timeframe TEXT NOT NULL,
-                    entry_score INTEGER NOT NULL,
-                    fomo_index INTEGER NOT NULL,
-                    created_at TEXT NOT NULL,
-                    payload TEXT NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_reports_symbol_created
-                    ON reports(symbol, created_at DESC);
-
-                CREATE TABLE IF NOT EXISTS positions (
-                    id TEXT PRIMARY KEY,
-                    symbol TEXT NOT NULL,
-                    status TEXT NOT NULL,
-                    opened_at TEXT NOT NULL,
-                    closed_at TEXT,
-                    payload TEXT NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_positions_status_opened
-                    ON positions(status, opened_at DESC);
-
-                CREATE TABLE IF NOT EXISTS monitoring_logs (
-                    id TEXT PRIMARY KEY,
-                    position_id TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    payload TEXT NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_monitoring_position_created
-                    ON monitoring_logs(position_id, created_at DESC);
-
-                CREATE TABLE IF NOT EXISTS position_snapshots (
-                    id TEXT PRIMARY KEY,
-                    position_id TEXT NOT NULL,
-                    symbol TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    payload TEXT NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_position_snapshots_position_created
-                    ON position_snapshots(position_id, created_at DESC);
-
-                CREATE TABLE IF NOT EXISTS position_insights (
-                    id TEXT PRIMARY KEY,
-                    position_id TEXT NOT NULL,
-                    snapshot_id TEXT,
-                    created_at TEXT NOT NULL,
-                    payload TEXT NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_position_insights_position_created
-                    ON position_insights(position_id, created_at DESC);
-
-                CREATE TABLE IF NOT EXISTS position_events (
-                    id TEXT PRIMARY KEY,
-                    position_id TEXT NOT NULL,
-                    event_type TEXT NOT NULL,
-                    severity TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    payload TEXT NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_position_events_position_created
-                    ON position_events(position_id, created_at DESC);
-
-                CREATE TABLE IF NOT EXISTS trades (
-                    id TEXT PRIMARY KEY,
-                    position_id TEXT NOT NULL,
-                    symbol TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    payload TEXT NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_trades_created
-                    ON trades(created_at DESC);
-
-                CREATE TABLE IF NOT EXISTS judgment_ledger (
-                    id TEXT PRIMARY KEY,
-                    position_id TEXT NOT NULL,
-                    judgment_id TEXT NOT NULL,
-                    as_of TEXT NOT NULL,
-                    type TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    payload TEXT NOT NULL
-                );
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_judgment_ledger_judgment_id
-                    ON judgment_ledger(judgment_id);
-                CREATE INDEX IF NOT EXISTS idx_judgment_ledger_position_asof
-                    ON judgment_ledger(position_id, as_of DESC);
-
-                CREATE TABLE IF NOT EXISTS judgment_scores (
-                    id TEXT PRIMARY KEY,
-                    position_id TEXT NOT NULL,
-                    trade_id TEXT,
-                    judgment_id TEXT NOT NULL,
-                    outcome TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    payload TEXT NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_judgment_scores_position_created
-                    ON judgment_scores(position_id, created_at DESC);
-                CREATE INDEX IF NOT EXISTS idx_judgment_scores_trade_created
-                    ON judgment_scores(trade_id, created_at DESC);
-
-                CREATE TABLE IF NOT EXISTS calibration_suggestions (
-                    id TEXT PRIMARY KEY,
-                    status TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    payload TEXT NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_calibration_suggestions_status_created
-                    ON calibration_suggestions(status, created_at DESC);
-
-                CREATE TABLE IF NOT EXISTS market_snapshots (
-                    id TEXT PRIMARY KEY,
-                    symbol TEXT NOT NULL,
-                    timeframe TEXT NOT NULL,
-                    provider TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    payload TEXT NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_market_snapshots_symbol_created
-                    ON market_snapshots(symbol, created_at DESC);
-
-                CREATE TABLE IF NOT EXISTS research_runs (
-                    id TEXT PRIMARY KEY,
-                    symbol TEXT NOT NULL,
-                    timeframe TEXT NOT NULL,
-                    report_id TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    payload TEXT NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_research_runs_symbol_created
-                    ON research_runs(symbol, created_at DESC);
-
-                CREATE TABLE IF NOT EXISTS agent_outputs (
-                    id TEXT PRIMARY KEY,
-                    research_run_id TEXT NOT NULL,
-                    agent_name TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    payload TEXT NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_agent_outputs_run_created
-                    ON agent_outputs(research_run_id, created_at ASC);
-
-                CREATE TABLE IF NOT EXISTS shadow_profiles (
-                    shadow_id TEXT PRIMARY KEY,
-                    created_at TEXT NOT NULL,
-                    payload TEXT NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS decision_memories (
-                    id TEXT PRIMARY KEY,
-                    symbol TEXT,
-                    memory_type TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    payload TEXT NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_decision_memories_symbol_created
-                    ON decision_memories(symbol, created_at DESC);
-
-                CREATE TABLE IF NOT EXISTS validation_runs (
-                    id TEXT PRIMARY KEY,
-                    symbol TEXT NOT NULL,
-                    timeframe TEXT NOT NULL,
-                    strategy_type TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    payload TEXT NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_validation_runs_created
-                    ON validation_runs(created_at DESC);
-                CREATE TABLE IF NOT EXISTS watchlist (
-                    symbol TEXT PRIMARY KEY,
-                    added_at TEXT NOT NULL,
-                    payload TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS symbol_catalog (
-                    symbol TEXT PRIMARY KEY,
-                    updated_at TEXT NOT NULL,
-                    payload TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS entry_scenarios (
-                    id TEXT PRIMARY KEY,
-                    symbol TEXT NOT NULL,
-                    direction TEXT NOT NULL,
-                    linked_position_id TEXT,
-                    created_at TEXT NOT NULL,
-                    payload TEXT NOT NULL
-                );
-                CREATE INDEX IF NOT EXISTS idx_entry_scenarios_symbol
-                    ON entry_scenarios(symbol, direction, created_at DESC);
-                """
-            )
+            run_migrations(connection)
 
     def add_report(self, report: Report) -> Report:
         payload = _dump_model(report)
@@ -606,7 +653,12 @@ class SQLiteRepository:
                     (id, position_id, created_at, payload)
                 VALUES (?, ?, ?, ?)
                 """,
-                (str(log.id), str(log.position_id), log.created_at.isoformat(), _dump_model(log)),
+                (
+                    str(log.id),
+                    str(log.position_id),
+                    log.created_at.isoformat(),
+                    _dump_model(log),
+                ),
             )
         return log
 
@@ -697,6 +749,189 @@ class SQLiteRepository:
             ).fetchall()
         return [PositionEvent.model_validate_json(row["payload"]) for row in rows]
 
+    def add_alert(self, alert: AlertRecord) -> AlertRecord:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO alerts
+                    (id, rule_id, position_id, symbol, severity, fired_at, delivered, acked, created_at, payload)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(alert.id),
+                    alert.rule_id,
+                    str(alert.position_id) if alert.position_id else None,
+                    alert.symbol.upper(),
+                    alert.severity,
+                    alert.fired_at.isoformat(),
+                    1 if alert.delivered else 0,
+                    1 if alert.acked else 0,
+                    alert.created_at.isoformat(),
+                    _dump_model(alert),
+                ),
+            )
+        return alert
+
+    def list_alerts(self, position_id: UUID | None = None, limit: int = 100) -> list[AlertRecord]:
+        query = "SELECT payload FROM alerts"
+        params: tuple[str | int, ...]
+        if position_id is not None:
+            query += " WHERE position_id = ?"
+            params = (str(position_id), limit)
+        else:
+            params = (limit,)
+        query += " ORDER BY fired_at DESC LIMIT ?"
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [AlertRecord.model_validate_json(row["payload"]) for row in rows]
+
+    def add_alert_response(self, response: AlertResponseRecord) -> AlertResponseRecord:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                "DELETE FROM alert_responses WHERE alert_id = ? AND id != ?",
+                (str(response.alert_id), str(response.id)),
+            )
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO alert_responses
+                    (id, alert_id, position_id, rule_id, symbol, response, detected_at, outcome, created_at, payload)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(response.id),
+                    str(response.alert_id),
+                    str(response.position_id),
+                    response.rule_id,
+                    response.symbol.upper(),
+                    response.response,
+                    response.detected_at.isoformat(),
+                    response.outcome,
+                    response.created_at.isoformat(),
+                    _dump_model(response),
+                ),
+            )
+        return response
+
+    def get_alert_response(self, alert_id: UUID) -> AlertResponseRecord | None:
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT payload FROM alert_responses WHERE alert_id = ? LIMIT 1",
+                (str(alert_id),),
+            ).fetchone()
+        return AlertResponseRecord.model_validate_json(row["payload"]) if row else None
+
+    def list_alert_responses(
+        self,
+        position_id: UUID | None = None,
+        rule_id: str | None = None,
+        limit: int = 200,
+    ) -> list[AlertResponseRecord]:
+        query = "SELECT payload FROM alert_responses"
+        clauses: list[str] = []
+        params: list[str | int] = []
+        if position_id is not None:
+            clauses.append("position_id = ?")
+            params.append(str(position_id))
+        if rule_id is not None:
+            clauses.append("rule_id = ?")
+            params.append(rule_id)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY detected_at DESC LIMIT ?"
+        params.append(limit)
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(query, tuple(params)).fetchall()
+        return [AlertResponseRecord.model_validate_json(row["payload"]) for row in rows]
+
+    def add_scout_snapshot(self, snapshot: ScoutSnapshot) -> ScoutSnapshot:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO scout_snapshots
+                    (id, symbol, timeframe, as_of, created_at, payload)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(snapshot.id),
+                    snapshot.symbol.upper(),
+                    snapshot.timeframe,
+                    snapshot.as_of.isoformat(),
+                    snapshot.created_at.isoformat(),
+                    _dump_model(snapshot),
+                ),
+            )
+        return snapshot
+
+    def list_scout_snapshots(self, symbol: str | None = None, limit: int = 100) -> list[ScoutSnapshot]:
+        query = "SELECT payload FROM scout_snapshots"
+        params: tuple[str | int, ...]
+        if symbol:
+            query += " WHERE symbol = ?"
+            params = (symbol.upper(), limit)
+        else:
+            params = (limit,)
+        query += " ORDER BY as_of DESC LIMIT ?"
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [ScoutSnapshot.model_validate_json(row["payload"]) for row in rows]
+
+    def latest_scout_snapshot(self, symbol: str, timeframe: str | None = None) -> ScoutSnapshot | None:
+        query = "SELECT payload FROM scout_snapshots WHERE symbol = ?"
+        params: list[str | int] = [symbol.upper()]
+        if timeframe:
+            query += " AND timeframe = ?"
+            params.append(timeframe)
+        query += " ORDER BY as_of DESC LIMIT 1"
+        with self._lock, self._connect() as connection:
+            row = connection.execute(query, tuple(params)).fetchone()
+        return ScoutSnapshot.model_validate_json(row["payload"]) if row else None
+
+    def upsert_armed_setup(self, setup: ArmedSetup) -> ArmedSetup:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO armed_setups
+                    (id, symbol, timeframe, source, setup_type, status, trigger_price, updated_at, created_at, payload)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(setup.id),
+                    setup.symbol.upper(),
+                    setup.timeframe,
+                    setup.source,
+                    setup.setup_type,
+                    setup.status,
+                    setup.trigger_price,
+                    setup.updated_at.isoformat(),
+                    setup.created_at.isoformat(),
+                    _dump_model(setup),
+                ),
+            )
+        return setup
+
+    def get_armed_setup(self, setup_id: UUID) -> ArmedSetup | None:
+        with self._lock, self._connect() as connection:
+            row = connection.execute("SELECT payload FROM armed_setups WHERE id = ?", (str(setup_id),)).fetchone()
+        return ArmedSetup.model_validate_json(row["payload"]) if row else None
+
+    def list_armed_setups(self, symbol: str | None = None, status: str | None = None, limit: int = 200) -> list[ArmedSetup]:
+        query = "SELECT payload FROM armed_setups"
+        clauses: list[str] = []
+        params: list[str | int] = []
+        if symbol:
+            clauses.append("symbol = ?")
+            params.append(symbol.upper())
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY updated_at DESC LIMIT ?"
+        params.append(limit)
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(query, tuple(params)).fetchall()
+        return [ArmedSetup.model_validate_json(row["payload"]) for row in rows]
+
     def add_trade(self, trade: Trade) -> Trade:
         with self._lock, self._connect() as connection:
             connection.execute(
@@ -705,7 +940,13 @@ class SQLiteRepository:
                     (id, position_id, symbol, created_at, payload)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                (str(trade.id), str(trade.position_id), trade.symbol.upper(), trade.created_at.isoformat(), _dump_model(trade)),
+                (
+                    str(trade.id),
+                    str(trade.position_id),
+                    trade.symbol.upper(),
+                    trade.created_at.isoformat(),
+                    _dump_model(trade),
+                ),
             )
         return trade
 
@@ -767,7 +1008,12 @@ class SQLiteRepository:
             )
         return score
 
-    def list_judgment_scores(self, position_id: UUID | None = None, trade_id: UUID | None = None, limit: int = 500) -> list[JudgmentScore]:
+    def list_judgment_scores(
+        self,
+        position_id: UUID | None = None,
+        trade_id: UUID | None = None,
+        limit: int = 500,
+    ) -> list[JudgmentScore]:
         query = "SELECT payload FROM judgment_scores"
         clauses: list[str] = []
         params: list[str | int] = []
@@ -793,13 +1039,21 @@ class SQLiteRepository:
                     (id, status, created_at, payload)
                 VALUES (?, ?, ?, ?)
                 """,
-                (str(suggestion.id), suggestion.status, suggestion.created_at.isoformat(), _dump_model(suggestion)),
+                (
+                    str(suggestion.id),
+                    suggestion.status,
+                    suggestion.created_at.isoformat(),
+                    _dump_model(suggestion),
+                ),
             )
         return suggestion
 
     def get_calibration_suggestion(self, suggestion_id: UUID) -> CalibrationSuggestion | None:
         with self._lock, self._connect() as connection:
-            row = connection.execute("SELECT payload FROM calibration_suggestions WHERE id = ?", (str(suggestion_id),)).fetchone()
+            row = connection.execute(
+                "SELECT payload FROM calibration_suggestions WHERE id = ?",
+                (str(suggestion_id),),
+            ).fetchone()
         return CalibrationSuggestion.model_validate_json(row["payload"]) if row else None
 
     def list_calibration_suggestions(self, status: str | None = None, limit: int = 50) -> list[CalibrationSuggestion]:
@@ -815,6 +1069,54 @@ class SQLiteRepository:
             rows = connection.execute(query, params).fetchall()
         return [CalibrationSuggestion.model_validate_json(row["payload"]) for row in rows]
 
+    def add_engine_param_version(self, version: EngineParamVersion) -> EngineParamVersion:
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                "SELECT id, payload FROM engine_params WHERE param = ? AND status = 'active'",
+                (version.param,),
+            ).fetchall()
+            for row in rows:
+                existing = EngineParamVersion.model_validate_json(row["payload"])
+                if existing.id == version.id:
+                    continue
+                superseded = existing.model_copy(update={"status": "superseded"})
+                connection.execute(
+                    "UPDATE engine_params SET status = ?, payload = ? WHERE id = ?",
+                    (superseded.status, _dump_model(superseded), str(superseded.id)),
+                )
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO engine_params
+                    (id, param, status, approved_at, suggestion_id, payload)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(version.id),
+                    version.param,
+                    version.status,
+                    version.approved_at.isoformat(),
+                    str(version.suggestion_id) if version.suggestion_id else None,
+                    _dump_model(version),
+                ),
+            )
+        return version
+
+    def latest_engine_param(self, param: str) -> EngineParamVersion | None:
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT payload FROM engine_params WHERE param = ? AND status = 'active' ORDER BY approved_at DESC LIMIT 1",
+                (param,),
+            ).fetchone()
+        return EngineParamVersion.model_validate_json(row["payload"]) if row else None
+
+    def list_engine_params(self, limit: int = 100) -> list[EngineParamVersion]:
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                "SELECT payload FROM engine_params ORDER BY approved_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [EngineParamVersion.model_validate_json(row["payload"]) for row in rows]
+
     def add_market_snapshot(self, snapshot: MarketSnapshotRecord) -> MarketSnapshotRecord:
         with self._lock, self._connect() as connection:
             connection.execute(
@@ -823,9 +1125,190 @@ class SQLiteRepository:
                     (id, symbol, timeframe, provider, created_at, payload)
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (str(snapshot.id), snapshot.symbol.upper(), snapshot.timeframe, snapshot.provider, snapshot.created_at.isoformat(), _dump_model(snapshot)),
+                (
+                    str(snapshot.id),
+                    snapshot.symbol.upper(),
+                    snapshot.timeframe,
+                    snapshot.provider,
+                    snapshot.created_at.isoformat(),
+                    _dump_model(snapshot),
+                ),
             )
         return snapshot
+
+    def add_derivative_snapshot(self, snapshot: DerivativeDataSnapshot) -> DerivativeDataSnapshot:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO derivative_snapshots
+                    (id, symbol, provider, tier, as_of, created_at, payload)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(snapshot.id),
+                    snapshot.symbol.upper(),
+                    snapshot.provider,
+                    snapshot.tier,
+                    snapshot.as_of.isoformat(),
+                    snapshot.created_at.isoformat(),
+                    _dump_model(snapshot),
+                ),
+            )
+        return snapshot
+
+    def list_derivative_snapshots(self, symbol: str | None = None, provider: str | None = None, limit: int = 100) -> list[DerivativeDataSnapshot]:
+        query = "SELECT payload FROM derivative_snapshots"
+        clauses: list[str] = []
+        params: list[str | int] = []
+        if symbol:
+            clauses.append("symbol = ?")
+            params.append(symbol.upper())
+        if provider:
+            clauses.append("provider = ?")
+            params.append(provider)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(query, tuple(params)).fetchall()
+        return [DerivativeDataSnapshot.model_validate_json(row["payload"]) for row in rows]
+
+    def latest_derivative_snapshot(self, symbol: str, provider: str | None = None) -> DerivativeDataSnapshot | None:
+        snapshots = self.list_derivative_snapshots(symbol=symbol, provider=provider, limit=1)
+        return snapshots[0] if snapshots else None
+
+    def delete_derivative_snapshots_before(self, cutoff: datetime) -> int:
+        with self._lock, self._connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM derivative_snapshots WHERE as_of < ?",
+                (cutoff.isoformat(),),
+            )
+            return int(cursor.rowcount or 0)
+
+    def add_derivative_metric(self, metric: DerivativeMetric) -> DerivativeMetric:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO deriv_metrics
+                    (id, symbol, source, tier, as_of, created_at, payload)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(metric.id),
+                    metric.symbol.upper(),
+                    metric.source,
+                    metric.tier,
+                    metric.as_of.isoformat(),
+                    metric.created_at.isoformat(),
+                    _dump_model(metric),
+                ),
+            )
+        return metric
+
+    def list_derivative_metrics(self, symbol: str | None = None, source: str | None = None, limit: int = 100) -> list[DerivativeMetric]:
+        query = "SELECT payload FROM deriv_metrics"
+        clauses: list[str] = []
+        params: list[str | int] = []
+        if symbol:
+            clauses.append("symbol = ?")
+            params.append(symbol.upper())
+        if source:
+            clauses.append("source = ?")
+            params.append(source)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY as_of DESC LIMIT ?"
+        params.append(limit)
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(query, tuple(params)).fetchall()
+        return [DerivativeMetric.model_validate_json(row["payload"]) for row in rows]
+
+    def latest_derivative_metric(self, symbol: str, source: str | None = None) -> DerivativeMetric | None:
+        metrics = self.list_derivative_metrics(symbol=symbol, source=source, limit=1)
+        return metrics[0] if metrics else None
+
+    def delete_derivative_metrics_before(self, cutoff: datetime) -> int:
+        with self._lock, self._connect() as connection:
+            cursor = connection.execute("DELETE FROM deriv_metrics WHERE as_of < ?", (cutoff.isoformat(),))
+            return int(cursor.rowcount or 0)
+
+    def add_liquidation_event(self, event: LiquidationEvent) -> LiquidationEvent:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO liquidation_events
+                    (id, symbol, source, interval, bucket_start, created_at, payload)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(event.id),
+                    event.symbol.upper(),
+                    event.source,
+                    event.interval,
+                    event.bucket_start.isoformat(),
+                    event.created_at.isoformat(),
+                    _dump_model(event),
+                ),
+            )
+        return event
+
+    def list_liquidation_events(self, symbol: str | None = None, source: str | None = None, limit: int = 100) -> list[LiquidationEvent]:
+        query = "SELECT payload FROM liquidation_events"
+        clauses: list[str] = []
+        params: list[str | int] = []
+        if symbol:
+            clauses.append("symbol = ?")
+            params.append(symbol.upper())
+        if source:
+            clauses.append("source = ?")
+            params.append(source)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY bucket_start DESC LIMIT ?"
+        params.append(limit)
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(query, tuple(params)).fetchall()
+        return [LiquidationEvent.model_validate_json(row["payload"]) for row in rows]
+
+    def delete_liquidation_events_before(self, cutoff: datetime) -> int:
+        with self._lock, self._connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM liquidation_events WHERE bucket_start < ?",
+                (cutoff.isoformat(),),
+            )
+            return int(cursor.rowcount or 0)
+
+    def add_database_maintenance_event(self, event: DatabaseMaintenanceEvent) -> DatabaseMaintenanceEvent:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO database_maintenance_events
+                    (id, event_type, status, created_at, payload)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    str(event.id),
+                    event.event_type,
+                    event.status,
+                    event.created_at.isoformat(),
+                    _dump_model(event),
+                ),
+            )
+        return event
+
+    def list_database_maintenance_events(self, event_type: str | None = None, limit: int = 50) -> list[DatabaseMaintenanceEvent]:
+        query = "SELECT payload FROM database_maintenance_events"
+        params: tuple[str | int, ...]
+        if event_type:
+            query += " WHERE event_type = ?"
+            params = (event_type, limit)
+        else:
+            params = (limit,)
+        query += " ORDER BY created_at DESC LIMIT ?"
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(query, params).fetchall()
+        return [DatabaseMaintenanceEvent.model_validate_json(row["payload"]) for row in rows]
 
     def add_research_run(self, run: ResearchRun) -> ResearchRun:
         with self._lock, self._connect() as connection:
@@ -835,7 +1318,14 @@ class SQLiteRepository:
                     (id, symbol, timeframe, report_id, created_at, payload)
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (str(run.id), run.symbol.upper(), run.timeframe, str(run.report_id), run.created_at.isoformat(), _dump_model(run)),
+                (
+                    str(run.id),
+                    run.symbol.upper(),
+                    run.timeframe,
+                    str(run.report_id),
+                    run.created_at.isoformat(),
+                    _dump_model(run),
+                ),
             )
         return run
 
@@ -864,7 +1354,13 @@ class SQLiteRepository:
                     (id, research_run_id, agent_name, created_at, payload)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                (str(output.id), str(output.research_run_id), output.agent_name, output.created_at.isoformat(), _dump_model(output)),
+                (
+                    str(output.id),
+                    str(output.research_run_id),
+                    output.agent_name,
+                    output.created_at.isoformat(),
+                    _dump_model(output),
+                ),
             )
         return output
 
@@ -880,7 +1376,11 @@ class SQLiteRepository:
         with self._lock, self._connect() as connection:
             connection.execute(
                 "INSERT OR REPLACE INTO shadow_profiles (shadow_id, created_at, payload) VALUES (?, ?, ?)",
-                (profile.shadow_id, profile.created_at.isoformat(), _dump_model(profile)),
+                (
+                    profile.shadow_id,
+                    profile.created_at.isoformat(),
+                    _dump_model(profile),
+                ),
             )
         return profile
 
@@ -891,7 +1391,10 @@ class SQLiteRepository:
 
     def list_shadow_profiles(self, limit: int = 20) -> list[ShadowProfile]:
         with self._lock, self._connect() as connection:
-            rows = connection.execute("SELECT payload FROM shadow_profiles ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+            rows = connection.execute(
+                "SELECT payload FROM shadow_profiles ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
         return [ShadowProfile.model_validate_json(row["payload"]) for row in rows]
 
     def add_decision_memory(self, memory: DecisionMemory) -> DecisionMemory:
@@ -902,7 +1405,13 @@ class SQLiteRepository:
                     (id, symbol, memory_type, created_at, payload)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                (str(memory.id), memory.symbol.upper() if memory.symbol else None, memory.memory_type, memory.created_at.isoformat(), _dump_model(memory)),
+                (
+                    str(memory.id),
+                    memory.symbol.upper() if memory.symbol else None,
+                    memory.memory_type,
+                    memory.created_at.isoformat(),
+                    _dump_model(memory),
+                ),
             )
         return memory
 
@@ -925,7 +1434,14 @@ class SQLiteRepository:
                     (id, symbol, timeframe, strategy_type, created_at, payload)
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (str(run.id), run.symbol.upper(), run.timeframe, run.strategy_type, run.created_at.isoformat(), _dump_model(run)),
+                (
+                    str(run.id),
+                    run.symbol.upper(),
+                    run.timeframe,
+                    run.strategy_type,
+                    run.created_at.isoformat(),
+                    _dump_model(run),
+                ),
             )
         return run
 
@@ -936,7 +1452,10 @@ class SQLiteRepository:
 
     def list_validation_runs(self, limit: int = 20) -> list[ValidationRun]:
         with self._lock, self._connect() as connection:
-            rows = connection.execute("SELECT payload FROM validation_runs ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+            rows = connection.execute(
+                "SELECT payload FROM validation_runs ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
         return [ValidationRun.model_validate_json(row["payload"]) for row in rows]
 
     def list_watchlist(self) -> list[WatchlistItem]:
@@ -945,12 +1464,14 @@ class SQLiteRepository:
         return [WatchlistItem.model_validate_json(row["payload"]) for row in rows]
 
     def upsert_watchlist_item(self, item: WatchlistItem) -> WatchlistItem:
+        normalized = item.symbol.upper()
+        stored = item.model_copy(update={"symbol": normalized})
         with self._lock, self._connect() as connection:
             connection.execute(
-                "INSERT OR REPLACE INTO watchlist (symbol, added_at, payload) VALUES (?, ?, ?)",
-                (item.symbol.upper(), item.added_at.isoformat(), _dump_model(item)),
+                "INSERT OR REPLACE INTO watchlist (symbol, added_at, asset_class, payload) VALUES (?, ?, ?, ?)",
+                (normalized, stored.added_at.isoformat(), stored.asset_class, _dump_model(stored)),
             )
-        return item
+        return stored
 
     def remove_watchlist_item(self, symbol: str) -> bool:
         with self._lock, self._connect() as connection:
@@ -961,8 +1482,16 @@ class SQLiteRepository:
         with self._lock, self._connect() as connection:
             connection.execute("DELETE FROM symbol_catalog")
             connection.executemany(
-                "INSERT OR REPLACE INTO symbol_catalog (symbol, updated_at, payload) VALUES (?, ?, ?)",
-                [(item.symbol.upper(), item.updated_at.isoformat(), _dump_model(item)) for item in symbols],
+                "INSERT OR REPLACE INTO symbol_catalog (symbol, updated_at, asset_class, payload) VALUES (?, ?, ?, ?)",
+                [
+                    (
+                        item.symbol.upper(),
+                        item.updated_at.isoformat(),
+                        item.asset_class,
+                        _dump_model(item),
+                    )
+                    for item in symbols
+                ],
             )
         return len(symbols)
 
@@ -971,11 +1500,20 @@ class SQLiteRepository:
         with self._lock, self._connect() as connection:
             if needle:
                 rows = connection.execute(
-                    "SELECT payload FROM symbol_catalog WHERE symbol LIKE ? ORDER BY length(symbol), symbol LIMIT ?",
-                    (f"%{needle}%", limit),
+                    """
+                    SELECT payload
+                    FROM symbol_catalog
+                    WHERE symbol LIKE ? OR asset_class LIKE ? OR payload LIKE ?
+                    ORDER BY length(symbol), symbol
+                    LIMIT ?
+                    """,
+                    (f"%{needle}%", f"%{needle.lower()}%", f"%{needle}%", limit),
                 ).fetchall()
             else:
-                rows = connection.execute("SELECT payload FROM symbol_catalog ORDER BY length(symbol), symbol LIMIT ?", (limit,)).fetchall()
+                rows = connection.execute(
+                    "SELECT payload FROM symbol_catalog ORDER BY length(symbol), symbol LIMIT ?",
+                    (limit,),
+                ).fetchall()
         return [CatalogSymbol.model_validate_json(row["payload"]) for row in rows]
 
     def symbol_catalog_updated_at(self) -> datetime | None:
@@ -1016,7 +1554,10 @@ class SQLiteRepository:
                     (symbol.upper(), limit),
                 ).fetchall()
             else:
-                rows = connection.execute("SELECT payload FROM entry_scenarios ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+                rows = connection.execute(
+                    "SELECT payload FROM entry_scenarios ORDER BY created_at DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
         return [EntryScenario.model_validate_json(row["payload"]) for row in rows]
 
     def find_matching_scenario(self, symbol: str, direction: str, within_hours: int = 72) -> EntryScenario | None:

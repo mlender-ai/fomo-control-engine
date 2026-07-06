@@ -70,4 +70,3 @@ def calculate_indicators(snapshot: MarketSnapshot) -> dict:
         "previous_close": closes[-2],
         "twenty_close": closes[-20],
     }
-

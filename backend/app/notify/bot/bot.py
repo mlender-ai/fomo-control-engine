@@ -3,15 +3,15 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
-from datetime import datetime, timezone
 from typing import Any, Awaitable, Callable
 
 from app.core.config import Settings
-from app.notify.bot.callbacks import parse_callback
+from app.notify.bot.callbacks import encode_callback, parse_callback
 from app.notify.bot.formatters import (
     detail_keyboard,
     format_action_plan,
-    format_calibration,
+    format_briefing,
+    format_flow,
     format_help,
     format_insight,
     format_position_verdict,
@@ -20,11 +20,14 @@ from app.notify.bot.formatters import (
     format_scout,
     format_simulation,
     format_status,
+    format_weekly_calibration,
+    insight_keyboard,
+    main_menu_keyboard,
     positions_keyboard,
+    split_telegram_text,
 )
 from app.notify.bot.security import ChatGuard
 from app.notify.state import NotificationState
-from app.notify.telegram import inline_keyboard
 from app.services import runtime as service
 from app.worker.runtime import get_worker_status
 
@@ -62,17 +65,34 @@ class TelegramBotSupervisor:
 
     async def _run_polling(self) -> None:
         try:
-            from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-            from telegram.ext import Application, CallbackQueryHandler, CommandHandler, ContextTypes
+            from telegram import Update
+            from telegram.ext import (
+                Application,
+                CallbackQueryHandler,
+                CommandHandler,
+                ContextTypes,
+            )
         except ModuleNotFoundError as exc:
             raise RuntimeError("python-telegram-bot is not installed") from exc
 
-        async def guarded(update: Update, action: Callable[[Update, Any], Awaitable[None]], context: ContextTypes.DEFAULT_TYPE) -> None:
+        async def guarded(
+            update: Update,
+            action: Callable[[Update, Any], Awaitable[None]],
+            context: ContextTypes.DEFAULT_TYPE,
+        ) -> None:
             chat_id = update.effective_chat.id if update.effective_chat else None
             if not self.guard.is_allowed(chat_id):
                 logger.warning("telegram ignored unauthorized chat_id=%s", chat_id)
                 return
-            await action(update, context)
+            try:
+                await action(update, context)
+            except RuntimeError as exc:
+                await self._reply(update.effective_message, str(exc))
+            except ValueError:
+                await self._reply(
+                    update.effective_message,
+                    "입력값을 확인해주세요. /help에서 사용법을 볼 수 있습니다.",
+                )
 
         async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await guarded(update, self._help, context)
@@ -85,6 +105,12 @@ class TelegramBotSupervisor:
 
         async def insight(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await guarded(update, self._insight, context)
+
+        async def flow(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+            await guarded(update, self._flow, context)
+
+        async def brief(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+            await guarded(update, self._brief, context)
 
         async def scout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await guarded(update, self._scout, context)
@@ -115,6 +141,8 @@ class TelegramBotSupervisor:
         app.add_handler(CommandHandler(["positions", "p"], positions))
         app.add_handler(CommandHandler("plan", plan))
         app.add_handler(CommandHandler("insight", insight))
+        app.add_handler(CommandHandler("flow", flow))
+        app.add_handler(CommandHandler("brief", brief))
         app.add_handler(CommandHandler("scout", scout))
         app.add_handler(CommandHandler("sim", sim))
         app.add_handler(CommandHandler("review", review))
@@ -137,10 +165,10 @@ class TelegramBotSupervisor:
             await app.shutdown()
 
     async def _help(self, update: Any, context: Any) -> None:
-        await update.effective_message.reply_text(
+        await self._reply(
+            update.effective_message,
             format_help(),
-            parse_mode="HTML",
-            reply_markup=_markup([[{"text": "포지션", "callback_data": "v1:list:"}]], context),
+            reply_markup=_markup(main_menu_keyboard(), context),
         )
 
     async def _positions(self, update: Any, context: Any) -> None:
@@ -149,55 +177,76 @@ class TelegramBotSupervisor:
             await self._send_detail(update, context, args[0])
             return
         payload = await self._run(service.list_live_positions)
-        await update.effective_message.reply_text(format_positions_summary(payload), parse_mode="HTML", reply_markup=_markup(positions_keyboard(payload), context))
+        await self._reply(
+            update.effective_message,
+            format_positions_summary(payload),
+            reply_markup=_markup(positions_keyboard(payload), context),
+        )
 
     async def _plan(self, update: Any, context: Any) -> None:
         symbol = _first_arg(context.args)
         if not symbol:
-            await update.effective_message.reply_text("사용법: /plan BASED")
+            await self._reply(update.effective_message, "사용법: /plan BASED")
             return
         await self._send_plan(update, context, symbol)
 
     async def _insight(self, update: Any, context: Any) -> None:
         symbol = _first_arg(context.args)
         if not symbol:
-            await update.effective_message.reply_text("사용법: /insight BASED")
+            await self._reply(update.effective_message, "사용법: /insight BASED")
             return
         await self._send_insight(update, context, symbol)
 
+    async def _flow(self, update: Any, context: Any) -> None:
+        symbol = _first_arg(context.args)
+        if not symbol:
+            await self._reply(update.effective_message, "사용법: /flow BASED")
+            return
+        await self._send_flow(update, context, symbol)
+
+    async def _brief(self, update: Any, context: Any) -> None:
+        symbol = _first_arg(context.args)
+        if not symbol:
+            await self._reply(update.effective_message, "사용법: /brief BASED")
+            return
+        await self._send_brief(update, context, symbol)
+
     async def _scout(self, update: Any, context: Any) -> None:
         payload = await self._run(service.scout_scan)
-        await update.effective_message.reply_text(format_scout(payload), parse_mode="HTML")
+        await self._reply(update.effective_message, format_scout(payload))
 
     async def _sim(self, update: Any, context: Any) -> None:
         args = list(context.args or [])
         if len(args) < 3:
-            await update.effective_message.reply_text("사용법: /sim BASED long 10 [0.09]")
+            await self._reply(update.effective_message, "사용법: /sim BASED long 10 [0.09]")
             return
         entry = float(args[3]) if len(args) >= 4 else None
         result = await self._run(service.simulate_entry, args[0], args[1].lower(), float(args[2]), entry)
-        await update.effective_message.reply_text(format_simulation(result), parse_mode="HTML")
+        await self._reply(update.effective_message, format_simulation(result))
 
     async def _review(self, update: Any, context: Any) -> None:
         trades = await self._run(service.recent_reviews)
-        await update.effective_message.reply_text(format_reviews(trades), parse_mode="HTML")
+        await self._reply(update.effective_message, format_reviews(trades))
 
     async def _calib(self, update: Any, context: Any) -> None:
-        payload = await self._run(service.calibration_snapshot)
-        await update.effective_message.reply_text(format_calibration(payload), parse_mode="HTML")
+        payload = await self._run(service.weekly_calibration_report)
+        await self._reply(update.effective_message, format_weekly_calibration(payload))
 
     async def _status(self, update: Any, context: Any) -> None:
         payload = get_worker_status()
-        await update.effective_message.reply_text(format_status(payload), parse_mode="HTML")
+        await self._reply(update.effective_message, format_status(payload))
 
     async def _mute(self, update: Any, context: Any) -> None:
         seconds = parse_duration_seconds(_first_arg(context.args) or "2h")
         muted_until = self.state.mute_for(seconds)
-        await update.effective_message.reply_text(f"알림 무음: {muted_until.astimezone().strftime('%H:%M')}까지")
+        await self._reply(
+            update.effective_message,
+            f"알림 무음: {muted_until.astimezone().strftime('%H:%M')}까지",
+        )
 
     async def _unmute(self, update: Any, context: Any) -> None:
         self.state.unmute()
-        await update.effective_message.reply_text("알림 무음 해제")
+        await self._reply(update.effective_message, "알림 무음 해제")
 
     async def _callback(self, update: Any, context: Any) -> None:
         query = update.callback_query
@@ -208,13 +257,44 @@ class TelegramBotSupervisor:
             return
         if parsed.action == "list":
             payload = await self._run(service.list_live_positions)
-            await query.edit_message_text(format_positions_summary(payload), parse_mode="HTML", reply_markup=_markup(positions_keyboard(payload), context))
+            await self._edit(
+                query,
+                format_positions_summary(payload),
+                reply_markup=_markup(positions_keyboard(payload), context),
+            )
+        elif parsed.action == "scout":
+            payload = await self._run(service.scout_scan)
+            await self._edit(
+                query,
+                format_scout(payload),
+                reply_markup=_markup(main_menu_keyboard(), context),
+            )
+        elif parsed.action == "status":
+            await self._edit(
+                query,
+                format_status(get_worker_status()),
+                reply_markup=_markup(main_menu_keyboard(), context),
+            )
+        elif parsed.action == "sim":
+            symbol, direction = _symbol_direction(parsed.symbol)
+            result = await self._run(service.simulate_entry, symbol, direction, 10.0, None)
+            await self._edit(
+                query,
+                format_simulation(result),
+                reply_markup=_markup(main_menu_keyboard(), context),
+            )
         elif parsed.action == "detail":
             await self._edit_detail(query, context, parsed.symbol)
         elif parsed.action == "plan":
             await self._edit_plan(query, context, parsed.symbol)
         elif parsed.action == "insight":
             await self._edit_insight(query, context, parsed.symbol)
+        elif parsed.action == "flow":
+            await self._edit_flow(query, context, parsed.symbol)
+        elif parsed.action == "brief":
+            await self._edit_brief(query, context, parsed.symbol)
+        elif parsed.action == "regen_insight":
+            await self._edit_regenerated_insight(query, context, parsed.symbol)
         elif parsed.action == "refresh":
             await self._run(service.sync_and_analyze_positions)
             await self._edit_detail(query, context, parsed.symbol)
@@ -222,44 +302,167 @@ class TelegramBotSupervisor:
     async def _send_detail(self, update: Any, context: Any, symbol: str) -> None:
         payload = await self._detail_payload(symbol)
         if "candidates" in payload:
-            await update.effective_message.reply_text(_candidate_text(payload["candidates"]))
+            await self._reply(
+                update.effective_message,
+                _candidate_text(payload["candidates"]),
+                reply_markup=_markup(_candidate_rows(payload["candidates"]), context),
+            )
             return
-        await update.effective_message.reply_text(format_position_verdict(payload), parse_mode="HTML", reply_markup=_markup(detail_keyboard(payload["position"]["symbol"]), context))
+        await self._reply(
+            update.effective_message,
+            format_position_verdict(payload),
+            reply_markup=_markup(detail_keyboard(payload["position"]["symbol"]), context),
+        )
 
     async def _send_plan(self, update: Any, context: Any, symbol: str) -> None:
         payload = await self._detail_payload(symbol)
         if "candidates" in payload:
-            await update.effective_message.reply_text(_candidate_text(payload["candidates"]))
+            await self._reply(
+                update.effective_message,
+                _candidate_text(payload["candidates"]),
+                reply_markup=_markup(_candidate_rows(payload["candidates"]), context),
+            )
             return
-        await update.effective_message.reply_text(format_action_plan(payload), parse_mode="HTML", reply_markup=_markup(detail_keyboard(payload["position"]["symbol"]), context))
+        await self._reply(
+            update.effective_message,
+            format_action_plan(payload),
+            reply_markup=_markup(detail_keyboard(payload["position"]["symbol"]), context),
+        )
 
     async def _send_insight(self, update: Any, context: Any, symbol: str) -> None:
         payload = await self._detail_payload(symbol)
         if "candidates" in payload:
-            await update.effective_message.reply_text(_candidate_text(payload["candidates"]))
+            await self._reply(
+                update.effective_message,
+                _candidate_text(payload["candidates"]),
+                reply_markup=_markup(_candidate_rows(payload["candidates"]), context),
+            )
             return
-        await update.effective_message.reply_text(format_insight(payload), parse_mode="HTML", reply_markup=_markup(detail_keyboard(payload["position"]["symbol"]), context))
+        await self._reply(
+            update.effective_message,
+            format_insight(payload),
+            reply_markup=_markup(_insight_keyboard_rows(payload), context),
+        )
+
+    async def _send_flow(self, update: Any, context: Any, symbol: str) -> None:
+        payload = await self._flow_payload(symbol)
+        if "candidates" in payload:
+            await self._reply(
+                update.effective_message,
+                _candidate_text(payload["candidates"]),
+                reply_markup=_markup(_candidate_rows(payload["candidates"]), context),
+            )
+            return
+        await self._reply(
+            update.effective_message,
+            format_flow(payload),
+            reply_markup=_markup(detail_keyboard(payload["symbol"]), context),
+        )
+
+    async def _send_brief(self, update: Any, context: Any, symbol: str) -> None:
+        payload = await self._brief_payload(symbol)
+        if "candidates" in payload:
+            await self._reply(
+                update.effective_message,
+                _candidate_text(payload["candidates"]),
+                reply_markup=_markup(_candidate_rows(payload["candidates"]), context),
+            )
+            return
+        await self._reply(
+            update.effective_message,
+            format_briefing(payload),
+            reply_markup=_markup(detail_keyboard(payload["symbol"]), context),
+        )
 
     async def _edit_detail(self, query: Any, context: Any, symbol: str) -> None:
         payload = await self._detail_payload(symbol)
         if "candidates" in payload:
-            await query.edit_message_text(_candidate_text(payload["candidates"]))
+            await self._edit(
+                query,
+                _candidate_text(payload["candidates"]),
+                reply_markup=_markup(_candidate_rows(payload["candidates"]), context),
+            )
             return
-        await query.edit_message_text(format_position_verdict(payload), parse_mode="HTML", reply_markup=_markup(detail_keyboard(payload["position"]["symbol"]), context))
+        await self._edit(
+            query,
+            format_position_verdict(payload),
+            reply_markup=_markup(detail_keyboard(payload["position"]["symbol"]), context),
+        )
 
     async def _edit_plan(self, query: Any, context: Any, symbol: str) -> None:
         payload = await self._detail_payload(symbol)
         if "candidates" in payload:
-            await query.edit_message_text(_candidate_text(payload["candidates"]))
+            await self._edit(
+                query,
+                _candidate_text(payload["candidates"]),
+                reply_markup=_markup(_candidate_rows(payload["candidates"]), context),
+            )
             return
-        await query.edit_message_text(format_action_plan(payload), parse_mode="HTML", reply_markup=_markup(detail_keyboard(payload["position"]["symbol"]), context))
+        await self._edit(
+            query,
+            format_action_plan(payload),
+            reply_markup=_markup(detail_keyboard(payload["position"]["symbol"]), context),
+        )
 
     async def _edit_insight(self, query: Any, context: Any, symbol: str) -> None:
         payload = await self._detail_payload(symbol)
         if "candidates" in payload:
-            await query.edit_message_text(_candidate_text(payload["candidates"]))
+            await self._edit(
+                query,
+                _candidate_text(payload["candidates"]),
+                reply_markup=_markup(_candidate_rows(payload["candidates"]), context),
+            )
             return
-        await query.edit_message_text(format_insight(payload), parse_mode="HTML", reply_markup=_markup(detail_keyboard(payload["position"]["symbol"]), context))
+        await self._edit(
+            query,
+            format_insight(payload),
+            reply_markup=_markup(_insight_keyboard_rows(payload), context),
+        )
+
+    async def _edit_flow(self, query: Any, context: Any, symbol: str) -> None:
+        payload = await self._flow_payload(symbol)
+        if "candidates" in payload:
+            await self._edit(
+                query,
+                _candidate_text(payload["candidates"]),
+                reply_markup=_markup(_candidate_rows(payload["candidates"]), context),
+            )
+            return
+        await self._edit(
+            query,
+            format_flow(payload),
+            reply_markup=_markup(detail_keyboard(payload["symbol"]), context),
+        )
+
+    async def _edit_brief(self, query: Any, context: Any, symbol: str) -> None:
+        payload = await self._brief_payload(symbol)
+        if "candidates" in payload:
+            await self._edit(
+                query,
+                _candidate_text(payload["candidates"]),
+                reply_markup=_markup(_candidate_rows(payload["candidates"]), context),
+            )
+            return
+        await self._edit(
+            query,
+            format_briefing(payload),
+            reply_markup=_markup(detail_keyboard(payload["symbol"]), context),
+        )
+
+    async def _edit_regenerated_insight(self, query: Any, context: Any, symbol: str) -> None:
+        payload = await self._regenerate_insight_payload(symbol)
+        if "candidates" in payload:
+            await self._edit(
+                query,
+                _candidate_text(payload["candidates"]),
+                reply_markup=_markup(_candidate_rows(payload["candidates"]), context),
+            )
+            return
+        await self._edit(
+            query,
+            format_insight(payload),
+            reply_markup=_markup(_insight_keyboard_rows(payload), context),
+        )
 
     async def _detail_payload(self, symbol: str) -> dict[str, Any]:
         match = service.match_position_symbol(symbol)
@@ -267,11 +470,54 @@ class TelegramBotSupervisor:
             return {"candidates": [position.model_dump(mode="json") for position in match.candidates]}
         return await self._run(service.live_position_detail, match.position.id)
 
+    async def _flow_payload(self, symbol: str) -> dict[str, Any]:
+        match = service.match_position_symbol(symbol)
+        if match.position is None:
+            return {"candidates": [position.model_dump(mode="json") for position in match.candidates]}
+        return await self._run(service.latest_flow, match.position.symbol)
+
+    async def _brief_payload(self, symbol: str) -> dict[str, Any]:
+        return await self._run(service.analyst_briefing, symbol)
+
+    async def _regenerate_insight_payload(self, symbol: str) -> dict[str, Any]:
+        match = service.match_position_symbol(symbol)
+        if match.position is None:
+            return {"candidates": [position.model_dump(mode="json") for position in match.candidates]}
+        return await self._run(service.create_position_insight, match.position.id)
+
     async def _run(self, func: Callable[..., Any], *args: Any) -> Any:
         try:
-            return await asyncio.wait_for(asyncio.to_thread(func, *args), timeout=self.settings.telegram_command_timeout_seconds)
+            return await asyncio.wait_for(
+                asyncio.to_thread(func, *args),
+                timeout=self.settings.telegram_command_timeout_seconds,
+            )
         except asyncio.TimeoutError:
             raise RuntimeError("계산 중입니다. 잠시 후 다시 시도해주세요.")
+
+    async def _reply(self, message: Any, text: str, *, reply_markup: Any | None = None) -> None:
+        chunks = split_telegram_text(text)
+        for index, chunk in enumerate(chunks):
+            await message.reply_text(
+                chunk,
+                parse_mode="HTML",
+                reply_markup=reply_markup if index == len(chunks) - 1 else None,
+            )
+
+    async def _edit(self, query: Any, text: str, *, reply_markup: Any | None = None) -> None:
+        chunks = split_telegram_text(text)
+        await query.edit_message_text(
+            chunks[0],
+            parse_mode="HTML",
+            reply_markup=reply_markup if len(chunks) == 1 else None,
+        )
+        if len(chunks) <= 1 or query.message is None:
+            return
+        for index, chunk in enumerate(chunks[1:], start=1):
+            await query.message.reply_text(
+                chunk,
+                parse_mode="HTML",
+                reply_markup=reply_markup if index == len(chunks) - 1 else None,
+            )
 
 
 def parse_duration_seconds(value: str) -> int:
@@ -287,10 +533,35 @@ def _first_arg(args: list[str] | tuple[str, ...] | None) -> str | None:
     return args[0] if args else None
 
 
+def _symbol_direction(value: str) -> tuple[str, str]:
+    symbol, _, direction = value.partition("|")
+    normalized = direction.lower() if direction.lower() in {"long", "short"} else "long"
+    return symbol, normalized
+
+
 def _candidate_text(candidates: list[dict[str, Any]]) -> str:
     if not candidates:
         return "일치하는 열린 포지션이 없습니다."
     return "심볼이 모호합니다: " + ", ".join(str(item.get("symbol", "-")) for item in candidates)
+
+
+def _candidate_rows(candidates: list[dict[str, Any]]) -> list[list[dict[str, str]]]:
+    buttons = [
+        {
+            "text": str(item.get("symbol", "-")),
+            "callback_data": encode_callback("detail", str(item.get("symbol", ""))),
+        }
+        for item in candidates[:8]
+    ]
+    return [buttons[index : index + 2] for index in range(0, len(buttons), 2)]
+
+
+def _insight_keyboard_rows(payload: dict[str, Any]) -> list[list[dict[str, str]]]:
+    position = payload.get("position") if isinstance(payload.get("position"), dict) else {}
+    symbol = str(position.get("symbol") or "")
+    status = payload.get("insight_status") if isinstance(payload.get("insight_status"), dict) else {}
+    regenerate = not payload.get("latest_insight") or bool(status.get("is_stale"))
+    return insight_keyboard(symbol, regenerate=regenerate)
 
 
 def _markup(rows: list[list[dict[str, str]]], context: Any):

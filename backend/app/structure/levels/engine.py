@@ -57,7 +57,11 @@ class SwingPoint:
     relative_volume: float
 
 
-def detect_structure_levels(candles: list[MarketCandle], mark_price: float | None = None, volume_profile: dict | None = None) -> dict[str, list[StructureLevel]]:
+def detect_structure_levels(
+    candles: list[MarketCandle],
+    mark_price: float | None = None,
+    volume_profile: dict | None = None,
+) -> dict[str, list[StructureLevel]]:
     ordered = sorted(candles, key=lambda candle: candle.timestamp)[-MAX_LEVEL_CANDLES:]
     if len(ordered) < FRACTAL_WINDOW * 2 + 1:
         return {"support": [], "resistance": []}
@@ -72,8 +76,20 @@ def detect_structure_levels(candles: list[MarketCandle], mark_price: float | Non
         support = [level for level in support if level.price <= mark_price]
         resistance = [level for level in resistance if level.price >= mark_price]
     return {
-        "support": sorted(support, key=lambda level: (-level.score, abs((mark_price or level.price) - level.price)))[:8],
-        "resistance": sorted(resistance, key=lambda level: (-level.score, abs((mark_price or level.price) - level.price)))[:8],
+        "support": sorted(
+            support,
+            key=lambda level: (
+                -level.score,
+                abs((mark_price or level.price) - level.price),
+            ),
+        )[:8],
+        "resistance": sorted(
+            resistance,
+            key=lambda level: (
+                -level.score,
+                abs((mark_price or level.price) - level.price),
+            ),
+        )[:8],
     }
 
 
@@ -110,7 +126,13 @@ def _swing_points(candles: list[MarketCandle]) -> list[SwingPoint]:
     return swings
 
 
-def _levels_for_kind(swings: list[SwingPoint], candles: list[MarketCandle], tolerance: float, kind: str, hvn_prices: list[float]) -> list[StructureLevel]:
+def _levels_for_kind(
+    swings: list[SwingPoint],
+    candles: list[MarketCandle],
+    tolerance: float,
+    kind: str,
+    hvn_prices: list[float],
+) -> list[StructureLevel]:
     points = sorted([point for point in swings if point.kind == kind], key=lambda point: point.price)
     clusters: list[list[SwingPoint]] = []
     for point in points:
@@ -126,7 +148,13 @@ def _levels_for_kind(swings: list[SwingPoint], candles: list[MarketCandle], tole
     return [_level_from_cluster(cluster, candles, tolerance, kind, hvn_prices) for cluster in clusters if cluster]
 
 
-def _level_from_cluster(cluster: list[SwingPoint], candles: list[MarketCandle], tolerance: float, kind: str, hvn_prices: list[float]) -> StructureLevel:
+def _level_from_cluster(
+    cluster: list[SwingPoint],
+    candles: list[MarketCandle],
+    tolerance: float,
+    kind: str,
+    hvn_prices: list[float],
+) -> StructureLevel:
     price = round(_weighted_price(cluster), 8)
     touches = len(cluster)
     avg_relative_volume = mean([point.relative_volume for point in cluster])
@@ -141,7 +169,14 @@ def _level_from_cluster(cluster: list[SwingPoint], candles: list[MarketCandle], 
     if any(abs(price - hvn_price) <= tolerance for hvn_price in hvn_prices):
         score += 15
         sources.append("hvn")
-    return StructureLevel(price=price, score=min(100, score), touches=touches, last_touch_at=last_touch_at, kind=kind, sources=sources)
+    return StructureLevel(
+        price=price,
+        score=min(100, score),
+        touches=touches,
+        last_touch_at=last_touch_at,
+        kind=kind,
+        sources=sources,
+    )
 
 
 def _weighted_price(cluster: list[SwingPoint]) -> float:
@@ -186,7 +221,13 @@ def _atr(candles: list[MarketCandle], period: int = 14) -> float:
     ranges = []
     previous_close = candles[0].close
     for candle in candles[1:]:
-        ranges.append(max(candle.high - candle.low, abs(candle.high - previous_close), abs(candle.low - previous_close)))
+        ranges.append(
+            max(
+                candle.high - candle.low,
+                abs(candle.high - previous_close),
+                abs(candle.low - previous_close),
+            )
+        )
         previous_close = candle.close
     window = ranges[-period:] if len(ranges) >= period else ranges
     return mean(window) if window else candles[-1].close * 0.01

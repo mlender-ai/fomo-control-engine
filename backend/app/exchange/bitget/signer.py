@@ -28,4 +28,3 @@ def sign_bitget_request(
         hashlib.sha256,
     ).digest()
     return base64.b64encode(digest).decode("utf-8")
-

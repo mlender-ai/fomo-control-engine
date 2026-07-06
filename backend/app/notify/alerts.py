@@ -1,65 +1,342 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
+from uuid import UUID
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.core.config import Settings
-from app.notify.bot.formatters import alert_keyboard, format_position_verdict, format_positions_summary
-from app.notify.state import NotificationState
+from app.db.models import AlertRecord
+from app.notify.bot.formatters import (
+    alert_keyboard,
+    format_positions_summary,
+    format_weekly_calibration,
+    setup_alert_keyboard,
+)
+from app.notify.rules import (
+    AlertCandidate,
+    cooldown_seconds,
+    evaluate_data_stall,
+    evaluate_derivative_alerts,
+    evaluate_position_alerts,
+    morning_summary_due,
+    quiet_hours_active,
+    rearm_signals,
+)
+from app.notify.state import AlertRuleState, NotificationState
 from app.notify.telegram import TelegramSender, inline_keyboard
+from app.services import runtime as service
 
 logger = logging.getLogger(__name__)
 
 
 class AlertEngine:
-    def __init__(self, settings: Settings, sender: TelegramSender, state: NotificationState) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        sender: TelegramSender,
+        state: NotificationState,
+        *,
+        now_provider: Callable[[], datetime] | None = None,
+    ) -> None:
         self.settings = settings
         self.sender = sender
         self.state = state
+        self._now_provider = now_provider
 
     async def evaluate_positions(self, payloads: list[dict[str, Any]]) -> int:
         if not self.settings.telegram_alerts_enabled or self.state.is_muted():
             return 0
         sent = 0
-        now = datetime.now(timezone.utc)
         for payload in payloads:
-            state = payload.get("state", {})
-            position = payload.get("position", {})
-            severity = int(_value(state, "severity_rank", 0) or 0)
-            if severity < 4:
-                continue
-            symbol = str(_value(position, "symbol", ""))
-            key = f"critical:{_value(position, 'id', symbol)}:{_value(state, 'status_label', '')}:{_value(state, 'health_score', '')}"
-            last_sent = self.state.sent_alert_keys.get(key)
-            if last_sent and (now - last_sent).total_seconds() < self.settings.telegram_alert_min_interval_seconds:
-                continue
-            count = await self.sender.send_to_all(
-                format_position_verdict(payload),
-                reply_markup=inline_keyboard(alert_keyboard(symbol)),
-            )
-            if count:
-                self.state.sent_alert_keys[key] = now
-                sent += count
+            context = await self._alert_context(payload)
+            candidates = evaluate_position_alerts(context, self.settings)
+            self._rearm(context, candidates)
+            for candidate in candidates:
+                sent += await self._fire_if_allowed(candidate)
+        return sent
+
+    async def evaluate_worker_status(self, worker_status: dict[str, Any]) -> int:
+        if not self.settings.telegram_alerts_enabled or self.state.is_muted():
+            return 0
+        sent = 0
+        for candidate in evaluate_data_stall(worker_status, self.settings):
+            sent += await self._fire_if_allowed(candidate)
+        return sent
+
+    async def evaluate_derivatives(self, snapshots: list[dict[str, Any]]) -> int:
+        if not self.settings.telegram_alerts_enabled or self.state.is_muted():
+            return 0
+        candidates = evaluate_derivative_alerts(snapshots, self.settings)
+        self._rearm_derivatives(snapshots, candidates)
+        sent = 0
+        for candidate in candidates:
+            sent += await self._fire_if_allowed(candidate)
+        return sent
+
+    async def evaluate_scout_setups(self, candidates: list[AlertCandidate]) -> int:
+        if not self.settings.telegram_alerts_enabled or self.state.is_muted():
+            return 0
+        sent = 0
+        for candidate in candidates:
+            sent += await self._fire_if_allowed(candidate)
         return sent
 
     async def maybe_send_daily_summary(self, payload: dict[str, Any]) -> int:
         if not self.settings.telegram_alerts_enabled or self.state.is_muted():
             return 0
-        now = datetime.now().astimezone()
-        target = self.settings.telegram_daily_summary_time.strip()
-        if now.strftime("%H:%M") != target:
+        due, date_key = morning_summary_due(self.settings, self.state.last_summary_date, self._now())
+        if not due:
             return 0
-        date_key = now.strftime("%Y-%m-%d")
-        if self.state.last_summary_date == date_key:
-            return 0
-        count = await self.sender.send_to_all(format_positions_summary(payload))
+        suppressed = self.state.suppressed_alerts
+        lines = ["<b>밤새 알림 요약</b>"]
+        if suppressed:
+            for item in suppressed[:20]:
+                lines.append(f"• {item.get('emoji', '🟡')} <b>{item.get('symbol', '-')}</b> — {item.get('title', '-')}")
+                if item.get("summary"):
+                    lines.append(f"  {item['summary']}")
+        else:
+            lines.append("억제된 알림은 없습니다.")
+        lines.append("")
+        lines.append(format_positions_summary(payload))
+        count = await self.sender.send_to_all("\n".join(lines))
         if count:
+            self.state.suppressed_alerts.clear()
             self.state.last_summary_date = date_key
         return count
 
+    async def maybe_send_weekly_calibration_report(self) -> int:
+        if not self.settings.telegram_alerts_enabled or self.state.is_muted() or not self.settings.telegram_weekly_calibration_enabled:
+            return 0
+        due, date_key = _weekly_calibration_due(self.settings, self.state.last_weekly_calibration_date, self._now())
+        if not due:
+            return 0
+        payload = await asyncio.to_thread(service.weekly_calibration_report)
+        count = await self.sender.send_to_all(format_weekly_calibration(payload))
+        if count:
+            self.state.last_weekly_calibration_date = date_key
+        return count
 
-def _value(source: Any, key: str, default: Any = None) -> Any:
-    if isinstance(source, dict):
-        return source.get(key, default)
-    return getattr(source, key, default)
+    async def _alert_context(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if payload.get("action_plan"):
+            return payload
+        position = payload.get("position") if isinstance(payload.get("position"), dict) else {}
+        position_id = position.get("id")
+        if not position_id:
+            return payload
+        try:
+            return await asyncio.to_thread(service.live_position_alert_context, UUID(str(position_id)))
+        except Exception as exc:
+            logger.warning("alert context fallback position_id=%s error=%s", position_id, exc)
+            return payload
+
+    def _rearm(self, payload: dict[str, Any], candidates: list[AlertCandidate]) -> None:
+        active_keys = {candidate.state_key for candidate in candidates}
+        signals = rearm_signals(payload, self.settings)
+        now = self._now()
+        for key, rule_state in list(self.state.alert_rule_states.items()):
+            if key in active_keys:
+                continue
+            if not _same_position_key(key, payload):
+                continue
+            cooldown_done = rule_state.cooldown_until is None or now >= rule_state.cooldown_until
+            if cooldown_done and signals.get(key, _generic_rearm_allowed(key)):
+                rule_state.status = "armed"
+
+    def _rearm_derivatives(self, snapshots: list[dict[str, Any]], candidates: list[AlertCandidate]) -> None:
+        active_keys = {candidate.state_key for candidate in candidates}
+        symbols = {str(snapshot.get("symbol") or "").upper() for snapshot in snapshots if snapshot.get("symbol")}
+        threshold = abs(self.settings.alert_funding_extreme_abs_rate)
+        now = self._now()
+        for key, rule_state in list(self.state.alert_rule_states.items()):
+            if not key.startswith("funding_extreme:"):
+                continue
+            if key in active_keys:
+                continue
+            parts = key.split(":", 2)
+            identity = parts[2] if len(parts) == 3 else ""
+            symbol = identity.split(":", 1)[0].upper()
+            if not symbol or symbol not in symbols:
+                continue
+            cooldown_done = rule_state.cooldown_until is None or now >= rule_state.cooldown_until
+            if not cooldown_done:
+                continue
+            matching = next(
+                (snapshot for snapshot in snapshots if str(snapshot.get("symbol") or "").upper() == symbol),
+                None,
+            )
+            funding = _float(matching.get("funding_rate")) if isinstance(matching, dict) else None
+            if funding is None or abs(funding) < threshold:
+                rule_state.status = "armed"
+
+    async def _fire_if_allowed(self, candidate: AlertCandidate) -> int:
+        now = self._now()
+        rule_state = self.state.alert_rule_states.setdefault(candidate.state_key, AlertRuleState())
+        if candidate.rule_id.startswith("setup_") and rule_state.cooldown_until is not None and now >= rule_state.cooldown_until:
+            rule_state.status = "armed"
+        if rule_state.status != "armed":
+            return 0
+        if rule_state.cooldown_until is not None and now < rule_state.cooldown_until:
+            return 0
+
+        cooldown = cooldown_seconds(candidate.severity, self.settings)
+        rule_state.status = "cooldown"
+        rule_state.last_fired_at = now
+        rule_state.cooldown_until = now + _seconds(cooldown)
+        rule_state.last_payload = candidate.payload
+
+        enriched = self._with_response_history(candidate)
+
+        if quiet_hours_active(self.settings, now) and enriched.severity != "critical":
+            self._suppress(enriched)
+            self._record(enriched, delivered=False, fired_at=now)
+            return 0
+
+        delivered_count = await self.sender.send_to_all(enriched.message, reply_markup=self._reply_markup(enriched))
+        self._record(enriched, delivered=delivered_count > 0, fired_at=now)
+        return delivered_count
+
+    def _with_response_history(self, candidate: AlertCandidate) -> AlertCandidate:
+        try:
+            line = service.alert_response_history_line(candidate.rule_id)
+        except Exception as exc:
+            logger.debug(
+                "alert response history unavailable rule=%s error=%s",
+                candidate.rule_id,
+                exc,
+            )
+            line = None
+        if not line:
+            return candidate
+        return AlertCandidate(
+            rule_id=candidate.rule_id,
+            severity=candidate.severity,
+            position_id=candidate.position_id,
+            symbol=candidate.symbol,
+            identity=candidate.identity,
+            title=candidate.title,
+            message=f"{candidate.message}\n{line}",
+            payload={**candidate.payload, "response_history_line": line},
+        )
+
+    def _suppress(self, candidate: AlertCandidate) -> None:
+        self.state.suppressed_alerts.append(
+            {
+                "rule_id": candidate.rule_id,
+                "symbol": candidate.symbol,
+                "title": candidate.title,
+                "severity": candidate.severity,
+                "emoji": _severity_emoji(candidate.severity),
+                "summary": _summary_line(candidate.payload),
+                "payload": candidate.payload,
+            }
+        )
+
+    def _record(self, candidate: AlertCandidate, *, delivered: bool, fired_at: datetime) -> None:
+        record = AlertRecord(
+            rule_id=candidate.rule_id,
+            position_id=UUID(candidate.position_id) if candidate.position_id else None,
+            symbol=candidate.symbol,
+            severity=candidate.severity,
+            fired_at=fired_at,
+            payload={
+                **candidate.payload,
+                "title": candidate.title,
+                "message": candidate.message,
+                "state_key": candidate.state_key,
+            },
+            delivered=delivered,
+        )
+        try:
+            service.record_alert(record)
+        except Exception as exc:
+            logger.warning(
+                "failed to record alert rule=%s symbol=%s error=%s",
+                candidate.rule_id,
+                candidate.symbol,
+                exc,
+            )
+
+    def _reply_markup(self, candidate: AlertCandidate) -> dict[str, Any] | None:
+        if candidate.payload.get("kind") == "scout_setup":
+            return inline_keyboard(setup_alert_keyboard(candidate.symbol, candidate.payload.get("direction")))
+        if not candidate.position_id or candidate.symbol == "SYSTEM":
+            return None
+        return inline_keyboard(alert_keyboard(candidate.symbol))
+
+    def _now(self) -> datetime:
+        now = self._now_provider() if self._now_provider else datetime.now(timezone.utc)
+        return now if now.tzinfo else now.replace(tzinfo=timezone.utc)
+
+
+def _same_position_key(key: str, payload: dict[str, Any]) -> bool:
+    position = payload.get("position") if isinstance(payload.get("position"), dict) else {}
+    position_id = str(position.get("id") or "")
+    if not position_id:
+        return False
+    parts = key.split(":", 2)
+    return len(parts) >= 2 and parts[1] == position_id
+
+
+def _generic_rearm_allowed(key: str) -> bool:
+    rule_id = key.split(":", 1)[0]
+    return rule_id in {
+        "status_worsened",
+        "health_drop",
+        "wyckoff_event",
+        "data_stall",
+        "funding_extreme",
+        "oi_divergence",
+        "liq_cluster_near",
+    }
+
+
+def _seconds(value: int):
+    from datetime import timedelta
+
+    return timedelta(seconds=max(1, value))
+
+
+def _severity_emoji(severity: str) -> str:
+    if severity == "critical":
+        return "🔴"
+    if severity == "warn":
+        return "🟠"
+    if severity == "action":
+        return "🟢"
+    return "🟡"
+
+
+def _summary_line(payload: dict[str, Any]) -> str:
+    current = payload.get("current_price")
+    trigger = payload.get("trigger_price")
+    if trigger is not None and current is not None:
+        return f"기준 {trigger} · 현재 {current}"
+    if payload.get("health_score") is not None:
+        return f"건강도 {payload.get('health_score')} · PnL {payload.get('pnl_percent')}"
+    return ""
+
+
+def _weekly_calibration_due(settings: Settings, last_date_key: str | None, now: datetime) -> tuple[bool, str]:
+    try:
+        local_timezone = ZoneInfo(settings.telegram_quiet_hours_timezone)
+    except ZoneInfoNotFoundError:
+        local_timezone = timezone.utc
+    current = now.astimezone(local_timezone)
+    day = min(max(int(settings.telegram_weekly_calibration_day), 0), 6)
+    date_key = current.strftime("%Y-%m-%d")
+    if current.weekday() != day or last_date_key == date_key:
+        return False, date_key
+    target = settings.telegram_weekly_calibration_time.strip()
+    return current.strftime("%H:%M") == target, date_key
+
+
+def _float(value: Any) -> float | None:
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None

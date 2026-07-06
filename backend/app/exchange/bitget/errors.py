@@ -20,4 +20,3 @@ class BitgetNotConfiguredError(BitgetAuthError):
 
 class BitgetPermissionError(BitgetAuthError):
     pass
-

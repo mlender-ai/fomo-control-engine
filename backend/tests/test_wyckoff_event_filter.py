@@ -2,12 +2,23 @@ from app.positions.chart_analysis import split_wyckoff_events
 
 
 def _event(event_id: str, confidence: int) -> dict:
-    return {"id": event_id, "type": "secondary_test", "label": "ST", "confidence": confidence}
+    return {
+        "id": event_id,
+        "type": "secondary_test",
+        "label": "ST",
+        "confidence": confidence,
+    }
 
 
 def test_split_hides_low_confidence_events_from_display() -> None:
     wyckoff = {
-        "events": [_event("a", 91), _event("b", 40), _event("c", 72), _event("d", 55), _event("e", 30)],
+        "events": [
+            _event("a", 91),
+            _event("b", 40),
+            _event("c", 72),
+            _event("d", 55),
+            _event("e", 30),
+        ],
         "evidence_event_ids": ["a", "b"],
     }
     result = split_wyckoff_events(wyckoff, 55)
@@ -17,7 +28,10 @@ def test_split_hides_low_confidence_events_from_display() -> None:
 
 
 def test_split_caps_display_events_to_recent_four() -> None:
-    wyckoff = {"events": [_event(str(index), 80) for index in range(7)], "evidence_event_ids": []}
+    wyckoff = {
+        "events": [_event(str(index), 80) for index in range(7)],
+        "evidence_event_ids": [],
+    }
     result = split_wyckoff_events(wyckoff, 55)
 
     assert [event["id"] for event in result["events"]] == ["3", "4", "5", "6"]

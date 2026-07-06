@@ -1,7 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api.routes import configure_runtime
+from app.api.deps import configure_runtime
 from app.db.repository import MemoryRepository
 from app.exchange.mock import MockMarketDataProvider
 from app.main import app
@@ -17,4 +17,3 @@ def isolated_runtime():
 @pytest.fixture
 def client() -> TestClient:
     return TestClient(app)
-

@@ -8,9 +8,21 @@ from app.db.models import DataQuality, MarketCandle, MarketSnapshot
 from app.exchange.base import MarketDataProvider
 from app.exchange.bitget.client import BitgetClient
 from app.exchange.bitget.errors import BitgetAPIError
-from app.exchange.bitget.schemas import BitgetPosition, Candle, FundingRate, OpenInterest
+from app.exchange.bitget.schemas import (
+    BitgetPosition,
+    Candle,
+    FundingRate,
+    OpenInterest,
+)
 from app.exchange.bitget.trade_cache import BitgetTradeFillCache
-from app.exchange.bitget.trades import BitgetTradeFill, aggregate_trade_buckets, cvd_series_from_buckets, parse_trade_fill, timeframe_seconds
+from app.exchange.bitget.trades import (
+    BitgetTradeFill,
+    aggregate_trade_buckets,
+    cvd_series_from_buckets,
+    parse_trade_fill,
+    timeframe_seconds,
+)
+from app.marketdata.assets import classify_asset_class, funding_interval_from_contract, source_category_from_contract
 
 
 TIMEFRAME_MAP = {
@@ -57,6 +69,9 @@ class BitgetMarketDataProvider(MarketDataProvider):
     def get_trade_flow(self, symbol: str, timeframe: str, candles: list[MarketCandle]) -> dict:
         return _run(self.get_trade_flow_async(symbol, timeframe, candles))
 
+    def get_derivative_snapshot(self, symbol: str, ratio_period: str = "5m") -> dict:
+        return _run(self.get_derivative_snapshot_async(symbol, ratio_period))
+
     def list_contracts(self) -> list[dict]:
         return _run(self.get_contracts())
 
@@ -76,7 +91,35 @@ class BitgetMarketDataProvider(MarketDataProvider):
                     "base_coin": str(row.get("baseCoin", "")),
                     "quote_coin": str(row.get("quoteCoin", "")),
                     "status": str(row.get("symbolStatus", "")),
-                    "maintenance_margin_rate": _first_float(row, ("maintainMarginRate", "maintenanceMarginRate", "keepMarginRate")),
+                    "asset_class": classify_asset_class(
+                        str(row["symbol"]).upper(),
+                        str(row.get("baseCoin", "")),
+                        str(row.get("quoteCoin", "")),
+                        row,
+                    ),
+                    "source_category": source_category_from_contract(row),
+                    "funding_rate_interval_hours": funding_interval_from_contract(row),
+                    "raw_metadata": {
+                        key: row.get(key)
+                        for key in (
+                            "symbolType",
+                            "isRwa",
+                            "fundInterval",
+                            "maxLever",
+                            "openTime",
+                            "pricePlace",
+                            "volumePlace",
+                        )
+                        if key in row
+                    },
+                    "maintenance_margin_rate": _first_float(
+                        row,
+                        (
+                            "maintainMarginRate",
+                            "maintenanceMarginRate",
+                            "keepMarginRate",
+                        ),
+                    ),
                     "taker_fee_rate": _first_float(row, ("takerFeeRate", "takerFee")),
                 }
             )
@@ -155,7 +198,94 @@ class BitgetMarketDataProvider(MarketDataProvider):
             timestamp=_optional_timestamp_ms(data.get("ts")),
         )
 
-    async def get_trade_fills(self, symbol: str, start_time: datetime, end_time: datetime, limit: int = 1000, max_pages: int = 8) -> list[BitgetTradeFill]:
+    async def get_long_short_ratio(self, symbol: str, period: str = "5m") -> dict[str, Any] | None:
+        payload = await self.client.public_get(
+            "/api/v2/mix/market/account-long-short",
+            {
+                "symbol": normalize_symbol(symbol),
+                "productType": self.product_type,
+                "period": period,
+            },
+        )
+        item = _first_dict(payload.get("data"))
+        if item is None and isinstance(payload.get("data"), dict):
+            item = payload["data"]
+        if item is None:
+            return None
+        return {
+            "symbol": str(item.get("symbol", normalize_symbol(symbol))).upper(),
+            "period": period,
+            "long_short_ratio": _optional_float(item.get("longShortRatio") or item.get("longShortAccountRatio")),
+            "long_account_ratio": _optional_float(item.get("longAccountRatio")),
+            "short_account_ratio": _optional_float(item.get("shortAccountRatio")),
+            "timestamp": _optional_timestamp_ms(item.get("ts") or item.get("timestamp")),
+            "raw": item,
+        }
+
+    async def get_derivative_snapshot_async(self, symbol: str, ratio_period: str = "5m") -> dict[str, Any]:
+        normalized = normalize_symbol(symbol)
+        notes: list[str] = []
+        raw: dict[str, Any] = {}
+        funding = None
+        open_interest = None
+        ratio = None
+        for label, getter in (
+            ("funding", lambda: self.get_funding_rate(normalized)),
+            ("open_interest", lambda: self.get_open_interest(normalized)),
+            (
+                "long_short_ratio",
+                lambda: self.get_long_short_ratio(normalized, ratio_period),
+            ),
+            ("ticker", lambda: self._get_ticker(normalized)),
+        ):
+            try:
+                value = await getter()
+            except BitgetAPIError as exc:
+                notes.append(f"Bitget {label} unavailable: {exc.message}")
+                continue
+            raw[label] = _model_or_value(value)
+            if label == "funding":
+                funding = value
+            elif label == "open_interest":
+                open_interest = value
+            elif label == "long_short_ratio":
+                ratio = value
+
+        oi_size = open_interest.size if open_interest else None
+        ok_count = sum(value is not None for value in (funding, open_interest, ratio))
+        return {
+            "symbol": normalized,
+            "provider": "bitget",
+            "tier": "bitget_public",
+            "as_of": datetime.now(timezone.utc),
+            "open_interest": oi_size,
+            "open_interest_value": None,
+            "open_interest_change_pct": None,
+            "funding_rate": funding.funding_rate if funding else None,
+            "funding_rate_interval_hours": funding.funding_rate_interval_hours if funding else None,
+            "next_funding_time": funding.next_update if funding else None,
+            "long_short_ratio": ratio.get("long_short_ratio") if ratio else None,
+            "long_account_ratio": ratio.get("long_account_ratio") if ratio else None,
+            "short_account_ratio": ratio.get("short_account_ratio") if ratio else None,
+            "data_quality": {
+                "funding_ok": funding is not None,
+                "open_interest_ok": open_interest is not None,
+                "long_short_ratio_ok": ratio is not None,
+                "source": "bitget_public",
+            },
+            "source_status": "ok" if ok_count == 3 else "partial" if ok_count else "error",
+            "notes": notes,
+            "raw_json": raw,
+        }
+
+    async def get_trade_fills(
+        self,
+        symbol: str,
+        start_time: datetime,
+        end_time: datetime,
+        limit: int = 1000,
+        max_pages: int = 8,
+    ) -> list[BitgetTradeFill]:
         normalized = normalize_symbol(symbol)
         fills: list[BitgetTradeFill] = []
         seen: set[str] = set()
@@ -198,8 +328,21 @@ class BitgetMarketDataProvider(MarketDataProvider):
         candle_end = ordered[-1].timestamp + timedelta(seconds=timeframe_seconds(timeframe))
         if candle_end > end_time:
             end_time = candle_end
-        start_time = max(ordered[0].timestamp, end_time - timedelta(hours=self.trade_fill_lookback_hours))
-        fills = self.trade_cache.fresh_fills(normalized, timeframe, start_time, end_time, self.trade_fill_cache_ttl_seconds) if self.trade_cache else None
+        start_time = max(
+            ordered[0].timestamp,
+            end_time - timedelta(hours=self.trade_fill_lookback_hours),
+        )
+        fills = (
+            self.trade_cache.fresh_fills(
+                normalized,
+                timeframe,
+                start_time,
+                end_time,
+                self.trade_fill_cache_ttl_seconds,
+            )
+            if self.trade_cache
+            else None
+        )
         source = "bitget_fills_history_cache" if fills is not None else "bitget_fills_history"
         error_note = None
         if fills is None:
@@ -210,7 +353,10 @@ class BitgetMarketDataProvider(MarketDataProvider):
             except BitgetAPIError as exc:
                 stale = self.trade_cache.stale_fills(normalized, start_time, end_time) if self.trade_cache else []
                 if not stale:
-                    return _empty_trade_flow("fills_unavailable", "Bitget 실체결 데이터를 가져오지 못해 체결 델타 판정을 보류합니다.")
+                    return _empty_trade_flow(
+                        "fills_unavailable",
+                        "Bitget 실체결 데이터를 가져오지 못해 체결 델타 판정을 보류합니다.",
+                    )
                 fills = stale
                 source = "bitget_fills_history_stale_cache"
                 error_note = str(exc)
@@ -245,7 +391,10 @@ class BitgetMarketDataProvider(MarketDataProvider):
         open_interest = await self.get_open_interest(normalized)
         ticker = await self._get_ticker(normalized)
         if len(candles) < 30:
-            raise BitgetAPIError("insufficient_candles", "Not enough candle data to calculate indicators.")
+            raise BitgetAPIError(
+                "insufficient_candles",
+                "Not enough candle data to calculate indicators.",
+            )
 
         market_candles = [
             MarketCandle(
@@ -386,12 +535,29 @@ def _optional_string(value: Any) -> str | None:
     return str(value)
 
 
+def _model_or_value(value: Any) -> Any:
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json")
+    return value
+
+
+def utc_iso_from_values(*values: datetime | None) -> datetime:
+    timestamps = [value for value in values if value is not None]
+    return max(timestamps) if timestamps else datetime.now(timezone.utc)
+
+
 def _empty_trade_flow(reason: str, note: str) -> dict:
     return {
         "method": "data_unavailable",
         "source": "bitget_fills_history",
         "data_available": False,
-        "coverage": {"from": None, "to": None, "lookback_hours": None, "fills": 0, "buckets": 0},
+        "coverage": {
+            "from": None,
+            "to": None,
+            "lookback_hours": None,
+            "fills": 0,
+            "buckets": 0,
+        },
         "fills": [],
         "buckets": [],
         "cvd": [],

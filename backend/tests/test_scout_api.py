@@ -1,7 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api.scout_routes import reset_scout_cache
+from app.services.scout_handlers import reset_scout_cache
 from app.main import app
 
 
@@ -28,17 +28,35 @@ def test_symbol_search_builds_catalog_from_provider(client: TestClient) -> None:
     assert len(empty_query.json()["symbols"]) >= 5
 
 
+def test_symbol_search_exposes_stock_puffs_with_asset_class(client: TestClient) -> None:
+    response = client.get("/api/symbols", params={"query": "tsla"})
+    assert response.status_code == 200
+    matches = response.json()["symbols"]
+    tsla = next(item for item in matches if item["symbol"] == "TSLAUSDT")
+    assert tsla["asset_class"] == "stock"
+    assert tsla["funding_rate_interval_hours"] == 8
+
+
 def test_watchlist_crud(client: TestClient) -> None:
-    created = client.post("/api/watchlist", json={"symbol": "ethusdt", "note": "테스트", "default_timeframe": "1h"})
+    created = client.post(
+        "/api/watchlist",
+        json={"symbol": "ethusdt", "note": "테스트", "default_timeframe": "1h"},
+    )
     assert created.status_code == 200
     assert created.json()["item"]["symbol"] == "ETHUSDT"
+    assert created.json()["item"]["asset_class"] == "crypto"
+
+    stock = client.post("/api/watchlist", json={"symbol": "tslausdt"})
+    assert stock.status_code == 200
+    assert stock.json()["item"]["asset_class"] == "stock"
 
     listed = client.get("/api/watchlist")
-    assert [item["symbol"] for item in listed.json()["items"]] == ["ETHUSDT"]
+    assert [item["symbol"] for item in listed.json()["items"]] == ["TSLAUSDT", "ETHUSDT"]
 
     removed = client.delete("/api/watchlist/ETHUSDT")
     assert removed.status_code == 200
-    assert client.get("/api/watchlist").json()["items"] == []
+    assert [item["symbol"] for item in client.get("/api/watchlist").json()["items"]] == ["TSLAUSDT"]
+    client.delete("/api/watchlist/TSLAUSDT")
 
     missing = client.delete("/api/watchlist/ETHUSDT")
     assert missing.status_code == 404
@@ -56,8 +74,17 @@ def test_scout_analysis_returns_scenarios_without_position(client: TestClient) -
     assert payload["summary"]["short_score"] >= 0
 
 
+def test_stock_scout_analysis_includes_session_context(client: TestClient) -> None:
+    response = client.get("/api/scout/TSLAUSDT/analysis", params={"timeframe": "4h"})
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["analysis"]["asset_class"] == "stock"
+    assert payload["analysis"]["session"]["label"] in {"본장", "확장 세션", "휴장"}
+    assert payload["analysis"]["data_quality"]["session_excluded_candles"] >= 0
+
+
 def test_scan_uses_cache_within_ttl(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    from app.api import routes as runtime
+    from app.services import http_handlers as runtime
 
     client.post("/api/watchlist", json={"symbol": "BTCUSDT"})
     client.post("/api/watchlist", json={"symbol": "ETHUSDT"})
@@ -86,7 +113,7 @@ def test_scan_uses_cache_within_ttl(client: TestClient, monkeypatch: pytest.Monk
 
 
 def test_scan_rows_sorted_by_setup_proximity(client: TestClient) -> None:
-    for symbol in ("BTCUSDT", "ETHUSDT", "SOLUSDT"):
+    for symbol in ("BTCUSDT", "ETHUSDT", "SOLUSDT", "TSLAUSDT"):
         client.post("/api/watchlist", json={"symbol": symbol})
     response = client.post("/api/scout/scan", json={})
     rows = response.json()["rows"]
@@ -95,3 +122,4 @@ def test_scan_rows_sorted_by_setup_proximity(client: TestClient) -> None:
     for row in rows:
         assert "long_score" in row and "short_score" in row
         assert "volume_state" in row and "as_of" in row
+        assert row["asset_class"] in {"crypto", "stock"}

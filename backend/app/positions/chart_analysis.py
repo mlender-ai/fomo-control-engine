@@ -7,14 +7,20 @@ from typing import Any
 
 from app.core.config import get_settings
 from app.db.models import MarketCandle, MarketSnapshot, Position
+from app.marketdata.assets import classify_asset_class
+from app.marketdata.sessions import filter_analysis_candles, session_info_for_symbol
 from app.positions.scenarios import build_direction_scenarios
 from app.structure.harmonic.engine import detect_harmonic_patterns
 from app.structure.levels.engine import StructureLevel, detect_structure_levels
+from app.structure.liquidity.engine import (
+    analyze_liquidity_structure,
+    attach_liquidity_crosscheck_to_wyckoff,
+)
 from app.structure.wyckoff.engine import analyze_wyckoff
 
 
 MIN_CHART_CANDLES = 100
-_HARMONIC_CACHE: dict[tuple[str, str, int, int, float], dict[str, Any]] = {}
+_HARMONIC_CACHE: dict[tuple[str, str, int, int, float, float], dict[str, Any]] = {}
 
 
 @dataclass(frozen=True)
@@ -46,29 +52,52 @@ class PositionContext:
         )
 
 
-def build_chart_analysis(snapshot: MarketSnapshot, position_context: PositionContext | None = None, trade_flow: dict | None = None) -> dict:
+def build_chart_analysis(
+    snapshot: MarketSnapshot,
+    position_context: PositionContext | None = None,
+    trade_flow: dict | None = None,
+    *,
+    derivatives: dict | None = None,
+) -> dict:
     candles = sorted(snapshot.candles, key=lambda candle: candle.timestamp)
     if len(candles) < MIN_CHART_CANDLES:
         raise ValueError("차트 분석에 필요한 캔들 데이터가 부족합니다.")
 
     context = position_context
-    recent = candles[-200:]
+    asset_class = classify_asset_class(snapshot.symbol)
+    tagged_candles, session_excluded = filter_analysis_candles(candles, asset_class)
+    engine_candles = tagged_candles[-200:]
+    if len(engine_candles) < MIN_CHART_CANDLES:
+        raise ValueError("휴장 구간을 제외한 차트 분석 캔들 데이터가 부족합니다.")
+    recent = tagged_candles[-200:]
+    analysis_recent = engine_candles
     context_mark = (context.mark_price or context.current_price) if context else None
     mark_price = context_mark or snapshot.price or recent[-1].close
-    profile = _volume_profile(recent, trade_flow)
-    levels = detect_structure_levels(recent, mark_price, profile)
+    profile = _volume_profile(analysis_recent, trade_flow)
+    levels = detect_structure_levels(analysis_recent, mark_price, profile)
     support = levels["support"]
     resistance = levels["resistance"]
     invalidation = _invalidation_levels(context, support, resistance)
-    xray = _volume_xray(recent, trade_flow)
-    wyckoff = analyze_wyckoff(recent, levels=levels, trade_flow=trade_flow, timeframe=snapshot.timeframe)
+    xray = _volume_xray(analysis_recent, trade_flow)
+    wyckoff = analyze_wyckoff(analysis_recent, levels=levels, trade_flow=trade_flow, timeframe=snapshot.timeframe)
+    liquidity = analyze_liquidity_structure(
+        analysis_recent,
+        mark_price=mark_price,
+        levels=levels,
+        wyckoff=wyckoff,
+        trade_flow=trade_flow,
+    )
+    wyckoff = attach_liquidity_crosscheck_to_wyckoff(wyckoff, liquidity)
     wyckoff_events = split_wyckoff_events(wyckoff, get_settings().wyckoff_event_min_confidence)
-    harmonic = _harmonic_analysis(snapshot.symbol, snapshot.timeframe, recent, levels, profile)
+    harmonic = _harmonic_analysis(snapshot.symbol, snapshot.timeframe, analysis_recent, levels, profile)
+    session = session_info_for_symbol(snapshot.symbol, asset_class)
 
     payload = {
         "position_id": context.position_id if context else None,
         "symbol": snapshot.symbol,
         "timeframe": snapshot.timeframe,
+        "asset_class": asset_class,
+        "session": session.as_dict(),
         "direction": context.direction if context else None,
         "entry_price": context.entry_price if context else None,
         "mark_price": mark_price,
@@ -82,10 +111,11 @@ def build_chart_analysis(snapshot: MarketSnapshot, position_context: PositionCon
             "resistance": [level.model_dump() for level in resistance],
             "invalidation": invalidation,
         },
-        "indicators": _indicators(recent),
+        "indicators": _indicators(analysis_recent),
         "volume_profile": profile,
         "volume_xray": xray,
         "trade_flow": _trade_flow_payload(trade_flow),
+        "liquidity": liquidity,
         "wyckoff": wyckoff,
         "wyckoff_range": wyckoff.get("range"),
         "wyckoff_phase": {
@@ -102,12 +132,16 @@ def build_chart_analysis(snapshot: MarketSnapshot, position_context: PositionCon
         "harmonic_prz": _harmonic_prz(harmonic.get("patterns", [])),
         "data_quality": {
             "candles": len(recent),
+            "analysis_candles": len(analysis_recent),
+            "session_excluded_candles": session_excluded,
             "source": snapshot.provider,
             "estimated_volume_profile": profile["method"] != "trade_fills",
             "volume_profile_method": profile["method"],
             "last_candle_at": recent[-1].timestamp,
         },
     }
+    if derivatives is not None:
+        payload["derivatives"] = _derivatives_payload(derivatives)
     if context is None:
         # 포지션 없는 스카우트 뷰: 방향 미지정 → 롱/숏 양쪽 시나리오를 제공
         payload["scenarios"] = build_direction_scenarios(
@@ -118,6 +152,35 @@ def build_chart_analysis(snapshot: MarketSnapshot, position_context: PositionCon
             mark_price=mark_price,
         )
     return payload
+
+
+def _derivatives_payload(derivatives: dict | None) -> dict:
+    if not isinstance(derivatives, dict):
+        return {
+            "as_of": None,
+            "latest": None,
+            "coinglass": None,
+            "signals": {
+                "as_of": None,
+                "coverage": {"metric_samples": 0, "liquidation_samples": 0},
+                "oi_price_divergence": None,
+                "funding_state": None,
+                "crowding_score": None,
+                "liquidation_clusters": [],
+            },
+            "metrics": [],
+            "liquidation_events": [],
+            "source_status": "missing",
+        }
+    return {
+        "as_of": derivatives.get("as_of"),
+        "latest": derivatives.get("latest"),
+        "coinglass": derivatives.get("coinglass"),
+        "signals": derivatives.get("signals") if isinstance(derivatives.get("signals"), dict) else {},
+        "metrics": derivatives.get("metrics") if isinstance(derivatives.get("metrics"), list) else [],
+        "liquidation_events": derivatives.get("liquidation_events") if isinstance(derivatives.get("liquidation_events"), list) else [],
+        "source_status": derivatives.get("source_status", "missing"),
+    }
 
 
 def split_wyckoff_events(wyckoff: dict[str, Any], min_confidence: int, display_limit: int = 4) -> dict[str, Any]:
@@ -136,9 +199,22 @@ def split_wyckoff_events(wyckoff: dict[str, Any], min_confidence: int, display_l
     }
 
 
-def _harmonic_analysis(symbol: str, timeframe: str, candles: list[MarketCandle], levels: dict[str, list[StructureLevel]], volume_profile: dict[str, Any]) -> dict[str, Any]:
+def _harmonic_analysis(
+    symbol: str,
+    timeframe: str,
+    candles: list[MarketCandle],
+    levels: dict[str, list[StructureLevel]],
+    volume_profile: dict[str, Any],
+) -> dict[str, Any]:
     settings = get_settings()
-    key = (symbol, timeframe, int(candles[-1].timestamp.timestamp()), len(candles), candles[-1].close)
+    key = (
+        symbol,
+        timeframe,
+        int(candles[-1].timestamp.timestamp()),
+        len(candles),
+        candles[-1].close,
+        settings.harmonic_ratio_tolerance_multiplier,
+    )
     cached = _HARMONIC_CACHE.get(key)
     if cached is not None:
         return cached
@@ -148,6 +224,7 @@ def _harmonic_analysis(symbol: str, timeframe: str, candles: list[MarketCandle],
         volume_profile=volume_profile,
         atr_multiplier=settings.harmonic_zigzag_atr_multiplier,
         min_confidence=settings.harmonic_min_confidence,
+        tolerance_multiplier=settings.harmonic_ratio_tolerance_multiplier,
     )
     if len(_HARMONIC_CACHE) > 64:
         _HARMONIC_CACHE.clear()
@@ -185,21 +262,39 @@ def _candle_payload(candle: MarketCandle) -> dict:
         "low": candle.low,
         "close": candle.close,
         "volume": candle.volume,
+        "session": candle.session,
+        "is_regular_session": candle.is_regular_session,
     }
 
 
-def _invalidation_levels(context: PositionContext | None, support: list[StructureLevel], resistance: list[StructureLevel]) -> list[dict]:
+def _invalidation_levels(
+    context: PositionContext | None,
+    support: list[StructureLevel],
+    resistance: list[StructureLevel],
+) -> list[dict]:
     if context is None:
         return []
     if context.planned_stop_price:
-        return [{"price": context.planned_stop_price, "label": "계획 손절/무효화", "source": "user"}]
+        return [
+            {
+                "price": context.planned_stop_price,
+                "label": "계획 손절/무효화",
+                "source": "user",
+            }
+        ]
     candidates = support if context.direction == "long" else resistance
     strong_candidates = [level for level in candidates if level.score >= 40]
     if strong_candidates:
         level = strong_candidates[0]
         action = "이탈 시 진입 논리 약화" if context.direction == "long" else "돌파 시 진입 논리 약화"
         return [{**level.model_dump(), "label": action, "source": "structure_level"}]
-    return [{"price": None, "label": "구조 레벨 부족, 사용자 손절 기준 필요", "source": "insufficient_structure"}]
+    return [
+        {
+            "price": None,
+            "label": "구조 레벨 부족, 사용자 손절 기준 필요",
+            "source": "insufficient_structure",
+        }
+    ]
 
 
 def _volume_profile(candles: list[MarketCandle], trade_flow: dict | None = None, bin_count: int = 24) -> dict:
@@ -341,7 +436,13 @@ def _volume_xray(candles: list[MarketCandle], trade_flow: dict | None = None) ->
     delta_direction = 1 if delta_ratio > 0.15 else -1 if delta_ratio < -0.15 else 0
     absorption_candidate = abs(delta_ratio) >= 0.35 and body / full_range < 0.35 and delta_direction != 0 and delta_direction != body_direction
     climax_candidate = abs(recent_delta) >= abs_delta_baseline * 2 and abs(push) > 0.025
-    state = _trade_volume_state(relative_trade_volume, delta_ratio, spike_detected, absorption_candidate, climax_candidate)
+    state = _trade_volume_state(
+        relative_trade_volume,
+        delta_ratio,
+        spike_detected,
+        absorption_candidate,
+        climax_candidate,
+    )
     return {
         "relative_volume": round(relative_trade_volume, 2),
         "relative_volume_method": "trade_fills",
@@ -372,7 +473,13 @@ def _volume_state(relative_volume: float, push: float, spike_detected: bool, cli
     return "weak_rebound"
 
 
-def _trade_volume_state(relative_volume: float, delta_ratio: float, spike_detected: bool, absorption_candidate: bool, climax_candidate: bool) -> str:
+def _trade_volume_state(
+    relative_volume: float,
+    delta_ratio: float,
+    spike_detected: bool,
+    absorption_candidate: bool,
+    climax_candidate: bool,
+) -> str:
     if climax_candidate:
         return "climax_candidate"
     if absorption_candidate:

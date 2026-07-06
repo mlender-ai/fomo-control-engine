@@ -2,6 +2,7 @@
 
 import type { PositionActionPlan, PositionChartAnalysis } from "@/lib/api";
 import type { ChartLayerId, ChartLayerState } from "@/lib/chartLayers";
+import type { Density } from "@/lib/density";
 import { PositionCandlestickChart } from "./PositionCandlestickChart";
 
 export function PositionChart({
@@ -14,7 +15,8 @@ export function PositionChart({
   layers,
   onToggleLayer,
   highlightPrice,
-  positionOverlay
+  positionOverlay,
+  density = "simple"
 }: {
   analysis: PositionChartAnalysis | null;
   loading: boolean;
@@ -26,10 +28,11 @@ export function PositionChart({
   onToggleLayer: (id: ChartLayerId, additive: boolean) => void;
   highlightPrice?: number | null;
   positionOverlay?: PositionChartOverlay | null;
+  density?: Density;
 }) {
-  if (loading) {
+  if (loading && !analysis) {
     return (
-      <section className="positionChartPanel">
+      <section className="positionChartPanel" data-testid="position-chart">
         <div className="chartLoadingState">
           <i />
           <span>캔들 데이터를 불러오는 중입니다.</span>
@@ -40,7 +43,7 @@ export function PositionChart({
 
   if (error || !analysis) {
     return (
-      <section className="positionChartPanel">
+      <section className="positionChartPanel" data-testid="position-chart">
         <div className="chartErrorState">
           <strong>차트 데이터를 불러올 수 없습니다.</strong>
           <p>가능한 원인: Bitget 시세 오류, 캔들 데이터 부족, 심볼 매핑 오류</p>
@@ -53,7 +56,7 @@ export function PositionChart({
 
   if (analysis.candles.length < 100) {
     return (
-      <section className="positionChartPanel">
+      <section className="positionChartPanel" data-testid="position-chart">
         <div className="chartErrorState">
           <strong>차트 분석에 필요한 캔들 데이터가 부족합니다.</strong>
           <p>최소 100개 이상의 캔들이 필요합니다.</p>
@@ -64,7 +67,8 @@ export function PositionChart({
   }
 
   return (
-    <section className="positionChartPanel">
+    <section className="positionChartPanel" data-testid="position-chart">
+      {loading ? <div className="chartRefreshingBadge">차트 갱신 중</div> : null}
       <PositionCandlestickChart
         analysis={analysis}
         trendSummary={trendSummary}
@@ -73,6 +77,7 @@ export function PositionChart({
         onToggleLayer={onToggleLayer}
         highlightPrice={highlightPrice}
         positionOverlay={positionOverlay}
+        density={density}
       />
     </section>
   );
