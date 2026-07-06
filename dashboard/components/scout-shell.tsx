@@ -10,6 +10,7 @@ import {
   type ArmedSetup,
   type CatalogSymbolInfo,
   type EntryIntent,
+  type HistoricalBacktest,
   type ScoutAnalysisResponse,
   type ScoutScanRow,
   type WatchlistEntry
@@ -533,6 +534,7 @@ function ScoutSymbolView({ symbol, onBack }: { symbol: string; onBack: () => voi
             <ScenarioPanel scenarios={scenarios} asOf={data?.as_of} />
           </div>
         }
+        historyExtras={<HistoricalBacktestPanel context={data?.historical_backtest ?? analysis?.historical_backtest ?? null} />}
       />
     </div>
   );
@@ -733,6 +735,75 @@ function ScenarioPanel({ scenarios, asOf }: { scenarios: ScoutAnalysisResponse["
   );
 }
 
+function HistoricalBacktestPanel({ context }: { context: HistoricalBacktest | null }) {
+  if (!context) {
+    return <div className="terminalEmpty">과거 사례 통계를 불러오는 중입니다.</div>;
+  }
+  const stats = context.stats ?? [];
+  return (
+    <section className="historicalBacktestPanel" data-testid="historical-backtest-panel">
+      <div className="focusPanelHeader compact">
+        <div>
+          <h3>과거 사례</h3>
+          <p>{context.disclaimer}</p>
+        </div>
+        <span>{context.source === "cache" ? "캐시" : context.source}</span>
+      </div>
+      {stats.length ? (
+        <div className="historicalBacktestStats">
+          {stats.slice(0, 3).map((stat) => (
+            <div className="historicalBacktestStat" key={stat.signature_key}>
+              <div>
+                <strong>{plainifyTaText(stat.label ?? "동일 시그니처")}</strong>
+                <span>{stat.sample_warning ?? `N=${stat.sample_size}`}</span>
+              </div>
+              <div className="historicalBacktestMetrics">
+                <span>1R {formatNullablePct(stat.win_1r_pct)}</span>
+                <span>2R {formatNullablePct(stat.win_2r_pct)}</span>
+                <span>중앙 {formatNullableR(stat.median_rr)}</span>
+              </div>
+              {stat.cases?.length ? (
+                <div className="historicalCaseGrid">
+                  {stat.cases.slice(0, 3).map((item) => (
+                    <div className="historicalCaseCard" key={`${stat.signature_key}-${item.as_of}`}>
+                      <MiniPricePath points={item.price_path} />
+                      <span>{new Date(item.as_of).toLocaleDateString()} · {item.outcome.win_1r ? "1R 도달" : "무효화 우선"}</span>
+                      <em>MFE {item.outcome.mfe_r}R · MAE {item.outcome.mae_r}R</em>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="terminalEmpty">현재 활성 신호와 매칭되는 과거 사례가 부족합니다.</div>
+      )}
+      <p className="tabExplanation">{context.notes.join(" · ")}</p>
+    </section>
+  );
+}
+
+function MiniPricePath({ points }: { points: Array<{ close: number }> }) {
+  const values = points.map((point) => point.close).filter((value) => Number.isFinite(value));
+  if (values.length < 2) return <div className="miniBacktestChart empty" />;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min || 1;
+  const d = values
+    .map((value, index) => {
+      const x = (index / Math.max(1, values.length - 1)) * 100;
+      const y = 30 - ((value - min) / span) * 28;
+      return `${index === 0 ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`;
+    })
+    .join(" ");
+  return (
+    <svg className="miniBacktestChart" viewBox="0 0 100 32" role="img" aria-label="과거 사례 미니 차트">
+      <path d={d} />
+    </svg>
+  );
+}
+
 function ScenarioBlock({ title, scenario }: { title: string; scenario: { invalidation: { price: number | null; basis: string; distance_pct: number | null; action: string } | null; take_profit: Array<{ price: number | null; basis: string; distance_pct: number | null; action: string }>; watch_triggers: Array<{ condition: string; meaning: string }> } }) {
   return (
     <div className="scenarioBlock">
@@ -799,6 +870,16 @@ function intentDistanceFromMark(intent: EntryIntent, markPrice: number | null | 
 function formatPct(value: number | null | undefined): string {
   if (typeof value !== "number") return "-";
   return `${value.toFixed(2)}%`;
+}
+
+function formatNullablePct(value: number | null | undefined): string {
+  if (typeof value !== "number") return "-";
+  return `${value.toFixed(1)}%`;
+}
+
+function formatNullableR(value: number | null | undefined): string {
+  if (typeof value !== "number") return "-";
+  return `${value.toFixed(2)}R`;
 }
 
 function formatInputPrice(value: number): string {

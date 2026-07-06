@@ -18,6 +18,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
 from app.analyst.briefing import build_analyst_briefing
+from app.backtest.service import backtest_line, historical_context_for_analysis
 from app.services import http_handlers as runtime
 from app.db.models import (
     CatalogSymbol,
@@ -175,6 +176,7 @@ def scout_analysis(symbol: str, timeframe: str = "4h", force: bool = False) -> d
         "cache_age_seconds": round(time.monotonic() - entry["cached_at_monotonic"], 1),
         "analysis": entry["analysis"],
         "summary": entry["summary"],
+        "historical_backtest": entry["historical_backtest"],
         "analyst_briefing": briefing,
     }
 
@@ -182,7 +184,23 @@ def scout_analysis(symbol: str, timeframe: str = "4h", force: bool = False) -> d
 def scout_briefing(symbol: str, timeframe: str = "4h", force: bool = False) -> dict:
     entry = _analysis_entry(symbol, timeframe, force=force, include_trade_flow=True)
     briefing = _briefing_for_entry(symbol, timeframe, entry, action_plan=None, context="pre_entry")
-    return {"symbol": symbol.upper(), "timeframe": timeframe, "as_of": entry["as_of"], "analyst_briefing": briefing}
+    return {
+        "symbol": symbol.upper(),
+        "timeframe": timeframe,
+        "as_of": entry["as_of"],
+        "historical_backtest": entry["historical_backtest"],
+        "analyst_briefing": briefing,
+    }
+
+
+def scout_backtest(symbol: str, timeframe: str = "4h", force: bool = False) -> dict:
+    entry = _analysis_entry(symbol, timeframe, force=force, include_trade_flow=False)
+    return {
+        "symbol": symbol.upper(),
+        "timeframe": timeframe,
+        "as_of": entry["as_of"],
+        "historical_backtest": entry["historical_backtest"],
+    }
 
 
 class ScanRequest(BaseModel):
@@ -242,9 +260,20 @@ def _analysis_entry(symbol: str, timeframe: str, force: bool, include_trade_flow
         analysis = build_chart_analysis(snapshot, None, trade_flow, derivatives=derivatives)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    historical = historical_context_for_analysis(
+        _repo(),
+        runtime.settings,
+        symbol=snapshot.symbol,
+        timeframe=snapshot.timeframe,
+        analysis=analysis,
+        candles=snapshot.candles,
+        force=force,
+    )
+    analysis["historical_backtest"] = historical
     entry = {
         "analysis": analysis,
         "summary": _summary_row(symbol, snapshot, analysis, derivatives),
+        "historical_backtest": historical,
         "as_of": utc_now().isoformat(),
         "cached_at_monotonic": now,
     }
@@ -281,6 +310,8 @@ def _summary_row(
     signals = derivatives.get("signals") if isinstance(derivatives, dict) and isinstance(derivatives.get("signals"), dict) else {}
     crowding = signals.get("crowding_score") if isinstance(signals.get("crowding_score"), dict) else None
     funding = signals.get("funding_state") if isinstance(signals.get("funding_state"), dict) else None
+    setup_candidates = setup_candidates_from_analysis(symbol, snapshot.timeframe, analysis, runtime.settings)
+    _attach_backtest_to_candidates(setup_candidates, analysis.get("historical_backtest"))
     return {
         "symbol": symbol.upper(),
         "asset_class": analysis.get("asset_class") or classify_asset_class(symbol),
@@ -307,8 +338,20 @@ def _summary_row(
         "setup_proximity_pct": min(proximity_candidates) if proximity_candidates else None,
         "entry_intent_distance_pct": _nearest_intent_distance(symbol, mark),
         "mark_price": mark,
-        "setup_candidates": setup_candidates_from_analysis(symbol, snapshot.timeframe, analysis, runtime.settings),
+        "setup_candidates": setup_candidates,
+        "backtest_summary": backtest_line(analysis.get("historical_backtest")),
     }
+
+
+def _attach_backtest_to_candidates(candidates: list[dict[str, Any]], context: Any) -> None:
+    line = backtest_line(context if isinstance(context, dict) else None)
+    if not line:
+        return
+    for candidate in candidates:
+        preview = candidate.get("preview") if isinstance(candidate.get("preview"), dict) else {}
+        preview["backtest_summary"] = line
+        candidate["preview"] = preview
+        candidate["backtest_summary"] = line
 
 
 def _nearest_intent_distance(symbol: str, mark: float | None) -> float | None:

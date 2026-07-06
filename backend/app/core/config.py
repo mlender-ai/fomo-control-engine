@@ -356,6 +356,22 @@ class Settings(BaseSettings):
         24.0,
         validation_alias=AliasChoices("FCE_ENTRY_INTENT_SCORE_AFTER_HOURS", "ENTRY_INTENT_SCORE_AFTER_HOURS"),
     )
+    backtest_enabled: bool = Field(
+        True,
+        validation_alias=AliasChoices("FCE_BACKTEST_ENABLED", "BACKTEST_ENABLED"),
+    )
+    backtest_min_window_candles: int = Field(
+        60,
+        validation_alias=AliasChoices("FCE_BACKTEST_MIN_WINDOW_CANDLES", "BACKTEST_MIN_WINDOW_CANDLES"),
+    )
+    backtest_lookahead_bars: int = Field(
+        48,
+        validation_alias=AliasChoices("FCE_BACKTEST_LOOKAHEAD_BARS", "BACKTEST_LOOKAHEAD_BARS"),
+    )
+    backtest_sample_floor: int = Field(
+        10,
+        validation_alias=AliasChoices("FCE_BACKTEST_SAMPLE_FLOOR", "BACKTEST_SAMPLE_FLOOR"),
+    )
     worker_backoff_failure_threshold: int = Field(
         3,
         validation_alias=AliasChoices("FCE_WORKER_BACKOFF_FAILURE_THRESHOLD", "WORKER_BACKOFF_FAILURE_THRESHOLD"),

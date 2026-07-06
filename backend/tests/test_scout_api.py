@@ -72,6 +72,18 @@ def test_scout_analysis_returns_scenarios_without_position(client: TestClient) -
     assert set(analysis["scenarios"].keys()) == {"long", "short"}
     assert payload["summary"]["long_score"] >= 0
     assert payload["summary"]["short_score"] >= 0
+    assert payload["historical_backtest"]["disclaimer"].startswith("과거 통계")
+    assert analysis["historical_backtest"]["source"] in {"cache", "replay", "insufficient_candles", "disabled"}
+
+
+def test_scout_backtest_endpoint_returns_descriptive_stats(client: TestClient) -> None:
+    response = client.get("/api/scout/BTCUSDT/backtest", params={"timeframe": "4h"})
+    assert response.status_code == 200
+    payload = response.json()["historical_backtest"]
+    assert payload["symbol"] == "BTCUSDT"
+    assert payload["disclaimer"] == "과거 통계 · 미래 보장 아님 · 수수료/슬리피지 미반영"
+    assert isinstance(payload["active_signatures"], list)
+    assert isinstance(payload["stats"], list)
 
 
 def test_stock_scout_analysis_includes_session_context(client: TestClient) -> None:

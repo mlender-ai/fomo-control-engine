@@ -627,6 +627,60 @@ export type ScoutScanRow = {
   entry_intent_distance_pct?: number | null;
   mark_price?: number | null;
   setup_candidates?: Array<Record<string, unknown>>;
+  backtest_summary?: string | null;
+};
+
+export type BacktestCase = {
+  symbol: string;
+  timeframe: string;
+  asset_class: string;
+  as_of: string;
+  entry_price: number;
+  signature_key: string;
+  signature: Record<string, unknown>;
+  event: Record<string, unknown>;
+  outcome: {
+    win_1r: boolean;
+    win_2r: boolean;
+    mfe_r: number;
+    mae_r: number;
+    realized_rr: number;
+    resolved_bars: number;
+    risk_fallback?: boolean;
+  };
+  price_path: Array<{ time: string; close: number; high?: number; low?: number }>;
+  disclaimer: string;
+};
+
+export type BacktestStat = {
+  signature_key: string;
+  signature?: Record<string, unknown>;
+  label?: string;
+  scope?: string;
+  sample_size: number;
+  win_1r_pct: number | null;
+  win_2r_pct: number | null;
+  median_rr: number | null;
+  avg_mfe_r: number | null;
+  avg_mae_r: number | null;
+  avg_resolution_bars?: number | null;
+  sample_warning?: string | null;
+  disclaimer: string;
+  cases: BacktestCase[];
+};
+
+export type HistoricalBacktest = {
+  symbol: string;
+  timeframe: string;
+  asset_class?: string;
+  generated_at: string;
+  source: string;
+  disclaimer: string;
+  sample_floor: number;
+  active_signatures: Array<Record<string, unknown>>;
+  stats: BacktestStat[];
+  case_count?: number | null;
+  notes: string[];
 };
 
 export type ArmedSetup = {
@@ -686,6 +740,7 @@ export type ScoutAnalysisResponse = {
   cache_age_seconds: number;
   analysis: PositionChartAnalysis;
   summary: ScoutScanRow;
+  historical_backtest?: HistoricalBacktest | null;
   analyst_briefing?: AnalystBriefing | null;
 };
 
@@ -978,6 +1033,7 @@ export type PositionChartAnalysis = {
     volume_profile_method: string;
     last_candle_at: string;
   };
+  historical_backtest?: HistoricalBacktest | null;
 };
 
 export type Trade = {
@@ -1342,8 +1398,12 @@ export const api = {
   scoutAnalysis: (symbol: string, timeframe = "4h", force = false) =>
     request<ScoutAnalysisResponse>(`/api/scout/${encodeURIComponent(symbol)}/analysis?timeframe=${encodeURIComponent(timeframe)}&force=${force}`),
   scoutBriefing: (symbol: string, timeframe = "4h", force = false) =>
-    request<{ symbol: string; timeframe: string; as_of: string; analyst_briefing: AnalystBriefing }>(
+    request<{ symbol: string; timeframe: string; as_of: string; historical_backtest?: HistoricalBacktest | null; analyst_briefing: AnalystBriefing }>(
       `/api/scout/${encodeURIComponent(symbol)}/briefing?timeframe=${encodeURIComponent(timeframe)}&force=${force}`
+    ),
+  scoutBacktest: (symbol: string, timeframe = "4h", force = false) =>
+    request<{ symbol: string; timeframe: string; as_of: string; historical_backtest: HistoricalBacktest }>(
+      `/api/scout/${encodeURIComponent(symbol)}/backtest?timeframe=${encodeURIComponent(timeframe)}&force=${force}`
     ),
   scoutScan: (payload: { timeframe?: string | null; force?: boolean } = {}) =>
     request<ScoutScanResponse>("/api/scout/scan", {

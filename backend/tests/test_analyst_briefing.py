@@ -17,10 +17,21 @@ def test_briefing_requires_counter_evidence_for_directional_stance() -> None:
 
 
 def test_briefing_outputs_evidence_counter_scenario_and_hit_rates() -> None:
+    analysis = _balanced_analysis()
+    analysis["historical_backtest"] = {
+        "sample_floor": 10,
+        "stats": [
+            {
+                "label": "유동성 저점 스윕",
+                "sample_size": 14,
+                "win_1r_pct": 64.3,
+            }
+        ],
+    }
     briefing = build_analyst_briefing(
         symbol="TESTUSDT",
         timeframe="4h",
-        analysis=_balanced_analysis(),
+        analysis=analysis,
         action_plan=_action_plan(),
         calibration_scores=_calibration_scores("liquidity_sweep", total=22, correct=15),
     )
@@ -29,7 +40,8 @@ def test_briefing_outputs_evidence_counter_scenario_and_hit_rates() -> None:
     assert confluence["stance"] in {"long_leaning", "conflicted"}
     assert confluence["counter_evidence"]
     assert briefing["scenario"]
-    assert any("N=" in line for line in briefing["hit_rates"])
+    assert any(line.startswith("라이브") and "N=" in line for line in briefing["hit_rates"])
+    assert any(line.startswith("백테스트") and "N=14" in line for line in briefing["hit_rates"])
     assert "반대 근거" in briefing["text"]
     assert "판단은 사용자 몫" in briefing["text"]
 

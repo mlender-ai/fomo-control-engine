@@ -234,6 +234,7 @@ def evaluate_entry_intents(repo: Any, settings: Settings, row: dict[str, Any], s
     current = _float(row.get("mark_price"))
     if not symbol or current is None:
         return {"intents": [], "candidates": []}
+    backtest_summary = _row_backtest_summary(row)
     now = utc_now()
     candidates: list[AlertCandidate] = []
     updated_intents: list[EntryIntent] = []
@@ -242,7 +243,7 @@ def evaluate_entry_intents(repo: Any, settings: Settings, row: dict[str, Any], s
             expired = intent.model_copy(update={"status": "expired", "updated_at": now, "last_seen_at": now})
             repo.upsert_entry_intent(expired)
             updated_intents.append(expired)
-            candidates.append(_intent_candidate("intent_invalidated", "info", expired, current, _zone_distance_pct(current, expired), "의도 만료"))
+            candidates.append(_intent_candidate("intent_invalidated", "info", expired, current, _zone_distance_pct(current, expired), "의도 만료", backtest_summary))
             continue
 
         condition_state = _intent_condition_state(intent, row)
@@ -266,7 +267,7 @@ def evaluate_entry_intents(repo: Any, settings: Settings, row: dict[str, Any], s
             )
             repo.upsert_entry_intent(invalidated)
             updated_intents.append(invalidated)
-            candidates.append(_intent_candidate("intent_invalidated", "info", invalidated, current, distance, "존 반대편 이탈"))
+            candidates.append(_intent_candidate("intent_invalidated", "info", invalidated, current, distance, "존 반대편 이탈", backtest_summary))
             continue
 
         if in_zone and all_met:
@@ -283,7 +284,7 @@ def evaluate_entry_intents(repo: Any, settings: Settings, row: dict[str, Any], s
             repo.upsert_entry_intent(triggered)
             _record_intent_judgment(repo, triggered, snapshot, condition_state)
             updated_intents.append(triggered)
-            candidates.append(_intent_candidate("intent_zone_entered", "action", triggered, current, distance, "등록 조건 충족"))
+            candidates.append(_intent_candidate("intent_zone_entered", "action", triggered, current, distance, "등록 조건 충족", backtest_summary))
             continue
 
         if in_zone:
@@ -300,7 +301,7 @@ def evaluate_entry_intents(repo: Any, settings: Settings, row: dict[str, Any], s
             repo.upsert_entry_intent(partial)
             updated_intents.append(partial)
             if should_alert:
-                candidates.append(_intent_candidate("intent_zone_entered_partial", "info", partial, current, distance, "조건 일부 미충족"))
+                candidates.append(_intent_candidate("intent_zone_entered_partial", "info", partial, current, distance, "조건 일부 미충족", backtest_summary))
             continue
 
         if distance <= rearmed.tolerance_pct and rearmed.approaching_alerted_at is None:
@@ -314,7 +315,7 @@ def evaluate_entry_intents(repo: Any, settings: Settings, row: dict[str, Any], s
             )
             repo.upsert_entry_intent(approaching)
             updated_intents.append(approaching)
-            candidates.append(_intent_candidate("intent_approaching", "info", approaching, current, distance, "존 접근"))
+            candidates.append(_intent_candidate("intent_approaching", "info", approaching, current, distance, "존 접근", backtest_summary))
             continue
 
         refreshed = rearmed.model_copy(update={"updated_at": now, "last_seen_at": now, "condition_state": condition_state})
@@ -587,11 +588,13 @@ def _setup_candidate(rule_id: str, severity: str, setup: ArmedSetup, current: fl
     emoji = "🎯" if rule_id == "setup_near" else "🟢" if rule_id == "setup_triggered" else "🟡"
     preview = _preview_line(setup)
     briefing = _briefing_preview_line(setup)
+    backtest = _backtest_preview_line(setup)
     title = title_map.get(rule_id, "셋업")
     lines = [
         f"{emoji} <b>{escape(setup.symbol)}</b> — {escape(title)}",
         f"{escape(setup.trigger_label)} {_price(setup.trigger_price)} (거리 {_signed_pct(distance)}) · 신뢰도 {setup.confidence or '-'}",
         preview,
+        backtest,
         briefing,
         "→ 진입 판단은 사용자 몫. 시뮬레이션으로 R:R과 무효화를 다시 확인하세요.",
     ]
@@ -703,7 +706,15 @@ def _score_setup_path(setup: ArmedSetup, snapshots: list[ScoutSnapshot], setting
     return "whipsaw", "트리거 이후 양방향 변동이 섞여 결론을 보류합니다.", metrics
 
 
-def _intent_candidate(rule_id: str, severity: str, intent: EntryIntent, current: float, distance: float, reason: str) -> AlertCandidate:
+def _intent_candidate(
+    rule_id: str,
+    severity: str,
+    intent: EntryIntent,
+    current: float,
+    distance: float,
+    reason: str,
+    backtest_summary: str | None = None,
+) -> AlertCandidate:
     title_map = {
         "intent_approaching": "진입 의도 접근",
         "intent_zone_entered": "진입 의도 조건 충족",
@@ -722,6 +733,8 @@ def _intent_candidate(rule_id: str, severity: str, intent: EntryIntent, current:
     preview = _intent_preview_line(intent)
     if preview:
         lines.append(preview)
+    if backtest_summary:
+        lines.append(escape(backtest_summary))
     if intent.note:
         lines.append(f"메모: {escape(intent.note)}")
     lines.append(f"→ 등록한 조건 상태 통보입니다. 진입 판단은 사용자 몫입니다. ({escape(reason)})")
@@ -747,6 +760,7 @@ def _intent_candidate(rule_id: str, severity: str, intent: EntryIntent, current:
             "conditions": intent.conditions,
             "condition_state": intent.condition_state,
             "preview": intent.preview,
+            "backtest_summary": backtest_summary,
             "number_sources": [
                 {"label": "zone_lower", "value": intent.zone_lower, "source": "entry_intents.zone_lower"},
                 {"label": "zone_upper", "value": intent.zone_upper, "source": "entry_intents.zone_upper"},
@@ -986,6 +1000,12 @@ def _preview_line(setup: ArmedSetup) -> str:
     return f"프리뷰({setup.direction or '-'} 10x 가정): R:R {rr or '-'} · 무효화 {_signed_pct(inv)}{checks}"
 
 
+def _backtest_preview_line(setup: ArmedSetup) -> str:
+    preview = setup.preview if isinstance(setup.preview, dict) else {}
+    summary = preview.get("backtest_summary")
+    return escape(summary.strip()) if isinstance(summary, str) and summary.strip() else ""
+
+
 def _briefing_preview_line(setup: ArmedSetup) -> str:
     preview = setup.preview if isinstance(setup.preview, dict) else {}
     summary = preview.get("briefing_summary")
@@ -995,6 +1015,21 @@ def _briefing_preview_line(setup: ArmedSetup) -> str:
     if isinstance(stance, str) and stance.strip():
         return f"브리핑: {escape(stance.strip())}"
     return ""
+
+
+def _row_backtest_summary(row: dict[str, Any]) -> str | None:
+    if isinstance(row.get("backtest_summary"), str):
+        return row["backtest_summary"]
+    analysis = row.get("analysis") if isinstance(row.get("analysis"), dict) else {}
+    context = analysis.get("historical_backtest") if isinstance(analysis.get("historical_backtest"), dict) else None
+    stats = context.get("stats") if isinstance(context, dict) and isinstance(context.get("stats"), list) else []
+    if not stats:
+        return None
+    stat = stats[0]
+    n = int(stat.get("sample_size") or 0)
+    if n < 10:
+        return f"백테스트: 과거 {n}회 · 표본 부족 — 결론 유보" if n > 0 else None
+    return f"백테스트: 동일 시그니처 과거 {n}회 · 1R {stat.get('win_1r_pct')}% · 중앙 {stat.get('median_rr')}R"
 
 
 def _distance_pct(base: float, target: float) -> float:

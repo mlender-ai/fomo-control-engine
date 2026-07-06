@@ -323,6 +323,31 @@ class EntryIntent(BaseModel):
     last_seen_at: datetime = Field(default_factory=utc_now)
 
 
+class BacktestStat(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    signature_key: str
+    symbol: str
+    timeframe: str = "4h"
+    asset_class: Literal["crypto", "stock", "index", "unknown"] | str = "unknown"
+    scope: Literal["symbol", "asset_class", "all"] = "symbol"
+    engine: str
+    event_type: str
+    strength_class: str
+    direction: Literal["long", "short", "neutral"] | str
+    sample_size: int = 0
+    win_1r_pct: float | None = None
+    win_2r_pct: float | None = None
+    median_rr: float | None = None
+    avg_mfe_r: float | None = None
+    avg_mae_r: float | None = None
+    avg_resolution_bars: float | None = None
+    cases: list[dict] = Field(default_factory=list)
+    disclaimer: str = "과거 통계 · 미래 보장 아님 · 수수료/슬리피지 미반영"
+    payload: dict = Field(default_factory=dict)
+    generated_at: datetime = Field(default_factory=utc_now)
+    created_at: datetime = Field(default_factory=utc_now)
+
+
 class PositionMemoUpdate(BaseModel):
     memo: str | None = None
     entry_memo: str | None = None

@@ -22,7 +22,7 @@ def build_analyst_briefing(
         calibration_scores=calibration_scores or [],
     )
     scenario = _scenario_lines(confluence, action_plan or {}, analysis)
-    hit_rates = _hit_rate_lines(confluence)
+    hit_rates = _hit_rate_lines(confluence, analysis.get("historical_backtest"))
     text = render_briefing(confluence, scenario, hit_rates, context=context)
     return {
         "symbol": symbol.upper(),
@@ -156,7 +156,7 @@ def _scenario_plan_from_analysis(analysis: dict[str, Any], stance: Any) -> dict[
     return plan if isinstance(plan, dict) else {}
 
 
-def _hit_rate_lines(confluence: dict[str, Any]) -> list[str]:
+def _hit_rate_lines(confluence: dict[str, Any], historical_backtest: Any = None) -> list[str]:
     lines = []
     seen: set[str] = set()
     for item in _primary_evidence(confluence) + _dict_list(confluence.get("counter_evidence")):
@@ -167,7 +167,17 @@ def _hit_rate_lines(confluence: dict[str, Any]) -> list[str]:
         if engine in seen:
             continue
         seen.add(engine)
-        lines.append(f"{_engine_label(engine)} {calibration.get('accuracy_pct')}% (N={calibration.get('tested')})")
+        lines.append(f"라이브 {_engine_label(engine)} {calibration.get('accuracy_pct')}% (N={calibration.get('tested')})")
+    if isinstance(historical_backtest, dict):
+        for stat in _dict_list(historical_backtest.get("stats"))[:3]:
+            n = int(stat.get("sample_size") or 0)
+            if n <= 0:
+                continue
+            label = stat.get("label") or "동일 시그니처"
+            if n < int(historical_backtest.get("sample_floor") or 10):
+                lines.append(f"백테스트 {label} 표본 부족 (N={n})")
+            else:
+                lines.append(f"백테스트 {label} 1R {stat.get('win_1r_pct')}% (N={n})")
     return lines
 
 
