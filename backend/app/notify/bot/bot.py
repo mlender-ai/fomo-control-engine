@@ -16,11 +16,13 @@ from app.notify.bot.formatters import (
     format_help,
     format_entry_intents,
     format_insight,
+    format_one_liner_strip,
     format_performance,
     format_position_verdict,
     format_positions_summary,
     format_reviews,
     format_scout,
+    format_scout_quick_answer,
     format_simulation,
     format_status,
     format_weekly_calibration,
@@ -118,6 +120,9 @@ class TelegramBotSupervisor:
         async def scout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await guarded(update, self._scout, context)
 
+        async def quick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+            await guarded(update, self._quick, context)
+
         async def intents(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await guarded(update, self._intents, context)
 
@@ -162,6 +167,7 @@ class TelegramBotSupervisor:
         app.add_handler(CommandHandler("flow", flow))
         app.add_handler(CommandHandler("brief", brief))
         app.add_handler(CommandHandler("scout", scout))
+        app.add_handler(CommandHandler(["q", "quick"], quick))
         app.add_handler(CommandHandler("intents", intents))
         app.add_handler(CommandHandler("intent", intent))
         app.add_handler(CommandHandler("sim", sim))
@@ -237,6 +243,18 @@ class TelegramBotSupervisor:
     async def _scout(self, update: Any, context: Any) -> None:
         payload = await self._run(service.scout_scan)
         await self._reply(update.effective_message, format_scout(payload))
+
+    async def _quick(self, update: Any, context: Any) -> None:
+        symbol = _first_arg(context.args)
+        if not symbol:
+            await self._reply(update.effective_message, "사용법: /q SOL")
+            return
+        try:
+            payload = await self._run(service.scout_quick_answer, symbol)
+        except Exception as exc:
+            await self._reply(update.effective_message, f"즉답 분석 실패: {exc}")
+            return
+        await self._reply(update.effective_message, format_scout_quick_answer(payload))
 
     async def _intents(self, update: Any, context: Any) -> None:
         symbol = _first_arg(context.args)
@@ -340,6 +358,13 @@ class TelegramBotSupervisor:
                 format_status(get_worker_status()),
                 reply_markup=_markup(main_menu_keyboard(), context),
             )
+        elif parsed.action == "review":
+            trades = await self._run(service.recent_reviews)
+            await self._edit(
+                query,
+                format_reviews(trades),
+                reply_markup=_markup(main_menu_keyboard(), context),
+            )
         elif parsed.action == "sim":
             symbol, direction = _symbol_direction(parsed.symbol)
             result = await self._run(service.simulate_entry, symbol, direction, 10.0, None)
@@ -350,6 +375,10 @@ class TelegramBotSupervisor:
             )
         elif parsed.action == "detail":
             await self._edit_detail(query, context, parsed.symbol)
+        elif parsed.action == "one_liners":
+            await self._edit_one_liners(query, context, parsed.symbol)
+        elif parsed.action == "chart":
+            await self._edit_chart_hint(query, context, parsed.symbol)
         elif parsed.action == "plan":
             await self._edit_plan(query, context, parsed.symbol)
         elif parsed.action == "insight":
@@ -452,6 +481,45 @@ class TelegramBotSupervisor:
             query,
             format_position_verdict(payload),
             reply_markup=_markup(detail_keyboard(payload["position"]["symbol"]), context),
+        )
+
+    async def _edit_one_liners(self, query: Any, context: Any, symbol: str) -> None:
+        payload = await self._detail_payload(symbol)
+        if "candidates" in payload:
+            await self._edit(
+                query,
+                _candidate_text(payload["candidates"]),
+                reply_markup=_markup(_candidate_rows(payload["candidates"]), context),
+            )
+            return
+        text = format_one_liner_strip(payload) or "1줄 판정 데이터가 아직 없습니다."
+        await self._edit(
+            query,
+            text,
+            reply_markup=_markup(detail_keyboard(payload["position"]["symbol"]), context),
+        )
+
+    async def _edit_chart_hint(self, query: Any, context: Any, symbol: str) -> None:
+        payload = await self._detail_payload(symbol)
+        if "candidates" in payload:
+            await self._edit(
+                query,
+                _candidate_text(payload["candidates"]),
+                reply_markup=_markup(_candidate_rows(payload["candidates"]), context),
+            )
+            return
+        position = payload["position"]
+        text = "\n".join(
+            [
+                f"<b>{escape(str(position.get('symbol', symbol)).upper())} 차트</b>",
+                "차트는 로컬 대시보드에서 확인합니다.",
+                "http://127.0.0.1:8876/",
+            ]
+        )
+        await self._edit(
+            query,
+            text,
+            reply_markup=_markup(detail_keyboard(position["symbol"]), context),
         )
 
     async def _edit_plan(self, query: Any, context: Any, symbol: str) -> None:

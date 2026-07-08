@@ -16,6 +16,8 @@ const checks = [
     patterns: [
       { pattern: 'data-budget-columns-max="4"', label: "스카우트 4컬럼 예산" },
       { pattern: 'data-budget-numbers-max="7"', label: "스카우트 평결 카드 숫자 예산" },
+      { pattern: 'data-budget-numbers-max="6"', label: "스카우트 즉답 카드 숫자 예산" },
+      { pattern: 'data-testid="scout-quick-answer"', label: "스카우트 즉답 카드" },
       { pattern: 'data-testid="scout-minimal-table"', label: "스카우트 미니멀 표" }
     ]
   }

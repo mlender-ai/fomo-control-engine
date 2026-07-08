@@ -43,6 +43,7 @@ def _payload(
     invalidation: float = 95,
     take_profit: float = 110,
     direction: str = "long",
+    entry: float = 100,
     leverage: float = 3,
     health: int = 70,
     previous_health: int = 72,
@@ -84,7 +85,7 @@ def _payload(
             "id": str(position_id),
             "symbol": "BASEDUSDT",
             "direction": direction,
-            "entry_price": 100,
+            "entry_price": entry,
             "quantity": 10,
             "leverage": leverage,
             "status": "open",
@@ -173,6 +174,38 @@ async def test_invalidation_breach_sends_once_and_cools_down(repo) -> None:
     assert alerts[0].delivered is True
     assert "손절 검토" in sender.messages[0]
     assert "매도하세요" not in sender.messages[0]
+
+
+@pytest.mark.asyncio
+async def test_short_take_profit_above_entry_is_not_alerted(repo) -> None:
+    sender = FakeTelegramSender()
+    engine = AlertEngine(_settings(), sender, NotificationState())
+    payload = _payload(
+        direction="short",
+        entry=158.0,
+        current=160.22,
+        invalidation=170.0,
+        take_profit=160.71,
+    )
+
+    assert await engine.evaluate_positions([payload]) == 0
+    assert sender.messages == []
+
+
+@pytest.mark.asyncio
+async def test_short_take_profit_alert_uses_directional_progress(repo) -> None:
+    sender = FakeTelegramSender()
+    engine = AlertEngine(_settings(alert_trigger_near_pct=0.5), sender, NotificationState())
+    payload = _payload(
+        direction="short",
+        entry=100.0,
+        current=89.0,
+        invalidation=110.0,
+        take_profit=90.0,
+    )
+
+    assert await engine.evaluate_positions([payload]) == 1
+    assert "익절1 90.0000에 도달했습니다. 현재 89.0000 · 목표 대비 +1.11%" in sender.messages[0]
 
 
 @pytest.mark.asyncio

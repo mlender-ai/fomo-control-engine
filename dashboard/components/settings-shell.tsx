@@ -101,7 +101,13 @@ export function SettingsShell() {
     }
   }
 
-  async function updateQuietHours(patch: { quiet_hours_enabled?: boolean; quiet_hours_start?: string; quiet_hours_end?: string; daily_summary_time?: string }) {
+  async function updateQuietHours(patch: {
+    quiet_hours_enabled?: boolean;
+    quiet_hours_start?: string;
+    quiet_hours_end?: string;
+    daily_summary_time?: string;
+    pulse_interval_hours?: number;
+  }) {
     setBusy("quiet");
     setError("");
     setNotice("");
@@ -116,12 +122,12 @@ export function SettingsShell() {
     }
   }
 
-  async function sendTestAlert() {
-    setBusy("test-alert");
+  async function sendTestAlert(ruleId?: string) {
+    setBusy(ruleId ? `test-alert:${ruleId}` : "test-alert");
     setError("");
     setNotice("");
     try {
-      const result = await api.sendTestAlert();
+      const result = await api.sendTestAlert(ruleId);
       setNotice(result.sent > 0 ? `테스트 알림 ${result.sent}건을 발송했습니다.` : result.configured ? "Telegram 발송이 실패했습니다. 백엔드 로그를 확인하세요." : "Telegram 토큰 또는 chat_id가 설정되지 않았습니다.");
       await load();
     } catch (err) {
@@ -173,7 +179,7 @@ export function SettingsShell() {
         subtitle="판단이 필요한 순간만 발송하고, 야간에는 critical 외 알림을 아침 요약으로 묶습니다"
         status={alertSettings?.telegram.configured ? "ok" : "warning"}
         actions={
-          <button className="button secondary" onClick={sendTestAlert} disabled={busy === "test-alert"}>
+          <button className="button secondary" onClick={() => sendTestAlert()} disabled={busy === "test-alert"}>
             <Send size={16} />
             테스트 발송
           </button>
@@ -184,6 +190,7 @@ export function SettingsShell() {
           <StatusItem label="Chat IDs" value={String(alertSettings?.telegram.chat_ids_configured ?? "-")} tone="muted" />
           <StatusItem label="Quiet Hours" value={alertSettings?.telegram.quiet_hours_enabled ? `${alertSettings.telegram.quiet_hours_start}-${alertSettings.telegram.quiet_hours_end}` : "off"} tone="muted" />
           <StatusItem label="Morning Summary" value={alertSettings?.telegram.daily_summary_time ?? "-"} tone="muted" />
+          <StatusItem label="Pulse" value={alertSettings ? `${alertSettings.telegram.pulse_interval_hours}h` : "-"} tone="muted" />
         </div>
         {alertSettings ? (
           <div className="alertSettingsGrid">
@@ -216,6 +223,20 @@ export function SettingsShell() {
               value={alertSettings.telegram.daily_summary_time}
               onChange={(event) => setAlertSettings({ ...alertSettings, telegram: { ...alertSettings.telegram, daily_summary_time: event.currentTarget.value } })}
               onBlur={(event) => updateQuietHours({ daily_summary_time: event.currentTarget.value })}
+            />
+            <input
+              aria-label="펄스 주기"
+              min="0.25"
+              step="0.25"
+              type="number"
+              value={alertSettings.telegram.pulse_interval_hours}
+              onChange={(event) =>
+                setAlertSettings({
+                  ...alertSettings,
+                  telegram: { ...alertSettings.telegram, pulse_interval_hours: Number(event.currentTarget.value) }
+                })
+              }
+              onBlur={(event) => updateQuietHours({ pulse_interval_hours: Number(event.currentTarget.value) })}
             />
           </div>
         ) : null}
@@ -251,6 +272,9 @@ export function SettingsShell() {
               ) : (
                 <span className="alertRuleFixed">조건형</span>
               )}
+              <button className="button ghost" onClick={() => sendTestAlert(rule.id)} disabled={busy === `test-alert:${rule.id}`} type="button">
+                테스트
+              </button>
             </div>
           ))}
         </div>

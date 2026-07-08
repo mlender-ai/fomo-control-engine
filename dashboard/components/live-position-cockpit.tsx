@@ -826,16 +826,16 @@ type MinimalPositionCopy = {
 function minimalPositionCopy(payload: LivePositionPayload): MinimalPositionCopy {
   const plan = actionPlanForPayload(payload);
   const verdictState = plan?.verdict_state ?? "holding";
-  const label = minimalVerdictLabel(verdictState, payload.state.severity_rank);
+  const label = minimalStatusLabel(payload, verdictState);
   const briefing = payload.analyst_briefing?.confluence;
   const sameDirection = payload.position.direction === "short" ? briefing?.short_evidence : briefing?.long_evidence;
   const oppositeDirection = payload.position.direction === "short" ? briefing?.long_evidence : briefing?.short_evidence;
   const riskState = verdictState === "danger" || verdictState === "weakening" || payload.state.severity_rank >= 2;
-  const whySource = riskState ? dedupeEvidence(oppositeDirection) : dedupeEvidence(sameDirection);
+  const headlineText = minimalHeadlineText(payload);
   const counterSource = riskState ? dedupeEvidence(sameDirection) : dedupeEvidence([...(briefing?.counter_evidence ?? []), ...(oppositeDirection ?? [])]);
   const whyEvidence = evidenceChoiceFromAnalyst(
-    whySource[0],
-    plan?.headline_action || headlineForPayload(payload),
+    undefined,
+    headlineText,
     "why",
     nearestActionTriggerPrice(payload)
   );
@@ -856,6 +856,19 @@ function minimalPositionCopy(payload: LivePositionPayload): MinimalPositionCopy 
     whyEvidence,
     counterEvidence
   };
+}
+
+function minimalStatusLabel(payload: LivePositionPayload, verdictState: string): string {
+  const label = plainifyTaText(payload.state.status_label || "");
+  return label || minimalVerdictLabel(verdictState, payload.state.severity_rank);
+}
+
+function minimalHeadlineText(payload: LivePositionPayload): string {
+  const raw = plainifyTaText(headlineForPayload(payload));
+  return raw
+    .replace(/^→\s*/u, "")
+    .replace(/^지금\s*볼\s*것\s*[:：]\s*/u, "")
+    .trim() || "현재 평결 기준을 확인하세요.";
 }
 
 function dedupeEvidence(items: AnalystEvidence[] | undefined): AnalystEvidence[] {

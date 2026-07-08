@@ -209,7 +209,21 @@ def build_judgment_entries(
             )
         )
 
+    # WO-45: 판단 시점 레짐 태깅 — 주간 개선 비교의 레짐 통제(동일 레짐 전후)에 쓰인다.
+    # claim에 넣어도 judgment_id는 price/condition만 쓰므로 멱등성은 유지된다.
+    regime = _analysis_regime(chart_analysis)
+    if regime:
+        for entry in entries:
+            entry.claim.setdefault("regime", regime)
+
     return entries
+
+
+def _analysis_regime(chart_analysis: dict[str, Any]) -> str | None:
+    historical = chart_analysis.get("historical_backtest") if isinstance(chart_analysis.get("historical_backtest"), dict) else {}
+    current = historical.get("current_regime") if isinstance(historical.get("current_regime"), dict) else {}
+    regime = current.get("regime")
+    return str(regime) if regime and regime != "unknown" else None
 
 
 def score_judgments(

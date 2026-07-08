@@ -13,6 +13,7 @@ from app.notify.bot.formatters import (
     alert_keyboard,
     format_positions_summary,
     format_weekly_calibration,
+    lifecycle_alert_keyboard,
     setup_alert_keyboard,
 )
 from app.notify.lifecycle import (
@@ -370,6 +371,8 @@ class AlertEngine:
     def _reply_markup(self, candidate: AlertCandidate) -> dict[str, Any] | None:
         if candidate.payload.get("kind") in {"scout_setup", "entry_intent", "universe_discovery"}:
             return inline_keyboard(setup_alert_keyboard(candidate.symbol, candidate.payload.get("direction")))
+        if candidate.payload.get("kind") in {"lifecycle", "lifecycle_pulse"}:
+            return inline_keyboard(lifecycle_alert_keyboard(candidate.rule_id, candidate.symbol))
         if not candidate.position_id or candidate.symbol == "SYSTEM":
             return None
         return inline_keyboard(alert_keyboard(candidate.symbol))

@@ -32,13 +32,13 @@ def opened_candidate(context: dict[str, Any]) -> AlertCandidate:
     state = _state(context)
     one_liners = _one_liners(context)
     scenario_line = _scenario_line(position)
+    plan = context.get("action_plan") if isinstance(context.get("action_plan"), dict) else {}
     lines = [
-        _headline(position, "🟢", RULE_LABELS["position_opened"]),
-        f"진입 {_price(position.get('entry_price'))} · 수량 {_qty(position.get('quantity'))} · {_time(position.get('opened_at') or state.get('as_of'))} 기준",
-        _observation_line(position, one_liners),
-        _top_module_lines(one_liners, limit=3),
+        f"🟢 진입 감지 · <b>{escape(str(position.get('symbol') or '-'))}</b> {_direction_kr(position)} {position.get('leverage', '-')}x @ {_price(position.get('entry_price'))}",
+        f"초기 판정: {VERDICT_LABELS.get(str(plan.get('verdict_state') or 'unknown'), '미판정')} — {_counts_line(one_liners)}",
+        _next_price_sentence(plan),
         scenario_line,
-        "→ read-only 감지 통보입니다. 판단은 사용자 몫입니다.",
+        "판단은 사용자 몫입니다. 주문 실행 없음.",
     ]
     return _candidate(
         "position_opened",
@@ -62,16 +62,11 @@ def closed_candidate(position: dict[str, Any], trade: dict[str, Any] | None) -> 
     trade = trade or {}
     pnl_amount = _float(trade.get("pnl_amount"))
     pnl_percent = _float(trade.get("pnl_percent"))
-    pnl_line = (
-        f"실현 손익 {pnl_amount:+,.2f} USDT ({pnl_percent:+.2f}%)"
-        if pnl_amount is not None and pnl_percent is not None
-        else "실현 손익 집계 대기 (체결 기록 확인 필요)"
-    )
+    pnl_line = _closed_pnl_line(position, pnl_amount, pnl_percent)
     lines = [
-        _headline(position, "🏁", RULE_LABELS["position_closed"]),
         pnl_line,
         *_review_lines(trade),
-        "→ 종료는 2회 연속 sync 부재 확인 후 확정된 기록입니다.",
+        "종료는 2회 연속 sync 부재 확인 후 확정된 기록입니다.",
     ]
     return _candidate(
         "position_closed",
@@ -113,12 +108,10 @@ def transition_candidates(
     if previous_verdict and verdict != previous_verdict and verdict in VERDICT_LABELS and previous_verdict in VERDICT_LABELS:
         worsened = VERDICT_RANK.get(verdict, 0) > VERDICT_RANK.get(previous_verdict, 0)
         reason = str(plan.get("headline_action") or plan.get("headline") or one_liners.get("summary") or "판정 근거 갱신")[:80]
-        next_price = _next_watch_price(plan)
         lines = [
-            _headline(position, "🟠" if worsened else "🟢", RULE_LABELS["verdict_changed"]),
-            f"{VERDICT_LABELS[previous_verdict]} → {VERDICT_LABELS[verdict]}",
+            f"🟡 판정 변화 · <b>{escape(str(position.get('symbol') or '-'))}</b> {VERDICT_LABELS[previous_verdict]} → {VERDICT_LABELS[verdict]}",
             f"사유: {escape(reason)}",
-            f"다음 가격: {next_price}" if next_price else "",
+            _next_price_sentence(plan),
             _snapshot_line(state),
         ]
         candidates.append(
@@ -139,9 +132,9 @@ def transition_candidates(
     if previous_stance in {"상방", "하방"} and stance in {"상방", "하방"} and stance != previous_stance:
         top = _strongest_line(one_liners)
         lines = [
-            _headline(position, "🔄", RULE_LABELS["stance_flipped"]),
-            f"종합 스탠스 {previous_stance} → {stance} · {escape(str(one_liners.get('summary') or ''))}",
-            f"반전 근거: {top}" if top else "",
+            f"🟡 스탠스 변화 · <b>{escape(str(position.get('symbol') or '-'))}</b> {previous_stance} → {stance}",
+            f"사유: {top}" if top else "사유: 1줄 판정 갱신",
+            _counts_line(one_liners),
             _snapshot_line(state),
         ]
         candidates.append(
@@ -167,8 +160,8 @@ def transition_candidates(
             insufficient_since = now
         elif now - insufficient_since >= window and not tracker.get("insufficient_alerted"):
             lines = [
-                _headline(position, "⚪", RULE_LABELS["evidence_insufficient"]),
-                f"현재 판단 근거 부족 — 구조 형성 대기 (판정 가능 모듈 {judged if judged is not None else '-'} / 7)",
+                f"⚪ 근거 부족 지속 · <b>{escape(str(position.get('symbol') or '-'))}</b>",
+                f"판정 가능 모듈 {judged if judged is not None else '-'} / 7 — 구조 형성 대기",
                 _observation_line(position, one_liners),
                 _snapshot_line(state),
             ]
@@ -205,7 +198,7 @@ def pulse_candidate(
     pending_redelivery: list[dict[str, Any]] | None = None,
 ) -> AlertCandidate | None:
     """periodic_pulse — 보유 포지션 1줄 상태 묶음 1통. "전부 정상"도 발송 (침묵 ≠ 정상 증명)."""
-    lines = [f"📡 <b>{RULE_LABELS['periodic_pulse']}</b>"]
+    lines = [f"📡 <b>{RULE_LABELS['periodic_pulse']}</b> · 기준 {_time(datetime.now(timezone.utc))}"]
     if not contexts:
         lines.append("보유 포지션 없음 — 감시 정상 동작 중입니다.")
     all_normal = True
@@ -221,16 +214,16 @@ def pulse_candidate(
         lines.append(
             f"• <b>{escape(str(position.get('symbol') or '-'))}</b> {_direction_kr(position)} "
             f"{_signed_pct(state.get('pnl_percent'))} · 판정 {VERDICT_LABELS.get(verdict, verdict)} · "
-            f"방향 근거 {aligned}/{judged if judged is not None else '-'} · 반대 {opposing}"
+            f"{_counts_line(one_liners)}"
         )
     if contexts and all_normal:
-        lines.append("전 포지션 관측 정상 범위입니다.")
+        lines.append("전부 정상 · 변화 없음")
     redelivery = [item for item in (pending_redelivery or []) if isinstance(item, dict)]
     if redelivery:
         lines.append(f"⚠ 미도달 알림 {len(redelivery)}건 병합:")
         for item in redelivery[:5]:
             lines.append(f"  - {escape(str(item.get('symbol') or '-'))} {escape(str(item.get('title') or '-'))} ({_time(item.get('fired_at'))})")
-    lines.append("→ 정기 상태 통보입니다. 알림 침묵과 시스템 고장을 구분하기 위해 정상 상태도 발송합니다.")
+    lines.append("정기 상태 통보입니다. 알림 침묵과 시스템 고장을 구분하기 위해 정상 상태도 발송합니다.")
     return AlertCandidate(
         rule_id="periodic_pulse",
         severity="info",
@@ -244,6 +237,38 @@ def pulse_candidate(
 
 
 # ── 관측 문형 (판단 지시 금지) ─────────────────────────────────────
+
+
+def _counts_line(one_liners: dict[str, Any]) -> str:
+    counts = one_liners.get("counts") if isinstance(one_liners.get("counts"), dict) else {}
+    up = int(counts.get("상방") or 0)
+    down = int(counts.get("하방") or 0)
+    neutral = int(counts.get("횡보") or 0)
+    unknown = int(counts.get("판단불가") or 0)
+    parts = [f"상방 {up}", f"하방 {down}"]
+    if neutral:
+        parts.append(f"중립 {neutral}")
+    parts.append(f"판단불가 {unknown}")
+    return " · ".join(parts)
+
+
+def _next_price_sentence(plan: dict[str, Any]) -> str:
+    next_price = _next_watch_price(plan)
+    if not next_price:
+        return ""
+    headline = str(plan.get("headline_action") or plan.get("headline") or "").strip()
+    if headline:
+        return f"다음 가격: {next_price} · {escape(headline[:90])}"
+    return f"다음 가격: {next_price}"
+
+
+def _closed_pnl_line(position: dict[str, Any], pnl_amount: float | None, pnl_percent: float | None) -> str:
+    symbol = escape(str(position.get("symbol") or "-"))
+    direction = _direction_kr(position)
+    if pnl_amount is None or pnl_percent is None:
+        return f"🔵 종료 · <b>{symbol}</b> {direction} · 실현 손익 집계 대기"
+    return f"🔵 종료 · <b>{symbol}</b> {direction} {pnl_percent:+.2f}% ({pnl_amount:+,.2f} USDT)"
+
 
 def _observation_line(position: dict[str, Any], one_liners: dict[str, Any]) -> str:
     aligned, opposing, judged = _alignment_counts(position, one_liners)
@@ -312,7 +337,7 @@ def _review_lines(trade: dict[str, Any]) -> list[str]:
     tested = correct + wrong + whipsaw
     if tested == 0:
         return ["복기: 판단 채점 표본 없음 — 상세 복기는 /trades에서 확인하세요."]
-    first = f"복기: 판단 {tested}건 채점 — 적중 {correct} · 오판 {wrong} · 휩쏘 {whipsaw}"
+    first = f"복기: 판단 {tested}건 중 {correct} 적중 · 오판 {wrong} · 휩쏘 {whipsaw}"
     review = trade.get("review_v2") if isinstance(trade.get("review_v2"), dict) else {}
     realized_r = _float(review.get("realized_r"))
     second = f"실현 R {realized_r:+.2f}" if realized_r is not None else "실현 R 미산출"
@@ -324,6 +349,7 @@ def _review_lines(trade: dict[str, Any]) -> list[str]:
 
 
 # ── 공용 헬퍼 ─────────────────────────────────────────────────────
+
 
 def _candidate(
     rule_id: str,
@@ -348,17 +374,14 @@ def _candidate(
             **payload,
             "symbol": position.get("symbol"),
             "direction": _direction(position),
-            "pnl_percent": state.get("pnl_percent"),
-            "as_of": state.get("as_of"),
+            "pnl_percent": state.get("pnl_percent") if state.get("pnl_percent") is not None else payload.get("pnl_percent"),
+            "as_of": state.get("as_of") if state.get("as_of") is not None else payload.get("as_of"),
         },
     )
 
 
 def _headline(position: dict[str, Any], emoji: str, title: str) -> str:
-    return (
-        f"{emoji} <b>{escape(str(position.get('symbol') or '-'))}</b> "
-        f"{_direction_kr(position)} {position.get('leverage', '-')}x — {escape(title)}"
-    )
+    return f"{emoji} <b>{escape(str(position.get('symbol') or '-'))}</b> {_direction_kr(position)} {position.get('leverage', '-')}x — {escape(title)}"
 
 
 def _snapshot_line(state: dict[str, Any]) -> str:
@@ -374,11 +397,15 @@ def _one_liners(context: dict[str, Any]) -> dict[str, Any]:
 def _next_watch_price(plan: dict[str, Any]) -> str | None:
     invalidation = plan.get("invalidation") or plan.get("engine_invalidation")
     if isinstance(invalidation, dict) and _float(invalidation.get("price")) is not None:
-        return f"무효화 {_price(invalidation.get('price'))}"
+        distance = _signed_pct(invalidation.get("distance_pct"))
+        suffix = f" ({distance})" if distance != "-" else ""
+        return f"무효화 {_price(invalidation.get('price'))}{suffix}"
     targets = plan.get("take_profit") if isinstance(plan.get("take_profit"), list) else []
     for target in targets:
         if isinstance(target, dict) and _float(target.get("price")) is not None:
-            return f"익절 후보 {_price(target.get('price'))}"
+            distance = _signed_pct(target.get("distance_pct"))
+            suffix = f" ({distance})" if distance != "-" else ""
+            return f"익절 후보 {_price(target.get('price'))}{suffix}"
     return None
 
 

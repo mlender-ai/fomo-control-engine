@@ -13,9 +13,12 @@ from app.notify.bot.formatters import (
     format_action_plan,
     format_flow,
     format_insight,
+    lifecycle_alert_keyboard,
+    format_one_liner_strip,
     format_position_verdict,
     format_positions_summary,
     format_scout,
+    format_scout_quick_answer,
     format_simulation,
     insight_keyboard,
     main_menu_keyboard,
@@ -77,6 +80,93 @@ def test_bot_formatters_render_verdict_plan_and_positions(client) -> None:
     assert "BASEDUSDT" in scout
     assert "매수하세요" not in verdict
     assert "매도하세요" not in verdict
+
+
+def test_one_liner_strip_formatter_is_shared_with_position_verdict() -> None:
+    one_liners = {
+        "lines": [
+            {
+                "module": "wyckoff",
+                "module_label": "와이코프",
+                "stance": "상방",
+                "phrase": "매집 우세",
+                "confidence_class": "강",
+                "evidence_ref": "wyckoff.side=accumulation",
+            },
+            {
+                "module": "liquidity",
+                "module_label": "유동성",
+                "stance": "상방",
+                "phrase": "저점 청소 후 반등 구조",
+                "confidence_class": "중",
+                "evidence_ref": "liquidity.sweep:1",
+            },
+            {"module": "volume", "module_label": "볼륨", "stance": "횡보", "phrase": "균형", "confidence_class": "약", "evidence_ref": "volume"},
+            {
+                "module": "harmonic",
+                "module_label": "하모닉",
+                "stance": "하방",
+                "phrase": "하방 반전 구간 접근",
+                "confidence_class": "강",
+                "evidence_ref": "harmonic.prz",
+            },
+            {"module": "levels", "module_label": "레벨", "stance": "판단불가", "phrase": "데이터 부족", "confidence_class": "약", "evidence_ref": "levels"},
+            {"module": "derivatives", "module_label": "수급", "stance": "횡보", "phrase": "중립", "confidence_class": "약", "evidence_ref": "derivatives"},
+            {"module": "indicators", "module_label": "지표", "stance": "상방", "phrase": "상승 우세", "confidence_class": "중", "evidence_ref": "indicators"},
+        ],
+        "counts": {"상방": 3, "하방": 1, "횡보": 2, "판단불가": 1},
+        "overall_stance": "상방",
+        "summary": "종합: 상방 3 · 하방 1 · 횡보 2 · 판단불가 1",
+        "policy": "모듈 간 불일치는 그대로 노출합니다.",
+    }
+    payload = {
+        "position": {"symbol": "BTCUSDT", "direction": "long", "leverage": 10, "status": "open", "liquidation_price": 100},
+        "state": {"status_label": "관찰 필요", "health_score": 62, "pnl_percent": 2.5, "pnl_source": "exchange", "as_of": "2026-07-08T01:00:00+00:00"},
+        "action_plan": {"headline_action": "지금 볼 것: 지지 유지 여부"},
+        "chart_analysis": {"one_liners": one_liners},
+        "insight_status": {"has_insight": False},
+    }
+
+    strip = format_one_liner_strip(one_liners)
+    verdict = format_position_verdict(payload)
+
+    assert "와이코프 ● 매집 우세" in strip
+    assert "레벨 ○ 데이터 부족" in strip
+    assert "종합: 상방 3 · 하방 1 · 중립 2 · 판단불가 1 · 충돌" in strip
+    assert strip in verdict
+    assert "신뢰도" not in strip
+    assert "매수하세요" not in strip
+    assert "매도하세요" not in strip
+
+
+def test_scout_quick_answer_uses_one_liner_strip() -> None:
+    one_liners = {
+        "lines": [
+            {"module": "wyckoff", "module_label": "와이코프", "stance": "하방", "phrase": "분산 우세", "confidence_class": "중", "evidence_ref": "wyckoff"},
+            {"module": "liquidity", "module_label": "유동성", "stance": "하방", "phrase": "고점 청소 후 하락 경계", "confidence_class": "중", "evidence_ref": "liq"},
+            {"module": "volume", "module_label": "볼륨", "stance": "횡보", "phrase": "균형", "confidence_class": "약", "evidence_ref": "vol"},
+            {"module": "harmonic", "module_label": "하모닉", "stance": "판단불가", "phrase": "패턴 없음", "confidence_class": "약", "evidence_ref": "harm"},
+        ],
+        "counts": {"상방": 0, "하방": 2, "횡보": 1, "판단불가": 1},
+        "overall_stance": "하방",
+        "summary": "하방 2 · 중립 1 · 판단불가 1",
+    }
+    text = format_scout_quick_answer(
+        {
+            "symbol": "SOLUSDT",
+            "timeframe": "4h",
+            "as_of": "2026-07-08T01:00:00+00:00",
+            "analysis": {"one_liners": one_liners},
+            "summary": {"setup_proximity_pct": 1.2, "long_score": 30, "short_score": 70, "long_evidence_count": 1, "short_evidence_count": 3},
+        }
+    )
+
+    assert "SOLUSDT" in text
+    assert "하방 근거 우세" in text
+    assert "와이코프 ● 분산 우세" in text
+    assert "종합: 상방 0 · 하방 2 · 중립 1 · 판단불가 1" in text
+    assert "매수하세요" not in text
+    assert "매도하세요" not in text
 
 
 def test_insight_formatter_uses_regenerate_button_without_pre() -> None:
@@ -175,10 +265,54 @@ def test_callback_parser_and_chat_guard() -> None:
     assert parse_callback("v1:delete:BTCUSDT") is None
     assert parse_callback("bad") is None
 
+    assert parse_callback("v1:one_liners:BTCUSDT").action == "one_liners"
+    assert parse_callback("v1:chart:BTCUSDT").action == "chart"
+    assert parse_callback("v1:review:").action == "review"
+
     guard = ChatGuard([123, 456])
     assert guard.is_allowed(123) is True
     assert guard.is_allowed(999) is False
     assert guard.is_allowed(None) is False
+
+
+def test_lifecycle_keyboard_templates() -> None:
+    opened = lifecycle_alert_keyboard("position_opened", "BTCUSDT")
+    closed = lifecycle_alert_keyboard("position_closed", "BTCUSDT")
+    verdict = lifecycle_alert_keyboard("verdict_changed", "BTCUSDT")
+    pulse = lifecycle_alert_keyboard("periodic_pulse", "")
+
+    assert [button["text"] for button in opened[0]] == ["플랜", "1줄 판정", "차트"]
+    assert opened[0][1]["callback_data"] == "v1:one_liners:BTCUSDT"
+    assert closed[0][0]["callback_data"] == "v1:review:"
+    assert any(button["callback_data"] == "v1:refresh:BTCUSDT" for button in verdict[0])
+    assert pulse[0][0]["callback_data"] == "v1:list:"
+
+
+def test_alert_settings_preserve_lifecycle_rules_and_pulse_interval(client) -> None:
+    response = client.patch(
+        "/api/alerts/settings",
+        json={
+            "rules": {
+                "position_opened": {"enabled": False},
+                "periodic_pulse": {"enabled": True},
+            },
+            "pulse_interval_hours": 2.5,
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    rules = {rule["id"]: rule for rule in body["rules"]}
+
+    assert rules["position_opened"]["enabled"] is False
+    assert rules["position_closed"]["enabled"] is True
+    assert rules["verdict_changed"]["enabled"] is True
+    assert rules["stance_flipped"]["enabled"] is True
+    assert rules["evidence_insufficient"]["enabled"] is True
+    assert rules["periodic_pulse"]["enabled"] is True
+    assert body["telegram"]["pulse_interval_hours"] == 2.5
+
+    # Keep the mutable test settings close to default for following tests.
+    client.patch("/api/alerts/settings", json={"rules": {"position_opened": {"enabled": True}}, "pulse_interval_hours": 4.0})
 
 
 def test_telegram_text_split_respects_limit() -> None:

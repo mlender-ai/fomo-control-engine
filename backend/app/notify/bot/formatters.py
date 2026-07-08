@@ -66,7 +66,10 @@ def detail_keyboard(symbol: str) -> list[list[dict[str, str]]]:
     return [
         [
             {"text": "플랜", "callback_data": encode_callback("plan", symbol)},
+            {"text": "1줄 판정", "callback_data": encode_callback("one_liners", symbol)},
             {"text": "인사이트", "callback_data": encode_callback("insight", symbol)},
+        ],
+        [
             {"text": "수급", "callback_data": encode_callback("flow", symbol)},
             {"text": "브리핑", "callback_data": encode_callback("brief", symbol)},
         ],
@@ -98,9 +101,38 @@ def alert_keyboard(symbol: str) -> list[list[dict[str, str]]]:
         [
             {"text": "상세 보기", "callback_data": encode_callback("detail", symbol)},
             {"text": "플랜", "callback_data": encode_callback("plan", symbol)},
-            {"text": "브리핑", "callback_data": encode_callback("brief", symbol)},
+            {"text": "1줄 판정", "callback_data": encode_callback("one_liners", symbol)},
         ]
     ]
+
+
+def lifecycle_alert_keyboard(rule_id: str, symbol: str) -> list[list[dict[str, str]]]:
+    if rule_id == "position_opened":
+        return [
+            [
+                {"text": "플랜", "callback_data": encode_callback("plan", symbol)},
+                {"text": "1줄 판정", "callback_data": encode_callback("one_liners", symbol)},
+                {"text": "차트", "callback_data": encode_callback("chart", symbol)},
+            ]
+        ]
+    if rule_id == "position_closed":
+        return [[{"text": "복기 상세", "callback_data": encode_callback("review")}]]
+    if rule_id in {"verdict_changed", "stance_flipped", "evidence_insufficient"}:
+        return [
+            [
+                {"text": "상세", "callback_data": encode_callback("detail", symbol)},
+                {"text": "1줄 판정", "callback_data": encode_callback("one_liners", symbol)},
+                {"text": "갱신", "callback_data": encode_callback("refresh", symbol)},
+            ]
+        ]
+    if rule_id == "periodic_pulse":
+        return [
+            [
+                {"text": "포지션", "callback_data": encode_callback("list")},
+                {"text": "상태", "callback_data": encode_callback("status")},
+            ]
+        ]
+    return alert_keyboard(symbol)
 
 
 def setup_alert_keyboard(symbol: str, direction: str | None = None) -> list[list[dict[str, str]]]:
@@ -127,6 +159,7 @@ def format_help() -> str:
             "/flow BASED — 펀딩·OI·롱숏비",
             "/brief BASED — 애널리스트 브리핑",
             "/scout — 관심종목 스캔 상위 5",
+            "/q SOL — 심볼 즉답 판정",
             "/intents — 등록한 진입 의도",
             "/intent TSLA long 240-250 — 진입 의도 등록",
             "/sim BASED long 10 [0.09] — 진입 시뮬레이션",
@@ -153,10 +186,7 @@ def format_entry_intents(payload: dict[str, Any]) -> str:
         zone = f"{_price(intent.get('zone_lower'))}–{_price(intent.get('zone_upper'))}"
         conditions = intent.get("conditions") if isinstance(intent.get("conditions"), list) else []
         expires = _time(intent.get("expires_at"))
-        lines.append(
-            f"📍 <b>{escape(str(intent.get('symbol') or '-'))}</b> {direction} · {zone} · "
-            f"{escape(str(intent.get('status') or '-'))}"
-        )
+        lines.append(f"📍 <b>{escape(str(intent.get('symbol') or '-'))}</b> {direction} · {zone} · {escape(str(intent.get('status') or '-'))}")
         lines.append(f"조건 {escape(', '.join(map(str, conditions)) or 'price_in_zone')} · 만료 {expires}")
         note = str(intent.get("note") or "").strip()
         if note:
@@ -222,11 +252,7 @@ def format_one_liner_strip(payload_or_one_liners: dict[str, Any]) -> str:
     raw_lines = one_liners.get("lines")
     if not isinstance(raw_lines, list):
         return ""
-    by_module = {
-        str(line.get("module")): line
-        for line in raw_lines
-        if isinstance(line, dict) and line.get("module")
-    }
+    by_module = {str(line.get("module")): line for line in raw_lines if isinstance(line, dict) and line.get("module")}
     lines = ["<b>TA 1줄</b>"]
     counts = {stance: 0 for stance in ONE_LINER_STANCES}
     for module in ONE_LINER_MODULES:
@@ -245,10 +271,7 @@ def format_one_liner_strip(payload_or_one_liners: dict[str, Any]) -> str:
             if isinstance(value, int):
                 counts[stance] = value
     conflict = counts["상방"] > 0 and counts["하방"] > 0
-    summary = (
-        f"종합: 상방 {counts['상방']} · 하방 {counts['하방']} · "
-        f"중립 {counts['횡보']} · 판단불가 {counts['판단불가']}"
-    )
+    summary = f"종합: 상방 {counts['상방']} · 하방 {counts['하방']} · 중립 {counts['횡보']} · 판단불가 {counts['판단불가']}"
     if conflict:
         summary += " · 충돌"
     lines.append(summary)
@@ -349,6 +372,61 @@ def format_scout(payload: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def format_scout_quick_answer(payload: dict[str, Any]) -> str:
+    symbol = str(payload.get("symbol") or "-").upper()
+    timeframe = str(payload.get("timeframe") or "4h")
+    one_liners = _one_liners_from_payload(payload)
+    strip = format_one_liner_strip(one_liners) if one_liners else ""
+    summary = _dump(payload.get("summary"))
+    tilt = _scout_tilt_label(summary, one_liners)
+    as_of = _time(payload.get("as_of"))
+    lines = [
+        f"<b>{escape(symbol)}</b> · 기준 {as_of} · {escape(timeframe)}",
+        tilt,
+    ]
+    if strip:
+        lines.extend(["", strip])
+    else:
+        reasons = _scout_reason_line(summary)
+        lines.append(f"근거: {escape(reasons or '모듈별 판정 데이터가 아직 없습니다.')}")
+    trigger = _scout_trigger(summary)
+    if trigger:
+        lines.extend(["", f"트리거까지: {escape(trigger)}"])
+    lines.append("과거 통계와 현재 판정은 판단 보조입니다.")
+    return "\n".join(lines)
+
+
+def format_improvement_digest(payload: dict[str, Any]) -> str:
+    totals = _dump(payload.get("totals"))
+    highlights = [str(item) for item in payload.get("highlights", []) if item]
+    tested = int(totals.get("tested") or 0)
+    accuracy = _nullable_pct(totals.get("accuracy_pct"))
+    if tested < 10:
+        headline = "이번 주 유의미한 개선 없음"
+        reason = f"검증 표본 N={tested} · 결론 유보"
+    elif highlights:
+        headline = _compact(highlights[0], 92)
+        reason = f"검증 N={tested} · 적중률 {accuracy}"
+    else:
+        headline = "이번 주 유의미한 개선 없음"
+        reason = f"검증 N={tested} · 새 과신/개선 구간 없음"
+    scheduled = payload.get("scheduled_suggestions_count")
+    experiments = payload.get("experiment_suggestions_count")
+    if scheduled is None:
+        scheduled = len(payload.get("scheduled_suggestions", []) or [])
+    if experiments is None:
+        experiments = len(payload.get("experiment_suggestions", []) or [])
+    return "\n".join(
+        [
+            "<b>개선 카드</b>",
+            f"• {escape(headline)}",
+            f"• {escape(reason)}",
+            f"• 자율 예정 {scheduled}건 · 섀도 실험 {experiments}건",
+            "• 표본 부족 구간은 결론을 보류합니다.",
+        ]
+    )
+
+
 def format_simulation(result: dict[str, Any]) -> str:
     lines = [
         f"<b>{escape(result.get('symbol', '-'))} 시뮬레이션</b>",
@@ -417,6 +495,8 @@ def format_weekly_calibration(payload: dict[str, Any]) -> str:
     totals_ci = totals.get("accuracy_ci")
     ci_text = f" (CI {totals_ci[0]}~{totals_ci[1]}%)" if isinstance(totals_ci, list) and len(totals_ci) == 2 else ""
     lines = [
+        format_improvement_digest(payload),
+        "",
         "<b>주간 판단 성적표</b>",
         f"{escape(str(period.get('label', '최근 7일')))} · 검증 N={totals.get('tested', 0)} · 적중률 {_nullable_pct(totals.get('accuracy_pct'))}{ci_text}",
     ]
@@ -449,10 +529,7 @@ def format_weekly_calibration(payload: dict[str, Any]) -> str:
     briefing = payload.get("briefing_performance") if isinstance(payload.get("briefing_performance"), dict) else {}
     if briefing:
         summary = briefing.get("summary") if isinstance(briefing.get("summary"), dict) else {}
-        lines.append(
-            "브리핑 성적: "
-            f"N={briefing.get('total', 0)} · 검증 {summary.get('tested', 0)} · 적중률 {_nullable_pct(summary.get('accuracy_pct'))}"
-        )
+        lines.append(f"브리핑 성적: N={briefing.get('total', 0)} · 검증 {summary.get('tested', 0)} · 적중률 {_nullable_pct(summary.get('accuracy_pct'))}")
     performance = payload.get("performance") if isinstance(payload.get("performance"), dict) else {}
     overall = performance.get("overall") if isinstance(performance.get("overall"), dict) else {}
     if overall:
@@ -469,7 +546,9 @@ def format_weekly_calibration(payload: dict[str, Any]) -> str:
             lines.append(f"거부권 대기 {payload.get('scheduled_suggestions_count', len(scheduled))}건")
             for suggestion in scheduled[:3]:
                 deadline = suggestion.get("autonomy", {}).get("veto_deadline_at") if isinstance(suggestion.get("autonomy"), dict) else None
-                lines.append(f"• {escape(suggestion.get('title', '-'))} · N={suggestion.get('sample_size', 0)} · /veto {escape(str(suggestion.get('id', '')))} · 기한 {escape(str(deadline or '-'))}")
+                lines.append(
+                    f"• {escape(suggestion.get('title', '-'))} · N={suggestion.get('sample_size', 0)} · /veto {escape(str(suggestion.get('id', '')))} · 기한 {escape(str(deadline or '-'))}"
+                )
         if experiments:
             lines.append(f"섀도 실험 {payload.get('experiment_suggestions_count', len(experiments))}건")
             for suggestion in experiments[:3]:
@@ -525,9 +604,7 @@ def format_performance(payload: dict[str, Any]) -> str:
         f"리커버리 {escape(str(overall.get('recovery_factor') if overall.get('recovery_factor') is not None else '유보'))} · 파산확률 {_nullable_pct(ruin.get('probability_pct') if ruin.get('published') else None)}",
     ]
     if guard.get("configured"):
-        lines.append(
-            f"월 MDD 한도 {guard.get('limit_pct')}% · 사용률 {guard.get('usage_pct')}% · {escape(str(guard.get('status', '-')))}"
-        )
+        lines.append(f"월 MDD 한도 {guard.get('limit_pct')}% · 사용률 {guard.get('usage_pct')}% · {escape(str(guard.get('status', '-')))}")
     else:
         lines.append("월 MDD 한도: 미설정")
     lines.append(
@@ -547,9 +624,7 @@ def format_status(payload: dict[str, Any]) -> str:
     lines = ["<b>시스템 상태</b>"]
     alerts_24h = payload.get("alerts_24h") if isinstance(payload.get("alerts_24h"), dict) else None
     if alerts_24h:
-        lines.append(
-            f"알림 24h: 발화 {alerts_24h.get('fired', 0)} · 발송 {alerts_24h.get('delivered', 0)} · 실패 {alerts_24h.get('failed', 0)}"
-        )
+        lines.append(f"알림 24h: 발화 {alerts_24h.get('fired', 0)} · 발송 {alerts_24h.get('delivered', 0)} · 실패 {alerts_24h.get('failed', 0)}")
     for name, job in jobs.items():
         lines.append(f"• {escape(name)}: {escape(job.get('status', '-'))} · 성공 {_time(job.get('last_success_at'))} · 실패 {job.get('failures', 0)}")
     notify = payload.get("notifications", {})
@@ -665,6 +740,73 @@ def _briefing_line_from_payload(payload: dict[str, Any]) -> str:
         return ""
     score_text = f" · 종합 {_number(score)}/100" if score is not None else ""
     return f"브리핑: {escape(str(stance))}{score_text} · 반대 근거 {counter_count}개"
+
+
+def _one_liners_from_payload(payload_or_one_liners: dict[str, Any]) -> dict[str, Any]:
+    if isinstance(payload_or_one_liners.get("lines"), list):
+        return payload_or_one_liners
+    chart_analysis = _dump(payload_or_one_liners.get("chart_analysis"))
+    one_liners = chart_analysis.get("one_liners")
+    if not isinstance(one_liners, dict):
+        analysis = _dump(payload_or_one_liners.get("analysis"))
+        one_liners = analysis.get("one_liners")
+    return one_liners if isinstance(one_liners, dict) else {}
+
+
+def _scout_tilt_label(summary: dict[str, Any], one_liners: dict[str, Any]) -> str:
+    stance = str(one_liners.get("overall_stance") or "")
+    if stance == "상방":
+        return "숏 ◀━━━●▶ 롱 (상방 근거 우세)"
+    if stance == "하방":
+        return "숏 ◀●━━━▶ 롱 (하방 근거 우세)"
+    if stance == "횡보":
+        return "숏 ◀━━●━━▶ 롱 (중립)"
+    if stance == "판단불가":
+        return "숏 ◀━━○━━▶ 롱 (근거 부족)"
+    try:
+        long_score = float(summary.get("long_score"))
+        short_score = float(summary.get("short_score"))
+        evidence = int(summary.get("long_evidence_count") or 0) + int(summary.get("short_evidence_count") or 0)
+    except (TypeError, ValueError):
+        return "숏 ◀━━○━━▶ 롱 (근거 부족)"
+    if evidence < 3:
+        return "숏 ◀━━○━━▶ 롱 (근거 부족)"
+    diff = long_score - short_score
+    if abs(diff) < 10:
+        return "숏 ◀━━●━━▶ 롱 (충돌)"
+    return "숏 ◀━━━●▶ 롱 (상방 근거 우세)" if diff > 0 else "숏 ◀●━━━▶ 롱 (하방 근거 우세)"
+
+
+def _scout_reason_line(summary: dict[str, Any]) -> str:
+    reasons = [
+        _dump(summary.get("top_event")).get("label"),
+        _dump(summary.get("liquidity_nearest_pool")).get("label"),
+        "반전 후보 구간" if summary.get("harmonic_active") else "",
+        summary.get("funding_state"),
+        summary.get("volume_state"),
+    ]
+    clean = []
+    for item in reasons:
+        text = _compact(str(item or "").strip(), 26)
+        if text and text not in clean:
+            clean.append(text)
+    return " · ".join(clean[:2])
+
+
+def _scout_trigger(summary: dict[str, Any]) -> str:
+    if summary.get("entry_intent_distance_pct") is not None:
+        return f"의도 {_nullable_pct(summary.get('entry_intent_distance_pct'))}"
+    if summary.get("setup_proximity_pct") is not None:
+        return _nullable_pct(summary.get("setup_proximity_pct"))
+    if summary.get("liquidity_pool_distance_pct") is not None:
+        return f"유동성 {_nullable_pct(summary.get('liquidity_pool_distance_pct'))}"
+    if summary.get("nearest_level_distance_pct") is not None:
+        return f"구조 {_nullable_pct(summary.get('nearest_level_distance_pct'))}"
+    return ""
+
+
+def _stance_dot(stance: str) -> str:
+    return "○" if stance == "판단불가" else "●"
 
 
 def _severity_emoji(state: dict[str, Any]) -> str:

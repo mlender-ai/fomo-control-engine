@@ -40,7 +40,14 @@ def _one_liners(overall: str = "상방", up: int = 5, down: int = 1) -> dict:
     return {
         "lines": [
             {"module": "wyckoff", "module_label": "와이코프", "stance": "상방", "phrase": "매집 우세", "confidence_class": "강", "evidence_ref": "x"},
-            {"module": "liquidity", "module_label": "유동성", "stance": "상방", "phrase": "저점 청소 후 반등 구조", "confidence_class": "중", "evidence_ref": "x"},
+            {
+                "module": "liquidity",
+                "module_label": "유동성",
+                "stance": "상방",
+                "phrase": "저점 청소 후 반등 구조",
+                "confidence_class": "중",
+                "evidence_ref": "x",
+            },
             {"module": "derivatives", "module_label": "수급", "stance": "하방", "phrase": "롱 쏠림 경계", "confidence_class": "중", "evidence_ref": "x"},
         ],
         "counts": {"상방": up, "하방": down, "횡보": 0, "판단불가": max(0, unknown)},
@@ -93,11 +100,12 @@ def _engine(sender: FakeSender | None = None, settings: Settings | None = None) 
 
 # ── 이벤트 메시지 (Part B) ─────────────────────────────────────────
 
+
 def test_opened_candidate_carries_initial_verdict_and_scenario() -> None:
     candidate = opened_candidate(_context())
-    assert "포지션 진입 감지" in candidate.message
-    assert "관측 양호: 상방 근거 5/6 · 반대 1" in candidate.message
-    assert "판정: 와이코프: 매집 우세(강)" in candidate.message
+    assert "진입 감지" in candidate.message
+    assert "초기 판정: 관찰 유지 — 상방 5 · 하방 1 · 판단불가 1" in candidate.message
+    assert "다음 가격: 무효화" in candidate.message
     assert "시나리오: 매칭된 사전 시나리오 없음" in candidate.message
 
 
@@ -115,9 +123,11 @@ def test_closed_candidate_has_pnl_and_two_line_review() -> None:
         "review_v2": {"realized_r": 1.4},
     }
     candidate = closed_candidate(_context()["position"], trade)
-    assert "실현 손익 +42.50 USDT (+4.25%)" in candidate.message
-    assert "복기: 판단 5건 채점 — 적중 3 · 오판 1 · 휩쏘 1" in candidate.message
+    assert "종료" in candidate.message
+    assert "+4.25% (+42.50 USDT)" in candidate.message
+    assert "복기: 판단 5건 중 3 적중 · 오판 1 · 휩쏘 1" in candidate.message
     assert "실현 R +1.40" in candidate.message
+    assert candidate.payload["pnl_percent"] == 4.25
 
 
 def test_verdict_transition_fires_with_reason_and_next_price() -> None:
@@ -135,7 +145,7 @@ def test_stance_flip_fires_with_top_reason() -> None:
     candidates, updated = transition_candidates(_context(overall="하방"), tracker, _settings(), now=NOW)
     flips = [candidate for candidate in candidates if candidate.rule_id == "stance_flipped"]
     assert flips and "상방 → 하방" in flips[0].message
-    assert "반전 근거:" in flips[0].message
+    assert "사유:" in flips[0].message
     assert updated["overall_stance"] == "하방"
 
 
@@ -148,7 +158,7 @@ def test_evidence_insufficient_requires_sustained_window() -> None:
     # 2시간 지속 후 발화.
     candidates, tracker = transition_candidates(context, tracker, settings, now=NOW + timedelta(hours=2, minutes=1))
     fired = [c for c in candidates if c.rule_id == "evidence_insufficient"]
-    assert fired and "판단 근거 부족" in fired[0].message
+    assert fired and "근거 부족 지속" in fired[0].message
     # 재발화 방지 플래그.
     candidates, tracker = transition_candidates(context, tracker, settings, now=NOW + timedelta(hours=3))
     assert not [c for c in candidates if c.rule_id == "evidence_insufficient"]
@@ -158,7 +168,7 @@ def test_pulse_bundles_positions_and_reports_all_normal() -> None:
     candidate = pulse_candidate([_context(), _context(symbol="ETHUSDT")])
     assert candidate is not None
     assert candidate.message.count("•") == 2
-    assert "전 포지션 관측 정상 범위" in candidate.message
+    assert "전부 정상 · 변화 없음" in candidate.message
     assert "정상 상태도 발송" in candidate.message
 
 
@@ -169,6 +179,7 @@ def test_pulse_merges_pending_redelivery() -> None:
 
 
 # ── 판단 문형 가드 (수용 기준: "진입하세요/좋다" grep 0) ────────────
+
 
 def test_no_directive_trading_phrases_in_messages() -> None:
     messages = [
@@ -194,6 +205,7 @@ def test_no_directive_phrases_in_notify_sources() -> None:
 
 # ── E2E: open → verdict change → close 순서 (데모/페이크 싱크) ──────
 
+
 def test_e2e_lifecycle_sequence(monkeypatch) -> None:
     engine, sender, state = _engine()
     monkeypatch.setattr("app.notify.alerts.service.record_alert", lambda record: record)
@@ -210,15 +222,13 @@ def test_e2e_lifecycle_sequence(monkeypatch) -> None:
     asyncio.run(engine.evaluate_lifecycle({"positions": [_context(verdict="danger")]}))
     # 3) 종료 감지.
     trade = {"id": "33333333-3333-3333-3333-333333333333", "pnl_amount": -12.0, "pnl_percent": -1.2, "judgment_scorecard": {}}
-    asyncio.run(
-        engine.evaluate_lifecycle({"closed_positions": [{"position": opened_context["position"], "trade": trade}]})
-    )
+    asyncio.run(engine.evaluate_lifecycle({"closed_positions": [{"position": opened_context["position"], "trade": trade}]}))
 
     joined = "\n---\n".join(sender.messages)
     assert sender.messages, joined
-    opened_index = next(i for i, m in enumerate(sender.messages) if "포지션 진입 감지" in m)
-    verdict_index = next(i for i, m in enumerate(sender.messages) if "판정 상태 전이" in m)
-    closed_index = next(i for i, m in enumerate(sender.messages) if "포지션 종료 감지" in m)
+    opened_index = next(i for i, m in enumerate(sender.messages) if "진입 감지" in m)
+    verdict_index = next(i for i, m in enumerate(sender.messages) if "판정 변화" in m)
+    closed_index = next(i for i, m in enumerate(sender.messages) if "종료" in m)
     assert opened_index < verdict_index < closed_index
     # 종료 후 트래커 정리.
     assert opened_context["position"]["id"] not in state.lifecycle_positions
@@ -287,6 +297,7 @@ def test_lifecycle_tracker_handles_model_shaped_position(monkeypatch) -> None:
 
 
 # ── 상태 영속화 (Part C) ───────────────────────────────────────────
+
 
 def test_notification_state_roundtrip(tmp_path) -> None:
     state = NotificationState()

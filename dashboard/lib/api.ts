@@ -1362,6 +1362,7 @@ export type AlertSettings = {
     quiet_hours_end: string;
     quiet_hours_timezone: string;
     daily_summary_time: string;
+    pulse_interval_hours: number;
     chat_ids_configured: number;
   };
   rules: AlertRuleSetting[];
@@ -1373,6 +1374,7 @@ export type AlertSettingsUpdate = {
   quiet_hours_start?: string;
   quiet_hours_end?: string;
   daily_summary_time?: string;
+  pulse_interval_hours?: number;
 };
 
 export type AlertTestResult = {
@@ -1481,9 +1483,10 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(payload)
     }),
-  sendTestAlert: () =>
+  sendTestAlert: (ruleId?: string) =>
     request<AlertTestResult>("/api/alerts/test", {
-      method: "POST"
+      method: "POST",
+      body: JSON.stringify(ruleId ? { rule_id: ruleId } : {})
     }),
   livePositions: () => request<LivePositionsResponse>("/api/live/positions"),
   syncLivePositions: () =>

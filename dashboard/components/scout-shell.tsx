@@ -12,6 +12,8 @@ import {
   type CatalogSymbolInfo,
   type EntryIntent,
   type HistoricalBacktest,
+  type OneLinerLine,
+  type OneLinerSummary,
   type ScoutAnalysisResponse,
   type ScoutScanRow,
   type UniverseDiscovery,
@@ -70,9 +72,15 @@ export function ScoutShell() {
   const [sortAsc, setSortAsc] = useState(true);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<CatalogSymbolInfo[]>([]);
+  const [quickSymbol, setQuickSymbol] = useState("");
+  const [quickAnswer, setQuickAnswer] = useState<ScoutAnalysisResponse | null>(null);
+  const [quickLoading, setQuickLoading] = useState(false);
+  const [quickError, setQuickError] = useState("");
   const [activeSymbol, setActiveSymbol] = useState<string>("");
   const [assetFilter, setAssetFilter] = useState<AssetFilter>("all");
   const [viewMode, setViewMode] = useState<FceViewMode>("minimal");
+  const quickRequestRef = useRef("");
+  const autoScanKeyRef = useRef("");
 
   useEffect(() => {
     setViewMode(loadFceViewMode());
@@ -105,18 +113,53 @@ export function ScoutShell() {
   useEffect(() => {
     if (!query.trim()) {
       setResults([]);
+      setQuickSymbol("");
+      setQuickAnswer(null);
+      setQuickError("");
       return;
     }
     const handle = window.setTimeout(async () => {
       try {
         const response = await api.searchSymbols(query, 12);
-        setResults(response.symbols);
+        const symbols = mergeSearchResultsWithDirectCandidate(response.symbols, query);
+        setResults(symbols);
+        const first = symbols[0];
+        if (first) void loadQuickAnswer(first.symbol);
+        else {
+          setQuickSymbol("");
+          setQuickAnswer(null);
+        }
       } catch {
-        setResults([]);
+        const fallback = directSymbolCandidate(query);
+        setResults(fallback ? [fallback] : []);
+        if (fallback) void loadQuickAnswer(fallback.symbol);
+        else setQuickAnswer(null);
       }
     }, 200);
     return () => window.clearTimeout(handle);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query]);
+
+  async function loadQuickAnswer(symbol: string, force = false) {
+    const normalized = symbol.trim().toUpperCase();
+    if (!normalized) return;
+    const requestKey = `${normalized}:${Date.now()}`;
+    quickRequestRef.current = requestKey;
+    setQuickSymbol(normalized);
+    setQuickLoading(true);
+    setQuickError("");
+    try {
+      const response = await api.scoutAnalysis(normalized, "4h", force);
+      if (quickRequestRef.current !== requestKey) return;
+      setQuickAnswer(response);
+    } catch (err) {
+      if (quickRequestRef.current !== requestKey) return;
+      setQuickAnswer(null);
+      setQuickError(err instanceof Error ? err.message : "즉답 분석을 불러오지 못했습니다.");
+    } finally {
+      if (quickRequestRef.current === requestKey) setQuickLoading(false);
+    }
+  }
 
   async function runScan(force = false) {
     setScanning(true);
@@ -136,6 +179,16 @@ export function ScoutShell() {
     }
   }
 
+  useEffect(() => {
+    if (!watchlist.length || scanRows.length || scanning) return;
+    const key = watchlist.map((item) => item.symbol).sort().join("|");
+    if (!key || autoScanKeyRef.current === key) return;
+    autoScanKeyRef.current = key;
+    void runScan(false);
+    // runScan intentionally stays out of deps; this is a one-shot scan per watchlist composition.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [watchlist, scanRows.length, scanning]);
+
   async function addSymbol(symbol: string) {
     try {
       await api.addWatchlistItem({ symbol });
@@ -143,6 +196,7 @@ export function ScoutShell() {
       setQuery("");
       setResults([]);
       await loadWatchlist();
+      setScanRows([]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "관심종목 추가에 실패했습니다.");
     }
@@ -260,20 +314,33 @@ export function ScoutShell() {
         {results.length ? (
           <div className="scoutSearchResults">
             {results.map((item) => (
-              <button key={item.symbol} onClick={() => void addSymbol(item.symbol)} type="button">
-                <strong>{item.symbol}</strong>
-                <span>
-                  <AssetClassBadge assetClass={item.asset_class} />
-                  {item.base_coin || "-"} · {item.quote_coin || "-"}
-                </span>
-                <Star size={13} />
-              </button>
+              <div className="scoutSearchResultRow" key={item.symbol}>
+                <button onClick={() => void loadQuickAnswer(item.symbol)} type="button">
+                  <strong>{item.symbol}</strong>
+                  <span>
+                    <AssetClassBadge assetClass={item.asset_class} />
+                    {item.base_coin || "-"} · {item.quote_coin || "-"}
+                  </span>
+                </button>
+                <button className="scoutSearchAdd" onClick={() => void addSymbol(item.symbol)} type="button" aria-label={`${item.symbol} 관심종목 추가`}>
+                  <Star size={13} />
+                </button>
+              </div>
             ))}
           </div>
         ) : null}
       </div>
 
       <p className="scoutDisclaimer">셋업 근접도는 가장 가까운 트리거(반전 후보 구간·구조 레벨)까지의 거리입니다. 매수 판단 문구가 아니라 &ldquo;지금 반응을 지켜볼 종목&rdquo;의 정렬 기준입니다.</p>
+
+      <ScoutQuickAnswerCard
+        symbol={quickSymbol}
+        data={quickAnswer}
+        loading={quickLoading}
+        error={quickError}
+        onRefresh={(symbol) => void loadQuickAnswer(symbol, true)}
+        onOpen={(symbol) => setActiveSymbol(symbol)}
+      />
 
       <div className="assetClassTabs" role="group" aria-label="자산 클래스 필터">
         {ASSET_FILTERS.map((filter) => (
@@ -293,54 +360,60 @@ export function ScoutShell() {
 
       {watchlist.length ? (
         scanRows.length ? (
-          <div className="scoutTableWrap">
-            {viewMode === "minimal" ? (
-              <ScoutMinimalTable
-                rows={sortedRows}
-                armedSetups={armedSetups}
-                entryIntents={entryIntents}
-                onOpen={(symbol) => setActiveSymbol(symbol)}
-                onRemove={(symbol) => void removeSymbol(symbol)}
-              />
-            ) : (
-            <table className="scoutTable" data-testid="scout-table">
-              <thead>
-                <tr>
-                  <th>심볼</th>
-                  <th>클래스</th>
-                  <th>무장</th>
-                  {SORT_COLUMNS.map((column) => (
-                    <th key={column.key}>
-                      <button onClick={() => toggleSort(column.key, column.direction)} type="button">
-                        {column.label}
-                        {sortKey === column.key ? <span>{sortAsc ? " ▲" : " ▼"}</span> : null}
-                      </button>
-                    </th>
+          sortedRows.length ? (
+            <div className="scoutTableWrap">
+              {viewMode === "minimal" ? (
+                <ScoutMinimalTable
+                  rows={sortedRows}
+                  armedSetups={armedSetups}
+                  entryIntents={entryIntents}
+                  onOpen={(symbol) => setActiveSymbol(symbol)}
+                  onRemove={(symbol) => void removeSymbol(symbol)}
+                />
+              ) : (
+              <table className="scoutTable" data-testid="scout-table">
+                <thead>
+                  <tr>
+                    <th>심볼</th>
+                    <th>클래스</th>
+                    <th>무장</th>
+                    {SORT_COLUMNS.map((column) => (
+                      <th key={column.key}>
+                        <button onClick={() => toggleSort(column.key, column.direction)} type="button">
+                          {column.label}
+                          {sortKey === column.key ? <span>{sortAsc ? " ▲" : " ▼"}</span> : null}
+                        </button>
+                      </th>
+                    ))}
+                    <th>와이코프</th>
+                    <th>거래량</th>
+                    <th>기준</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {sortedRows.map((row) => (
+                    <ScanRow
+                      key={row.symbol}
+                      row={row}
+                      armedSetups={armedSetups.filter((setup) => setup.symbol === row.symbol && setup.status === "armed")}
+                      entryIntents={entryIntents.filter((intent) => intent.symbol === row.symbol && intent.status === "active")}
+                      scanReference={scannedAt}
+                      onOpen={() => setActiveSymbol(row.symbol)}
+                      onRemove={() => void removeSymbol(row.symbol)}
+                      onDisarm={disarmSetup}
+                      onCancelIntent={cancelIntent}
+                    />
                   ))}
-                  <th>와이코프</th>
-                  <th>거래량</th>
-                  <th>기준</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {sortedRows.map((row) => (
-                  <ScanRow
-                    key={row.symbol}
-                    row={row}
-                    armedSetups={armedSetups.filter((setup) => setup.symbol === row.symbol && setup.status === "armed")}
-                    entryIntents={entryIntents.filter((intent) => intent.symbol === row.symbol && intent.status === "active")}
-                    scanReference={scannedAt}
-                    onOpen={() => setActiveSymbol(row.symbol)}
-                    onRemove={() => void removeSymbol(row.symbol)}
-                    onDisarm={disarmSetup}
-                    onCancelIntent={cancelIntent}
-                  />
-                ))}
-              </tbody>
-            </table>
-            )}
-          </div>
+                </tbody>
+              </table>
+              )}
+            </div>
+          ) : (
+            <div className="scoutEmpty">
+              <p>현재 필터에 맞는 스캔 결과가 없습니다. 전체 필터로 바꾸거나 관심종목을 추가하세요.</p>
+            </div>
+          )
         ) : (
           <div className="scoutEmpty">
             <p>관심종목 {filteredWatchlist.length}개가 있습니다. 스캔을 눌러 6개 축으로 비교하세요.</p>
@@ -363,6 +436,106 @@ export function ScoutShell() {
         </div>
       )}
     </div>
+  );
+}
+
+function mergeSearchResultsWithDirectCandidate(items: CatalogSymbolInfo[], query: string): CatalogSymbolInfo[] {
+  const candidate = directSymbolCandidate(query);
+  if (!candidate) return items;
+  const seen = new Set(items.map((item) => item.symbol));
+  return seen.has(candidate.symbol) ? items : [candidate, ...items];
+}
+
+function directSymbolCandidate(query: string): CatalogSymbolInfo | null {
+  const clean = query.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (clean.length < 2) return null;
+  const symbol = clean.endsWith("USDT") ? clean : `${clean}USDT`;
+  if (symbol.length < 6 || symbol.length > 24) return null;
+  return {
+    symbol,
+    base_coin: symbol.replace(/USDT$/u, ""),
+    quote_coin: "USDT",
+    status: "direct",
+    asset_class: "unknown",
+    source_category: "direct",
+    funding_rate_interval_hours: null,
+    updated_at: new Date().toISOString()
+  };
+}
+
+function ScoutQuickAnswerCard({
+  symbol,
+  data,
+  loading,
+  error,
+  onRefresh,
+  onOpen
+}: {
+  symbol: string;
+  data: ScoutAnalysisResponse | null;
+  loading: boolean;
+  error: string;
+  onRefresh: (symbol: string) => void;
+  onOpen: (symbol: string) => void;
+}) {
+  if (!symbol && !loading && !error) return null;
+  const oneLiners = data?.analysis?.one_liners ?? null;
+  const tilt = quickTilt(data);
+  const rows = quickOneLinerRows(oneLiners);
+  const counts = quickOneLinerCounts(oneLiners);
+  return (
+    <section className={`scoutQuickAnswer ${loading ? "loading" : ""}`} data-testid="scout-quick-answer" data-budget-numbers-max="6">
+      <div className="scoutQuickHeader">
+        <div>
+          <strong>{symbol || "검색 중"}</strong>
+          <span>기준 {formatQuickAsOf(data?.as_of)} · {data?.timeframe ?? "4h"}</span>
+        </div>
+        <div className="scoutQuickActions">
+          <button className="button secondary" type="button" onClick={() => symbol && onRefresh(symbol)} disabled={!symbol || loading}>
+            <RefreshCw size={14} />
+            갱신
+          </button>
+          <button className="button secondary" type="button" onClick={() => symbol && onOpen(symbol)} disabled={!symbol}>
+            의도 등록
+          </button>
+          <button className="button" type="button" onClick={() => symbol && onOpen(symbol)} disabled={!symbol}>
+            자세히
+          </button>
+        </div>
+      </div>
+
+      {error ? <div className="scoutQuickError">{error}</div> : null}
+      {loading && !data ? (
+        <div className="scoutQuickSkeleton">
+          <span />
+          <span />
+          <span />
+        </div>
+      ) : null}
+      {data ? (
+        <>
+          <div className={`scoutQuickTilt ${tilt.tone}`}>
+            <span>숏</span>
+            <i><b style={{ left: `${tilt.position}%` }} /></i>
+            <span>롱</span>
+            <strong>{tilt.label}</strong>
+          </div>
+          <div className="scoutQuickStrip">
+            {rows.map((row) => (
+              <div className="scoutQuickStripRow" key={row.module}>
+                <span>{row.label}</span>
+                <i className={`stance-${row.stance}`} />
+                <strong>{row.phrase}</strong>
+              </div>
+            ))}
+          </div>
+          <div className="scoutQuickSummary">
+            종합: 상방 {counts.up} · 하방 {counts.down} · 중립 {counts.neutral} · 판단불가 {counts.unknown}
+            {counts.up > 0 && counts.down > 0 ? <em>충돌</em> : null}
+          </div>
+        </>
+      ) : null}
+    </section>
   );
 }
 
@@ -1182,6 +1355,56 @@ function scoutTilt(row: ScoutScanRow): { position: number; label: string; tone: 
   return diff > 0
     ? { position, label: "롱 근거 우세", tone: "long" }
     : { position, label: "숏 근거 우세", tone: "short" };
+}
+
+function quickTilt(data: ScoutAnalysisResponse | null): { position: number; label: string; tone: "long" | "short" | "neutral" | "insufficient" } {
+  const stance = data?.analysis?.one_liners?.overall_stance;
+  if (stance === "상방") return { position: 78, label: "상방 근거 우세", tone: "long" };
+  if (stance === "하방") return { position: 22, label: "하방 근거 우세", tone: "short" };
+  if (stance === "횡보") return { position: 50, label: "중립", tone: "neutral" };
+  if (stance === "판단불가") return { position: 50, label: "근거 부족", tone: "insufficient" };
+  return data?.summary ? scoutTilt(data.summary) : { position: 50, label: "분석 대기", tone: "insufficient" };
+}
+
+function quickOneLinerRows(oneLiners: OneLinerSummary | null): Array<{ module: OneLinerLine["module"]; label: string; stance: string; phrase: string }> {
+  const preferred: OneLinerLine["module"][] = ["wyckoff", "liquidity", "volume", "harmonic"];
+  const fallback = [
+    { module: "wyckoff", label: "와이코프", stance: "판단불가", phrase: "판정 대기" },
+    { module: "liquidity", label: "유동성", stance: "판단불가", phrase: "판정 대기" },
+    { module: "volume", label: "볼륨", stance: "판단불가", phrase: "판정 대기" },
+    { module: "harmonic", label: "하모닉", stance: "판단불가", phrase: "패턴 없음" }
+  ] satisfies Array<{ module: OneLinerLine["module"]; label: string; stance: string; phrase: string }>;
+  if (!oneLiners?.lines?.length) return fallback;
+  const byModule = new Map(oneLiners.lines.map((line) => [line.module, line]));
+  return preferred.map((module) => {
+    const line = byModule.get(module);
+    if (!line) return fallback.find((item) => item.module === module)!;
+    return {
+      module,
+      label: line.module_label,
+      stance: line.stance,
+      phrase: clampScoutText(plainifyTaText(line.phrase), 28)
+    };
+  });
+}
+
+function quickOneLinerCounts(oneLiners: OneLinerSummary | null): { up: number; down: number; neutral: number; unknown: number } {
+  return {
+    up: oneLiners?.counts?.["상방"] ?? 0,
+    down: oneLiners?.counts?.["하방"] ?? 0,
+    neutral: oneLiners?.counts?.["횡보"] ?? 0,
+    unknown: oneLiners?.counts?.["판단불가"] ?? (oneLiners ? 0 : 4)
+  };
+}
+
+function formatQuickAsOf(value: string | undefined): string {
+  if (!value) return "분석 중";
+  const diff = Date.now() - new Date(value).getTime();
+  if (!Number.isFinite(diff) || diff < 0) return "방금";
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return "방금";
+  if (minutes < 60) return `${minutes}분 전`;
+  return new Date(value).toLocaleTimeString();
 }
 
 function scoutMinimalReasons(row: ScoutScanRow): string[] {

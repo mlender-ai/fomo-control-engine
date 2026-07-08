@@ -374,7 +374,12 @@ def _take_profit_targets(
 ) -> list[dict[str, Any]]:
     direction = position.direction.value
     targets: list[dict[str, Any]] = []
-    if position.planned_take_profit_price is not None:
+    if position.planned_take_profit_price is not None and _is_favorable_target(
+        position.planned_take_profit_price,
+        mark_price,
+        direction,
+        position.entry_price,
+    ):
         targets.append(
             _plan_item(
                 position=position,
@@ -395,7 +400,7 @@ def _take_profit_targets(
     target_label = "저항" if direction == "long" else "지지"
     for level in level_targets:
         price = level.get("price")
-        if price is None or not _is_favorable_target(price, mark_price, direction):
+        if price is None or not _is_favorable_target(price, mark_price, direction, position.entry_price):
             continue
         targets.append(
             _plan_item(
@@ -409,7 +414,7 @@ def _take_profit_targets(
 
     profile_key = "value_area_high" if direction == "long" else "value_area_low"
     profile_price = volume_profile.get(profile_key)
-    if profile_price is not None and _is_favorable_target(profile_price, mark_price, direction):
+    if profile_price is not None and _is_favorable_target(profile_price, mark_price, direction, position.entry_price):
         targets.append(
             _plan_item(
                 position=position,
@@ -421,7 +426,7 @@ def _take_profit_targets(
         )
 
     previous_extreme = _previous_extreme(candles, direction)
-    if previous_extreme is not None and _is_favorable_target(previous_extreme, mark_price, direction):
+    if previous_extreme is not None and _is_favorable_target(previous_extreme, mark_price, direction, position.entry_price):
         targets.append(
             _plan_item(
                 position=position,
@@ -454,7 +459,7 @@ def _harmonic_targets(
         if not isinstance(prz, dict):
             continue
         price = prz.get("low") if direction == "long" else prz.get("high")
-        if not isinstance(price, (int, float)) or not _is_favorable_target(price, mark_price, direction):
+        if not isinstance(price, (int, float)) or not _is_favorable_target(price, mark_price, direction, position.entry_price):
             continue
         basis = pattern.get("basis") or f"{pattern.get('label', 'Harmonic')} PRZ"
         confidence = pattern.get("confidence")
@@ -581,7 +586,7 @@ def _liquidation_cluster_targets(position: Position, mark_price: float | None, d
         return targets
     for cluster in _liquidation_clusters(derivatives):
         price = _optional_float(cluster.get("price") or cluster.get("mid") or cluster.get("level"))
-        if price is None or not _is_favorable_target(price, mark_price, position.direction.value):
+        if price is None or not _is_favorable_target(price, mark_price, position.direction.value, position.entry_price):
             continue
         targets.append(
             _plan_item(
@@ -681,10 +686,18 @@ def _distance_pct(price: float | None, mark_price: float | None, direction: str)
     return round(((price - mark_price) / mark_price) * 100 * side, 2)
 
 
-def _is_favorable_target(price: float, mark_price: float | None, direction: str) -> bool:
-    if mark_price is None:
+def _is_favorable_target(
+    price: float,
+    mark_price: float | None,
+    direction: str,
+    entry_price: float | None = None,
+) -> bool:
+    anchors = [value for value in (mark_price, entry_price) if value is not None and value > 0]
+    if not anchors:
         return True
-    return price > mark_price if direction == "long" else price < mark_price
+    if direction == "long":
+        return all(price > anchor for anchor in anchors)
+    return all(price < anchor for anchor in anchors)
 
 
 def _previous_extreme(candles: list[dict[str, Any]], direction: str) -> float | None:

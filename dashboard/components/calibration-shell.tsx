@@ -88,6 +88,8 @@ export function CalibrationShell() {
 
       {calibration ? (
         <>
+          <ImprovementDigestCard weekly={weekly} />
+
           <section className="grid four">
             <TerminalMetric label="전체 판단" value={metricNumber(calibration.totals, "total")} delta={`${metricNumber(calibration.totals, "tested")} 검증`} tone="info" />
             <TerminalMetric label="전체 적중률" value={metricPercent(calibration.totals, "accuracy_pct")} tone={metricTone(calibration.totals)} />
@@ -189,6 +191,50 @@ export function CalibrationShell() {
         </TerminalPanel>
       )}
     </div>
+  );
+}
+
+function ImprovementDigestCard({ weekly }: { weekly: Record<string, unknown> | null }) {
+  const digest = buildImprovementDigest(weekly);
+  return (
+    <section className="improvementDigestCard" data-testid="weekly-improvement-card">
+      <div className="improvementDigestCopy">
+        <p className="eyebrow">이번 주 개선</p>
+        <h2>{digest.headline}</h2>
+        <div className="improvementDigestLines">
+          {digest.lines.map((line) => <span key={line}>{line}</span>)}
+        </div>
+      </div>
+      <div className="improvementSparkline" aria-label="12주 적중률 스파크라인">
+        <MiniSparkline values={digest.sparkline} />
+        <span>{digest.sparklineLabel}</span>
+      </div>
+    </section>
+  );
+}
+
+function MiniSparkline({ values }: { values: number[] }) {
+  if (values.length < 2) {
+    return (
+      <svg viewBox="0 0 120 36" role="img" aria-label="표본 부족">
+        <path d="M4 24 L116 24" className="flat" />
+      </svg>
+    );
+  }
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const span = max - min || 1;
+  const path = values
+    .map((value, index) => {
+      const x = 4 + (index / Math.max(1, values.length - 1)) * 112;
+      const y = 32 - ((value - min) / span) * 28;
+      return `${index === 0 ? "M" : "L"}${x.toFixed(2)},${y.toFixed(2)}`;
+    })
+    .join(" ");
+  return (
+    <svg viewBox="0 0 120 36" role="img" aria-label="적중률 추세">
+      <path d={path} />
+    </svg>
   );
 }
 
@@ -460,6 +506,40 @@ function BriefingPerformanceSummary({ data }: { data: Record<string, unknown> })
       <small>{String(data.sample_warning ?? "N<10 구간은 결론을 보류합니다.")}</small>
     </div>
   );
+}
+
+function buildImprovementDigest(weekly: Record<string, unknown> | null): { headline: string; lines: string[]; sparkline: number[]; sparklineLabel: string } {
+  if (!weekly) {
+    return {
+      headline: "이번 주 유의미한 개선 없음",
+      lines: ["주간 리포트 데이터가 아직 없습니다.", "표본이 쌓이면 개선·과신 구간을 표시합니다.", "표본 부족 구간은 결론을 보류합니다."],
+      sparkline: [],
+      sparklineLabel: "12주 추적 데이터 부족"
+    };
+  }
+  const totals = asRecord(weekly.totals);
+  const tested = Number(totals.tested || 0);
+  const accuracy = typeof totals.accuracy_pct === "number" ? `${totals.accuracy_pct.toFixed(1)}%` : SAMPLE_WARNING;
+  const highlights = Array.isArray(weekly.highlights) ? weekly.highlights.map(String).filter(Boolean) : [];
+  const scheduled = Number(weekly.scheduled_suggestions_count || (Array.isArray(weekly.scheduled_suggestions) ? weekly.scheduled_suggestions.length : 0));
+  const experiments = Number(weekly.experiment_suggestions_count || (Array.isArray(weekly.experiment_suggestions) ? weekly.experiment_suggestions.length : 0));
+  const headline = tested >= 10 && highlights.length ? highlights[0] : "이번 주 유의미한 개선 없음";
+  const reason = tested >= 10 ? `검증 N=${tested} · 적중률 ${accuracy}` : `검증 표본 N=${tested} · 결론 유보`;
+  const curve = Array.isArray(weekly.confidence_curve) ? weekly.confidence_curve.map(asRecord) : [];
+  const sparkline = curve
+    .map((row) => (typeof row.accuracy_pct === "number" ? row.accuracy_pct : null))
+    .filter((value): value is number => typeof value === "number")
+    .slice(-12);
+  return {
+    headline,
+    lines: [
+      reason,
+      `자율 예정 ${scheduled}건 · 섀도 실험 ${experiments}건`,
+      highlights[1] ?? "표본 부족 구간은 결론을 보류합니다."
+    ],
+    sparkline,
+    sparklineLabel: sparkline.length >= 2 ? "신뢰도 구간 적중률 추세" : "12주 추적 데이터 부족"
+  };
 }
 
 function metricNumber(bucket: Record<string, unknown>, key: string) {

@@ -139,6 +139,8 @@ def rearm_signals(payload: dict[str, Any], settings: Settings) -> dict[str, bool
         if trigger["kind"] == "invalidation":
             signals[f"invalidation_breach:{position_id}:{identity}"] = not _breached(direction, current, price)
         elif trigger["kind"] == "take_profit":
+            if not _is_valid_take_profit_target(direction, position, price):
+                continue
             signals[f"take_profit_hit:{position_id}:{identity}"] = not _take_profit_reached(direction, current, price)
 
     liq_distance = _float(state.get("liquidation_distance_pct") or _snapshot(payload).get("liquidation_distance_pct"))
@@ -272,17 +274,20 @@ def _trigger_candidates(payload: dict[str, Any], settings: Settings) -> list[Ale
     current = _current_price(payload)
     if current is None:
         return []
+    position, state = _position(payload), _state(payload)
+    direction = _direction(position)
     candidates: list[AlertCandidate] = []
     for trigger in _plan_triggers(_plan(payload)):
         price = _float(trigger.get("price"))
         if price is None:
+            continue
+        if trigger["kind"] == "take_profit" and not _is_valid_take_profit_target(direction, position, price):
             continue
         distance = trigger.get("distance_pct")
         distance = _float(distance) if distance is not None else _distance_pct(current, price)
         if abs(distance) > settings.alert_trigger_near_pct:
             continue
         label = "무효화" if trigger["kind"] == "invalidation" else "익절"
-        position, state = _position(payload), _state(payload)
         title = f"{label} 트리거 근접"
         message = "\n".join(
             [
@@ -369,7 +374,8 @@ def _invalidation_candidates(payload: dict[str, Any]) -> list[AlertCandidate]:
 
 def _take_profit_candidates(payload: dict[str, Any]) -> list[AlertCandidate]:
     current = _current_price(payload)
-    direction = _direction(_position(payload))
+    position, state = _position(payload), _state(payload)
+    direction = _direction(position)
     if current is None:
         return []
     candidates: list[AlertCandidate] = []
@@ -377,15 +383,18 @@ def _take_profit_candidates(payload: dict[str, Any]) -> list[AlertCandidate]:
         if trigger["kind"] != "take_profit":
             continue
         price = _float(trigger.get("price"))
-        if price is None or not _take_profit_reached(direction, current, price):
+        if (
+            price is None
+            or not _is_valid_take_profit_target(direction, position, price)
+            or not _take_profit_reached(direction, current, price)
+        ):
             continue
-        distance = _distance_pct(price, current)
-        position, state = _position(payload), _state(payload)
+        distance = _take_profit_progress_pct(direction, current, price)
         title = f"{trigger.get('label', '익절')} 도달"
         message = "\n".join(
             [
                 _headline(payload, "🟢", title),
-                f"{escape(str(trigger.get('label', '익절')))} {_price(price)}에 도달했습니다. 현재 {_price(current)} · {_signed_pct(distance)}",
+                f"{escape(str(trigger.get('label', '익절')))} {_price(price)}에 도달했습니다. 현재 {_price(current)} · 목표 대비 {_signed_pct(distance)}",
                 f"→ {escape(str(trigger.get('action') or '부분 익절 검토'))}. 근거: {escape(str(trigger.get('basis') or '액션 플랜'))}",
                 _snapshot_line(state),
             ]
@@ -408,7 +417,7 @@ def _take_profit_candidates(payload: dict[str, Any]) -> list[AlertCandidate]:
                     "number_sources": _number_sources(
                         ("trigger_price", price, "action_plan.take_profit.price"),
                         ("current_price", current, "snapshot.mark_price_or_last_close"),
-                        ("distance_pct", distance, "computed_from_snapshot"),
+                        ("distance_pct", distance, "computed_direction_aware_from_snapshot"),
                     ),
                 },
             )
@@ -918,6 +927,21 @@ def _breached(direction: str, current: float, price: float) -> bool:
 
 def _take_profit_reached(direction: str, current: float, price: float) -> bool:
     return current >= price if direction == "long" else current <= price
+
+
+def _is_valid_take_profit_target(direction: str, position: dict[str, Any], price: float) -> bool:
+    entry = _float(position.get("entry_price"))
+    if entry is None or entry <= 0:
+        return True
+    return price > entry if direction == "long" else price < entry
+
+
+def _take_profit_progress_pct(direction: str, current: float, price: float) -> float:
+    if not price:
+        return 0.0
+    if direction == "short":
+        return ((price - current) / price) * 100
+    return ((current - price) / price) * 100
 
 
 def _distance_pct(base: float, target: float) -> float:

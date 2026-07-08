@@ -36,3 +36,4 @@ router.add_api_route(
     handlers.approve_signature_recovery,
     methods=["POST"],
 )
+router.add_api_route("/api/review/improvement", handlers.review_improvement, methods=["GET"])

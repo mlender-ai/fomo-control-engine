@@ -605,6 +605,11 @@ def scout_scan(limit: int = 5) -> dict[str, Any]:
     }
 
 
+def scout_quick_answer(symbol: str, timeframe: str = "4h") -> dict[str, Any]:
+    """Single-symbol scout answer used by the web quick card and Telegram /q."""
+    return scout_handlers.scout_analysis(symbol, timeframe=timeframe, force=False)
+
+
 def entry_intents(symbol: str | None = None, status: str | None = None) -> dict[str, Any]:
     return scout_handlers.list_entry_intents(symbol=symbol, status=status)
 
@@ -697,8 +702,29 @@ def weekly_calibration_report() -> dict[str, Any]:
         runtime.repository.list_alert_responses(limit=2000),
         self_audit=self_audit,
     )
+    # WO-45: 개선 다이제스트 — WO-49가 렌더·발송하는 고정 스키마.
+    payload["improvement_digest"] = improvement_digest(scores=scores, suggestions=suggestions)
     payload["performance"] = performance_summary()
     return payload
+
+
+def improvement_digest(
+    scores: list[Any] | None = None,
+    suggestions: list[Any] | None = None,
+) -> dict[str, Any]:
+    """WO-45: 주간 개선 다이제스트 + 12주 스파크라인 (결정론, 읽기 전용)."""
+    from app.analyst.signature_registry import state_map
+    from app.review.improvement import weekly_improvement_digest
+
+    scores = scores if scores is not None else runtime.repository.list_judgment_scores(limit=5000)
+    suggestions = suggestions if suggestions is not None else runtime.repository.list_calibration_suggestions(limit=100)
+    return weekly_improvement_digest(
+        scores,
+        suggestions,
+        runtime.repository.list_engine_params(limit=200),
+        runtime.repository.list_autonomy_logs(limit=1000),
+        state_map(runtime.repository),
+    )
 
 
 def veto_calibration_suggestion(suggestion_id: str) -> dict[str, Any]:

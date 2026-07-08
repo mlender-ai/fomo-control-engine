@@ -119,6 +119,32 @@ def test_headline_short_direction_wording() -> None:
     assert plan["headline_action"] == "지금 볼 것: 98 저항 유지 여부. 돌파 시 손절 검토."
 
 
+def test_short_take_profit_requires_price_below_entry_and_mark() -> None:
+    position = Position(
+        symbol="COINUSDT",
+        direction=Direction.short,
+        entry_price=158.0,
+        quantity=1.0,
+        leverage=10,
+        mark_price=163.0,
+    )
+    plan = build_action_plan(
+        position,
+        _snapshot(position, 163.0),
+        _chart_analysis(
+            163.0,
+            support=[
+                {"price": 160.71, "score": 85, "touches": 4, "basis": "진입가 위 손실 구간 지지"},
+                {"price": 150.0, "score": 70, "touches": 3, "basis": "진입가 아래 유효 지지"},
+            ],
+        ),
+    )
+
+    prices = [item["price"] for item in plan["take_profit"]]
+    assert 160.71 not in prices
+    assert 150.0 in prices
+
+
 def test_headline_matches_action_plan_rows() -> None:
     """headline은 항상 액션 플랜에 실제 존재하는 트리거에서 파생된다."""
     position = Position(

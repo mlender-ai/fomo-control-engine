@@ -1591,8 +1591,25 @@ def review_weekly_calibration() -> dict:
     # WO-37: 읽기 뷰는 부패 스윕(상태 변경)을 실행하지 않고 기존 원장에서 셀프 오딧만 구성한다.
     self_audit = build_self_audit(repository)
     payload = build_weekly_calibration_report(scores, suggestions, repository.list_alert_responses(limit=2000), self_audit=self_audit)
+    payload["improvement_digest"] = review_improvement()["digest"]
     payload["performance"] = performance_summary()
     return payload
+
+
+def review_improvement() -> dict:
+    """WO-45: 개선 다이제스트 + 조치별 효과표 (읽기 전용, 결정론)."""
+    from app.services import runtime as service_runtime
+
+    scores = repository.list_judgment_scores(limit=5000)
+    digest = service_runtime.improvement_digest(scores=scores)
+    from app.review.improvement import action_effect_table
+
+    effects = action_effect_table(
+        scores,
+        repository.list_engine_params(limit=200),
+        repository.list_autonomy_logs(limit=1000),
+    )
+    return {"digest": digest, "action_effects": effects}
 
 
 def approve_signature_recovery(signature_key: str) -> dict:
