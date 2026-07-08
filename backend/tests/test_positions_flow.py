@@ -43,7 +43,14 @@ def test_position_monitor_exit_review_flow(client) -> None:
 
     trades_response = client.get("/api/trades")
     assert trades_response.status_code == 200
-    assert trades_response.json()[0]["id"] == trade["id"]
+    listed_trade = trades_response.json()[0]
+    assert listed_trade["id"] == trade["id"]
+    assert "scores" not in listed_trade["review_v2"]["scorecard"]
+    assert "scores" not in listed_trade["judgment_scorecard"]
+
+    trade_response = client.get(f"/api/trades/{trade['id']}")
+    assert trade_response.status_code == 200
+    assert "scores" in trade_response.json()["review_v2"]["scorecard"]
 
     timeline_response = client.get(f"/api/trades/{trade['id']}/timeline")
     assert timeline_response.status_code == 200

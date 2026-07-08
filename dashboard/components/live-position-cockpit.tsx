@@ -278,6 +278,7 @@ export function LivePositionCockpit() {
             positions={positions}
             selectedId={selected?.position.id ?? ""}
             onSelect={setSelectedId}
+            compact={viewMode === "minimal"}
           />
           {selectedPayload ? (
             <>
@@ -336,23 +337,45 @@ export function LivePositionCockpit() {
 
 function PositionStrip({
   chartAnalysisById,
+  compact,
   positions,
   selectedId,
   onSelect
 }: {
   chartAnalysisById: Record<string, PositionChartAnalysis>;
+  compact: boolean;
   positions: LivePositionPayload[];
   selectedId: string;
   onSelect: (positionId: string) => void;
 }) {
   const sortedPositions = [...positions].sort((left, right) => right.state.severity_rank - left.state.severity_rank);
   return (
-    <section className="positionStrip" aria-label="보유 포지션" data-testid="position-strip">
+    <section className={`positionStrip ${compact ? "compact" : ""}`} aria-label="보유 포지션" data-testid="position-strip">
       {sortedPositions.map((item) => {
         const trigger = nearestActionTrigger(item);
+        const selected = item.position.id === selectedId;
+        if (compact) {
+          return (
+            <button
+              className={`positionStripCard minimal severity-${item.state.severity_rank} ${selected ? "selected" : ""}`}
+              data-testid="position-card"
+              key={item.position.id}
+              onClick={() => onSelect(item.position.id)}
+              title={`${item.position.symbol} · ${directionLabel(item.position.direction)} ${item.position.leverage}x · ${item.state.status_label}`}
+              type="button"
+            >
+              <span className="stripSeverityBar" aria-hidden="true" />
+              <strong>
+                {item.position.symbol}
+                {liquidationMissing(item) ? <AlertTriangle className="liqMissingIcon" size={11} aria-label="청산가 미수신" /> : null}
+              </strong>
+              <span>{directionLabel(item.position.direction)} · {item.position.leverage}x</span>
+            </button>
+          );
+        }
         return (
           <button
-            className={`positionStripCard severity-${item.state.severity_rank} ${item.position.id === selectedId ? "selected" : ""}`}
+            className={`positionStripCard severity-${item.state.severity_rank} ${selected ? "selected" : ""}`}
             data-testid="position-card"
             key={item.position.id}
             onClick={() => onSelect(item.position.id)}
@@ -873,7 +896,7 @@ function ActionPlanPanel({
   density: Density;
 }) {
   const plan = actionPlanForPayload(payload);
-  const rows = actionPlanRows(plan);
+  const rows = actionPlanRows(plan, true);
   const liquidationWarning = typeof plan?.liquidation?.warning === "string" ? plan.liquidation.warning : "";
   return (
     <section className="focusPanel actionPlanPanel" data-testid="action-plan">
@@ -1531,7 +1554,7 @@ function deriveHeadlineAction(plan: PositionActionPlan | null, direction: "long"
   return null;
 }
 
-function actionPlanRows(plan: PositionActionPlan | null) {
+function actionPlanRows(plan: PositionActionPlan | null, compact = false) {
   if (!plan) return [];
   const rows: Array<{ kind: string; price?: string; condition?: string; action: string; basis: string; tone: "danger" | "positive" | "warning" | "neutral"; priceValue: number | null }> = [];
   if (plan.invalidation) {
@@ -1546,7 +1569,7 @@ function actionPlanRows(plan: PositionActionPlan | null) {
   }
   const takeProfitTargets = Array.isArray(plan.take_profit) ? plan.take_profit : [];
   const watchTriggers = Array.isArray(plan.watch_triggers) ? plan.watch_triggers : [];
-  for (const target of takeProfitTargets.slice(0, 3)) {
+  for (const target of takeProfitTargets.slice(0, compact ? 1 : 3)) {
     rows.push({
       kind: "익절",
       price: `${formatNullablePrice(target.price)} · ${formatDistance(target.distance_pct)}`,
@@ -1556,7 +1579,7 @@ function actionPlanRows(plan: PositionActionPlan | null) {
       priceValue: target.price
     });
   }
-  for (const trigger of watchTriggers.slice(0, 3)) {
+  for (const trigger of watchTriggers.slice(0, compact ? 1 : 3)) {
     rows.push({
       kind: "감시",
       condition: trigger.condition ?? "조건 확인",
@@ -1565,6 +1588,20 @@ function actionPlanRows(plan: PositionActionPlan | null) {
       tone: "warning",
       priceValue: null
     });
+  }
+  if (compact) {
+    const hiddenCount = Math.max(0, takeProfitTargets.length - 1) + Math.max(0, watchTriggers.length - 1) + Math.max(0, (plan.reference_zones ?? []).length) + (typeof plan.liquidation?.price === "number" ? 1 : 0);
+    if (hiddenCount > 0) {
+      rows.push({
+        kind: "더보기",
+        condition: `접힌 항목 ${hiddenCount}개`,
+        action: "프로 화면에서 전체 가격 보기",
+        basis: "기본 화면은 무효화 1 · 익절 1 · 감시 1만 표시",
+        tone: "neutral",
+        priceValue: null
+      });
+    }
+    return rows.slice(0, 4);
   }
   for (const reference of (plan.reference_zones ?? []).slice(0, 3)) {
     rows.push({

@@ -485,6 +485,9 @@ def _wyckoff_direction(label: str) -> str | None:
         return "long"
     if any(token in lower for token in ("utad", "sow", "lpsy", "distribution")):
         return "short"
+    # WO-43: 매집 레인지의 UT(업스러스트) 재명명 라벨 — 방향은 여전히 하락 경계.
+    if lower == "ut" or lower.startswith("ut "):
+        return "short"
     return None
 
 

@@ -116,13 +116,17 @@ def _without_phase_l_fields(payload: dict) -> dict:
             candle.pop("session", None)
             candle.pop("is_regular_session", None)
     cleaned.pop("liquidity", None)
+    # WO-43 추가 필드 (1줄 판정·혼합 신호 노트) — 리팩토링 전 픽스처엔 없는 의도된 추가.
+    cleaned.pop("one_liners", None)
     wyckoff = cleaned.get("wyckoff")
     if isinstance(wyckoff, dict):
         wyckoff.pop("liquidity_crosscheck", None)
+        wyckoff.pop("conflict_note", None)
         for event in wyckoff.get("events", []) if isinstance(wyckoff.get("events"), list) else []:
             if isinstance(event, dict):
                 event.pop("liquidity_crosscheck", None)
                 event.pop("display_label", None)
+                event.pop("context_note", None)
                 components = event.get("components")
                 if isinstance(components, dict):
                     components.pop("liquidity_confirmation", None)

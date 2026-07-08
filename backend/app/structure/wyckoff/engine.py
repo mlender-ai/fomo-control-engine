@@ -94,7 +94,9 @@ def analyze_wyckoff(
 
     events = _detect_events(ordered, trading_range, trade_flow)
     phase = _phase_from_events(events)
+    events = _contextualize_event_labels(events, phase["side"])
     accumulation_score, distribution_score = _side_scores(events)
+    conflict_note = _conflict_note(events, phase["side"])
     result = {
         "timeframe": timeframe,
         "phase": phase["phase"],
@@ -115,11 +117,44 @@ def analyze_wyckoff(
         "lpsy_candidate": _has_event(events, "lpsy_candidate"),
         "trend": trend,
         "structure_comment": _structure_comment({"phase": phase["phase"], "side": phase["side"], "events": events}),
+        "conflict_note": conflict_note,
         "mtf": {"htf_phase": None, "htf_trend": None, "alignment": "neutral"},
     }
     if include_mtf:
         result["mtf"] = _mtf_payload(ordered, normalized_levels, result)
     return result
+
+
+def _contextualize_event_labels(events: list[dict], side: str) -> list[dict]:
+    """이벤트 라벨을 판정된 국면 맥락에 맞춘다 (WO-43 Part B).
+
+    UTAD(UpThrust After Distribution)는 분산 국면을 전제하는 명칭이다. 매집 우세로
+    판정된 레인지에서 저항 상단 스윕은 교과서적으로 UT(업스러스트)이므로 재명명한다
+    — "매집 Phase A + UTAD" 같은 자기모순 출력을 구조적으로 제거.
+    type은 유지(신호 계보·시그니처 안정성), 표시 라벨만 맥락화한다.
+    """
+    if side != "accumulation":
+        return events
+    relabeled = []
+    for event in events:
+        if event.get("type") == "utad_candidate":
+            relabeled.append({**event, "label": "UT", "context_note": "매집 레인지 상단 업스러스트 — UTAD 아님"})
+        else:
+            relabeled.append(event)
+    return relabeled
+
+
+def _conflict_note(events: list[dict], side: str) -> str | None:
+    """판정 side와 반대되는 고신뢰 이벤트가 공존하면 혼합 신호를 명시한다 (은폐 금지)."""
+    if side not in {"accumulation", "distribution"}:
+        return None
+    opposing_side = "distribution" if side == "accumulation" else "accumulation"
+    opposing = [event for event in events if event.get("side") == opposing_side and int(event.get("confidence", 0)) >= 65]
+    if not opposing:
+        return None
+    best = max(opposing, key=lambda event: int(event.get("confidence", 0)))
+    side_label = "매집" if side == "accumulation" else "분산"
+    return f"{side_label} 우세 판정이나 반대측 {best.get('label')} {best.get('confidence')}점 공존 — 혼합 신호"
 
 
 def _detect_trading_range(candles: list[MarketCandle], levels: dict[str, list[WyckoffLevel]], atr: float) -> TradingRange | None:
@@ -416,7 +451,11 @@ def _derived_retest_events(
                     break
         if event["type"] == "spring_candidate":
             for candle in followup:
-                if candle.low >= trading_range.support.price and candle.close > candle.open and candle.volume <= avg_volume * 1.1:
+                # Test는 지지선 "근접" 재시험이어야 한다. 근접 조건 없이는 스프링 뒤
+                # 아무 양봉이나 Test가 되고, 레벨과의 거리가 depth 점수로 가산되어
+                # 원본 스프링보다 높은 신뢰도의 허위 이벤트가 만들어진다 (매집 과대판정 원인).
+                near_support = trading_range.support.price <= candle.low <= trading_range.support.price + threshold
+                if near_support and candle.close > candle.open and candle.volume <= avg_volume * 1.1:
                     key = _timestamp(candle)
                     if key not in by_time and key in recent_by_time:
                         derived.append(
@@ -821,6 +860,7 @@ def _empty_result(phase: str, comment: str, *, timeframe: str) -> dict:
         "sow_confirmed": False,
         "lpsy_candidate": False,
         "structure_comment": comment,
+        "conflict_note": None,
         "mtf": {"htf_phase": None, "htf_trend": None, "alignment": "neutral"},
         "trend": {
             "direction": "neutral",

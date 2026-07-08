@@ -1478,7 +1478,28 @@ def review_trade(trade_id: UUID):
 
 
 def list_trades():
-    return repository.list_trades()
+    return [_trade_list_payload(trade) for trade in repository.list_trades()]
+
+
+def _trade_list_payload(trade: Trade) -> dict:
+    payload = trade.model_dump(mode="json")
+    payload["review_v2"] = _review_v2_list_summary(payload.get("review_v2"))
+    payload["judgment_scorecard"] = _scorecard_list_summary(payload.get("judgment_scorecard"))
+    return payload
+
+
+def _review_v2_list_summary(review_v2: object) -> dict:
+    if not isinstance(review_v2, dict):
+        return {}
+    summary = dict(review_v2)
+    summary["scorecard"] = _scorecard_list_summary(summary.get("scorecard"))
+    return summary
+
+
+def _scorecard_list_summary(scorecard: object) -> dict:
+    if not isinstance(scorecard, dict):
+        return {}
+    return {key: value for key, value in scorecard.items() if key != "scores"}
 
 
 def performance_summary() -> dict:

@@ -993,6 +993,25 @@ export type DerivativesContext = {
   source_status?: string;
 };
 
+export type OneLinerStance = "상방" | "하방" | "횡보" | "판단불가";
+
+export type OneLinerLine = {
+  module: "wyckoff" | "liquidity" | "volume" | "harmonic" | "levels" | "derivatives" | "indicators";
+  module_label: string;
+  stance: OneLinerStance;
+  phrase: string;
+  confidence_class: "강" | "중" | "약";
+  evidence_ref: string;
+};
+
+export type OneLinerSummary = {
+  lines: OneLinerLine[];
+  counts: Record<OneLinerStance, number>;
+  overall_stance: OneLinerStance;
+  summary: string;
+  policy: string;
+};
+
 export type PositionChartAnalysis = {
   position_id: string;
   symbol: string;
@@ -1070,6 +1089,8 @@ export type PositionChartAnalysis = {
   wyckoff_mtf: WyckoffMtf;
   wyckoff_markers: WyckoffMarker[];
   wyckoff_markers_low_confidence?: WyckoffMarker[];
+  // WO-43: TA별 1줄 판정 (고정 어휘, 충돌 그대로 노출) — WO-47 스트립 UI 입력.
+  one_liners?: OneLinerSummary;
   scenarios?: SymbolScenarios | null;
   harmonic: {
     pivots: HarmonicPoint[];

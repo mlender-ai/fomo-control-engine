@@ -194,13 +194,14 @@ export function PositionCandlestickChart({
       }
     });
 
+    const minimalCandles = layerMode === "minimal";
     const candleSeries = chart.addSeries(CandlestickSeries, {
-      upColor: palette.color("green"),
-      downColor: palette.color("red"),
-      wickUpColor: palette.color("green", 0.92),
-      wickDownColor: palette.color("red", 0.92),
-      borderUpColor: palette.color("green", 0.9),
-      borderDownColor: palette.color("red", 0.9),
+      upColor: minimalCandles ? palette.color("amber", 0.98) : palette.color("green"),
+      downColor: minimalCandles ? palette.color("red", 0.98) : palette.color("red"),
+      wickUpColor: minimalCandles ? palette.color("amber", 0.96) : palette.color("green", 0.92),
+      wickDownColor: minimalCandles ? palette.color("red", 0.96) : palette.color("red", 0.92),
+      borderUpColor: minimalCandles ? palette.color("amber", 1) : palette.color("green", 0.9),
+      borderDownColor: minimalCandles ? palette.color("red", 1) : palette.color("red", 0.9),
       borderVisible: true,
       priceLineVisible: false,
       lastValueVisible: false
@@ -793,7 +794,7 @@ function renderTaOverlay(
   const shapes: string[] = [];
   const badges: string[] = [];
   const right = overlayRight(width);
-  const context: OverlayContext = { series, chart, analysis, plan, layers, positionOverlay, highlightPrice, palette, width, height, right, density };
+  const context: OverlayContext = { series, chart, analysis, plan, layers, positionOverlay, highlightPrice, palette, width, height, right, density, minimal: Boolean(minimalEvidence) };
 
   if (minimalEvidence) {
     const minimal = minimalEvidenceOverlayNodes(context, minimalEvidence, activeHarmonic);
@@ -856,6 +857,7 @@ type OverlayContext = {
   height: number;
   right: number;
   density: Density;
+  minimal: boolean;
 };
 
 type OverlayGroup = { zones: string[]; shapes: string[]; badges: string[] };
@@ -871,78 +873,64 @@ function minimalEvidenceOverlayNodes(
 ): OverlayGroup {
   const group: OverlayGroup = { zones: [], shapes: [], badges: [] };
   if (evidence.layer === "levels") {
-    group.zones.push(...minimalLevelNodes(context, evidence.price));
+    group.shapes.push(...minimalLevelNodes(context, evidence));
   } else if (evidence.layer === "liquidity") {
-    const liquidity = minimalLiquidityNodes(context, evidence.price, evidence.time);
-    group.zones.push(...liquidity.zones);
-    group.shapes.push(...liquidity.shapes);
-    group.badges.push(...liquidity.badges);
+    group.shapes.push(...minimalLiquidityNodes(context, evidence));
   } else if (evidence.layer === "wyckoff") {
-    const wyckoff = minimalWyckoffNodes(context, evidence.time);
-    group.zones.push(...wyckoff.zones);
-    group.shapes.push(...wyckoff.shapes);
-    group.badges.push(...wyckoff.badges);
+    group.shapes.push(...minimalWyckoffNodes(context, evidence));
   } else if (evidence.layer === "harmonic" && activeHarmonic) {
-    const harmonic = minimalHarmonicNodes(context, activeHarmonic);
-    group.zones.push(...harmonic.zones);
-    group.badges.push(...harmonic.badges);
+    group.shapes.push(...minimalHarmonicNodes(context, activeHarmonic));
   } else if (evidence.layer === "flow") {
-    group.badges.push(minimalFlowBadge(context, evidence.label));
+    group.badges.push(minimalFlowBadge(context, minimalEvidenceLabel(evidence.label, "flow")));
   }
   if (group.zones.length || group.shapes.length || group.badges.length) {
-    group.zones.unshift(`<g data-testid="minimal-evidence-overlay">`);
+    group.shapes.unshift(`<g data-testid="minimal-evidence-overlay">`);
     group.badges.push("</g>");
   }
   return group;
 }
 
-function minimalLevelNodes(context: OverlayContext, price?: number | null): string[] {
+function minimalLevelNodes(context: OverlayContext, evidence: MinimalChartEvidence): string[] {
   const levels = [...context.analysis.price_levels.support, ...context.analysis.price_levels.resistance];
-  const target = nearestByPrice(levels, price ?? context.analysis.mark_price);
+  const target = nearestByPrice(levels, evidence.price ?? context.analysis.mark_price);
   if (!target) return [];
-  return levelZoneNode(context, target, 0, target.kind === "resistance" ? "resistance" : "support", averageTrueRange(context.analysis.candles));
+  const label = minimalEvidenceLabel(evidence.label, target.kind === "resistance" ? "resistance" : "support");
+  return minimalDashedPriceLine(context, target.price, label, target.kind === "resistance" ? "red" : "amber");
 }
 
-function minimalLiquidityNodes(context: OverlayContext, price?: number | null, time?: number | null): OverlayGroup {
+function minimalLiquidityNodes(context: OverlayContext, evidence: MinimalChartEvidence): string[] {
   const liquidity = context.analysis.liquidity;
-  if (!liquidity) return { zones: [], shapes: [], badges: [] };
+  if (!liquidity) return [];
   const sweeps = [...(liquidity.sweeps ?? []), ...(liquidity.htf_range_sweeps ?? [])]
     .filter((sweep) => sweep.confirmed)
     .sort((left, right) => {
-      if (typeof time === "number") return Math.abs(left.timestamp - time) - Math.abs(right.timestamp - time);
+      if (typeof evidence.time === "number") return Math.abs(left.timestamp - evidence.time) - Math.abs(right.timestamp - evidence.time);
       return (right.timestamp - left.timestamp) || (right.confidence - left.confidence);
     });
   const sweep = sweeps[0];
   if (sweep) {
-    return {
-      zones: [],
-      shapes: liquiditySweepLeaderNode(context, sweep).slice(0, 2),
-      badges: liquiditySweepBadgeNode(context, sweep, 0).slice(0, 1)
-    };
+    return minimalDashedPriceLine(context, sweep.price || sweep.pool_price, liquiditySweepMinimalLabel(sweep), sweep.side === "buy_side" ? "red" : "amber");
   }
-  const pool = nearestByPrice(liquidity.pools.filter((item) => !item.swept), price ?? context.analysis.mark_price);
-  return pool ? { zones: liquidityPoolZoneNode(context, pool), shapes: [], badges: [] } : { zones: [], shapes: [], badges: [] };
+  const pool = nearestByPrice(liquidity.pools.filter((item) => !item.swept), evidence.price ?? context.analysis.mark_price);
+  return pool ? minimalDashedPriceLine(context, pool.price, liquidityPoolMinimalLabel(pool), pool.side === "buy_side" ? "red" : "amber") : [];
 }
 
-function minimalWyckoffNodes(context: OverlayContext, time?: number | null): OverlayGroup {
+function minimalWyckoffNodes(context: OverlayContext, evidence: MinimalChartEvidence): string[] {
   const range = context.analysis.wyckoff_range;
-  if (!range) return { zones: [], shapes: [], badges: [] };
-  const full = wyckoffOverlayNodes(context);
+  if (!range) return [];
   const events = splitWyckoffEvents(context.analysis.wyckoff_markers, context.analysis.wyckoff_markers_low_confidence).events
     .sort((left, right) => {
-      if (typeof time === "number") return Math.abs(left.time - time) - Math.abs(right.time - time);
+      if (typeof evidence.time === "number") return Math.abs(left.time - evidence.time) - Math.abs(right.time - evidence.time);
       return (right.confidence - left.confidence) || (right.time - left.time);
     });
   const marker = events[0];
-  const markerNodes = marker ? {
-    shapes: wyckoffEventMarker(context, marker).slice(0, 1),
-    badges: wyckoffEventBadge(context, marker, wyckoffRangeBox(context, range), 0).slice(0, 1)
-  } : { shapes: [], badges: [] };
-  return {
-    zones: full.zones.slice(0, 1),
-    shapes: markerNodes.shapes,
-    badges: markerNodes.badges
-  };
+  if (marker) {
+    return minimalDashedPriceLine(context, marker.price, `${eventShortLabel(marker)} ${Math.round(marker.confidence)}`, marker.side === "distribution" ? "red" : "amber");
+  }
+  return [
+    ...minimalDashedPriceLine(context, range.resistance.price, "레인지 상단", "red", "top"),
+    ...minimalDashedPriceLine(context, range.support.price, "레인지 하단", "amber", "bottom")
+  ];
 }
 
 function wyckoffRangeBox(context: OverlayContext, range: NonNullable<PositionChartAnalysis["wyckoff_range"]>): { top: number; bottom: number; x: number; width: number } {
@@ -955,23 +943,72 @@ function wyckoffRangeBox(context: OverlayContext, range: NonNullable<PositionCha
   return { top, bottom, x: Math.min(x1, x2), width: Math.max(12, Math.abs(x2 - x1)) };
 }
 
-function minimalHarmonicNodes(context: OverlayContext, pattern: PositionChartAnalysis["harmonic_patterns"][number]): OverlayGroup {
+function minimalHarmonicNodes(context: OverlayContext, pattern: PositionChartAnalysis["harmonic_patterns"][number]): string[] {
   const przTop = context.series.priceToCoordinate(pattern.prz.high);
   const przBottom = context.series.priceToCoordinate(pattern.prz.low);
-  if (przTop === null || przBottom === null) return { zones: [], shapes: [], badges: [] };
-  const y = Math.min(przTop, przBottom);
-  const height = Math.max(4, Math.abs(przBottom - przTop));
-  const x = Math.max(12, context.right - 190);
-  const stroke = context.palette.color("purple", 0.8);
-  return {
-    zones: [`<rect x="${x}" y="${y}" width="${Math.max(18, context.right - x)}" height="${height}" rx="3" fill="${context.palette.zone("prz", 0.16)}" stroke="${stroke}" stroke-width="1" />`],
-    shapes: [],
-    badges: [labelBadge(x + 6, Math.max(16, y - 24), `반전 후보 구간 · ${Math.round(pattern.confidence)}`, context.palette.color("panel", 0.82), stroke, context.palette.color("text"), 130)]
-  };
+  if (przTop === null || przBottom === null) return [];
+  const price = (pattern.prz.high + pattern.prz.low) / 2;
+  return minimalDashedPriceLine(context, price, `반전 후보 ${Math.round(pattern.confidence)}`, "amber");
 }
 
 function minimalFlowBadge(context: OverlayContext, label: string): string {
-  return labelBadge(14, 18, truncateSvgLabel(label || "수급 근거", 20), context.palette.color("panel", 0.8), context.palette.flag("watch", 0.8), context.palette.color("text"), 126);
+  return minimalFloatingLabel(context, truncateSvgLabel(label || "수급 근거", 18), 22, 32, "amber");
+}
+
+function minimalDashedPriceLine(
+  context: OverlayContext,
+  price: number,
+  label: string,
+  tone: "amber" | "red" | "text" = "text",
+  placement: "auto" | "top" | "bottom" = "auto"
+): string[] {
+  const y = context.series.priceToCoordinate(price);
+  if (y === null) return [];
+  const lineY = clamp(y, 20, context.height - 46);
+  const x1 = 18;
+  const x2 = Math.max(28, context.right - 16);
+  const labelX = clamp(x1 + (x2 - x1) * 0.5, 96, context.right - 96);
+  const offset = placement === "top" ? -18 : placement === "bottom" ? 28 : lineY > context.height * 0.72 ? -18 : 28;
+  const labelY = clamp(lineY + offset, 24, context.height - 24);
+  const stroke = tone === "red" ? context.palette.color("red", 0.9) : tone === "amber" ? context.palette.color("amber", 0.92) : context.palette.color("text", 0.88);
+  return [
+    `<line x1="${x1}" x2="${x2}" y1="${lineY}" y2="${lineY}" stroke="${context.palette.color("text", 0.2)}" stroke-width="7" stroke-linecap="round" stroke-dasharray="10 12" />`,
+    `<line x1="${x1}" x2="${x2}" y1="${lineY}" y2="${lineY}" stroke="${stroke}" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="10 12" />`,
+    minimalTextLabel(context, label, labelX, labelY, stroke)
+  ];
+}
+
+function minimalTextLabel(context: OverlayContext, label: string, x: number, y: number, fill: string): string {
+  const text = truncateSvgLabel(label, 16);
+  return `<text x="${x}" y="${y}" text-anchor="middle" fill="${fill}" stroke="${context.palette.color("panel", 0.9)}" stroke-width="5" paint-order="stroke" font-size="19" font-weight="780" font-family="Pretendard, Inter, system-ui, sans-serif">${escapeSvgText(text)}</text>`;
+}
+
+function minimalFloatingLabel(context: OverlayContext, label: string, x: number, y: number, tone: "amber" | "red" | "text" = "text"): string {
+  const fill = tone === "red" ? context.palette.color("red", 0.92) : tone === "amber" ? context.palette.color("amber", 0.92) : context.palette.color("text", 0.9);
+  return minimalTextLabel(context, label, x + 86, y, fill);
+}
+
+function minimalEvidenceLabel(label: string, fallback: "support" | "resistance" | "flow"): string {
+  const plain = label.replace(/\s+/g, " ").trim();
+  if (plain.includes("스윕") || plain.includes("청소")) return plain.includes("고점") || plain.includes("상위") ? "고점 청소" : "저점 청소";
+  if (plain.includes("UTAD")) return "UTAD";
+  if (plain.includes("Spring") || plain.includes("스프링")) return "스프링";
+  if (plain.includes("반전")) return "반전 후보";
+  if (plain.includes("지지")) return "지지 확인";
+  if (plain.includes("저항")) return "저항 확인";
+  if (fallback === "support") return "지지 확인";
+  if (fallback === "resistance") return "저항 확인";
+  return plain || "수급 근거";
+}
+
+function liquiditySweepMinimalLabel(sweep: LiquiditySweep): string {
+  if (sweep.side === "buy_side" || sweep.pool_kind.includes("high")) return "고점 청소";
+  return "저점 청소";
+}
+
+function liquidityPoolMinimalLabel(pool: LiquidityPool): string {
+  if (pool.side === "buy_side" || pool.kind.includes("high") || pool.kind === "eqh") return "고점 유동성";
+  return "저점 유동성";
 }
 
 function nearestByPrice<T extends { price: number }>(items: T[], price: number): T | null {
@@ -1456,11 +1493,12 @@ function actionPriceFlags(context: OverlayContext): PriceFlag[] {
   if (invalidation && isFinitePrice(invalidation.price)) {
     flags.push({ label: `무효화 ${formatPrice(invalidation.price)}`, price: invalidation.price, kind: "invalidation", priority: 2 });
   }
-  firstTwoTakeProfits(context.plan).forEach((target, index) => {
+  firstTwoTakeProfits(context.plan).slice(0, context.minimal ? 1 : 2).forEach((target, index) => {
     if (isFinitePrice(target.price)) {
       flags.push({ label: `익절${index + 1} ${formatPrice(target.price)}`, price: target.price, kind: "takeProfit", priority: 3 + index });
     }
   });
+  if (context.minimal) return flags.filter((flag) => Number.isFinite(flag.price)).slice(0, 4);
   const watchPrice = firstWatchPrice(context.plan?.watch_triggers, isFinitePrice(context.analysis.mark_price) ? context.analysis.mark_price : null);
   if (isFinitePrice(watchPrice)) {
     flags.push({ label: `감시 ${formatPrice(watchPrice)}`, price: watchPrice, kind: "watch", priority: 6 });

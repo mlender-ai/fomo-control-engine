@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from statistics import mean
 from typing import Any
 
+from app.analyst.oneliner import build_one_liners
 from app.core.config import get_settings
 from app.db.models import MarketCandle, MarketSnapshot, Position
 from app.marketdata.assets import classify_asset_class
@@ -142,6 +143,8 @@ def build_chart_analysis(
     }
     if derivatives is not None:
         payload["derivatives"] = _derivatives_payload(derivatives)
+    # WO-43: TA별 1줄 판정 — 고정 어휘, 충돌 그대로 노출 (파생 포함 전체 페이로드 기준).
+    payload["one_liners"] = build_one_liners(payload)
     if context is None:
         # 포지션 없는 스카우트 뷰: 방향 미지정 → 롱/숏 양쪽 시나리오를 제공
         payload["scenarios"] = build_direction_scenarios(
