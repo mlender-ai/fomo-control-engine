@@ -894,6 +894,13 @@ h3 {
   scrollbar-width: thin;
 }
 
+.positionStrip.compact {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: 8px;
+  overflow-x: visible;
+}
+
 .positionStripCard {
   position: relative;
   display: grid;
@@ -929,6 +936,55 @@ h3 {
 
 .positionStripCard.selected {
   box-shadow: inset 0 0 0 1px rgba(240, 184, 64, 0.38);
+}
+
+.positionStripCard.minimal {
+  grid-template-columns: minmax(0, 1fr);
+  align-content: center;
+  flex: 1 1 132px;
+  gap: 4px;
+  min-height: 58px;
+  border-radius: 7px;
+  padding: 9px 10px 9px 13px;
+  background: rgba(var(--chart-neutral-rgb), 0.045);
+}
+
+.positionStripCard.minimal.severity-0 {
+  background: rgba(var(--chart-green-rgb), 0.045);
+}
+
+.positionStripCard.minimal.severity-1,
+.positionStripCard.minimal.severity-2 {
+  background: rgba(var(--chart-amber-rgb), 0.055);
+}
+
+.positionStripCard.minimal.severity-3,
+.positionStripCard.minimal.severity-4 {
+  background: rgba(var(--chart-red-rgb), 0.07);
+}
+
+.positionStripCard.minimal:hover,
+.positionStripCard.minimal.selected {
+  transform: translateY(-1px);
+}
+
+.positionStripCard.minimal.selected {
+  border-color: rgba(240, 184, 64, 0.86);
+  background: rgba(240, 184, 64, 0.11);
+  box-shadow: inset 0 0 0 1px rgba(240, 184, 64, 0.48), 0 8px 22px rgba(0, 0, 0, 0.16);
+}
+
+.positionStripCard.minimal strong {
+  font-size: 13px;
+  line-height: 1.05;
+}
+
+.positionStripCard.minimal span:not(.stripSeverityBar) {
+  color: var(--terminal-muted);
+  font-family: var(--fce-font-label);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0;
 }
 
 .stripSeverityBar {
@@ -5575,6 +5631,15 @@ button.actionPlanRow:not(:disabled):hover {
 
 .minimalChartShell .positionChartPanel {
   min-height: 640px;
+}
+
+.minimalChartShell .positionChartCanvasFrame {
+  background: rgb(var(--chart-panel-rgb));
+}
+
+.minimalChartShell .chartHoverReadout {
+  border-color: rgba(var(--chart-neutral-rgb), 0.34);
+  background: rgba(0, 0, 0, 0.72);
 }
 
 .scoutMinimalTable th,

@@ -66,6 +66,7 @@ export function LivePositionCockpit() {
   const [selectedDetail, setSelectedDetail] = useState<LivePositionDetail | null>(null);
   const [stripChartAnalysis, setStripChartAnalysis] = useState<Record<string, PositionChartAnalysis>>({});
   const [viewMode, setViewMode] = useState<FceViewMode>("minimal");
+  const selectedChartRequestRef = useRef(0);
   const workspace = useAnalysisWorkspace();
 
   useEffect(() => {
@@ -173,6 +174,7 @@ export function LivePositionCockpit() {
   const selected = positions.find((item) => item.position.id === selectedId) ?? positions[0];
   const selectedDetailPayload = selectedDetail?.position.id === selected?.position.id ? selectedDetail : null;
   const selectedPayload = selectedDetailPayload ?? selected;
+  const selectedChartForPayload = selectedChartAnalysis?.position_id === selectedPayload?.position.id ? selectedChartAnalysis : null;
   const stripChartKey = positions.map((item) => item.position.id).join("|");
 
   async function loadSelectedDetail(positionId: string) {
@@ -184,15 +186,20 @@ export function LivePositionCockpit() {
   }
 
   async function loadSelectedChart(positionId: string, showSpinner = true) {
+    const requestId = selectedChartRequestRef.current + 1;
+    selectedChartRequestRef.current = requestId;
     if (showSpinner) setSelectedChartLoading(true);
     setSelectedChartError("");
     try {
-      setSelectedChartAnalysis(await api.positionChartAnalysis(positionId, "4h"));
+      const analysis = await api.positionChartAnalysis(positionId, "4h");
+      if (selectedChartRequestRef.current !== requestId) return;
+      setSelectedChartAnalysis(analysis);
     } catch (err) {
+      if (selectedChartRequestRef.current !== requestId) return;
       if (showSpinner) setSelectedChartAnalysis(null);
       setSelectedChartError(err instanceof Error ? err.message : "차트 분석 데이터를 불러오지 못했습니다.");
     } finally {
-      if (showSpinner) setSelectedChartLoading(false);
+      if (selectedChartRequestRef.current === requestId && showSpinner) setSelectedChartLoading(false);
     }
   }
 
@@ -200,6 +207,9 @@ export function LivePositionCockpit() {
     if (!selected?.position.id) return;
     void loadSelectedDetail(selected.position.id);
     const hasCurrentChart = selectedChartAnalysis?.position_id === selected.position.id;
+    if (!hasCurrentChart) {
+      setSelectedChartAnalysis(null);
+    }
     void loadSelectedChart(selected.position.id, !hasCurrentChart);
   }, [selected?.position.id, data?.timestamp]);
 

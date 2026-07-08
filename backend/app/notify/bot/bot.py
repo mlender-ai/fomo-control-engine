@@ -294,6 +294,11 @@ class TelegramBotSupervisor:
 
     async def _status(self, update: Any, context: Any) -> None:
         payload = get_worker_status()
+        try:
+            # WO-44 Part C: 최근 24h 발화/발송/실패 노출 — 침묵과 고장의 구분.
+            payload["alerts_24h"] = await self._run(service.alert_delivery_stats_24h)
+        except Exception:
+            payload["alerts_24h"] = None
         await self._reply(update.effective_message, format_status(payload))
 
     async def _mute(self, update: Any, context: Any) -> None:

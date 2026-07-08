@@ -604,8 +604,26 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("FCE_TELEGRAM_QUIET_HOURS_TIMEZONE", "TELEGRAM_QUIET_HOURS_TIMEZONE"),
     )
     alert_rules_enabled: str = Field(
-        "trigger_near,invalidation_breach,take_profit_hit,status_worsened,health_drop,liq_proximity,liq_unknown_high_lev,wyckoff_event,data_stall,funding_extreme,oi_divergence,liq_cluster_near,setup_near,setup_triggered,setup_invalidated,intent_approaching,intent_zone_entered,intent_zone_entered_partial,intent_invalidated,universe_discovery,mdd_limit_warn,mdd_limit_critical",
+        "trigger_near,invalidation_breach,take_profit_hit,status_worsened,health_drop,liq_proximity,liq_unknown_high_lev,wyckoff_event,data_stall,funding_extreme,oi_divergence,liq_cluster_near,setup_near,setup_triggered,setup_invalidated,intent_approaching,intent_zone_entered,intent_zone_entered_partial,intent_invalidated,universe_discovery,mdd_limit_warn,mdd_limit_critical,"
+        "position_opened,position_closed,verdict_changed,stance_flipped,evidence_insufficient,periodic_pulse",
         validation_alias=AliasChoices("FCE_ALERT_RULES_ENABLED", "ALERT_RULES_ENABLED"),
+    )
+    # WO-44 포지션 라이프사이클 알림.
+    alert_pulse_interval_hours: float = Field(
+        4.0,
+        validation_alias=AliasChoices("FCE_ALERT_PULSE_INTERVAL_HOURS", "ALERT_PULSE_INTERVAL_HOURS"),
+    )
+    alert_closure_confirm_ticks: int = Field(
+        2,
+        validation_alias=AliasChoices("FCE_ALERT_CLOSURE_CONFIRM_TICKS", "ALERT_CLOSURE_CONFIRM_TICKS"),
+    )
+    alert_evidence_insufficient_hours: float = Field(
+        2.0,
+        validation_alias=AliasChoices("FCE_ALERT_EVIDENCE_INSUFFICIENT_HOURS", "ALERT_EVIDENCE_INSUFFICIENT_HOURS"),
+    )
+    notification_state_path: str = Field(
+        "./notification_state.json",
+        validation_alias=AliasChoices("FCE_NOTIFICATION_STATE_PATH", "NOTIFICATION_STATE_PATH"),
     )
     alert_trigger_near_pct: float = Field(
         1.5,

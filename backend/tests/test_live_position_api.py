@@ -173,13 +173,24 @@ def test_bitget_sync_auto_records_missing_position_exit(client) -> None:
     assert first_sync.json()["created"] == 1
 
     provider.positions = []
+    # WO-44 Part C: 1틱 부재는 가짜 종료(sync 간극·거래소 일시 오류)일 수 있어 종료 확정 금지.
     second_sync = client.post("/api/live/positions/sync")
     assert second_sync.status_code == 200
-    sync_payload = second_sync.json()
+    first_miss = second_sync.json()
+    assert first_miss["missing_from_exchange"] == 1
+    assert first_miss["auto_closed"] == 0
+    positions_after_first_miss = client.get("/api/positions").json()
+    assert positions_after_first_miss[0]["status"] == "open"
+
+    # 2틱 연속 부재 → 종료 확정 + 종료 기록.
+    third_sync = client.post("/api/live/positions/sync")
+    assert third_sync.status_code == 200
+    sync_payload = third_sync.json()
     assert sync_payload["missing_from_exchange"] == 1
     assert sync_payload["auto_closed"] == 1
     assert sync_payload["positions"] == []
     assert sync_payload["open_count"] == 0
+    assert sync_payload["closed_positions"][0]["position"]["symbol"] == "PLTRUSDT"
 
     positions = client.get("/api/positions").json()
     assert positions[0]["symbol"] == "PLTRUSDT"

@@ -15,6 +15,12 @@ from app.notify.bot.formatters import (
     format_weekly_calibration,
     setup_alert_keyboard,
 )
+from app.notify.lifecycle import (
+    closed_candidate,
+    opened_candidate,
+    pulse_candidate,
+    transition_candidates,
+)
 from app.notify.rules import (
     AlertCandidate,
     cooldown_seconds,
@@ -58,6 +64,79 @@ class AlertEngine:
             for candidate in candidates:
                 sent += await self._fire_if_allowed(candidate)
         return sent
+
+    async def evaluate_lifecycle(self, sync_payload: dict[str, Any]) -> int:
+        """WO-44: 진입/종료/판정 전이/스탠스 반전/근거 부족 알림."""
+        if not self.settings.telegram_alerts_enabled or self.state.is_muted():
+            return 0
+        enabled = self.settings.alert_enabled_rule_set
+        sent = 0
+
+        if "position_opened" in enabled:
+            for position_id in sync_payload.get("created_position_ids", []) or []:
+                try:
+                    context = await asyncio.to_thread(service.live_position_alert_context, UUID(str(position_id)))
+                except Exception as exc:
+                    logger.warning("opened alert context failed position_id=%s error=%s", position_id, exc)
+                    continue
+                sent += await self._fire_if_allowed(opened_candidate(context))
+
+        if "position_closed" in enabled:
+            for item in sync_payload.get("closed_positions", []) or []:
+                if not isinstance(item, dict):
+                    continue
+                position = item.get("position") if isinstance(item.get("position"), dict) else {}
+                trade = item.get("trade") if isinstance(item.get("trade"), dict) else None
+                sent += await self._fire_if_allowed(closed_candidate(position, trade))
+                self.state.lifecycle_positions.pop(str(position.get("id") or ""), None)
+
+        transition_rules = {"verdict_changed", "stance_flipped", "evidence_insufficient"} & enabled
+        if transition_rules:
+            for payload in sync_payload.get("positions", []) or []:
+                context = await self._alert_context(payload)
+                position = context.get("position") if isinstance(context.get("position"), dict) else {}
+                position_id = str(position.get("id") or "")
+                if not position_id:
+                    continue
+                tracker = self.state.lifecycle_positions.get(position_id, {})
+                candidates, updated = transition_candidates(context, tracker, self.settings, now=self._now())
+                for candidate in candidates:
+                    if candidate.rule_id in transition_rules:
+                        sent += await self._fire_if_allowed(candidate)
+                self.state.lifecycle_positions[position_id] = updated
+        self._persist()
+        return sent
+
+    async def maybe_send_pulse(self, sync_payload: dict[str, Any]) -> int:
+        """WO-44: 보유 중 정기 펄스 — "전부 정상"도 발송 (침묵과 고장의 구분). 미도달분 병합."""
+        if not self.settings.telegram_alerts_enabled or self.state.is_muted():
+            return 0
+        if "periodic_pulse" not in self.settings.alert_enabled_rule_set:
+            return 0
+        now = self._now()
+        interval_hours = max(0.25, float(getattr(self.settings, "alert_pulse_interval_hours", 4.0)))
+        if self.state.last_pulse_at is not None and (now - self.state.last_pulse_at).total_seconds() < interval_hours * 3600:
+            return 0
+        contexts = []
+        for payload in sync_payload.get("positions", []) or []:
+            contexts.append(await self._alert_context(payload))
+        candidate = pulse_candidate(contexts, pending_redelivery=self.state.pending_redelivery)
+        if candidate is None:
+            return 0
+        if quiet_hours_active(self.settings, now):
+            # 무음 준수 — 억제분은 아침 요약에 병합되고, 펄스 주기는 다음 창에서 재개.
+            self._suppress(candidate)
+            self._record(candidate, delivered=False, fired_at=now)
+            self.state.last_pulse_at = now
+            self._persist()
+            return 0
+        delivered_count = await self.sender.send_to_all(candidate.message)
+        self._record(candidate, delivered=delivered_count > 0, fired_at=now)
+        self.state.last_pulse_at = now
+        if delivered_count > 0:
+            self.state.pending_redelivery.clear()
+        self._persist()
+        return delivered_count
 
     async def evaluate_worker_status(self, worker_status: dict[str, Any]) -> int:
         if not self.settings.telegram_alerts_enabled or self.state.is_muted():
@@ -205,7 +284,24 @@ class AlertEngine:
 
         delivered_count = await self.sender.send_to_all(enriched.message, reply_markup=self._reply_markup(enriched))
         self._record(enriched, delivered=delivered_count > 0, fired_at=now)
+        if delivered_count == 0 and self.sender.enabled:
+            # WO-44 Part C: 발송 실패분은 다음 pulse에 병합해 도달을 보증한다.
+            self.state.pending_redelivery.append(
+                {
+                    "rule_id": enriched.rule_id,
+                    "symbol": enriched.symbol,
+                    "title": enriched.title,
+                    "fired_at": now.isoformat(),
+                }
+            )
+            self.state.pending_redelivery = self.state.pending_redelivery[-50:]
+        self._persist()
         return delivered_count
+
+    def _persist(self) -> None:
+        path = str(getattr(self.settings, "notification_state_path", "") or "")
+        if path:
+            self.state.save(path)
 
     def _with_response_history(self, candidate: AlertCandidate) -> AlertCandidate:
         try:

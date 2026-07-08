@@ -39,6 +39,10 @@ class WorkerManager:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.state = NotificationState()
+        # WO-44 Part C: 억제분·라이프사이클 트래커·아침 요약 상태의 재시작 유실 방지.
+        state_path = str(getattr(settings, "notification_state_path", "") or "")
+        if state_path:
+            self.state.load(state_path)
         self.sender = TelegramSender(settings)
         self.alerts = AlertEngine(settings, self.sender, self.state)
         self.bot = TelegramBotSupervisor(settings, self.state)
@@ -172,6 +176,8 @@ class WorkerManager:
     async def _sync_positions(self) -> dict[str, Any]:
         payload = await asyncio.to_thread(service.sync_and_analyze_positions)
         await self._run_hook("detect_closures", lambda: asyncio.to_thread(service.detect_closures))
+        # WO-44: 진입/종료/판정 전이 — 라이프사이클이 1차 정보이므로 조건 알림보다 먼저.
+        await self._run_hook("evaluate_lifecycle", lambda: self.alerts.evaluate_lifecycle(payload))
         await self._run_hook(
             "evaluate_alerts",
             lambda: self.alerts.evaluate_positions(payload.get("positions", [])),
@@ -180,11 +186,14 @@ class WorkerManager:
             "evaluate_performance_alerts",
             lambda: self.alerts.evaluate_performance(service.performance_summary()),
         )
+        await self._run_hook("periodic_pulse", lambda: self.alerts.maybe_send_pulse(payload))
         await self._run_hook("daily_summary", lambda: self.alerts.maybe_send_daily_summary(payload))
         return {
             "open_count": payload.get("open_count"),
             "needs_exit_record_count": payload.get("needs_exit_record_count"),
             "positions": len(payload.get("positions", [])),
+            "created": payload.get("created"),
+            "auto_closed": payload.get("auto_closed"),
         }
 
     async def _daily_summary(self) -> dict[str, Any]:
@@ -285,8 +294,20 @@ class WorkerManager:
                 lambda: service.detect_closures(),
                 scheduled=False,
             ),
+            "evaluate_lifecycle": WorkerJob(
+                "evaluate_lifecycle",
+                self.settings.worker_sync_positions_interval_seconds,
+                None,
+                scheduled=False,
+            ),
             "evaluate_alerts": WorkerJob(
                 "evaluate_alerts",
+                self.settings.worker_sync_positions_interval_seconds,
+                None,
+                scheduled=False,
+            ),
+            "periodic_pulse": WorkerJob(
+                "periodic_pulse",
                 self.settings.worker_sync_positions_interval_seconds,
                 None,
                 scheduled=False,

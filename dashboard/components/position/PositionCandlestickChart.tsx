@@ -1047,9 +1047,11 @@ function riskRewardBoxNodes(context: OverlayContext): string[] {
   const profitPct = directionDistancePct(target.price, mark, context.analysis.direction);
   const rr = riskPct < 0 && profitPct > 0 ? profitPct / Math.abs(riskPct) : null;
   const label = `현재 기준 ${formatSignedPercent(profitPct)} / ${formatSignedPercent(riskPct)}${rr ? ` · R:R ${rr.toFixed(1)}` : ""}`;
+  const profitFill = context.minimal ? context.palette.zone("profit", 0.045) : context.palette.zone("profit");
+  const riskFill = context.minimal ? context.palette.zone("risk", 0.045) : context.palette.zone("risk");
   return [
-    `<rect x="${x}" y="${profitY}" width="${width}" height="${profitHeight}" fill="${context.palette.zone("profit")}" />`,
-    `<rect x="${x}" y="${riskY}" width="${width}" height="${riskHeight}" fill="${context.palette.zone("risk")}" />`,
+    `<rect x="${x}" y="${profitY}" width="${width}" height="${profitHeight}" fill="${profitFill}" />`,
+    `<rect x="${x}" y="${riskY}" width="${width}" height="${riskHeight}" fill="${riskFill}" />`,
     `<line x1="${x}" x2="${context.right}" y1="${entryY}" y2="${entryY}" stroke="${context.palette.flag("entry", 0.54)}" stroke-width="1" stroke-dasharray="${chartTheme.stroke.minor.dash}" />`,
     `<line x1="${x}" x2="${context.right}" y1="${markY}" y2="${markY}" stroke="${context.palette.flag("mark", 0.72)}" stroke-width="${chartTheme.stroke.major.width}" />`,
     labelBadge(context.right - 154, Math.max(18, Math.min(profitY, riskY) - 26), label, context.palette.color("panel", 0.82), context.palette.flag("takeProfit", 0.88), context.palette.color("text"), 148)

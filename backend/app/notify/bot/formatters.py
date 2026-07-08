@@ -491,6 +491,11 @@ def format_performance(payload: dict[str, Any]) -> str:
 def format_status(payload: dict[str, Any]) -> str:
     jobs = payload.get("jobs", {})
     lines = ["<b>시스템 상태</b>"]
+    alerts_24h = payload.get("alerts_24h") if isinstance(payload.get("alerts_24h"), dict) else None
+    if alerts_24h:
+        lines.append(
+            f"알림 24h: 발화 {alerts_24h.get('fired', 0)} · 발송 {alerts_24h.get('delivered', 0)} · 실패 {alerts_24h.get('failed', 0)}"
+        )
     for name, job in jobs.items():
         lines.append(f"• {escape(name)}: {escape(job.get('status', '-'))} · 성공 {_time(job.get('last_success_at'))} · 실패 {job.get('failures', 0)}")
     notify = payload.get("notifications", {})

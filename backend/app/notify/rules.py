@@ -49,6 +49,13 @@ RULE_LABELS: dict[str, str] = {
     "universe_discovery": "유니버스 발견",
     "mdd_limit_warn": "월 MDD 한도 접근",
     "mdd_limit_critical": "월 MDD 한도 도달",
+    # WO-44 포지션 라이프사이클.
+    "position_opened": "포지션 진입 감지",
+    "position_closed": "포지션 종료 감지",
+    "verdict_changed": "판정 상태 전이",
+    "stance_flipped": "종합 스탠스 반전",
+    "evidence_insufficient": "판단 근거 부족",
+    "periodic_pulse": "정기 상태 펄스",
 }
 
 RULE_SEVERITY: dict[str, AlertSeverity] = {
@@ -74,6 +81,12 @@ RULE_SEVERITY: dict[str, AlertSeverity] = {
     "universe_discovery": "info",
     "mdd_limit_warn": "warn",
     "mdd_limit_critical": "critical",
+    "position_opened": "action",
+    "position_closed": "action",
+    "verdict_changed": "warn",
+    "stance_flipped": "warn",
+    "evidence_insufficient": "info",
+    "periodic_pulse": "info",
 }
 
 

@@ -127,6 +127,8 @@ class Position(BaseModel):
     source: str = "manual"
     detected_source: str = "manual"
     synced_at: datetime | None = None
+    # WO-44: 거래소 목록 연속 부재 횟수 — N틱 연속 확인 후에만 종료 확정 (가짜 종료 방지).
+    sync_miss_count: int = 0
     memo: str = ""
     entry_memo: str = ""
     planned_stop_price: float | None = None

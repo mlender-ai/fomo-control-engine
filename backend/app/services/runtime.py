@@ -324,6 +324,28 @@ def regenerate_stale_insights() -> dict[str, Any]:
     }
 
 
+def alert_delivery_stats_24h() -> dict[str, Any]:
+    """WO-44 Part C: 최근 24h 발화/발송/실패 — 알림 침묵과 시스템 고장의 구분 근거."""
+    from datetime import timedelta
+
+    cutoff = utc_now() - timedelta(hours=24)
+    alerts = runtime.repository.list_alerts(limit=2000)
+    recent = [alert for alert in alerts if _aware(alert.fired_at) >= cutoff]
+    delivered = len([alert for alert in recent if alert.delivered])
+    return {
+        "window_hours": 24,
+        "fired": len(recent),
+        "delivered": delivered,
+        "failed": len(recent) - delivered,
+    }
+
+
+def _aware(value):
+    from datetime import timezone as _tz
+
+    return value if value.tzinfo else value.replace(tzinfo=_tz.utc)
+
+
 def detect_closures() -> dict[str, Any]:
     """Expose closure detection as a service hook.
 

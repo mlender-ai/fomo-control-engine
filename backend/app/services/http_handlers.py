@@ -552,6 +552,8 @@ def _sync_bitget_positions() -> dict:
     created = 0
     updated = 0
     auto_closed = 0
+    created_position_ids: list[str] = []
+    closed_positions: list[dict] = []
     exit_record_errors: list[dict[str, str]] = []
     seen_keys: set[tuple[str, Direction]] = set()
     existing = repository.list_positions()
@@ -560,20 +562,38 @@ def _sync_bitget_positions() -> dict:
         seen_keys.add(key)
         current = _find_bitget_position(existing, exchange_position.symbol, Direction(exchange_position.hold_side))
         if current is None:
-            repository.add_position(_position_from_bitget(exchange_position))
+            saved = repository.add_position(_position_from_bitget(exchange_position))
             created += 1
+            created_position_ids.append(str(saved.id))
         else:
-            repository.update_position(_merge_bitget_position(current, exchange_position))
+            merged = _merge_bitget_position(current, exchange_position)
+            # WO-44 Part C: 재등장 → 부재 카운터 리셋 (일시 오류로 인한 가짜 종료 방지).
+            merged.sync_miss_count = 0
+            repository.update_position(merged)
             updated += 1
 
+    # WO-44 Part C: 종료 확정은 N틱 연속 부재 확인 후 — sync 간극/거래소 일시 오류 오탐 방지.
+    confirm_ticks = max(1, int(getattr(settings, "alert_closure_confirm_ticks", 2)))
     missing = 0
     for position in existing:
         key = (position.symbol, position.direction)
         if position.source == "bitget" and position.status in EXIT_RECORDABLE_STATUSES and key not in seen_keys:
             missing += 1
+            position.sync_miss_count = int(position.sync_miss_count or 0) + 1
+            if position.sync_miss_count < confirm_ticks:
+                position.synced_at = utc_now()
+                repository.update_position(position)
+                continue
             closed, error = _auto_record_missing_bitget_exit(position)
             if closed:
                 auto_closed += 1
+                trade = _trade_for_position(position.id)
+                closed_positions.append(
+                    {
+                        "position": (repository.get_position(position.id) or position).model_dump(mode="json"),
+                        "trade": trade.model_dump(mode="json") if trade is not None else None,
+                    }
+                )
             elif error:
                 exit_record_errors.append(error)
 
@@ -585,6 +605,8 @@ def _sync_bitget_positions() -> dict:
         "updated": updated,
         "missing_from_exchange": missing,
         "auto_closed": auto_closed,
+        "created_position_ids": created_position_ids,
+        "closed_positions": closed_positions,
         "exit_record_errors": exit_record_errors,
     }
 
