@@ -94,7 +94,8 @@ class AlertEngine:
         if transition_rules:
             for payload in sync_payload.get("positions", []) or []:
                 context = await self._alert_context(payload)
-                position = context.get("position") if isinstance(context.get("position"), dict) else {}
+                # 실서비스 페이로드의 position은 Pydantic 모델일 수 있다 — dict로 정규화.
+                position = _as_dict(context.get("position"))
                 position_id = str(position.get("id") or "")
                 if not position_id:
                     continue
@@ -376,8 +377,16 @@ class AlertEngine:
         return now if now.tzinfo else now.replace(tzinfo=timezone.utc)
 
 
+def _as_dict(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json")
+    return {}
+
+
 def _same_position_key(key: str, payload: dict[str, Any]) -> bool:
-    position = payload.get("position") if isinstance(payload.get("position"), dict) else {}
+    position = _as_dict(payload.get("position"))
     position_id = str(position.get("id") or "")
     if not position_id:
         return False

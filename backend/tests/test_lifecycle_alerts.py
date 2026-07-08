@@ -272,6 +272,20 @@ def test_pulse_interval_gate(monkeypatch) -> None:
     assert "정기 상태 펄스" in sender.messages[0]
 
 
+def test_lifecycle_tracker_handles_model_shaped_position(monkeypatch) -> None:
+    """실서비스 페이로드는 position이 Pydantic 모델 — dict 가정으로 스킵되면 안 된다 (실환경 회귀)."""
+    from app.db.models import Direction, Position
+
+    engine, _, state = _engine()
+    monkeypatch.setattr("app.notify.alerts.service.record_alert", lambda record: record)
+    monkeypatch.setattr("app.notify.alerts.service.alert_response_history_line", lambda rule_id: None)
+    model_position = Position(symbol="BTCUSDT", direction=Direction.short, entry_price=100.0, quantity=1.0, leverage=5)
+    context = _context()
+    context["position"] = model_position  # dict가 아니라 모델
+    asyncio.run(engine.evaluate_lifecycle({"positions": [context]}))
+    assert str(model_position.id) in state.lifecycle_positions  # 트래커 등록 확인
+
+
 # ── 상태 영속화 (Part C) ───────────────────────────────────────────
 
 def test_notification_state_roundtrip(tmp_path) -> None:

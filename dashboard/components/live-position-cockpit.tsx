@@ -295,7 +295,7 @@ export function LivePositionCockpit() {
               {viewMode === "minimal" ? (
                 <MinimalPositionWorkspace
                   payload={selectedPayload}
-                  chartAnalysis={selectedChartAnalysis}
+                  chartAnalysis={selectedChartForPayload}
                   chartLoading={selectedChartLoading}
                   chartError={selectedChartError}
                   onRetryChart={() => void loadSelectedChart(selectedPayload.position.id)}
@@ -312,7 +312,7 @@ export function LivePositionCockpit() {
                     refreshing={actionLoading === `refresh:${selectedPayload.position.id}`}
                   />
                   <SymbolAnalysisView
-                    chartAnalysis={selectedChartAnalysis}
+                    chartAnalysis={selectedChartForPayload}
                     chartLoading={selectedChartLoading}
                     chartError={selectedChartError}
                     onRetryChart={() => void loadSelectedChart(selectedPayload.position.id)}
