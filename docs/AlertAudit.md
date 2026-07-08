@@ -16,6 +16,12 @@
 추가 발견 (Part C 선행 결함): 종료 감지가 **1틱 부재 즉시 auto-close** — sync 간극·거래소
 일시 오류로 인한 가짜 종료 기록 위험이 실재했다 (`_sync_bitget_positions`의 missing 루프).
 
+추가 발견 ② (라이브 검증 중 확정): `_alert_context`가 `action_plan`만 있으면 조기 반환해
+`chart_analysis`가 영영 컨텍스트에 실리지 않았다 — **wyckoff_event 규칙 발화 0건(DB 증거)과
+스탠스 추적 불능의 실원인**. sync 페이로드의 action_plan은 report 기반이라 차트 분석이
+없는데도 "완전한 컨텍스트"로 취급된 것. 수정: chart_analysis 부재 시 풀 컨텍스트 조회
+(비용: 보유 심볼당 캔들 1회/90s — Bitget 공개 한도 대비 미미).
+
 ## 수리 내역 (감사 → 수리 → 증설 순서 준수)
 
 ### 수리 (기존 경로)

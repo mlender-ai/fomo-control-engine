@@ -209,9 +209,11 @@ class AlertEngine:
         return count
 
     async def _alert_context(self, payload: dict[str, Any]) -> dict[str, Any]:
-        if payload.get("action_plan"):
+        # chart_analysis까지 있어야 완전한 컨텍스트다. action_plan만 보고 조기 반환하면
+        # wyckoff_event 규칙과 스탠스 추적이 조용히 죽는다 (발화 0건의 실원인 — AlertAudit 참조).
+        if payload.get("action_plan") and payload.get("chart_analysis"):
             return payload
-        position = payload.get("position") if isinstance(payload.get("position"), dict) else {}
+        position = _as_dict(payload.get("position"))
         position_id = position.get("id")
         if not position_id:
             return payload

@@ -30,6 +30,9 @@ import {
   type LivePositionDetail,
   type LivePositionPayload,
   type LivePositionsResponse,
+  type OneLinerLine,
+  type OneLinerStance,
+  type OneLinerSummary,
   type PositionActionPlan,
   type PositionChartAnalysis,
   type ScenarioMatchResponse
@@ -516,8 +519,10 @@ function MinimalPositionWorkspace({
 }) {
   const plan = actionPlanForPayload(payload);
   const copy = minimalPositionCopy(payload);
+  const taEvidenceChoices = oneLinerEvidenceChoices(chartAnalysis?.one_liners ?? null, payload);
+  const evidenceChoices = [copy.whyEvidence, copy.counterEvidence, ...taEvidenceChoices];
   const [selectedEvidenceKey, setSelectedEvidenceKey] = useState(copy.whyEvidence.key);
-  const selectedEvidence = [copy.whyEvidence, copy.counterEvidence].find((item) => item.key === selectedEvidenceKey) ?? copy.whyEvidence;
+  const selectedEvidence = evidenceChoices.find((item) => item.key === selectedEvidenceKey) ?? copy.whyEvidence;
   const minimalChartEvidence: MinimalChartEvidence = {
     layer: selectedEvidence.layer,
     label: selectedEvidence.label,
@@ -545,6 +550,17 @@ function MinimalPositionWorkspace({
         refreshing={refreshing}
         onShowPro={onShowPro}
       />
+      <TaOneLineStrip
+        loading={chartLoading && !chartAnalysis}
+        oneLiners={chartAnalysis?.one_liners ?? null}
+        payload={payload}
+        selectedEvidenceKey={selectedEvidence.key}
+        onSelectEvidence={(evidence) => {
+          setSelectedEvidenceKey(evidence.key);
+          workspace.setHighlightPrice(evidence.price ?? null);
+        }}
+        onShowPro={onShowPro}
+      />
       <div className="minimalChartShell" id="position-minimal-chart">
         <PositionChart
           analysis={chartAnalysis}
@@ -564,6 +580,156 @@ function MinimalPositionWorkspace({
       </div>
     </section>
   );
+}
+
+function TaOneLineStrip({
+  oneLiners,
+  payload,
+  loading,
+  selectedEvidenceKey,
+  onSelectEvidence,
+  onShowPro
+}: {
+  oneLiners: OneLinerSummary | null;
+  payload: LivePositionPayload;
+  loading: boolean;
+  selectedEvidenceKey: string;
+  onSelectEvidence: (evidence: MinimalEvidenceChoice) => void;
+  onShowPro: () => void;
+}) {
+  if (loading) {
+    return (
+      <section className="taOneLineStrip loading" data-testid="ta-one-line-strip" aria-live="polite">
+        <span className="taOneLineSpinner" aria-hidden="true" />
+        TA 판정 불러오는 중
+      </section>
+    );
+  }
+
+  const lines = normalizedOneLinerLines(oneLiners);
+  const choices = oneLinerEvidenceChoices(oneLiners, payload);
+  const counts = oneLiners?.counts ?? countOneLinerStances(lines);
+  const conflict = (counts["상방"] ?? 0) > 0 && (counts["하방"] ?? 0) > 0;
+
+  return (
+    <section className="taOneLineStrip" data-testid="ta-one-line-strip">
+      <div className="taOneLineGrid">
+        {lines.map((line, index) => {
+          const evidence = choices[index] ?? oneLinerChoiceFromLine(line, payload);
+          return (
+            <button
+              className={`taOneLineRow ${selectedEvidenceKey === evidence.key ? "active" : ""}`}
+              key={`${line.module}-${line.evidence_ref || line.phrase}`}
+              onClick={() => onSelectEvidence(evidence)}
+              onDoubleClick={onShowPro}
+              title="클릭하면 차트 근거를 전환합니다. 더블클릭하면 자세히 봅니다."
+              type="button"
+            >
+              <span className="taOneLineModule">{line.module_label}</span>
+              <span
+                aria-label={`${stanceDisplayLabel(line.stance)} · ${line.confidence_class}`}
+                className={`taOneLineDot ${oneLinerStanceClass(line.stance)} ${oneLinerConfidenceClass(line.confidence_class)}`}
+              />
+              <strong>{plainifyTaText(line.phrase)}</strong>
+            </button>
+          );
+        })}
+      </div>
+      <div className="taOneLineSummary">
+        <span>{oneLinerSummaryText(counts)}</span>
+        {conflict ? <em>충돌</em> : null}
+      </div>
+    </section>
+  );
+}
+
+const ONE_LINER_MODULES: Array<{ module: OneLinerLine["module"]; label: string }> = [
+  { module: "wyckoff", label: "와이코프" },
+  { module: "liquidity", label: "유동성" },
+  { module: "volume", label: "볼륨" },
+  { module: "harmonic", label: "하모닉" },
+  { module: "levels", label: "레벨" },
+  { module: "derivatives", label: "수급" },
+  { module: "indicators", label: "지표" }
+];
+
+function normalizedOneLinerLines(oneLiners: OneLinerSummary | null): OneLinerLine[] {
+  const byModule = new Map((oneLiners?.lines ?? []).map((line) => [line.module, line]));
+  return ONE_LINER_MODULES.map(({ module, label }) => byModule.get(module) ?? fallbackOneLinerLine(module, label));
+}
+
+function fallbackOneLinerLine(module: OneLinerLine["module"], label: string): OneLinerLine {
+  return {
+    module,
+    module_label: label,
+    stance: "판단불가",
+    phrase: "데이터 부족",
+    confidence_class: "약",
+    evidence_ref: module
+  };
+}
+
+function oneLinerEvidenceChoices(oneLiners: OneLinerSummary | null, payload: LivePositionPayload): MinimalEvidenceChoice[] {
+  return normalizedOneLinerLines(oneLiners).map((line) => oneLinerChoiceFromLine(line, payload));
+}
+
+function oneLinerChoiceFromLine(line: OneLinerLine, payload: LivePositionPayload): MinimalEvidenceChoice {
+  const fallbackPrice = nearestActionTriggerPrice(payload);
+  return {
+    key: `ta:${line.module}:${line.evidence_ref || line.phrase}`,
+    text: line.phrase,
+    layer: oneLinerEvidenceLayer(line),
+    label: `${line.module_label} · ${plainifyTaText(line.phrase)}`,
+    price: oneLinerEvidencePrice(line) ?? fallbackPrice
+  };
+}
+
+function oneLinerEvidenceLayer(line: OneLinerLine): MinimalEvidenceLayer {
+  if (line.module === "wyckoff") return "wyckoff";
+  if (line.module === "liquidity") return "liquidity";
+  if (line.module === "harmonic") return "harmonic";
+  if (line.module === "volume" || line.module === "derivatives") return "flow";
+  if (line.module === "levels" || line.module === "indicators") return "levels";
+  return "plan";
+}
+
+function oneLinerEvidencePrice(line: OneLinerLine): number | null {
+  const source = `${line.evidence_ref} ${line.phrase}`;
+  const match = source.match(/(?:price|level|poc|s1|r1|=|:)\s*(-?\d{1,3}(?:,\d{3})*(?:\.\d+)?|-?\d+\.\d+)/i);
+  if (!match) return null;
+  const parsed = Number(match[1].replace(/,/g, ""));
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function countOneLinerStances(lines: OneLinerLine[]): Record<OneLinerStance, number> {
+  return lines.reduce<Record<OneLinerStance, number>>(
+    (counts, line) => {
+      counts[line.stance] += 1;
+      return counts;
+    },
+    { "상방": 0, "하방": 0, "횡보": 0, "판단불가": 0 }
+  );
+}
+
+function oneLinerSummaryText(counts: Record<OneLinerStance, number>): string {
+  return `종합: 상방 ${counts["상방"] ?? 0} · 하방 ${counts["하방"] ?? 0} · 중립 ${counts["횡보"] ?? 0} · 판단불가 ${counts["판단불가"] ?? 0}`;
+}
+
+function stanceDisplayLabel(stance: OneLinerStance): string {
+  return stance === "횡보" ? "중립" : stance;
+}
+
+function oneLinerStanceClass(stance: OneLinerStance): string {
+  if (stance === "상방") return "stance-up";
+  if (stance === "하방") return "stance-down";
+  if (stance === "횡보") return "stance-neutral";
+  return "stance-unknown";
+}
+
+function oneLinerConfidenceClass(confidence: OneLinerLine["confidence_class"]): string {
+  if (confidence === "강") return "confidence-strong";
+  if (confidence === "중") return "confidence-medium";
+  return "confidence-weak";
 }
 
 function MinimalPositionVerdictCard({

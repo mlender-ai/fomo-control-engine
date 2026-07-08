@@ -7,6 +7,17 @@ from typing import Any
 from app.notify.bot.callbacks import encode_callback
 
 TELEGRAM_LIMIT = 4096
+ONE_LINER_STANCES = ("상방", "하방", "횡보", "판단불가")
+ONE_LINER_MODULES = ("wyckoff", "liquidity", "volume", "harmonic", "levels", "derivatives", "indicators")
+ONE_LINER_LABELS = {
+    "wyckoff": "와이코프",
+    "liquidity": "유동성",
+    "volume": "볼륨",
+    "harmonic": "하모닉",
+    "levels": "레벨",
+    "derivatives": "수급",
+    "indicators": "지표",
+}
 
 
 def split_telegram_text(text: str, limit: int = TELEGRAM_LIMIT) -> list[str]:
@@ -183,6 +194,9 @@ def format_position_verdict(payload: dict[str, Any]) -> str:
         "",
         f"→ {escape(_headline(payload))}",
     ]
+    one_liners = format_one_liner_strip(payload)
+    if one_liners:
+        lines.extend(["", one_liners])
     flow_line = _flow_line_from_position_payload(payload)
     if flow_line:
         lines.append(flow_line)
@@ -198,6 +212,46 @@ def format_position_verdict(payload: dict[str, Any]) -> str:
     if plan:
         lines.append("")
         lines.append(_format_plan_block(plan, max_rows=3))
+    return "\n".join(lines)
+
+
+def format_one_liner_strip(payload_or_one_liners: dict[str, Any]) -> str:
+    one_liners = _one_liners_from_payload(payload_or_one_liners)
+    if not one_liners:
+        return ""
+    raw_lines = one_liners.get("lines")
+    if not isinstance(raw_lines, list):
+        return ""
+    by_module = {
+        str(line.get("module")): line
+        for line in raw_lines
+        if isinstance(line, dict) and line.get("module")
+    }
+    lines = ["<b>TA 1줄</b>"]
+    counts = {stance: 0 for stance in ONE_LINER_STANCES}
+    for module in ONE_LINER_MODULES:
+        line = by_module.get(module) or {}
+        label = str(line.get("module_label") or ONE_LINER_LABELS[module])
+        stance = str(line.get("stance") or "판단불가")
+        phrase = str(line.get("phrase") or "데이터 부족")
+        if stance not in counts:
+            stance = "판단불가"
+        counts[stance] += 1
+        lines.append(f"{escape(label)} {_stance_dot(stance)} {escape(_compact(phrase, 32))}")
+    raw_counts = one_liners.get("counts")
+    if isinstance(raw_counts, dict):
+        for stance in ONE_LINER_STANCES:
+            value = raw_counts.get(stance)
+            if isinstance(value, int):
+                counts[stance] = value
+    conflict = counts["상방"] > 0 and counts["하방"] > 0
+    summary = (
+        f"종합: 상방 {counts['상방']} · 하방 {counts['하방']} · "
+        f"중립 {counts['횡보']} · 판단불가 {counts['판단불가']}"
+    )
+    if conflict:
+        summary += " · 충돌"
+    lines.append(summary)
     return "\n".join(lines)
 
 
