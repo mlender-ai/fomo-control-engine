@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 from app.backtest.signatures import signature_key
+from app.backtest.statistics import bootstrap_ci_from_counts
 from app.core.config import Settings
 from app.db.models import BacktestStat, CatalogSymbol, UniverseDiscovery, WatchlistItem, utc_now
 from app.db.repository import MemoryRepository
@@ -95,7 +96,9 @@ def _repo_with_catalog(symbols: list[tuple[str, str]]) -> MemoryRepository:
     return repo
 
 
-def _seed_stat(repo: MemoryRepository, signature: dict, *, sample: int = 32, win: float = 59.0) -> None:
+def _seed_stat(repo: MemoryRepository, signature: dict, *, sample: int = 40, win: float = 75.0) -> None:
+    # WO-36 §3: 게이트가 CI 하한으로 동작하므로 CI 하한 >= 50%를 넘는 표본을 심는다.
+    ci = bootstrap_ci_from_counts(round(win / 100 * sample), sample)
     repo.upsert_backtest_stat(
         BacktestStat(
             signature_key=signature["key"],
@@ -110,14 +113,15 @@ def _seed_stat(repo: MemoryRepository, signature: dict, *, sample: int = 32, win
             win_1r_pct=win,
             win_2r_pct=40.0,
             median_rr=1.6,
-            payload={"signature": signature, "label": signature["label"]},
+            payload={"signature": signature, "label": signature["label"], "win_1r_ci": list(ci) if ci else None},
         )
     )
 
 
 def test_universe_gate_blocks_each_quality_condition() -> None:
     settings = _settings()
-    good_stat = {"sample_size": 32, "win_1r_pct": 59.0}
+    # CI 하한 60% — 다른 조건이 통과할 때 게이트를 넘는 기준 표본.
+    good_stat = {"sample_size": 40, "win_1r_pct": 75.0, "win_1r_ci": [60.0, 87.5]}
 
     assert (
         evaluate_discovery_gate(
@@ -136,7 +140,7 @@ def test_universe_gate_blocks_each_quality_condition() -> None:
         evaluate_discovery_gate(
             settings,
             confidence=74,
-            stat={"sample_size": 29, "win_1r_pct": 59.0},
+            stat={"sample_size": 29, "win_1r_pct": 75.0, "win_1r_ci": [60.0, 87.5]},
             quote_volume_24h=2_000_000,
             asset_class="crypto",
             earnings_blocked=False,
@@ -145,11 +149,12 @@ def test_universe_gate_blocks_each_quality_condition() -> None:
         ).quality_passed
         is False
     )
+    # WO-36 §3: 점추정(60%)은 기준을 넘지만 CI 하한(45%)이 50% 미만이면 차단.
     assert (
         evaluate_discovery_gate(
             settings,
             confidence=74,
-            stat={"sample_size": 32, "win_1r_pct": 54.9},
+            stat={"sample_size": 40, "win_1r_pct": 60.0, "win_1r_ci": [45.0, 75.0]},
             quote_volume_24h=2_000_000,
             asset_class="crypto",
             earnings_blocked=False,
@@ -197,7 +202,7 @@ def test_universe_scan_creates_alert_candidate_and_judgment_for_gate_pass() -> N
     discovery = repo.list_universe_discoveries()[0]
     assert discovery.status == "alerted"
     assert discovery.gate_passed is True
-    assert discovery.sample_size == 32
+    assert discovery.sample_size == 40
     assert repo.list_judgments(position_id=universe_module.SCOUT_SENTINEL_POSITION_ID)[0].type == "universe_discovery"
 
 

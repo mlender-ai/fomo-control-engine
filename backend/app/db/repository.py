@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Protocol
 from uuid import UUID
@@ -12,6 +12,7 @@ from app.db.models import (
     AlertRecord,
     AlertResponseRecord,
     ArmedSetup,
+    AutonomyLog,
     BacktestStat,
     CalibrationSuggestion,
     CatalogSymbol,
@@ -119,6 +120,15 @@ class Repository(Protocol):
     def add_engine_param_version(self, version: EngineParamVersion) -> EngineParamVersion: ...
     def latest_engine_param(self, param: str) -> EngineParamVersion | None: ...
     def list_engine_params(self, limit: int = 100) -> list[EngineParamVersion]: ...
+    def add_autonomy_log(self, log: AutonomyLog) -> AutonomyLog: ...
+    def list_autonomy_logs(
+        self,
+        signature_key: str | None = None,
+        new_state: str | None = None,
+        since: datetime | None = None,
+        limit: int = 200,
+    ) -> list[AutonomyLog]: ...
+    def latest_autonomy_states(self) -> dict[str, str]: ...
     def add_market_snapshot(self, snapshot: MarketSnapshotRecord) -> MarketSnapshotRecord: ...
     def add_derivative_snapshot(self, snapshot: DerivativeDataSnapshot) -> DerivativeDataSnapshot: ...
     def list_derivative_snapshots(self, symbol: str | None = None, provider: str | None = None, limit: int = 100) -> list[DerivativeDataSnapshot]: ...
@@ -180,6 +190,7 @@ class MemoryRepository:
         self.judgment_scores: dict[UUID, JudgmentScore] = {}
         self.calibration_suggestions: dict[UUID, CalibrationSuggestion] = {}
         self.engine_params: dict[UUID, EngineParamVersion] = {}
+        self.autonomy_logs: dict[UUID, AutonomyLog] = {}
         self.market_snapshots: dict[UUID, MarketSnapshotRecord] = {}
         self.derivative_snapshots: dict[UUID, DerivativeDataSnapshot] = {}
         self.derivative_metrics: dict[UUID, DerivativeMetric] = {}
@@ -461,6 +472,32 @@ class MemoryRepository:
 
     def list_engine_params(self, limit: int = 100) -> list[EngineParamVersion]:
         return sorted(self.engine_params.values(), key=lambda item: item.approved_at, reverse=True)[:limit]
+
+    def add_autonomy_log(self, log: AutonomyLog) -> AutonomyLog:
+        self.autonomy_logs[log.id] = log
+        return log
+
+    def list_autonomy_logs(
+        self,
+        signature_key: str | None = None,
+        new_state: str | None = None,
+        since: datetime | None = None,
+        limit: int = 200,
+    ) -> list[AutonomyLog]:
+        logs = list(self.autonomy_logs.values())
+        if signature_key:
+            logs = [log for log in logs if log.signature_key == signature_key]
+        if new_state:
+            logs = [log for log in logs if log.new_state == new_state]
+        if since is not None:
+            logs = [log for log in logs if _aware_dt(log.created_at) >= since]
+        return sorted(logs, key=lambda item: item.created_at, reverse=True)[:limit]
+
+    def latest_autonomy_states(self) -> dict[str, str]:
+        result: dict[str, str] = {}
+        for log in sorted(self.autonomy_logs.values(), key=lambda item: item.created_at, reverse=True):
+            result.setdefault(log.signature_key, log.new_state)
+        return result
 
     def add_market_snapshot(self, snapshot: MarketSnapshotRecord) -> MarketSnapshotRecord:
         self.market_snapshots[snapshot.id] = snapshot
@@ -1359,6 +1396,61 @@ class SQLiteRepository:
             ).fetchall()
         return [EngineParamVersion.model_validate_json(row["payload"]) for row in rows]
 
+    def add_autonomy_log(self, log: AutonomyLog) -> AutonomyLog:
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO autonomy_log
+                    (id, signature_key, new_state, transition, autonomous, created_at, payload)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(log.id),
+                    log.signature_key,
+                    log.new_state,
+                    log.transition,
+                    1 if log.autonomous else 0,
+                    log.created_at.isoformat(),
+                    _dump_model(log),
+                ),
+            )
+        return log
+
+    def list_autonomy_logs(
+        self,
+        signature_key: str | None = None,
+        new_state: str | None = None,
+        since: datetime | None = None,
+        limit: int = 200,
+    ) -> list[AutonomyLog]:
+        query = "SELECT payload FROM autonomy_log"
+        clauses: list[str] = []
+        params: list[str | int] = []
+        if signature_key:
+            clauses.append("signature_key = ?")
+            params.append(signature_key)
+        if new_state:
+            clauses.append("new_state = ?")
+            params.append(new_state)
+        if since is not None:
+            clauses.append("created_at >= ?")
+            params.append(_aware_dt(since).isoformat())
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(query, tuple(params)).fetchall()
+        return [AutonomyLog.model_validate_json(row["payload"]) for row in rows]
+
+    def latest_autonomy_states(self) -> dict[str, str]:
+        # SQLite bare-column + MAX 집계: 각 그룹에서 MAX(created_at) 행의 컬럼을 반환.
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                "SELECT signature_key, new_state, MAX(created_at) FROM autonomy_log GROUP BY signature_key"
+            ).fetchall()
+        return {str(row["signature_key"]): str(row["new_state"]) for row in rows}
+
     def add_market_snapshot(self, snapshot: MarketSnapshotRecord) -> MarketSnapshotRecord:
         with self._lock, self._connect() as connection:
             connection.execute(
@@ -1854,3 +1946,7 @@ def create_repository(database_url: str) -> Repository:
 
 def _dump_model(model) -> str:
     return json.dumps(model.model_dump(mode="json"), ensure_ascii=False)
+
+
+def _aware_dt(value: datetime) -> datetime:
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)

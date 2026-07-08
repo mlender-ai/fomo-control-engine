@@ -9,6 +9,7 @@ router.add_api_route("/api/trades/{trade_id}", handlers.get_trade, methods=["GET
 router.add_api_route("/api/trades/{trade_id}/review", handlers.review_trade, methods=["POST"])
 router.add_api_route("/api/trades/{trade_id}/timeline", handlers.get_trade_timeline, methods=["GET"])
 router.add_api_route("/api/trades/{trade_id}/memo", handlers.update_trade_memo, methods=["PATCH"])
+router.add_api_route("/api/performance", handlers.performance_summary, methods=["GET"])
 router.add_api_route("/api/review/calibration", handlers.review_calibration, methods=["GET"])
 router.add_api_route(
     "/api/review/calibration/weekly",
@@ -23,5 +24,15 @@ router.add_api_route(
 router.add_api_route(
     "/api/review/calibration/suggestions/{suggestion_id}/reject",
     handlers.reject_calibration_suggestion,
+    methods=["POST"],
+)
+router.add_api_route(
+    "/api/review/calibration/suggestions/{suggestion_id}/veto",
+    handlers.reject_calibration_suggestion,
+    methods=["POST"],
+)
+router.add_api_route(
+    "/api/review/signatures/{signature_key}/recover",
+    handlers.approve_signature_recovery,
     methods=["POST"],
 )

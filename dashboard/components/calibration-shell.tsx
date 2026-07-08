@@ -25,18 +25,40 @@ export function CalibrationShell() {
     }
   }
 
-  async function updateSuggestion(suggestion: CalibrationSuggestion, action: "approve" | "reject") {
+  async function vetoSuggestion(suggestion: CalibrationSuggestion) {
     setBusy(suggestion.id);
     setError("");
     try {
-      if (action === "approve") {
-        await api.approveCalibrationSuggestion(suggestion.id);
-      } else {
-        await api.rejectCalibrationSuggestion(suggestion.id);
-      }
+      await api.vetoCalibrationSuggestion(suggestion.id);
       setCalibration(await api.reviewCalibration());
     } catch (err) {
-      setError(err instanceof Error ? err.message : "제안 상태 변경에 실패했습니다.");
+      setError(err instanceof Error ? err.message : "거부권 처리에 실패했습니다.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function approveSuggestion(suggestion: CalibrationSuggestion) {
+    setBusy(suggestion.id);
+    setError("");
+    try {
+      await api.approveCalibrationSuggestion(suggestion.id);
+      setCalibration(await api.reviewCalibration());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "승인 처리에 실패했습니다.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function approveRecovery(signatureKey: string) {
+    setBusy(signatureKey);
+    setError("");
+    try {
+      await api.approveSignatureRecovery(signatureKey);
+      setCalibration(await api.reviewCalibration());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "복귀 승인에 실패했습니다.");
     } finally {
       setBusy("");
     }
@@ -70,7 +92,7 @@ export function CalibrationShell() {
             <TerminalMetric label="전체 판단" value={metricNumber(calibration.totals, "total")} delta={`${metricNumber(calibration.totals, "tested")} 검증`} tone="info" />
             <TerminalMetric label="전체 적중률" value={metricPercent(calibration.totals, "accuracy_pct")} tone={metricTone(calibration.totals)} />
             <TerminalMetric label="중간 채점" value={String(calibration.score_contexts?.interim ?? 0)} delta="open position" tone="agent" />
-            <TerminalMetric label="대기 제안" value={String(calibration.suggestion_status_counts?.pending ?? 0)} delta={`${calibration.engine_params?.filter((item) => item.status === "active").length ?? 0} active params`} tone="warning" />
+            <TerminalMetric label="자율 예정" value={String(calibration.suggestion_status_counts?.scheduled ?? 0)} delta={`${calibration.suggestion_status_counts?.experiment ?? 0} shadow experiments`} tone="warning" />
           </section>
 
           <section className="grid two">
@@ -82,7 +104,7 @@ export function CalibrationShell() {
 
             <div data-testid="calibration-module-weekly">
               <TerminalPanel title="주간 리포트" subtitle="일요일 20:00 텔레그램 리포트와 같은 결정론 요약" status="ok">
-                <WeeklyReport weekly={weekly} />
+                <WeeklyReport weekly={weekly} onApproveRecovery={approveRecovery} busy={busy} />
               </TerminalPanel>
             </div>
           </section>
@@ -114,21 +136,23 @@ export function CalibrationShell() {
           </TerminalPanel>
 
           <section className="grid two">
-            <TerminalPanel title="파라미터 제안" subtitle="자동 적용 없음. 승인해야 engine_params에 버전이 기록됩니다" status={calibration.suggestions.length ? "warning" : "neutral"}>
+            <TerminalPanel title="파라미터 자율 피드" subtitle="조임 변경은 거부권 창 이후 자동 적용됩니다. 완화/중립 변경은 섀도 실험으로 검증합니다" status={calibration.suggestions.length ? "warning" : "neutral"}>
               {calibration.suggestions.length ? (
                 <div className="eventTimeline">
                   {calibration.suggestions.map((suggestion) => (
-                    <div className={`eventItem severity-${suggestion.status === "approved" ? "low" : "medium"}`} key={suggestion.id}>
+                    <div className={`eventItem severity-${suggestion.status === "adopted" || suggestion.status === "approved" ? "low" : "medium"}`} key={suggestion.id}>
                       <div>
                         <strong>{suggestion.title}</strong>
-                        <span>{suggestion.status} · N={suggestion.sample_size}</span>
+                        <span>{suggestionStatusLabel(suggestion)} · N={suggestion.sample_size}</span>
                       </div>
                       <p>{suggestion.rationale}</p>
                       <small>{formatChange(suggestion.proposed_change)}</small>
-                      {suggestion.status === "pending" ? (
+                      <small>{autonomyLine(suggestion)}</small>
+                      <small>{oosValidationLine(suggestion)}</small>
+                      {["pending", "scheduled", "experiment"].includes(suggestion.status) ? (
                         <div className="actionGroup">
-                          <button className="button secondary" onClick={() => updateSuggestion(suggestion, "approve")} disabled={busy === suggestion.id}>승인</button>
-                          <button className="button secondary" onClick={() => updateSuggestion(suggestion, "reject")} disabled={busy === suggestion.id}>기각</button>
+                          <button className="button" onClick={() => approveSuggestion(suggestion)} disabled={busy === suggestion.id}>승인</button>
+                          <button className="button secondary" onClick={() => vetoSuggestion(suggestion)} disabled={busy === suggestion.id}>거부</button>
                         </div>
                       ) : null}
                     </div>
@@ -139,7 +163,7 @@ export function CalibrationShell() {
               )}
             </TerminalPanel>
 
-            <TerminalPanel title="적용된 파라미터 버전" subtitle="승인 후 판단은 이 버전 스냅샷으로 태깅됩니다" status={calibration.engine_params?.length ? "ok" : "neutral"}>
+            <TerminalPanel title="적용된 파라미터 버전" subtitle="자율 채택 또는 수동 적용 이후 판단은 이 버전 스냅샷으로 태깅됩니다" status={calibration.engine_params?.length ? "ok" : "neutral"}>
               {calibration.engine_params?.length ? (
                 <TerminalTable
                   data={calibration.engine_params}
@@ -148,6 +172,7 @@ export function CalibrationShell() {
                   columns={[
                     { key: "param", header: "Param", render: (row) => row.param },
                     { key: "new_value", header: "Value", align: "end", render: (row) => String(row.new_value) },
+                    { key: "adopted_by", header: "By", width: 104, render: (row) => String(row.adopted_by ?? "manual") },
                     { key: "status", header: "Status", width: 104, render: (row) => row.status },
                     { key: "approved_at", header: "Approved", width: 168, render: (row) => new Date(row.approved_at).toLocaleString() }
                   ]}
@@ -254,7 +279,15 @@ function LevelQuality({ data }: { data: Record<string, Array<Record<string, unkn
   );
 }
 
-function WeeklyReport({ weekly }: { weekly: Record<string, unknown> | null }) {
+function WeeklyReport({
+  weekly,
+  onApproveRecovery,
+  busy
+}: {
+  weekly: Record<string, unknown> | null;
+  onApproveRecovery?: (signatureKey: string) => void;
+  busy?: string;
+}) {
   if (!weekly) {
     return <div className="terminalEmpty">주간 리포트 데이터가 없습니다.</div>;
   }
@@ -262,17 +295,77 @@ function WeeklyReport({ weekly }: { weekly: Record<string, unknown> | null }) {
   const highlights = Array.isArray(weekly.highlights) ? weekly.highlights.map(String) : [];
   const best = asRecord(weekly.best_judgment);
   const worst = asRecord(weekly.worst_judgment);
+  const accuracyCi = Array.isArray(totals.accuracy_ci) ? totals.accuracy_ci : null;
   return (
     <div className="calibrationWeekly">
       <div className="terminalMetricGrid">
         <TerminalMetric label="주간 검증" value={metricNumber(totals, "tested")} tone="info" />
-        <TerminalMetric label="주간 적중률" value={metricPercent(totals, "accuracy_pct")} tone={metricTone(totals)} />
+        <TerminalMetric
+          label="주간 적중률"
+          value={metricPercent(totals, "accuracy_pct")}
+          delta={accuracyCi ? `CI ${accuracyCi[0]}~${accuracyCi[1]}%` : undefined}
+          tone={metricTone(totals)}
+        />
       </div>
-      {highlights.map((item) => <p key={item}>{item}</p>)}
+      {highlights.map((item, index) => <p key={`${index}-${item}`}>{item}</p>)}
       <div className="grid two compactGrid">
         <div className="calibrationMiniBox"><strong>최고 판단</strong><span>{best.detail ? `${judgmentTypeLabel(String(best.judgment_type))} · ${String(best.detail)}` : "표본 없음"}</span></div>
         <div className="calibrationMiniBox"><strong>최악 판단</strong><span>{worst.detail ? `${judgmentTypeLabel(String(worst.judgment_type))} · ${String(worst.detail)}` : "표본 없음"}</span></div>
       </div>
+      <SelfAuditSection audit={asRecord(weekly.self_audit)} onApproveRecovery={onApproveRecovery} busy={busy} />
+    </div>
+  );
+}
+
+function SelfAuditSection({
+  audit,
+  onApproveRecovery,
+  busy
+}: {
+  audit: Record<string, unknown>;
+  onApproveRecovery?: (signatureKey: string) => void;
+  busy?: string;
+}) {
+  const did = asRecord(audit.engine_did_autonomously);
+  const waiting = asRecord(audit.awaiting_approval);
+  const didRows = Array.isArray(did.transitions) ? did.transitions.map((row) => asRecord(row)) : [];
+  const waitingRows = Array.isArray(waiting.transitions) ? waiting.transitions.map((row) => asRecord(row)) : [];
+  const recoveryPending = Array.isArray(waiting.recovery_pending) ? waiting.recovery_pending.map(String) : [];
+  const meta = asRecord(audit.meta_integrity);
+  if (!didRows.length && !waitingRows.length && !recoveryPending.length && !audit.generated_at) {
+    return null;
+  }
+  return (
+    <div className="calibrationSelfAudit">
+      {audit.critical ? <p className="dangerText">🚨 전 시그니처 격리 — 엔진 전면 불신 상태 · 신규 자율 강등 동결</p> : null}
+      <div className="grid two compactGrid">
+        <div className="calibrationMiniBox">
+          <strong>엔진이 이번 주 스스로 한 일 (자율 {didRows.length}건)</strong>
+          {didRows.length ? didRows.slice(0, 5).map((row, index) => (
+            <span key={`${index}-${String(row.signature_key)}`}>
+              {String(row.signature_key)}: {String(row.from)}→{String(row.to)}{row.regime ? ` · ${String(row.regime)} 한정` : ""} ({String(row.reason)})
+            </span>
+          )) : <span>이번 주 자율 전이 없음</span>}
+        </div>
+        <div className="calibrationMiniBox">
+          <strong>사용자 승인 대기 중인 일 ({waitingRows.length + recoveryPending.length}건)</strong>
+          {waitingRows.slice(0, 5).map((row, index) => (
+            <span key={`${index}-${String(row.signature_key)}`}>{String(row.signature_key)}: {String(row.transition)} ({String(row.reason)})</span>
+          ))}
+          {recoveryPending.map((key) => (
+            <span key={key} className="calibrationRecoveryRow">
+              복귀 제안: {key}
+              {onApproveRecovery ? (
+                <button className="button secondary" onClick={() => onApproveRecovery(key)} disabled={busy === key}>복귀 승인</button>
+              ) : null}
+            </span>
+          ))}
+          {!waitingRows.length && !recoveryPending.length ? <span>승인 대기 항목 없음</span> : null}
+        </div>
+      </div>
+      {typeof meta.misjudgment_rate_pct === "number" ? (
+        <p className="subtle">자율 강등 오판율 {meta.misjudgment_rate_pct}% (N={metricNumber(meta, "autonomous_downgrades")}) — 자율 규칙도 채점 대상</p>
+      ) : null}
     </div>
   );
 }
@@ -446,6 +539,57 @@ function setupTypeLabel(type: string) {
 
 function formatChange(change: Record<string, unknown>) {
   return `${String(change.parameter ?? "-")}: ${String(change.from ?? "-")} -> ${String(change.to ?? "-")}`;
+}
+
+function suggestionStatusLabel(suggestion: CalibrationSuggestion) {
+  const labels: Record<CalibrationSuggestion["status"], string> = {
+    pending: "평가 대기",
+    scheduled: "자율 적용 예정",
+    experiment: "섀도 실험 중",
+    adopted: "자율 적용됨",
+    approved: "수동 적용됨",
+    rejected: "기각됨",
+    vetoed: "거부됨",
+    discarded: "폐기됨",
+    dwell_blocked: "재변경 대기",
+    rolled_back: "롤백됨",
+  };
+  return labels[suggestion.status] ?? suggestion.status;
+}
+
+function oosValidationLine(suggestion: CalibrationSuggestion): string {
+  // WO-36 §4: 승인 결정은 OOS(학습/검증 분할) 근거와 함께 내려야 한다.
+  const oos = suggestion.oos_validation;
+  if (!oos || oos.sample_state !== "ok") {
+    return "OOS 검증: 표본 부족 — 검증기간 성립 여부 미확인";
+  }
+  const train = oos.train ?? {};
+  const validation = oos.validation ?? {};
+  const holds = oos.holds_in_validation ? "검증기간에도 성립" : "검증기간 미성립 — 승인 주의";
+  return `OOS 검증: 학습 ${train.rate_pct ?? "-"}% (N=${train.sample_size ?? "-"}) / 검증 ${validation.rate_pct ?? "-"}% (N=${validation.sample_size ?? "-"}) · ${holds}`;
+}
+
+function autonomyLine(suggestion: CalibrationSuggestion) {
+  const meta = asRecord(suggestion.autonomy);
+  const direction = String(meta.change_direction ?? "-");
+  const deadline = typeof meta.veto_deadline_at === "string" ? new Date(meta.veto_deadline_at).toLocaleString() : "";
+  if (suggestion.status === "scheduled") {
+    return `변경 방향 ${direction} · 거부권 기한 ${deadline || "-"}`;
+  }
+  if (suggestion.status === "experiment") {
+    const criteria = asRecord(meta.preregistered_criteria);
+    return `변경 방향 ${direction} · 사전 기준 ${String(criteria.success ?? "고정됨")} · N≥${String(criteria.min_sample_size ?? 30)}`;
+  }
+  if (suggestion.status === "adopted") {
+    return `자율 채택 · ${String(meta.adopted_at ?? "")}`;
+  }
+  if (suggestion.status === "vetoed") {
+    return `거부권 행사 · ${String(meta.vetoed_at ?? "")}`;
+  }
+  if (suggestion.status === "discarded" || suggestion.status === "dwell_blocked") {
+    return `자율 가드 · ${String(meta.reason ?? "-")}`;
+  }
+  return `변경 방향 ${direction}`;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

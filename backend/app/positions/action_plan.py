@@ -39,6 +39,29 @@ def build_action_plan(position: Position, snapshot: PositionSnapshot, chart_anal
     engine_invalidation = _with_liquidity_confluence(engine_invalidation, liquidity)
     take_profit = [_with_liquidity_confluence(item, liquidity) for item in take_profit]
     watch_triggers = _watch_triggers(position, mark_price, volume_profile, volume_xray, derivatives)
+    reference_zones = (
+        []
+        if invalidation is not None
+        else _reference_zones(
+            direction=direction,
+            mark_price=mark_price,
+            support=support,
+            resistance=resistance,
+            liquidity=liquidity,
+            candles=candles,
+        )
+    )
+    verdict = _verdict_state(
+        snapshot=snapshot,
+        direction=direction,
+        invalidation=invalidation,
+        take_profit=take_profit,
+        watch_triggers=watch_triggers,
+        reference_zones=reference_zones,
+        candles=candles,
+        support=support,
+        resistance=resistance,
+    )
 
     return {
         "as_of": snapshot.as_of.isoformat(),
@@ -47,8 +70,11 @@ def build_action_plan(position: Position, snapshot: PositionSnapshot, chart_anal
         "engine_invalidation": engine_invalidation if invalidation != engine_invalidation else None,
         "take_profit": take_profit,
         "watch_triggers": watch_triggers,
+        "reference_zones": reference_zones,
         "liquidation": _liquidation(position),
-        "headline_action": _headline_action(direction, invalidation, take_profit, watch_triggers),
+        "verdict_state": verdict["state"],
+        "standby_reason": verdict.get("standby_reason"),
+        "headline_action": verdict["headline"],
     }
 
 
@@ -78,6 +104,226 @@ def _headline_action(
         trigger = watch_triggers[0]
         return f"지금 볼 것: {trigger['condition']}. {trigger['meaning']}."
     return None
+
+
+def _verdict_state(
+    *,
+    snapshot: PositionSnapshot,
+    direction: str,
+    invalidation: dict[str, Any] | None,
+    take_profit: list[dict[str, Any]],
+    watch_triggers: list[dict[str, str]],
+    reference_zones: list[dict[str, Any]],
+    candles: list[dict[str, Any]],
+    support: list[dict[str, Any]],
+    resistance: list[dict[str, Any]],
+) -> dict[str, str | None]:
+    headline = _headline_action(direction, invalidation, take_profit, watch_triggers)
+    primary_distances = [
+        abs(float(item["distance_pct"]))
+        for item in [invalidation, *take_profit]
+        if isinstance(item, dict) and isinstance(item.get("distance_pct"), (int, float))
+    ]
+    if snapshot.severity_rank >= 4 or snapshot.health_score <= 25:
+        if headline:
+            danger_headline = headline.replace("지금 볼 것:", "긴급 확인:")
+        else:
+            reason = _standby_reason(candles, support, resistance)
+            danger_headline = _danger_standby_headline(reason, reference_zones)
+        return {"state": "danger", "headline": danger_headline, "standby_reason": None}
+    if headline and primary_distances:
+        state = "weakening" if min(primary_distances) <= 3 or snapshot.severity_rank >= 2 else "holding"
+        return {"state": state, "headline": headline, "standby_reason": None}
+    if headline and (invalidation or take_profit):
+        state = "weakening" if snapshot.severity_rank >= 2 else "holding"
+        return {"state": state, "headline": headline, "standby_reason": None}
+    if headline and watch_triggers:
+        state = "weakening" if snapshot.severity_rank >= 2 else "holding"
+        return {"state": state, "headline": headline, "standby_reason": None}
+    reason = _standby_reason(candles, support, resistance)
+    return {
+        "state": "standby",
+        "headline": _standby_headline(reason, reference_zones),
+        "standby_reason": reason,
+    }
+
+
+def _standby_reason(candles: list[dict[str, Any]], support: list[dict[str, Any]], resistance: list[dict[str, Any]]) -> str:
+    candle_count = len(candles) if isinstance(candles, list) else 0
+    if candle_count and candle_count < 60:
+        return f"캔들 {candle_count}개 — 표본 축적 중"
+    scored = [
+        float(item["score"])
+        for item in [*support, *resistance]
+        if isinstance(item.get("score"), (int, float))
+    ]
+    if scored:
+        return f"유효 레벨 부재 (최고 score {max(scored):.0f})"
+    if candle_count:
+        return "레인지 형성 대기"
+    return "데이터 부족 — 캔들 표본 없음"
+
+
+def _standby_headline(reason: str, reference_zones: list[dict[str, Any]]) -> str:
+    reference = reference_zones[0] if reference_zones else None
+    if reference and reference.get("price") is not None:
+        return f"채점 가능한 구조 없음 — {reason}. 참조 {reference.get('label', '가격')} {_format_price(reference.get('price'))}."
+    return f"채점 가능한 구조 없음 — {reason}. 참조 존 형성 대기."
+
+
+def _danger_standby_headline(reason: str, reference_zones: list[dict[str, Any]]) -> str:
+    reference = reference_zones[0] if reference_zones else None
+    if reference and reference.get("price") is not None:
+        return f"긴급 확인: {reason}. 참고 {reference.get('label', '가격')} {_format_price(reference.get('price'))}."
+    return f"긴급 확인: {reason}. 수동 리스크 점검 필요."
+
+
+def _reference_zones(
+    *,
+    direction: str,
+    mark_price: float | None,
+    support: list[dict[str, Any]],
+    resistance: list[dict[str, Any]],
+    liquidity: Any,
+    candles: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    zones: list[dict[str, Any]] = []
+    liquidity_zone = _reference_liquidity_pool(direction, mark_price, liquidity)
+    if liquidity_zone:
+        zones.append(liquidity_zone)
+    weak_level = _weak_structural_reference(direction, mark_price, support, resistance)
+    if weak_level:
+        zones.append(weak_level)
+    atr_zone = _atr_reference_zone(direction, mark_price, candles)
+    if atr_zone:
+        zones.append(atr_zone)
+    return _dedupe_price_items(zones)[:3]
+
+
+def _reference_liquidity_pool(direction: str, mark_price: float | None, liquidity: Any) -> dict[str, Any] | None:
+    if not isinstance(liquidity, dict):
+        return None
+    pools = liquidity.get("pools")
+    if not isinstance(pools, list):
+        return None
+    candidates: list[tuple[float, dict[str, Any]]] = []
+    for pool in pools:
+        if not isinstance(pool, dict) or pool.get("swept"):
+            continue
+        price = _optional_float(pool.get("price"))
+        if price is None:
+            continue
+        if mark_price is not None:
+            if direction == "long" and price >= mark_price:
+                continue
+            if direction == "short" and price <= mark_price:
+                continue
+            distance = abs(price - mark_price)
+        else:
+            distance = 0.0
+        candidates.append((distance, pool))
+    if not candidates:
+        return None
+    pool = min(candidates, key=lambda item: item[0])[1]
+    price = _optional_float(pool.get("price"))
+    if price is None:
+        return None
+    return _reference_item(
+        price=price,
+        mark_price=mark_price,
+        direction=direction,
+        label=_liquidity_pool_basis(pool),
+        basis="구조 레벨 없음 · 유동성 풀 참조",
+        source="liquidity_pool",
+    )
+
+
+def _weak_structural_reference(
+    direction: str,
+    mark_price: float | None,
+    support: list[dict[str, Any]],
+    resistance: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    levels = support if direction == "long" else resistance
+    candidates: list[dict[str, Any]] = []
+    for level in levels:
+        price = _optional_float(level.get("price"))
+        if price is None:
+            continue
+        if mark_price is not None:
+            if direction == "long" and price >= mark_price:
+                continue
+            if direction == "short" and price <= mark_price:
+                continue
+        candidates.append(level)
+    if not candidates:
+        return None
+    best = max(candidates, key=lambda item: float(item.get("score") or 0))
+    price = _optional_float(best.get("price"))
+    if price is None:
+        return None
+    score = best.get("score")
+    label = "약한 지지 레벨" if direction == "long" else "약한 저항 레벨"
+    return _reference_item(
+        price=price,
+        mark_price=mark_price,
+        direction=direction,
+        label=f"{label} score {float(score):.0f}" if isinstance(score, (int, float)) else label,
+        basis="구조 레벨 기준 미달 · 참고 전용",
+        source="weak_structure_level",
+    )
+
+
+def _atr_reference_zone(direction: str, mark_price: float | None, candles: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if mark_price is None or mark_price <= 0:
+        return None
+    atr = _average_true_range(candles)
+    if atr is None or atr <= 0:
+        return None
+    price = mark_price - atr * 1.5 if direction == "long" else mark_price + atr * 1.5
+    return _reference_item(
+        price=price,
+        mark_price=mark_price,
+        direction=direction,
+        label=f"ATR 참조 존 ±{_format_price(atr * 1.5)}",
+        basis="구조 부재 · 변동성 참조 ±ATR×1.5",
+        source="atr_reference",
+    )
+
+
+def _reference_item(price: float, mark_price: float | None, direction: str, label: str, basis: str, source: str) -> dict[str, Any]:
+    return {
+        "price": price,
+        "label": label,
+        "basis": basis,
+        "source": source,
+        "distance_pct": _distance_pct(price, mark_price, direction),
+        "reference_only": True,
+        "action": "알림 미사용 · 수동 참고",
+    }
+
+
+def _average_true_range(candles: list[dict[str, Any]], period: int = 14) -> float | None:
+    if not isinstance(candles, list) or len(candles) < 2:
+        return None
+    recent = candles[-period:]
+    ranges: list[float] = []
+    previous_close: float | None = None
+    for candle in recent:
+        high = _optional_float(candle.get("high"))
+        low = _optional_float(candle.get("low"))
+        close = _optional_float(candle.get("close"))
+        if high is None or low is None:
+            continue
+        values = [high - low]
+        if previous_close is not None:
+            values.extend([abs(high - previous_close), abs(low - previous_close)])
+        ranges.append(max(values))
+        if close is not None:
+            previous_close = close
+    if not ranges:
+        return None
+    return sum(ranges) / len(ranges)
 
 
 def _planned_invalidation(position: Position, mark_price: float | None) -> dict[str, Any] | None:

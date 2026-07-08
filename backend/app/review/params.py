@@ -31,7 +31,7 @@ def apply_engine_param_overrides(settings, repository) -> dict[str, Any]:
     return applied
 
 
-def engine_param_from_suggestion(settings, suggestion: CalibrationSuggestion) -> EngineParamVersion | None:
+def engine_param_from_suggestion(settings, suggestion: CalibrationSuggestion, *, adopted_by: str = "manual") -> EngineParamVersion | None:
     proposed = suggestion.proposed_change or {}
     param = proposed.get("parameter")
     if not isinstance(param, str) or "to" not in proposed:
@@ -44,6 +44,11 @@ def engine_param_from_suggestion(settings, suggestion: CalibrationSuggestion) ->
         old_value=old_value,
         new_value=new_value,
         suggestion_id=UUID(str(suggestion.id)),
+        adopted_by=adopted_by,
+        metadata={
+            "suggestion_type": suggestion.suggestion_type,
+            "autonomy": suggestion.autonomy,
+        },
         approved_at=utc_now(),
     )
 

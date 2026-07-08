@@ -956,6 +956,24 @@ h3 {
   gap: 8px;
 }
 
+.stripCardMetrics em {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.stripCardMetrics small,
+.verdictPnl small {
+  border: 1px solid color-mix(in srgb, currentColor 35%, transparent);
+  border-radius: 4px;
+  color: var(--terminal-muted);
+  font-family: var(--fce-font-label);
+  font-size: var(--fce-type-xs);
+  font-weight: 700;
+  padding: 1px 5px;
+  white-space: nowrap;
+}
+
 .stripIdentity {
   display: grid;
   gap: 3px;
@@ -5153,6 +5171,134 @@ button.actionPlanRow:not(:disabled):hover {
   line-height: 1.45;
 }
 
+.simKellyBlock {
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--terminal-warning) 36%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--terminal-warning) 8%, transparent);
+}
+
+.simKellyBlock.muted {
+  border-color: var(--terminal-line);
+  background: rgba(13, 18, 26, 0.58);
+}
+
+.simKellyBlock > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.simKellyBlock strong,
+.simKellyBlock b {
+  color: var(--terminal-text);
+}
+
+.simKellyBlock span,
+.simKellyBlock small {
+  color: var(--terminal-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.equityCurve {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(8px, 1fr);
+  align-items: end;
+  gap: 3px;
+  min-height: 220px;
+  padding: 18px 12px 12px;
+  border: 1px solid var(--terminal-line);
+  border-radius: 8px;
+  background:
+    linear-gradient(to top, rgba(140, 171, 135, 0.12) 1px, transparent 1px) 0 0 / 100% 25%,
+    rgba(13, 18, 26, 0.58);
+}
+
+.equityColumn {
+  position: relative;
+  display: flex;
+  align-items: end;
+  justify-content: center;
+  height: 180px;
+}
+
+.equityColumn b {
+  width: 100%;
+  min-height: 2px;
+  border-radius: 4px 4px 0 0;
+  background: color-mix(in srgb, var(--terminal-positive) 72%, transparent);
+}
+
+.equityColumn span.drawdown {
+  position: absolute;
+  top: 0;
+  width: 100%;
+  max-height: 100%;
+  border-radius: 0 0 4px 4px;
+  background: color-mix(in srgb, var(--terminal-negative) 20%, transparent);
+}
+
+.mddGuard,
+.crossScorecard {
+  display: grid;
+  gap: 12px;
+}
+
+.mddGuard {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.mddGuard > div,
+.crossScorecard > div {
+  padding: 14px;
+  border: 1px solid var(--terminal-line);
+  border-radius: 8px;
+  background: rgba(13, 18, 26, 0.58);
+}
+
+.mddGuard span,
+.crossScorecard span {
+  display: block;
+  color: var(--terminal-muted);
+  font-size: 12px;
+}
+
+.mddGuard strong,
+.crossScorecard strong {
+  display: block;
+  margin-top: 6px;
+  color: var(--terminal-text);
+  font-family: var(--font-mono);
+  font-size: 18px;
+}
+
+.crossScorecard {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.crossScorecard p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: var(--terminal-muted);
+  font-size: 12px;
+}
+
+.performanceSplitTables {
+  display: grid;
+  gap: 16px;
+}
+
+.performanceDisclaimer {
+  margin: 0;
+  color: var(--terminal-muted);
+  font-size: 12px;
+}
+
 .alertResponseSummary {
   display: grid;
   gap: 12px;
@@ -5164,6 +5310,401 @@ button.actionPlanRow:not(:disabled):hover {
   color: var(--terminal-muted);
   font-size: 12px;
   line-height: 1.45;
+}
+
+.viewModeToggle {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--terminal-line);
+  border-radius: 7px;
+  background: rgba(7, 10, 14, 0.74);
+  padding: 3px;
+}
+
+.viewModeToggle button {
+  min-height: 28px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--terminal-muted);
+  padding: 0 10px;
+  font-size: 11px;
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.viewModeToggle button.active {
+  background: rgba(240, 184, 64, 0.14);
+  color: var(--terminal-amber);
+  box-shadow: inset 0 0 0 1px rgba(240, 184, 64, 0.42);
+}
+
+.minimalPositionWorkspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.oneQuestionCard {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  border: 1px solid var(--terminal-line);
+  border-radius: 8px;
+  background: rgba(14, 18, 25, 0.94);
+  padding: 18px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.018);
+}
+
+.positionOneQuestion {
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+  grid-template-areas:
+    "top actions"
+    "answer next"
+    "reasons next"
+    "warning warning";
+  align-items: start;
+  gap: 16px 24px;
+  padding: 20px 24px;
+}
+
+.positionOneQuestion .oneQuestionTop {
+  grid-area: top;
+}
+
+.positionOneQuestion .oneQuestionAnswer {
+  grid-area: answer;
+}
+
+.positionOneQuestion .oneQuestionReasons {
+  grid-area: reasons;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  align-self: end;
+}
+
+.positionOneQuestion .oneQuestionNext {
+  grid-area: next;
+  align-self: stretch;
+  min-width: 0;
+}
+
+.positionOneQuestion .oneQuestionWarning {
+  grid-area: warning;
+}
+
+.positionOneQuestion .oneQuestionActions {
+  grid-area: actions;
+  justify-content: flex-end;
+  align-self: start;
+  min-width: 0;
+}
+
+.oneQuestionTop,
+.oneQuestionActions {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 10px;
+}
+
+.positionOneQuestion .oneQuestionTop {
+  gap: 28px;
+}
+
+.positionOneQuestion .oneQuestionActions {
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.oneQuestionTop strong {
+  display: block;
+  color: var(--terminal-text);
+  font-family: var(--fce-font-number);
+  font-size: 15px;
+}
+
+.oneQuestionTop span,
+.oneQuestionNext span,
+.oneQuestionNext em {
+  color: var(--terminal-muted);
+  font-size: 11px;
+  font-weight: 760;
+}
+
+.oneQuestionTop em {
+  color: var(--terminal-text);
+  font-family: var(--fce-font-number);
+  font-size: 16px;
+  font-style: normal;
+  line-height: 1.2;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.oneQuestionTop em small {
+  display: block;
+  margin-top: 3px;
+  color: var(--terminal-muted);
+  font-size: 10px;
+}
+
+.oneQuestionAnswer {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  min-width: 0;
+  align-self: center;
+}
+
+.oneQuestionAnswer h2 {
+  margin: 0;
+  color: var(--terminal-text);
+  font-size: 26px;
+  line-height: 1.1;
+  letter-spacing: 0;
+}
+
+.oneQuestionDot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--terminal-positive);
+  box-shadow: 0 0 0 6px rgba(105, 226, 138, 0.1);
+}
+
+.oneQuestionCard.state-danger .oneQuestionDot,
+.oneQuestionCard.state-critical .oneQuestionDot {
+  background: var(--terminal-negative);
+  box-shadow: 0 0 0 6px rgba(255, 99, 99, 0.11);
+}
+
+.oneQuestionCard.state-weakening .oneQuestionDot,
+.oneQuestionCard.state-conflicted .oneQuestionDot,
+.oneQuestionCard.state-neutral .oneQuestionDot {
+  background: var(--terminal-amber);
+  box-shadow: 0 0 0 6px rgba(240, 184, 64, 0.1);
+}
+
+.oneQuestionCard.state-standby .oneQuestionDot,
+.oneQuestionCard.state-insufficient .oneQuestionDot {
+  background: var(--terminal-muted);
+  box-shadow: 0 0 0 6px rgba(166, 176, 195, 0.09);
+}
+
+.oneQuestionReasons {
+  display: grid;
+  gap: 8px;
+}
+
+.oneQuestionReasons p {
+  margin: 0;
+  color: var(--terminal-text);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.oneQuestionEvidence {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 8px;
+  width: 100%;
+  max-width: none;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  padding: 10px 12px;
+  margin: 0;
+  text-align: left;
+  color: var(--terminal-text);
+  font-size: 13px;
+  line-height: 1.35;
+  cursor: pointer;
+}
+
+.oneQuestionEvidence:hover,
+.oneQuestionEvidence.active {
+  border-color: rgba(105, 226, 138, 0.26);
+  background: rgba(105, 226, 138, 0.045);
+}
+
+.oneQuestionEvidence b {
+  color: var(--terminal-muted);
+}
+
+.oneQuestionEvidence span {
+  min-width: 0;
+}
+
+.oneQuestionNext {
+  display: grid;
+  align-content: center;
+  gap: 7px;
+  border: 1px solid var(--terminal-line);
+  border-radius: 7px;
+  background: rgba(7, 10, 14, 0.54);
+  padding: 16px 18px;
+}
+
+.oneQuestionNext strong {
+  color: var(--terminal-text);
+  font-family: var(--fce-font-number);
+  font-size: 17px;
+}
+
+.oneQuestionWarning {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--terminal-warning);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.oneQuestionActions {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.minimalChartShell {
+  min-width: 0;
+}
+
+.minimalChartShell .positionChartPanel {
+  min-height: 640px;
+}
+
+.scoutMinimalTable th,
+.scoutMinimalTable td {
+  white-space: normal;
+  vertical-align: middle;
+}
+
+.scoutMinimalTable th:nth-child(1),
+.scoutMinimalTable td:nth-child(1) {
+  width: 18%;
+}
+
+.scoutMinimalTable th:nth-child(2),
+.scoutMinimalTable td:nth-child(2) {
+  width: 28%;
+}
+
+.scoutMinimalTable th:nth-child(4),
+.scoutMinimalTable td:nth-child(4) {
+  width: 18%;
+}
+
+.scoutSymbolMeta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 5px;
+}
+
+.scoutSymbolMeta em {
+  color: var(--terminal-muted);
+  font-size: 10px;
+  font-style: normal;
+}
+
+.tiltGauge {
+  display: grid;
+  grid-template-columns: auto minmax(84px, 1fr) auto;
+  gap: 7px;
+  align-items: center;
+  max-width: 260px;
+}
+
+.tiltGauge span {
+  color: var(--terminal-muted);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.tiltGauge i {
+  position: relative;
+  height: 8px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(255, 99, 99, 0.32), rgba(166, 176, 195, 0.22), rgba(105, 226, 138, 0.32));
+}
+
+.tiltGauge b {
+  position: absolute;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  border: 2px solid #0b0e14;
+  border-radius: 50%;
+  background: var(--terminal-muted);
+  transform: translate(-50%, -50%);
+}
+
+.tiltGauge.long b {
+  background: var(--terminal-positive);
+}
+
+.tiltGauge.short b {
+  background: var(--terminal-negative);
+}
+
+.tiltGauge.neutral b {
+  background: var(--terminal-amber);
+}
+
+.scoutMinimalRow td > small {
+  display: block;
+  margin-top: 6px;
+  color: var(--terminal-muted);
+  font-size: 11px;
+}
+
+.minimalReasonBadges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.minimalReasonBadges span {
+  border: 1px solid var(--terminal-line);
+  border-radius: 999px;
+  background: rgba(105, 226, 138, 0.06);
+  color: var(--terminal-text);
+  padding: 5px 8px;
+  font-size: 11px;
+}
+
+.scoutMinimalWorkspace .scoutOneQuestion {
+  max-width: none;
+}
+
+@media (max-width: 1280px) {
+  .positionOneQuestion {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      "top"
+      "answer"
+      "reasons"
+      "next"
+      "warning"
+      "actions";
+  }
+
+  .positionOneQuestion .oneQuestionTop,
+  .positionOneQuestion .oneQuestionActions {
+    justify-content: space-between;
+  }
+
+  .positionOneQuestion .oneQuestionReasons {
+    grid-template-columns: 1fr;
+  }
+
+  .minimalChartShell .positionChartPanel {
+    min-height: auto;
+  }
 }
 
 @media (max-width: 900px) {
@@ -5201,4 +5742,24 @@ button.actionPlanRow:not(:disabled):hover {
   .simMetricGrid {
     grid-template-columns: 1fr;
   }
+}
+
+.calibrationSelfAudit {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid var(--terminal-line);
+  padding-top: 10px;
+}
+
+.calibrationRecoveryRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.historicalLifecycleNote {
+  margin: 4px 0 0;
+  color: var(--terminal-warning, #e0a94f);
+  font-size: 11.5px;
 }

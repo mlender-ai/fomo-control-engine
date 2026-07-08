@@ -3,7 +3,9 @@ from __future__ import annotations
 from typing import Any
 
 from app.backtest.outcomes import aggregate_outcomes, atr, score_event_outcome
+from app.backtest.regimes import label_regime
 from app.backtest.signatures import SetupSignature, signature_key, signature_label
+from app.backtest.statistics import DISCLAIMER_NET, enrich_signature_stat
 from app.db.models import MarketCandle
 from app.marketdata.assets import classify_asset_class
 from app.structure.harmonic.engine import detect_harmonic_patterns
@@ -23,11 +25,15 @@ def replay_candles(
     min_window: int = MIN_REPLAY_CANDLES,
     lookahead_bars: int = DEFAULT_LOOKAHEAD_BARS,
     start_index: int | None = None,
+    cost_pct: float = 0.0,
+    regime_params: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Replay detectors over historical candles without future leakage.
 
     Each detector receives only ``candles[:index+1]``. The event entry price is
     the confirmation candle close, not the original anchor candle.
+    Outcomes are scored net of ``cost_pct`` (roundtrip fee + slippage), and each
+    case is tagged with the regime at confirmation time (no lookahead).
     """
 
     ordered = sorted(candles, key=lambda candle: candle.timestamp)
@@ -47,6 +53,7 @@ def replay_candles(
         if not events:
             continue
         candle_atr = atr(past)
+        regime = label_regime(past, **(regime_params or {}))
         for event in events:
             invalidation = _invalidation_price(event["direction"], past[-1].close, levels)
             outcome = score_event_outcome(
@@ -56,6 +63,7 @@ def replay_candles(
                 invalidation_price=invalidation,
                 atr_value=candle_atr,
                 max_bars=lookahead_bars,
+                cost_pct=cost_pct,
             )
             cases.append(
                 {
@@ -69,14 +77,20 @@ def replay_candles(
                     "signature_key": event["signature"]["key"],
                     "event": event["event"],
                     "outcome": outcome,
+                    "regime": regime.get("regime"),
+                    "regime_label": regime.get("regime_label"),
                     "price_path": _price_path(past[-12:], future[:18]),
-                    "disclaimer": "과거 통계 · 미래 보장 아님 · 수수료/슬리피지 미반영",
+                    "disclaimer": DISCLAIMER_NET,
                 }
             )
     return cases
 
 
-def aggregate_by_signature(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def aggregate_by_signature(
+    cases: list[dict[str, Any]],
+    *,
+    statistics_params: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
     grouped: dict[str, list[dict[str, Any]]] = {}
     for case in cases:
         grouped.setdefault(str(case.get("signature_key")), []).append(case)
@@ -85,18 +99,17 @@ def aggregate_by_signature(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
         signature = items[0]["signature"]
         aggregate = aggregate_outcomes(items)
         recent_cases = sorted(items, key=lambda item: str(item.get("as_of") or ""), reverse=True)[:3]
-        stats.append(
-            {
-                "signature_key": key,
-                "signature": signature,
-                "label": signature_label(signature),
-                "scope": "symbol",
-                **aggregate,
-                "cases": recent_cases,
-                "sample_warning": "표본 부족 — 결론 유보" if aggregate["sample_size"] < 10 else None,
-                "disclaimer": "과거 통계 · 미래 보장 아님 · 수수료/슬리피지 미반영",
-            }
-        )
+        stat = {
+            "signature_key": key,
+            "signature": signature,
+            "label": signature_label(signature),
+            "scope": "symbol",
+            **aggregate,
+            "cases": recent_cases,
+            "sample_warning": "표본 부족 — 결론 유보" if aggregate["sample_size"] < 10 else None,
+            "disclaimer": DISCLAIMER_NET,
+        }
+        stats.append(enrich_signature_stat(stat, items, **(statistics_params or {})))
     return sorted(stats, key=lambda item: (item["sample_size"], item.get("win_1r_pct") or 0), reverse=True)
 
 

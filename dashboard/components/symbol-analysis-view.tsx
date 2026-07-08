@@ -63,6 +63,7 @@ function moduleForLayer(layer: TaFocusLayer): EvidenceModuleId | null {
 
 export type AnalysisWorkspace = {
   layers: ChartLayerState;
+  setLayers: (layers: ChartLayerState) => void;
   highlightPrice: number | null;
   setHighlightPrice: (price: number | null) => void;
   openModule: EvidenceModuleId | null;
@@ -112,7 +113,7 @@ export function useAnalysisWorkspace(): AnalysisWorkspace {
     }
   }
 
-  return { layers, highlightPrice, setHighlightPrice, openModule, handleToggleLayer, handleModuleToggle, density };
+  return { layers, setLayers, highlightPrice, setHighlightPrice, openModule, handleToggleLayer, handleModuleToggle, density };
 }
 
 /** 포지션 상세와 스카우트가 공유하는 분석 화면: 차트(레이어) + 사이드 패널 + 근거 아코디언. */
@@ -182,7 +183,7 @@ export function SymbolAnalysisView({
   );
 }
 
-function chartOverlayFromPayload(payload: LivePositionPayload | undefined): PositionChartOverlay | null {
+export function chartOverlayFromPayload(payload: LivePositionPayload | undefined): PositionChartOverlay | null {
   if (!payload || payload.position.status !== "open") return null;
   return {
     direction: payload.position.direction,
@@ -383,7 +384,7 @@ function AnalystBriefingEvidence({ briefing }: { briefing: AnalystBriefing }) {
 
       <div className="briefingScenarioList">
         <strong>조건부 시나리오</strong>
-        {briefing.scenario.map((line) => <span key={line}>{plainifyTaText(line)}</span>)}
+        {briefing.scenario.map((line, index) => <span key={`${index}-${line}`}>{plainifyTaText(line)}</span>)}
       </div>
       <p className="tabExplanation">
         {briefing.hit_rates.length ? briefing.hit_rates.join(" · ") : "근거별 실측 적중률은 표본이 충분할 때만 표시합니다."}

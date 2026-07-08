@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid5
 
 from fastapi import HTTPException
@@ -49,6 +50,7 @@ from app.memory.engine import (
     memory_from_validation,
 )
 from app.monitoring.engine import build_monitoring_log, calculate_pnl
+from app.performance.metrics import PerformanceConfig, build_performance_report
 from app.positions.action_plan import build_action_plan
 from app.positions.chart_analysis import PositionContext, build_chart_analysis
 from app.positions.engine import (
@@ -69,9 +71,8 @@ from app.review.engine import (
     generate_review_text,
     score_judgments,
 )
+from app.review.autonomy import adopt_suggestion, process_parameter_autonomy, veto_suggestion
 from app.review.params import (
-    apply_engine_param_overrides,
-    engine_param_from_suggestion,
     engine_param_snapshot,
 )
 from app.shadow.engine import (
@@ -79,6 +80,7 @@ from app.shadow.engine import (
     compare_shadow_profile,
     extract_shadow_profile,
 )
+from app.validation.decay import apply_recovery, build_self_audit
 from app.validation.engine import run_validation
 
 settings = get_settings()
@@ -191,7 +193,34 @@ def system_status() -> dict:
             "min_invalidation_level_score": settings.min_invalidation_level_score,
         },
         "engine_params": engine_param_snapshot(repository),
+        "verdict_state_distribution": _verdict_state_distribution(),
         "timestamp": utc_now(),
+    }
+
+
+def _verdict_state_distribution() -> dict:
+    counts = {"holding": 0, "weakening": 0, "danger": 0, "standby": 0, "unknown": 0}
+    open_positions = [position for position in repository.list_positions() if position.status == PositionStatus.open]
+    for position in open_positions:
+        try:
+            report = _generate_and_store_report(position.symbol)
+            derivatives = _derivative_context(position.symbol)
+            _attach_derivatives(report, derivatives)
+            previous_snapshots = repository.list_position_snapshots(position.id, limit=30)
+            state = build_position_state(position, report, previous_snapshots)
+            snapshot = make_snapshot(position, state)
+            plan = build_action_plan(position, snapshot, _action_plan_context_from_report(report, derivatives))
+            state_name = str(plan.get("verdict_state") or "unknown")
+        except Exception:
+            state_name = "unknown"
+        counts[state_name if state_name in counts else "unknown"] += 1
+    total = sum(counts.values())
+    standby_ratio = round((counts["standby"] / total) * 100, 2) if total else 0.0
+    return {
+        "counts": counts,
+        "total": total,
+        "standby_ratio_pct": standby_ratio,
+        "slo": {"standby_ratio_pct_max": 20, "ok": standby_ratio <= 20 if total else True},
     }
 
 
@@ -950,10 +979,12 @@ def _live_position_payload(position: Position, store_snapshot: bool = False) -> 
     latest_events = repository.list_position_events(position.id, limit=5)
     latest_insight = latest_insights[0] if latest_insights else None
     insight_status = _insight_status(latest_insight, snapshot)
+    action_plan = build_action_plan(position, snapshot, _action_plan_context_from_report(report, derivatives))
     return {
         "position": position,
         "state": state,
         "latest_snapshot": snapshot,
+        "action_plan": action_plan,
         "latest_insight": _insight_payload(latest_insight, insight_status) if latest_insight else None,
         "insight_status": insight_status,
         "recent_events": latest_events if latest_events else events,
@@ -998,6 +1029,24 @@ def _live_position_detail(position: Position) -> dict:
         "insights": [_insight_payload(insight, _insight_status(insight, snapshot)) for insight in insights],
         "events": repository.list_position_events(position.id, limit=50),
         "monitoring_logs": repository.list_monitoring_logs(position.id, limit=30),
+    }
+
+
+def _action_plan_context_from_report(report, derivatives: dict[str, Any] | None = None) -> dict[str, Any]:
+    raw = report.raw_json if isinstance(report.raw_json, dict) else {}
+    structure_levels = raw.get("structure_levels") if isinstance(raw.get("structure_levels"), dict) else {}
+    return {
+        "mark_price": report.price,
+        "price_levels": {
+            "support": structure_levels.get("support", []),
+            "resistance": structure_levels.get("resistance", []),
+            "invalidation": [],
+        },
+        "liquidity": raw.get("liquidity", {}) if isinstance(raw.get("liquidity"), dict) else {},
+        "derivatives": derivatives or {},
+        "volume_profile": raw.get("volume_profile", {}) if isinstance(raw.get("volume_profile"), dict) else {},
+        "volume_xray": raw.get("volume_xray", {}) if isinstance(raw.get("volume_xray"), dict) else {},
+        "candles": raw.get("candles", []) if isinstance(raw.get("candles"), list) else [],
     }
 
 
@@ -1432,6 +1481,25 @@ def list_trades():
     return repository.list_trades()
 
 
+def performance_summary() -> dict:
+    positions = repository.list_positions()
+    latest_snapshots = {}
+    for position in positions:
+        snapshots = repository.list_position_snapshots(position.id, limit=1)
+        if snapshots:
+            latest_snapshots[position.id] = snapshots[0]
+    mdd_limit = settings.performance_monthly_mdd_limit_pct if settings.performance_monthly_mdd_limit_pct > 0 else None
+    return build_performance_report(
+        repository.list_trades(),
+        positions=positions,
+        latest_snapshots=latest_snapshots,
+        config=PerformanceConfig(
+            capital_base_usdt=settings.performance_capital_base_usdt,
+            monthly_mdd_limit_pct=mdd_limit,
+        ),
+    )
+
+
 def get_trade(trade_id: UUID):
     trade = repository.get_trade(trade_id)
     if trade is None:
@@ -1459,8 +1527,13 @@ def review_calibration() -> dict:
         existing = repository.get_calibration_suggestion(suggestion.id)
         if existing is None:
             repository.add_calibration_suggestion(suggestion)
-    suggestions = repository.list_calibration_suggestions(limit=100)
-    summary = build_calibration_summary(scores, suggestions, repository.list_alert_responses(limit=2000))
+    suggestions = process_parameter_autonomy(settings, repository, repository.list_calibration_suggestions(limit=100))
+    summary = build_calibration_summary(
+        scores,
+        suggestions,
+        repository.list_alert_responses(limit=2000),
+        self_audit=build_self_audit(repository),
+    )
     summary["engine_params"] = [param.model_dump(mode="json") for param in repository.list_engine_params(limit=100)]
     return summary
 
@@ -1471,8 +1544,18 @@ def review_weekly_calibration() -> dict:
         existing = repository.get_calibration_suggestion(suggestion.id)
         if existing is None:
             repository.add_calibration_suggestion(suggestion)
-    suggestions = repository.list_calibration_suggestions(limit=100)
-    return build_weekly_calibration_report(scores, suggestions, repository.list_alert_responses(limit=2000))
+    suggestions = process_parameter_autonomy(settings, repository, repository.list_calibration_suggestions(limit=100))
+    # WO-37: 읽기 뷰는 부패 스윕(상태 변경)을 실행하지 않고 기존 원장에서 셀프 오딧만 구성한다.
+    self_audit = build_self_audit(repository)
+    payload = build_weekly_calibration_report(scores, suggestions, repository.list_alert_responses(limit=2000), self_audit=self_audit)
+    payload["performance"] = performance_summary()
+    return payload
+
+
+def approve_signature_recovery(signature_key: str) -> dict:
+    """WO-37: 복귀 제안 승인 — 제안-승인 경유로만 validated 복귀 (자율 아님)."""
+    log = apply_recovery(repository, signature_key, approved_by="manual")
+    return log.model_dump(mode="json")
 
 
 def approve_calibration_suggestion(suggestion_id: UUID) -> CalibrationSuggestion:
@@ -1480,7 +1563,10 @@ def approve_calibration_suggestion(suggestion_id: UUID) -> CalibrationSuggestion
 
 
 def reject_calibration_suggestion(suggestion_id: UUID) -> CalibrationSuggestion:
-    return _set_calibration_suggestion_status(suggestion_id, "rejected")
+    try:
+        return veto_suggestion(repository, suggestion_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Calibration suggestion not found") from None
 
 
 def _set_calibration_suggestion_status(suggestion_id: UUID, status: str) -> CalibrationSuggestion:
@@ -1491,10 +1577,7 @@ def _set_calibration_suggestion_status(suggestion_id: UUID, status: str) -> Cali
     suggestion.updated_at = utc_now()
     saved = repository.add_calibration_suggestion(suggestion)
     if status == "approved":
-        version = engine_param_from_suggestion(settings, saved)
-        if version is not None:
-            repository.add_engine_param_version(version)
-            apply_engine_param_overrides(settings, repository)
+        saved = adopt_suggestion(settings, repository, saved, adopted_by="manual")
     return saved
 
 

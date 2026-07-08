@@ -342,7 +342,7 @@ class BacktestStat(BaseModel):
     avg_mae_r: float | None = None
     avg_resolution_bars: float | None = None
     cases: list[dict] = Field(default_factory=list)
-    disclaimer: str = "과거 통계 · 미래 보장 아님 · 수수료/슬리피지 미반영"
+    disclaimer: str = "과거 통계 · 미래 보장 아님 · 수수료·슬리피지 반영(net)"
     payload: dict = Field(default_factory=dict)
     generated_at: datetime = Field(default_factory=utc_now)
     created_at: datetime = Field(default_factory=utc_now)
@@ -360,6 +360,7 @@ class UniverseDiscovery(BaseModel):
     gate_reasons: list[dict] = Field(default_factory=list)
     confidence: int | None = None
     win_1r_pct: float | None = None
+    win_1r_ci: list[float] | None = None
     sample_size: int | None = None
     quote_volume_24h: float | None = None
     current_price: float | None = None
@@ -446,7 +447,21 @@ class CalibrationSuggestion(BaseModel):
     rationale: str
     proposed_change: dict
     sample_size: int
-    status: Literal["pending", "approved", "rejected"] = "pending"
+    # WO-36 §4: 제안 근거 통계가 검증기간(OOS)에서도 성립하는지 첨부.
+    oos_validation: dict = Field(default_factory=dict)
+    status: Literal[
+        "pending",
+        "scheduled",
+        "experiment",
+        "adopted",
+        "approved",
+        "rejected",
+        "vetoed",
+        "discarded",
+        "dwell_blocked",
+        "rolled_back",
+    ] = "pending"
+    autonomy: dict = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 
@@ -458,7 +473,28 @@ class EngineParamVersion(BaseModel):
     new_value: float | int | str | bool
     suggestion_id: UUID | None = None
     status: Literal["active", "superseded"] = "active"
+    adopted_by: Literal["manual", "autonomy", "rollback"] = "manual"
+    metadata: dict = Field(default_factory=dict)
     approved_at: datetime = Field(default_factory=utc_now)
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+SignatureState = Literal["candidate", "validated", "degraded", "quarantined"]
+
+
+class AutonomyLog(BaseModel):
+    """WO-37 자율 상태 전이 원장 — append-only. 근거 스냅샷 없는 전이 금지."""
+
+    id: UUID = Field(default_factory=uuid4)
+    signature_key: str
+    previous_state: SignatureState | None = None
+    new_state: SignatureState
+    # degrade/quarantine/validate/recover_proposed/recover_applied/capped
+    transition: str
+    reason: str
+    autonomous: bool = True  # True=자율 즉시, False=제안-승인 경유(복귀)
+    regime: str | None = None  # 레짐별 부분 부패 시 해당 레짐
+    evidence: dict = Field(default_factory=dict)  # 전이 시점 통계 스냅샷 (필수)
     created_at: datetime = Field(default_factory=utc_now)
 
 

@@ -17,9 +17,11 @@ from app.db.models import (
     Trade,
     utc_now,
 )
+from app.backtest.statistics import bootstrap_ci_from_counts
 from app.positions.insight import call_openai_insight, validate_llm_numbers
 from app.review.alert_responses import build_alert_response_summary
 from app.scout.monitor import build_scout_calibration_summary
+from app.review.autonomy import experiments_snapshot
 
 PRICE_TOLERANCE = 0.005
 SAMPLE_FLOOR = 10
@@ -376,6 +378,8 @@ def build_calibration_summary(
     scores: list[JudgmentScore],
     suggestions: list[CalibrationSuggestion],
     alert_responses: list[Any] | None = None,
+    *,
+    self_audit: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     invalidation = [score for score in scores if score.judgment_type == "invalidation"]
     take_profit = [score for score in scores if score.judgment_type == "take_profit"]
@@ -399,7 +403,8 @@ def build_calibration_summary(
         "wyckoff_confidence": _confidence_buckets(wyckoff),
         "briefing_performance": build_briefing_calibration_summary(briefing),
         "suggestion_status_counts": _suggestion_status_counts(suggestions),
-        "weekly_report": build_weekly_calibration_report(scores, suggestions, alert_responses),
+        "autonomy": experiments_snapshot(suggestions),
+        "weekly_report": build_weekly_calibration_report(scores, suggestions, alert_responses, self_audit=self_audit),
         "alert_response_summary": build_alert_response_summary(alert_responses or []),
         "scout_setup_summary": build_scout_calibration_summary(scores),
         "suggestions": [suggestion.model_dump(mode="json") for suggestion in suggestions],
@@ -413,12 +418,15 @@ def build_weekly_calibration_report(
     alert_responses: list[Any] | None = None,
     *,
     now: datetime | None = None,
+    self_audit: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     end_at = now or utc_now()
     start_at = end_at - timedelta(days=7)
     weekly_scores = [score for score in scores if _aware(score.created_at) >= start_at]
     weekly_alert_responses = [response for response in (alert_responses or []) if _aware(response.detected_at) >= start_at]
     pending_suggestions = [suggestion for suggestion in suggestions if suggestion.status == "pending"]
+    scheduled_suggestions = [suggestion for suggestion in suggestions if suggestion.status == "scheduled"]
+    experiment_suggestions = [suggestion for suggestion in suggestions if suggestion.status == "experiment"]
     totals = _outcome_summary(weekly_scores)
     return {
         "generated_at": end_at,
@@ -433,13 +441,67 @@ def build_weekly_calibration_report(
         "confidence_curve": _confidence_buckets(weekly_scores),
         "pending_suggestions": [suggestion.model_dump(mode="json") for suggestion in pending_suggestions[:5]],
         "pending_suggestions_count": len(pending_suggestions),
+        "scheduled_suggestions": [suggestion.model_dump(mode="json") for suggestion in scheduled_suggestions[:5]],
+        "scheduled_suggestions_count": len(scheduled_suggestions),
+        "experiment_suggestions": [suggestion.model_dump(mode="json") for suggestion in experiment_suggestions[:5]],
+        "experiment_suggestions_count": len(experiment_suggestions),
+        "autonomy": experiments_snapshot(suggestions),
         "best_judgment": _representative_judgment(weekly_scores, "correct"),
         "worst_judgment": _representative_judgment(weekly_scores, "wrong"),
         "alert_response_summary": build_alert_response_summary(weekly_alert_responses),
         "scout_setup_summary": build_scout_calibration_summary(weekly_scores),
         "briefing_performance": build_briefing_calibration_summary([score for score in weekly_scores if score.judgment_type == "analyst_briefing"]),
         "highlights": _weekly_highlights(weekly_scores, totals),
+        "self_audit": self_audit or {},
         "sample_warning": "최근 7일 표본 N < 10 구간은 결론을 보류합니다.",
+    }
+
+
+def _correct_rate_pct(bucket: list[JudgmentScore]) -> float | None:
+    if not bucket:
+        return None
+    correct = len([score for score in bucket if score.outcome == "correct"])
+    return correct / len(bucket) * 100
+
+
+def _noisy_rate_pct(bucket: list[JudgmentScore]) -> float | None:
+    if not bucket:
+        return None
+    noisy = len([score for score in bucket if score.outcome in {"wrong", "whipsaw"}])
+    return noisy / len(bucket) * 100
+
+
+def _oos_validation(
+    bucket: list[JudgmentScore],
+    metric_fn: Any,
+    holds_fn: Any,
+    *,
+    min_slice: int = 5,
+) -> dict[str, Any]:
+    """WO-36 §4: 제안 근거 표본을 시간순 70/30 분할해 검증기간에서도 신호가 성립하는지 첨부.
+
+    ``holds_fn`` 은 검증기간 지표를 받아 제안이 여전히 정당한지(문제가 지속되는지) 판단한다.
+    """
+
+    ordered = sorted(bucket, key=lambda score: _aware(score.created_at))
+    split = int(len(ordered) * 0.7)
+    train = ordered[:split]
+    validation = ordered[split:]
+    train_rate = metric_fn(train) if len(train) >= min_slice else None
+    val_rate = metric_fn(validation) if len(validation) >= min_slice else None
+    holds = bool(val_rate is not None and holds_fn(val_rate))
+    return {
+        "split_ratio": 0.7,
+        "train": {
+            "sample_size": len(train),
+            "rate_pct": round(train_rate, 1) if train_rate is not None else None,
+        },
+        "validation": {
+            "sample_size": len(validation),
+            "rate_pct": round(val_rate, 1) if val_rate is not None else None,
+        },
+        "holds_in_validation": holds,
+        "sample_state": "ok" if val_rate is not None else "insufficient",
     }
 
 
@@ -469,6 +531,7 @@ def generate_calibration_suggestions(
                         "to": 55,
                     },
                     sample_size=len(invalidation_bucket),
+                    oos_validation=_oos_validation(invalidation_bucket, _correct_rate_pct, lambda rate: rate < 40.0),
                 )
             )
     suggestions.extend(_confidence_calibration_suggestions(scores))
@@ -1008,6 +1071,8 @@ def _outcome_summary(scores: list[JudgmentScore]) -> dict[str, Any]:
     tested = len([score for score in scores if score.outcome != "untested"])
     correct = counts["correct"]
     accuracy = round(correct / tested * 100, 1) if tested else None
+    # WO-36 표기 표준: 적중률도 CI 병기 (전 표면).
+    accuracy_ci = bootstrap_ci_from_counts(correct, tested) if tested else None
     sample_state = "ok" if tested >= SAMPLE_FLOOR else "insufficient_sample"
     return {
         "total": len(scores),
@@ -1017,6 +1082,7 @@ def _outcome_summary(scores: list[JudgmentScore]) -> dict[str, Any]:
         "whipsaw": counts["whipsaw"],
         "untested": counts["untested"],
         "accuracy_pct": accuracy,
+        "accuracy_ci": list(accuracy_ci) if accuracy_ci else None,
         "correct_rate_pct": accuracy,
         "sample_state": sample_state,
         "sample_floor": SAMPLE_FLOOR,
@@ -1133,8 +1199,15 @@ def _suggestion_status_counts(
     counts = Counter(suggestion.status for suggestion in suggestions)
     return {
         "pending": counts["pending"],
+        "scheduled": counts["scheduled"],
+        "experiment": counts["experiment"],
+        "adopted": counts["adopted"],
         "approved": counts["approved"],
         "rejected": counts["rejected"],
+        "vetoed": counts["vetoed"],
+        "discarded": counts["discarded"],
+        "dwell_blocked": counts["dwell_blocked"],
+        "rolled_back": counts["rolled_back"],
         "total": len(suggestions),
     }
 
@@ -1177,6 +1250,11 @@ def _confidence_calibration_suggestions(
                         "to": proposed_floor,
                     },
                     sample_size=len(bucket_scores),
+                    oos_validation=_oos_validation(
+                        bucket_scores,
+                        _correct_rate_pct,
+                        lambda rate, threshold=midpoint - 20: rate < threshold,
+                    ),
                 )
             )
     return suggestions
@@ -1211,6 +1289,7 @@ def _trigger_near_suggestions(
                 "to": 1.0,
             },
             sample_size=len(trigger_scores),
+            oos_validation=_oos_validation(trigger_scores, _noisy_rate_pct, lambda rate: rate >= 55.0),
         )
     ]
 
@@ -1238,6 +1317,7 @@ def _harmonic_tolerance_suggestions(
                 "to": 0.85,
             },
             sample_size=len(harmonic_scores),
+            oos_validation=_oos_validation(harmonic_scores, _correct_rate_pct, lambda rate: rate < 45.0),
         )
     ]
 

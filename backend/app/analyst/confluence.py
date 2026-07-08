@@ -4,6 +4,7 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any
 
+from app.backtest.statistics import bootstrap_ci_from_counts
 from app.db.models import JudgmentScore, utc_now
 
 CALIBRATION_SAMPLE_FLOOR = 20
@@ -37,6 +38,7 @@ def build_confluence(
     analysis: dict[str, Any],
     calibration_scores: list[JudgmentScore] | None = None,
     generated_at: datetime | None = None,
+    overlap_groups: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Normalize existing engine outputs into long/short evidence stacks.
 
@@ -48,6 +50,10 @@ def build_confluence(
     calibration = _calibration_index(calibration_scores or [])
     raw_evidence = _collect_evidence(analysis)
     evidence = [_apply_weight(item, calibration, now) for item in raw_evidence]
+    if overlap_groups is None:
+        historical = analysis.get("historical_backtest") if isinstance(analysis.get("historical_backtest"), dict) else {}
+        overlap_groups = historical.get("overlap_groups") if isinstance(historical.get("overlap_groups"), list) else []
+    evidence, overlap_suppressed = _suppress_overlaps(evidence, overlap_groups)
     directional = [item for item in evidence if item["direction"] in {"long", "short"} and item["score"] > 0]
     long_evidence = sorted([item for item in directional if item["direction"] == "long"], key=_evidence_sort_key, reverse=True)
     short_evidence = sorted([item for item in directional if item["direction"] == "short"], key=_evidence_sort_key, reverse=True)
@@ -75,11 +81,13 @@ def build_confluence(
         "counter_evidence": counter,
         "evidence_count": len(directional),
         "neutral_evidence": [item for item in evidence if item["direction"] == "neutral"],
+        "overlap_suppressed": overlap_suppressed,
         "calibration_policy": {
             "sample_floor": CALIBRATION_SAMPLE_FLOOR,
             "formula": "effective_score = base_weight × confidence/100 × calibration_factor",
-            "calibration_factor": "N>=20이면 실제 적중률/70을 0.60~1.25 사이로 클램프",
+            "calibration_factor": "N>=20이면 적중률 CI 하한/70을 0.60~1.25 사이로 클램프 (점추정 아님, WO-36)",
             "conflict_ratio": CONFLICT_RATIO,
+            "overlap_policy": "같은 overlap_group 증거는 최강 1개만 가중 반영, 나머지는 동근원 확인으로 표기만",
         },
     }
 
@@ -292,11 +300,18 @@ def _apply_weight(evidence: dict[str, Any], calibration: dict[tuple[str, int], d
     if calibration_payload is None and judgment_type:
         calibration_payload = calibration.get((judgment_type, -1))
     factor = 1.0
+    accuracy_ci_low: float | None = None
     if calibration_payload and calibration_payload["tested"] >= CALIBRATION_SAMPLE_FLOOR:
-        factor = _clamp(float(calibration_payload["accuracy_pct"]) / 70.0, 0.60, 1.25)
+        # WO-36 §3: 가중 보정은 점추정이 아니라 적중률 CI 하한 기준 —
+        # 운 좋은 점추정이 가중치를 부풀리는 것을 구조적으로 차단.
+        ci = bootstrap_ci_from_counts(int(calibration_payload["correct"]), int(calibration_payload["tested"]))
+        accuracy_ci_low = ci[0] if ci else None
+        basis = accuracy_ci_low if accuracy_ci_low is not None else float(calibration_payload["accuracy_pct"])
+        factor = _clamp(basis / 70.0, 0.60, 1.25)
     calibration_meta = (
         {
             **calibration_payload,
+            "accuracy_ci_low_pct": accuracy_ci_low,
             "sample_floor": CALIBRATION_SAMPLE_FLOOR,
             "applied": calibration_payload["tested"] >= CALIBRATION_SAMPLE_FLOOR,
         }
@@ -313,6 +328,76 @@ def _apply_weight(evidence: dict[str, Any], calibration: dict[tuple[str, int], d
         "is_stale": _is_stale(as_of, now),
         "calibration": calibration_meta,
     }
+
+
+def _evidence_family(item: dict[str, Any]) -> tuple[str, str, str] | None:
+    """증거를 백테스트 overlap 패밀리 (engine, event_family, direction)로 사상한다."""
+    engine = str(item.get("engine") or "")
+    direction = str(item.get("direction") or "neutral")
+    claim = str(item.get("claim") or "")
+    if direction not in {"long", "short"}:
+        return None
+    if engine == "liquidity":
+        return ("liquidity", "sweep", direction)
+    if engine == "wyckoff":
+        # 국면 증거는 이벤트가 아니다 — 이벤트 마커 증거만 동근원 후보.
+        if "국면" in claim:
+            return None
+        return ("wyckoff", "event", direction)
+    if engine == "harmonic":
+        return ("harmonic", "prz", direction)
+    if engine == "level":
+        return ("levels", "level", direction)
+    return None
+
+
+def _suppress_overlaps(
+    evidence: list[dict[str, Any]],
+    overlap_groups: list[dict[str, Any]] | None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """같은 overlap_group 증거는 최강 1개만 가중 반영 — 이중 가점 구조적 차단 (WO-36 §6)."""
+    if not overlap_groups:
+        return evidence, []
+    group_of: dict[tuple[str, str, str], int] = {}
+    group_meta: dict[int, dict[str, Any]] = {}
+    for group_index, group in enumerate(overlap_groups):
+        families = group.get("families") if isinstance(group.get("families"), list) else []
+        for family in families:
+            if isinstance(family, (list, tuple)) and len(family) == 3:
+                group_of[tuple(str(part) for part in family)] = group_index
+                group_meta[group_index] = {"group_id": group.get("group_id"), "source": group.get("source")}
+
+    winners: dict[int, dict[str, Any]] = {}
+    for item in evidence:
+        family = _evidence_family(item)
+        if family is None or family not in group_of:
+            continue
+        group_index = group_of[family]
+        current = winners.get(group_index)
+        if current is None or float(item.get("score") or 0) > float(current.get("score") or 0):
+            winners[group_index] = item
+
+    suppressed: list[dict[str, Any]] = []
+    result: list[dict[str, Any]] = []
+    for item in evidence:
+        family = _evidence_family(item)
+        group_index = group_of.get(family) if family else None
+        if group_index is not None and winners.get(group_index) is not item:
+            winner = winners[group_index]
+            demoted = {
+                **item,
+                "score": 0.0,
+                "overlap_note": "동근원 확인",
+                "overlap_group": group_meta.get(group_index, {}).get("group_id"),
+                "overlap_winner": winner.get("claim"),
+            }
+            suppressed.append(demoted)
+            result.append(demoted)
+            continue
+        if group_index is not None:
+            item = {**item, "overlap_group": group_meta.get(group_index, {}).get("group_id")}
+        result.append(item)
+    return result, suppressed
 
 
 def _calibration_index(scores: list[JudgmentScore]) -> dict[tuple[str, int], dict[str, Any]]:

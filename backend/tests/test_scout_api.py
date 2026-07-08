@@ -81,7 +81,7 @@ def test_scout_backtest_endpoint_returns_descriptive_stats(client: TestClient) -
     assert response.status_code == 200
     payload = response.json()["historical_backtest"]
     assert payload["symbol"] == "BTCUSDT"
-    assert payload["disclaimer"] == "과거 통계 · 미래 보장 아님 · 수수료/슬리피지 미반영"
+    assert payload["disclaimer"] == "과거 통계 · 미래 보장 아님 · 수수료·슬리피지 반영(net)"
     assert isinstance(payload["active_signatures"], list)
     assert isinstance(payload["stats"], list)
 
@@ -110,18 +110,20 @@ def test_scan_uses_cache_within_ttl(client: TestClient, monkeypatch: pytest.Monk
 
     monkeypatch.setattr(runtime.market_provider, "get_snapshot", counting_get_snapshot)
 
+    # 심볼 2개 스냅샷 + 알트(ETH) 1개에 대한 BTC 레짐 병기 스냅샷 1회 (WO-36 §5, 15분 캐시).
     first = client.post("/api/scout/scan", json={})
     assert first.status_code == 200
     assert first.json()["count"] == 2
-    assert calls["count"] == 2
+    assert calls["count"] == 3
 
     second = client.post("/api/scout/scan", json={})
     assert second.status_code == 200
-    assert calls["count"] == 2  # 캐시 히트 — 재계산 없음
+    assert calls["count"] == 3  # 캐시 히트 — 재계산 없음
 
+    # 강제 재스캔은 심볼 캐시만 무효화한다. BTC 레짐은 자체 TTL 캐시라 재조회 안 함.
     forced = client.post("/api/scout/scan", json={"force": True})
     assert forced.status_code == 200
-    assert calls["count"] == 4  # 강제 재스캔 — 캐시 미스
+    assert calls["count"] == 5
 
 
 def test_scan_rows_sorted_by_setup_proximity(client: TestClient) -> None:

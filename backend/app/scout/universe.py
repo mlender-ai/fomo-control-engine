@@ -6,7 +6,9 @@ from html import escape
 from typing import Any, Callable
 from uuid import NAMESPACE_URL, uuid5
 
+from app.analyst.signature_registry import current_state, gate_excluded, state_map
 from app.backtest.signatures import signature_key, signature_label, signatures_from_analysis
+from app.backtest.statistics import bootstrap_ci_from_counts, format_stat_line
 from app.core.config import Settings
 from app.db.models import BacktestStat, JudgmentLedgerEntry, UniverseDiscovery, utc_now
 from app.notify.rules import AlertCandidate
@@ -44,6 +46,7 @@ def run_universe_scan(
     errors: list[dict[str, str]] = []
     alerted_today = _alerted_today(repo)
     now = utc_now()
+    signature_states = state_map(repo)
 
     for item in selected:
         symbol = item["symbol"]
@@ -68,6 +71,7 @@ def run_universe_scan(
             confidence = signal_confidence(analysis, signature)
             cooldown_active = _symbol_cooldown_active(repo, symbol, settings, now=now)
             daily_room = alerted_today < max(0, settings.universe_daily_alert_limit)
+            sig_state = signature_states.get(key) or current_state(repo, key, stat=stat, settings=settings)
             gate = evaluate_discovery_gate(
                 settings,
                 confidence=confidence,
@@ -77,6 +81,7 @@ def run_universe_scan(
                 earnings_blocked=False,
                 daily_room=daily_room,
                 cooldown_active=cooldown_active,
+                signature_state=sig_state,
             )
             status = "rejected"
             alerted_at = None
@@ -98,6 +103,7 @@ def run_universe_scan(
                 gate_reasons=gate.reasons,
                 confidence=confidence,
                 win_1r_pct=_float(stat.get("win_1r_pct")) if stat else None,
+                win_1r_ci=_stat_ci(stat) if stat else None,
                 sample_size=int(stat.get("sample_size") or 0) if stat else None,
                 quote_volume_24h=quote_volume,
                 current_price=current_price,
@@ -181,18 +187,30 @@ def evaluate_discovery_gate(
     earnings_blocked: bool,
     daily_room: bool,
     cooldown_active: bool,
+    signature_state: str = "candidate",
 ) -> GateResult:
     sample = int(stat.get("sample_size") or 0) if stat else 0
-    win_1r = _float(stat.get("win_1r_pct")) if stat else None
+    ci_low = _stat_ci_low(stat)
     divergence_flag = bool((stat or {}).get("live_backtest_divergence") or ((stat or {}).get("payload") or {}).get("live_backtest_divergence"))
+    ci_threshold = float(getattr(settings, "universe_backtest_min_ci_low_pct", 50.0))
     reasons = [
         _reason("confidence", (confidence or 0) >= settings.universe_min_confidence, confidence, f">= {settings.universe_min_confidence}"),
         _reason("backtest_sample", sample >= settings.universe_backtest_min_sample, sample, f">= {settings.universe_backtest_min_sample}"),
+        # WO-37: 자율 강등/격리된 시그니처는 발견 게이트에서 제외 (강등의 실효).
         _reason(
-            "backtest_win_1r",
-            win_1r is not None and win_1r >= settings.universe_backtest_min_win_1r_pct,
-            win_1r,
-            f">= {settings.universe_backtest_min_win_1r_pct}%",
+            "signature_lifecycle_state",
+            not gate_excluded(signature_state),
+            signature_state,
+            "not degraded/quarantined",
+        ),
+        # WO-36 §3: 점추정이 아니라 부트스트랩 CI 하한 기준 — 표본 부족 시그니처가
+        # 운 좋은 점추정으로 게이트를 통과하는 것을 구조적으로 차단한다.
+        # CI가 없는(구버전) 통계는 검증 불가이므로 보수적으로 불통과.
+        _reason(
+            "backtest_win_1r_ci_low",
+            ci_low is not None and ci_low >= ci_threshold,
+            ci_low,
+            f"CI 하한 >= {ci_threshold}%",
         ),
         _reason("live_backtest_divergence", not divergence_flag, divergence_flag, "false"),
         _reason(
@@ -209,6 +227,25 @@ def evaluate_discovery_gate(
         _reason("symbol_cooldown", not cooldown_active, cooldown_active, f"{settings.universe_symbol_cooldown_hours}h"),
     ]
     return GateResult(quality_passed, quality_passed and all(item["passed"] for item in dispatch_reasons), [*reasons, *dispatch_reasons])
+
+
+def _stat_ci(stat: dict[str, Any] | None) -> list[float] | None:
+    if not isinstance(stat, dict):
+        return None
+    ci = stat.get("win_1r_ci")
+    if not isinstance(ci, (list, tuple)) or len(ci) != 2:
+        inner = stat.get("payload") if isinstance(stat.get("payload"), dict) else {}
+        ci = inner.get("win_1r_ci")
+    if isinstance(ci, (list, tuple)) and len(ci) == 2:
+        low, high = _float(ci[0]), _float(ci[1])
+        if low is not None and high is not None:
+            return [low, high]
+    return None
+
+
+def _stat_ci_low(stat: dict[str, Any] | None) -> float | None:
+    ci = _stat_ci(stat)
+    return ci[0] if ci else None
 
 
 def class_backtest_stat(repo: Any, signature: dict[str, Any]) -> dict[str, Any] | None:
@@ -282,10 +319,11 @@ def discovery_message(
 ) -> str:
     class_label = {"crypto": "코인", "stock": "주식", "index": "지수"}.get(asset_class, asset_class)
     label = signature.get("label") or signature_label(signature)
-    sample = int((stat or {}).get("sample_size") or 0)
-    win = (stat or {}).get("win_1r_pct")
     rr = (stat or {}).get("median_rr")
-    stat_line = f"동일 시그니처 ({class_label} 클래스): {sample}회 · 1R 승률 {win}% · 중앙 {rr}R"
+    # WO-36 §7: 승률 발행은 표기 표준(format_stat_line) 경유 — CI 없는 승률 표기 금지.
+    stat_line = format_stat_line(stat or {}, label=f"동일 시그니처 ({class_label} 클래스)")
+    if rr is not None:
+        stat_line += f" · 중앙 {rr}R"
     return "\n".join(
         [
             f"🔎 <b>발견 · {escape(symbol)}</b> ({escape(class_label)})",
@@ -336,6 +374,7 @@ def _alert_candidate(discovery: UniverseDiscovery) -> AlertCandidate:
             "confidence": discovery.confidence,
             "sample_size": discovery.sample_size,
             "win_1r_pct": discovery.win_1r_pct,
+            "win_1r_ci": discovery.win_1r_ci,
             "current_price": discovery.current_price,
             "quote_volume_24h": discovery.quote_volume_24h,
             "gate_reasons": discovery.gate_reasons,
@@ -444,6 +483,10 @@ def _stat_payload(stat: BacktestStat, *, scope: str) -> dict[str, Any]:
     payload["signature"] = signature
     payload["label"] = stat.payload.get("label") if isinstance(stat.payload, dict) else signature.get("label")
     payload["scope"] = scope
+    if isinstance(stat.payload, dict):
+        for key in ("win_1r_ci", "oos", "unstable", "walk_forward", "regimes", "period"):
+            if key not in payload or payload.get(key) is None:
+                payload[key] = stat.payload.get(key)
     return payload
 
 
@@ -454,6 +497,16 @@ def _aggregate_stats(stats: list[BacktestStat], *, asset_class: str, key: str, s
     win_1r = _weighted(stats, "win_1r_pct", sample)
     win_2r = _weighted(stats, "win_2r_pct", sample)
     rr = _weighted(stats, "median_rr", sample)
+    # 클래스 풀링 CI: 심볼별 (승수, 표본)을 합산해 부트스트랩 (WO-36 §3)
+    pooled_wins = 0
+    pooled_n = 0
+    for stat in stats:
+        n = max(0, int(stat.sample_size))
+        if n <= 0 or stat.win_1r_pct is None:
+            continue
+        pooled_wins += int(round(float(stat.win_1r_pct) / 100 * n))
+        pooled_n += n
+    ci = bootstrap_ci_from_counts(pooled_wins, pooled_n) if pooled_n > 0 else None
     return {
         "signature_key": key,
         "symbol": "*",
@@ -468,6 +521,7 @@ def _aggregate_stats(stats: list[BacktestStat], *, asset_class: str, key: str, s
         "win_1r_pct": round(win_1r, 1) if win_1r is not None else None,
         "win_2r_pct": round(win_2r, 1) if win_2r is not None else None,
         "median_rr": round(rr, 2) if rr is not None else None,
+        "win_1r_ci": list(ci) if ci else None,
         "signature": signature,
         "label": signature.get("label") or signature_label(signature),
         "source_symbols": sorted({stat.symbol for stat in stats}),

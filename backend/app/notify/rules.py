@@ -47,6 +47,8 @@ RULE_LABELS: dict[str, str] = {
     "intent_zone_entered_partial": "진입 의도 부분 충족",
     "intent_invalidated": "진입 의도 무효화",
     "universe_discovery": "유니버스 발견",
+    "mdd_limit_warn": "월 MDD 한도 접근",
+    "mdd_limit_critical": "월 MDD 한도 도달",
 }
 
 RULE_SEVERITY: dict[str, AlertSeverity] = {
@@ -70,6 +72,8 @@ RULE_SEVERITY: dict[str, AlertSeverity] = {
     "intent_zone_entered_partial": "info",
     "intent_invalidated": "info",
     "universe_discovery": "info",
+    "mdd_limit_warn": "warn",
+    "mdd_limit_critical": "critical",
 }
 
 
@@ -184,6 +188,44 @@ def evaluate_derivative_alerts(snapshots: list[dict[str, Any]], settings: Settin
     # this hook after collection, but position-aware candidates are generated from
     # evaluate_position_alerts() so watchlist-only symbols do not produce trade alerts.
     return []
+
+
+def evaluate_performance_alerts(payload: dict[str, Any], settings: Settings) -> list[AlertCandidate]:
+    enabled = settings.alert_enabled_rule_set
+    guard = payload.get("mdd_guard") if isinstance(payload.get("mdd_guard"), dict) else {}
+    if not guard.get("configured"):
+        return []
+    status = str(guard.get("status") or "ok")
+    rule_id = "mdd_limit_critical" if status == "critical" else "mdd_limit_warn" if status == "warn" else None
+    if rule_id is None or rule_id not in enabled:
+        return []
+    emoji = "🔴" if rule_id == "mdd_limit_critical" else "🟠"
+    message = "\n".join(
+        [
+            f"{emoji} <b>{RULE_LABELS[rule_id]}</b>",
+            f"설정한 월 낙폭 한도 {guard.get('limit_pct')}% 대비 사용률 {guard.get('usage_pct')}%입니다. 현재 MDD {guard.get('current_mdd_pct')}%",
+            "→ read-only 사실 통보입니다. 강제 조치나 주문 실행은 없습니다.",
+        ]
+    )
+    return [
+        AlertCandidate(
+            rule_id=rule_id,
+            severity=RULE_SEVERITY[rule_id],
+            position_id=None,
+            symbol="ACCOUNT",
+            identity="monthly_mdd",
+            title=RULE_LABELS[rule_id],
+            message=message,
+            payload={
+                "kind": "performance_mdd_guard",
+                "mdd_guard": guard,
+                "number_sources": [
+                    {"label": "current_mdd_pct", "value": guard.get("current_mdd_pct"), "source": "performance.equity_curve"},
+                    {"label": "limit_pct", "value": guard.get("limit_pct"), "source": "settings.performance_monthly_mdd_limit_pct"},
+                ],
+            },
+        )
+    ]
 
 
 def cooldown_seconds(severity: AlertSeverity, settings: Settings) -> int:
@@ -890,6 +932,9 @@ def _rule_threshold(rule_id: str, settings: Settings) -> float | int | str | Non
         "intent_zone_entered": None,
         "intent_zone_entered_partial": None,
         "intent_invalidated": None,
+        "universe_discovery": None,
+        "mdd_limit_warn": "월 MDD 한도 80%",
+        "mdd_limit_critical": "월 MDD 한도 100%",
     }.get(rule_id)
 
 

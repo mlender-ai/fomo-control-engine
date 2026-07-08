@@ -193,6 +193,13 @@ def test_calibration_suggestion_requires_sample_and_low_accuracy() -> None:
     assert suggestions[0].proposed_change["to"] == 55
     assert summary["invalidation"]["sample_state"] == "ok"
 
+    # WO-36 §4: 제안에 OOS 검증(학습/검증 분할 + 검증기간 성립 여부)이 첨부된다.
+    oos = suggestions[0].oos_validation
+    assert oos["sample_state"] == "ok"
+    assert oos["train"]["sample_size"] >= 5
+    assert oos["validation"]["sample_size"] >= 5
+    assert oos["holds_in_validation"] is True  # 낮은 적중률이 검증기간에도 지속
+
 
 def test_calibration_suggestion_waits_for_proposal_sample_floor() -> None:
     scores = [

@@ -10,6 +10,7 @@ import {
   LineStyle,
   type CandlestickData,
   type HistogramData,
+  type LogicalRange,
   type Time
 } from "lightweight-charts";
 import { useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
@@ -24,7 +25,15 @@ import type {
   PositionWatchTrigger,
   WyckoffMarker
 } from "@/lib/api";
-import { CHART_LAYER_DEFS, layerActive, type ChartLayerId, type ChartLayerState } from "@/lib/chartLayers";
+import {
+  CHART_LAYER_DEFS,
+  MINIMAL_FIXED_LAYER_STATE,
+  layerActive,
+  type ChartLayerId,
+  type ChartLayerState,
+  type MinimalChartEvidence,
+  type TaFocusLayer
+} from "@/lib/chartLayers";
 import { chartTheme, createChartPalette, type ResolvedChartPalette } from "@/lib/chartTheme";
 import type { Density } from "@/lib/density";
 import { formatPrice } from "@/lib/format";
@@ -47,7 +56,9 @@ export function PositionCandlestickChart({
   highlightPrice = null,
   positionOverlay = null,
   density = "simple",
-  intentZoneSelector
+  intentZoneSelector,
+  layerMode = "pro",
+  minimalEvidence = null
 }: {
   analysis: PositionChartAnalysis;
   trendSummary: string;
@@ -57,6 +68,8 @@ export function PositionCandlestickChart({
   highlightPrice?: number | null;
   positionOverlay?: PositionChartOverlay | null;
   density?: Density;
+  layerMode?: "minimal" | "pro";
+  minimalEvidence?: MinimalChartEvidence | null;
   intentZoneSelector?: {
     enabled: boolean;
     draft: { lower: number | null; upper: number | null };
@@ -68,26 +81,32 @@ export function PositionCandlestickChart({
   const overlayRef = useRef<SVGSVGElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
   const priceAtYRef = useRef<((y: number) => number | null) | null>(null);
+  const viewportRef = useRef<{ key: string; locked: boolean; range: LogicalRange | null }>({ key: "", locked: false, range: null });
   const [harmonicIndex, setHarmonicIndex] = useState(0);
   const [guideOpen, setGuideOpen] = useState(false);
   const [dragStartPrice, setDragStartPrice] = useState<number | null>(null);
   const [dragStartY, setDragStartY] = useState<number | null>(null);
   const [zoneBand, setZoneBand] = useState<{ top: number; bottom: number } | null>(null);
   const validation = useMemo(() => validateCandles(analysis.candles), [analysis.candles]);
+  const effectiveLayers = useMemo(
+    () => (layerMode === "minimal" ? minimalLayersForEvidence(minimalEvidence) : layers),
+    [layerMode, minimalEvidence, layers]
+  );
   const priceLines = useMemo(
-    () => (validation.valid ? priceLinesForAnalysis(analysis, plan, layers) : []),
-    [analysis, plan, layers, validation.valid]
+    () => (validation.valid ? priceLinesForAnalysis(analysis) : []),
+    [analysis, validation.valid]
   );
   const lastCandle = validation.candles.at(-1);
   const averageVolume = validation.valid ? average(validation.candles.map((candle) => candle.volume)) : 0;
-  const harmonicFocused = layers.ta.includes("harmonic");
+  const harmonicFocused = layerMode === "pro" && effectiveLayers.ta.includes("harmonic");
   const harmonicPatterns = useMemo(
     () => [...analysis.harmonic_patterns].sort((left, right) => right.confidence - left.confidence),
     [analysis.harmonic_patterns]
   );
   const activeHarmonic = harmonicPatterns.length ? harmonicPatterns[((harmonicIndex % harmonicPatterns.length) + harmonicPatterns.length) % harmonicPatterns.length] : null;
-  const guideLayer = activeGuideLayer(layers);
+  const guideLayer = activeGuideLayer(effectiveLayers);
   const intentZoneDraft = intentZoneSelector?.draft ?? null;
+  const viewportKey = `${analysis.position_id}:${analysis.timeframe}`;
 
   useEffect(() => {
     if (intentZoneDraft?.lower === null && intentZoneDraft?.upper === null) {
@@ -98,6 +117,10 @@ export function PositionCandlestickChart({
   useEffect(() => {
     setHarmonicIndex(0);
   }, [analysis.position_id, analysis.timeframe]);
+
+  useEffect(() => {
+    viewportRef.current = { key: viewportKey, locked: false, range: null };
+  }, [viewportKey]);
 
   useEffect(() => {
     setGuideOpen(window.localStorage.getItem(GUIDE_STORAGE_KEY) === "true");
@@ -209,11 +232,11 @@ export function PositionCandlestickChart({
     const volumeData: HistogramData[] = validation.candles.map((candle) => ({
       time: candle.time as Time,
       value: candle.volume,
-      color: layers.flow ? volumeColorForCandle(analysis, candle, palette) : simpleVolumeColor(candle, palette)
+      color: effectiveLayers.flow ? volumeColorForCandle(analysis, candle, palette) : simpleVolumeColor(candle, palette)
     }));
     volumeSeries.setData(volumeData);
 
-    if (layers.flow) {
+    if (effectiveLayers.flow) {
       const averageVolumeSeries = chart.addSeries(LineSeries, {
         priceScaleId: "volume",
         color: palette.color("neutral", 0.64),
@@ -278,7 +301,7 @@ export function PositionCandlestickChart({
       }
     }
 
-    if (layers.ta.includes("indicators")) {
+    if (effectiveLayers.ta.includes("indicators")) {
       const bands: Array<{ key: "upper" | "middle" | "lower"; style: LineStyle }> = [
         { key: "upper", style: LineStyle.Dashed },
         { key: "middle", style: LineStyle.Solid },
@@ -312,7 +335,7 @@ export function PositionCandlestickChart({
       });
     });
 
-    const spikeMarkers = layers.flow
+    const spikeMarkers = effectiveLayers.flow
       ? validation.candles
           .filter((candle) => candle.volume >= averageVolume * 1.8)
           .slice(-3)
@@ -350,20 +373,63 @@ export function PositionCandlestickChart({
       `;
     });
 
-    chart.timeScale().fitContent();
-    chart.timeScale().applyOptions({ rightOffset: 18 });
-    const drawOverlay = () => renderTaOverlay(overlay, container, candleSeries, chart, analysis, plan, layers, activeHarmonic, positionOverlay, highlightPrice, palette, density);
-    window.setTimeout(drawOverlay, 0);
-    chart.timeScale().subscribeVisibleLogicalRangeChange(drawOverlay);
+    const storedViewport = viewportRef.current;
+    if (storedViewport.key === viewportKey && storedViewport.locked && storedViewport.range) {
+      chart.timeScale().setVisibleLogicalRange(storedViewport.range);
+    } else {
+      chart.timeScale().fitContent();
+      chart.timeScale().applyOptions({ rightOffset: 18 });
+    }
+
+    const markViewportLocked = () => {
+      const range = chart.timeScale().getVisibleLogicalRange();
+      viewportRef.current = {
+        key: viewportKey,
+        locked: true,
+        range
+      };
+    };
+    container.addEventListener("wheel", markViewportLocked, { passive: true });
+    container.addEventListener("pointerdown", markViewportLocked);
+    container.addEventListener("touchstart", markViewportLocked, { passive: true });
+
+    const drawOverlay = () => renderTaOverlay(
+      overlay,
+      container,
+      candleSeries,
+      chart,
+      analysis,
+      plan,
+      effectiveLayers,
+      activeHarmonic,
+      positionOverlay,
+      highlightPrice,
+      palette,
+      density,
+      layerMode === "minimal" ? minimalEvidence : null
+    );
+    const initialDrawTimer = window.setTimeout(drawOverlay, 0);
+    const handleVisibleRangeChange = (range: LogicalRange | null) => {
+      const current = viewportRef.current;
+      if (current.key === viewportKey && current.locked) {
+        viewportRef.current = { ...current, range };
+      }
+      drawOverlay();
+    };
+    chart.timeScale().subscribeVisibleLogicalRangeChange(handleVisibleRangeChange);
     const resizeObserver = new ResizeObserver(drawOverlay);
     resizeObserver.observe(container);
     return () => {
+      window.clearTimeout(initialDrawTimer);
       resizeObserver.disconnect();
-      chart.timeScale().unsubscribeVisibleLogicalRangeChange(drawOverlay);
+      chart.timeScale().unsubscribeVisibleLogicalRangeChange(handleVisibleRangeChange);
+      container.removeEventListener("wheel", markViewportLocked);
+      container.removeEventListener("pointerdown", markViewportLocked);
+      container.removeEventListener("touchstart", markViewportLocked);
       priceAtYRef.current = null;
       chart.remove();
     };
-  }, [analysis, averageVolume, priceLines, plan, layers, highlightPrice, activeHarmonic, positionOverlay, validation, density]);
+  }, [analysis, averageVolume, priceLines, plan, effectiveLayers, highlightPrice, activeHarmonic, positionOverlay, validation, density, layerMode, minimalEvidence, viewportKey]);
 
   function pointerY(event: PointerEvent<HTMLDivElement>): number {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -428,9 +494,10 @@ export function PositionCandlestickChart({
         <div>
           <h2>{analysis.symbol} 차트</h2>
           <p>
-            {timeframeLabel(analysis.timeframe)} · {sourceLabel(analysis.data_quality.source)} · {assetClassLabel(analysis.asset_class)}
-            {analysis.session?.label ? ` · ${analysis.session.label}` : ""}
-            {typeof analysis.data_quality.session_excluded_candles === "number" && analysis.data_quality.session_excluded_candles > 0
+            {timeframeLabel(analysis.timeframe)} · {sourceLabel(analysis.data_quality.source)}
+            {layerMode === "pro" ? ` · ${assetClassLabel(analysis.asset_class)}` : ""}
+            {layerMode === "pro" && analysis.session?.label ? ` · ${analysis.session.label}` : ""}
+            {layerMode === "pro" && typeof analysis.data_quality.session_excluded_candles === "number" && analysis.data_quality.session_excluded_candles > 0
               ? ` · 휴장 제외 ${analysis.data_quality.session_excluded_candles}개`
               : ""}
             {" · "}마지막 캔들: {lastCandle ? formatKoreanDateTime(lastCandle.time) : "-"}
@@ -443,22 +510,12 @@ export function PositionCandlestickChart({
           </button>
         </div>
       </div>
-      <div className="taLayerToggle" role="group" aria-label="차트 레이어 선택">
-        {CHART_LAYER_DEFS.map((layer) => (
-          <button
-            aria-pressed={layerActive(layers, layer.id)}
-            className={layerActive(layers, layer.id) ? "active" : ""}
-            data-testid={`chart-layer-${layer.id}`}
-            key={layer.id}
-            onClick={() => onToggleLayer(layer.id, true)}
-            title={layer.description}
-            type="button"
-          >
-            {layer.label}
-          </button>
-        ))}
-        <small>여러 레이어 동시 선택 가능 · 해설은 별도 토글</small>
-      </div>
+      {layerMode === "pro" ? (
+        <ChartLayerControls
+          layers={layers}
+          onToggleLayer={onToggleLayer}
+        />
+      ) : null}
       {harmonicFocused ? (
         <div className="harmonicNav">
           {activeHarmonic ? (
@@ -505,8 +562,35 @@ export function PositionCandlestickChart({
         ) : null}
         {guideOpen ? <ChartGuideLayer layer={guideLayer} /> : null}
       </div>
-      {layers.flow ? <VolumePanel analysis={analysis} averageVolume={averageVolume} /> : null}
+      {effectiveLayers.flow ? <VolumePanel analysis={analysis} averageVolume={averageVolume} /> : null}
     </>
+  );
+}
+
+function ChartLayerControls({
+  layers,
+  onToggleLayer
+}: {
+  layers: ChartLayerState;
+  onToggleLayer: (id: ChartLayerId, additive: boolean) => void;
+}) {
+  return (
+    <div className="taLayerToggle" role="group" aria-label="차트 레이어 선택">
+      {CHART_LAYER_DEFS.map((layer) => (
+        <button
+          aria-pressed={layerActive(layers, layer.id)}
+          className={layerActive(layers, layer.id) ? "active" : ""}
+          data-testid={`chart-layer-${layer.id}`}
+          key={layer.id}
+          onClick={() => onToggleLayer(layer.id, true)}
+          title={layer.description}
+          type="button"
+        >
+          {layer.label}
+        </button>
+      ))}
+      <small>여러 레이어 동시 선택 가능 · 해설은 별도 토글</small>
+    </div>
   );
 }
 
@@ -521,6 +605,13 @@ function activeGuideLayer(layers: ChartLayerState): GuideLayer {
   if (layers.flow || layers.ta.includes("volume_profile")) return "flow";
   if (layers.ta.includes("levels")) return "levels";
   return "plan";
+}
+
+function minimalLayersForEvidence(evidence: MinimalChartEvidence | null): ChartLayerState {
+  if (!evidence) return MINIMAL_FIXED_LAYER_STATE;
+  if (evidence.layer === "flow") return { ...MINIMAL_FIXED_LAYER_STATE, flow: true };
+  if (evidence.layer === "plan") return MINIMAL_FIXED_LAYER_STATE;
+  return { ...MINIMAL_FIXED_LAYER_STATE, ta: [evidence.layer as TaFocusLayer] };
 }
 
 function assetClassLabel(assetClass?: string | null): string {
@@ -691,7 +782,8 @@ function renderTaOverlay(
   positionOverlay: PositionChartOverlay | null,
   highlightPrice: number | null,
   palette: ResolvedChartPalette,
-  density: Density
+  density: Density,
+  minimalEvidence: MinimalChartEvidence | null = null
 ) {
   if (!svg) return;
   const width = container.clientWidth;
@@ -703,32 +795,39 @@ function renderTaOverlay(
   const right = overlayRight(width);
   const context: OverlayContext = { series, chart, analysis, plan, layers, positionOverlay, highlightPrice, palette, width, height, right, density };
 
-  if (layers.ta.includes("levels")) {
-    zones.push(...structureZoneNodes(context));
-  }
-  if (layers.ta.includes("liquidity")) {
-    const liquidity = liquidityOverlayNodes(context);
-    zones.push(...liquidity.zones);
-    shapes.push(...liquidity.shapes);
-    badges.push(...liquidity.badges);
-  }
-  if (layers.ta.includes("wyckoff")) {
-    const wyckoff = wyckoffOverlayNodes(context);
-    zones.push(...wyckoff.zones);
-    shapes.push(...wyckoff.shapes);
-    badges.push(...wyckoff.badges);
-  }
-  if (layers.ta.includes("volume_profile")) {
-    shapes.push(...volumeProfileNodes(context));
-  }
-  if (layers.flow) {
-    zones.push(...liquidationClusterNodes(context));
-  }
-  if (layers.ta.includes("harmonic") && activeHarmonic) {
-    const harmonic = harmonicPatternNodes(context, activeHarmonic);
-    zones.push(...harmonic.zones);
-    shapes.push(...harmonic.shapes);
-    badges.push(...harmonic.badges);
+  if (minimalEvidence) {
+    const minimal = minimalEvidenceOverlayNodes(context, minimalEvidence, activeHarmonic);
+    zones.push(...minimal.zones);
+    shapes.push(...minimal.shapes);
+    badges.push(...minimal.badges);
+  } else {
+    if (layers.ta.includes("levels")) {
+      zones.push(...structureZoneNodes(context));
+    }
+    if (layers.ta.includes("liquidity")) {
+      const liquidity = liquidityOverlayNodes(context);
+      zones.push(...liquidity.zones);
+      shapes.push(...liquidity.shapes);
+      badges.push(...liquidity.badges);
+    }
+    if (layers.ta.includes("wyckoff")) {
+      const wyckoff = wyckoffOverlayNodes(context);
+      zones.push(...wyckoff.zones);
+      shapes.push(...wyckoff.shapes);
+      badges.push(...wyckoff.badges);
+    }
+    if (layers.ta.includes("volume_profile")) {
+      shapes.push(...volumeProfileNodes(context));
+    }
+    if (layers.flow) {
+      zones.push(...liquidationClusterNodes(context));
+    }
+    if (layers.ta.includes("harmonic") && activeHarmonic) {
+      const harmonic = harmonicPatternNodes(context, activeHarmonic);
+      zones.push(...harmonic.zones);
+      shapes.push(...harmonic.shapes);
+      badges.push(...harmonic.badges);
+    }
   }
   if (layers.plan) {
     zones.push(...riskRewardBoxNodes(context));
@@ -763,6 +862,121 @@ type OverlayGroup = { zones: string[]; shapes: string[]; badges: string[] };
 
 function overlayRight(width: number): number {
   return Math.max(24, width - AXIS_GUTTER);
+}
+
+function minimalEvidenceOverlayNodes(
+  context: OverlayContext,
+  evidence: MinimalChartEvidence,
+  activeHarmonic: PositionChartAnalysis["harmonic_patterns"][number] | null
+): OverlayGroup {
+  const group: OverlayGroup = { zones: [], shapes: [], badges: [] };
+  if (evidence.layer === "levels") {
+    group.zones.push(...minimalLevelNodes(context, evidence.price));
+  } else if (evidence.layer === "liquidity") {
+    const liquidity = minimalLiquidityNodes(context, evidence.price, evidence.time);
+    group.zones.push(...liquidity.zones);
+    group.shapes.push(...liquidity.shapes);
+    group.badges.push(...liquidity.badges);
+  } else if (evidence.layer === "wyckoff") {
+    const wyckoff = minimalWyckoffNodes(context, evidence.time);
+    group.zones.push(...wyckoff.zones);
+    group.shapes.push(...wyckoff.shapes);
+    group.badges.push(...wyckoff.badges);
+  } else if (evidence.layer === "harmonic" && activeHarmonic) {
+    const harmonic = minimalHarmonicNodes(context, activeHarmonic);
+    group.zones.push(...harmonic.zones);
+    group.badges.push(...harmonic.badges);
+  } else if (evidence.layer === "flow") {
+    group.badges.push(minimalFlowBadge(context, evidence.label));
+  }
+  if (group.zones.length || group.shapes.length || group.badges.length) {
+    group.zones.unshift(`<g data-testid="minimal-evidence-overlay">`);
+    group.badges.push("</g>");
+  }
+  return group;
+}
+
+function minimalLevelNodes(context: OverlayContext, price?: number | null): string[] {
+  const levels = [...context.analysis.price_levels.support, ...context.analysis.price_levels.resistance];
+  const target = nearestByPrice(levels, price ?? context.analysis.mark_price);
+  if (!target) return [];
+  return levelZoneNode(context, target, 0, target.kind === "resistance" ? "resistance" : "support", averageTrueRange(context.analysis.candles));
+}
+
+function minimalLiquidityNodes(context: OverlayContext, price?: number | null, time?: number | null): OverlayGroup {
+  const liquidity = context.analysis.liquidity;
+  if (!liquidity) return { zones: [], shapes: [], badges: [] };
+  const sweeps = [...(liquidity.sweeps ?? []), ...(liquidity.htf_range_sweeps ?? [])]
+    .filter((sweep) => sweep.confirmed)
+    .sort((left, right) => {
+      if (typeof time === "number") return Math.abs(left.timestamp - time) - Math.abs(right.timestamp - time);
+      return (right.timestamp - left.timestamp) || (right.confidence - left.confidence);
+    });
+  const sweep = sweeps[0];
+  if (sweep) {
+    return {
+      zones: [],
+      shapes: liquiditySweepLeaderNode(context, sweep).slice(0, 2),
+      badges: liquiditySweepBadgeNode(context, sweep, 0).slice(0, 1)
+    };
+  }
+  const pool = nearestByPrice(liquidity.pools.filter((item) => !item.swept), price ?? context.analysis.mark_price);
+  return pool ? { zones: liquidityPoolZoneNode(context, pool), shapes: [], badges: [] } : { zones: [], shapes: [], badges: [] };
+}
+
+function minimalWyckoffNodes(context: OverlayContext, time?: number | null): OverlayGroup {
+  const range = context.analysis.wyckoff_range;
+  if (!range) return { zones: [], shapes: [], badges: [] };
+  const full = wyckoffOverlayNodes(context);
+  const events = splitWyckoffEvents(context.analysis.wyckoff_markers, context.analysis.wyckoff_markers_low_confidence).events
+    .sort((left, right) => {
+      if (typeof time === "number") return Math.abs(left.time - time) - Math.abs(right.time - time);
+      return (right.confidence - left.confidence) || (right.time - left.time);
+    });
+  const marker = events[0];
+  const markerNodes = marker ? {
+    shapes: wyckoffEventMarker(context, marker).slice(0, 1),
+    badges: wyckoffEventBadge(context, marker, wyckoffRangeBox(context, range), 0).slice(0, 1)
+  } : { shapes: [], badges: [] };
+  return {
+    zones: full.zones.slice(0, 1),
+    shapes: markerNodes.shapes,
+    badges: markerNodes.badges
+  };
+}
+
+function wyckoffRangeBox(context: OverlayContext, range: NonNullable<PositionChartAnalysis["wyckoff_range"]>): { top: number; bottom: number; x: number; width: number } {
+  const top = context.series.priceToCoordinate(range.resistance.price) ?? 0;
+  const bottom = context.series.priceToCoordinate(range.support.price) ?? context.height;
+  const rawX1 = context.chart.timeScale().timeToCoordinate(range.start_time as Time);
+  const rawX2 = context.chart.timeScale().timeToCoordinate(range.end_time as Time);
+  const x1 = rawX1 ?? 0;
+  const x2 = rawX2 ?? context.width;
+  return { top, bottom, x: Math.min(x1, x2), width: Math.max(12, Math.abs(x2 - x1)) };
+}
+
+function minimalHarmonicNodes(context: OverlayContext, pattern: PositionChartAnalysis["harmonic_patterns"][number]): OverlayGroup {
+  const przTop = context.series.priceToCoordinate(pattern.prz.high);
+  const przBottom = context.series.priceToCoordinate(pattern.prz.low);
+  if (przTop === null || przBottom === null) return { zones: [], shapes: [], badges: [] };
+  const y = Math.min(przTop, przBottom);
+  const height = Math.max(4, Math.abs(przBottom - przTop));
+  const x = Math.max(12, context.right - 190);
+  const stroke = context.palette.color("purple", 0.8);
+  return {
+    zones: [`<rect x="${x}" y="${y}" width="${Math.max(18, context.right - x)}" height="${height}" rx="3" fill="${context.palette.zone("prz", 0.16)}" stroke="${stroke}" stroke-width="1" />`],
+    shapes: [],
+    badges: [labelBadge(x + 6, Math.max(16, y - 24), `반전 후보 구간 · ${Math.round(pattern.confidence)}`, context.palette.color("panel", 0.82), stroke, context.palette.color("text"), 130)]
+  };
+}
+
+function minimalFlowBadge(context: OverlayContext, label: string): string {
+  return labelBadge(14, 18, truncateSvgLabel(label || "수급 근거", 20), context.palette.color("panel", 0.8), context.palette.flag("watch", 0.8), context.palette.color("text"), 126);
+}
+
+function nearestByPrice<T extends { price: number }>(items: T[], price: number): T | null {
+  if (!Number.isFinite(price) || !items.length) return items[0] ?? null;
+  return [...items].sort((left, right) => Math.abs(left.price - price) - Math.abs(right.price - price))[0] ?? null;
 }
 
 type PriceFlag = {
@@ -1170,8 +1384,8 @@ function scenarioPathNodes(context: OverlayContext): string[] {
   const mark = context.analysis.mark_price;
   const target = firstTakeProfit(context.plan);
   const invalidation = planInvalidation(context.plan, context.analysis);
-  if (!target || !invalidation) return [];
-  const watchPrice = firstWatchPrice(context.plan?.watch_triggers);
+  if (!target || !invalidation || !isFinitePrice(mark) || !isFinitePrice(target.price) || !isFinitePrice(invalidation.price)) return [];
+  const watchPrice = firstWatchPrice(context.plan?.watch_triggers, mark);
   const x = Math.max(18, context.right - 248);
   const y = 24;
   const width = Math.min(226, Math.max(172, context.right - x - 8));
@@ -1231,25 +1445,34 @@ function positionOverlayNodes(context: OverlayContext, position: PositionChartOv
 }
 
 function actionPriceFlags(context: OverlayContext): PriceFlag[] {
-  const flags: PriceFlag[] = [
-    { label: `진입 ${formatPrice(context.analysis.entry_price)}`, price: context.analysis.entry_price, kind: "entry", priority: 0 },
-    { label: `현재 ${formatPrice(context.analysis.mark_price)}`, price: context.analysis.mark_price, kind: "mark", priority: 1 }
-  ];
+  const flags: PriceFlag[] = [];
+  if (isFinitePrice(context.analysis.entry_price)) {
+    flags.push({ label: `진입 ${formatPrice(context.analysis.entry_price)}`, price: context.analysis.entry_price, kind: "entry", priority: 0 });
+  }
+  if (isFinitePrice(context.analysis.mark_price)) {
+    flags.push({ label: `현재 ${formatPrice(context.analysis.mark_price)}`, price: context.analysis.mark_price, kind: "mark", priority: 1 });
+  }
   const invalidation = planInvalidation(context.plan, context.analysis);
-  if (invalidation) {
+  if (invalidation && isFinitePrice(invalidation.price)) {
     flags.push({ label: `무효화 ${formatPrice(invalidation.price)}`, price: invalidation.price, kind: "invalidation", priority: 2 });
   }
   firstTwoTakeProfits(context.plan).forEach((target, index) => {
-    flags.push({ label: `익절${index + 1} ${formatPrice(target.price)}`, price: target.price, kind: "takeProfit", priority: 3 + index });
+    if (isFinitePrice(target.price)) {
+      flags.push({ label: `익절${index + 1} ${formatPrice(target.price)}`, price: target.price, kind: "takeProfit", priority: 3 + index });
+    }
   });
-  const watchPrice = firstWatchPrice(context.plan?.watch_triggers);
-  if (watchPrice !== null) {
+  const watchPrice = firstWatchPrice(context.plan?.watch_triggers, isFinitePrice(context.analysis.mark_price) ? context.analysis.mark_price : null);
+  if (isFinitePrice(watchPrice)) {
     flags.push({ label: `감시 ${formatPrice(watchPrice)}`, price: watchPrice, kind: "watch", priority: 6 });
   }
-  if (context.layers.ta.includes("volume_profile")) {
+  if (context.layers.ta.includes("volume_profile") && isFinitePrice(context.analysis.volume_profile.poc_price)) {
     flags.push({ label: `POC ${formatPrice(context.analysis.volume_profile.poc_price)}`, price: context.analysis.volume_profile.poc_price, kind: "poc", priority: 7 });
   }
   return flags.filter((flag) => Number.isFinite(flag.price));
+}
+
+function isFinitePrice(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
 }
 
 function stackFlags(flags: PriceFlag[], height: number, series?: OverlayContext["series"]): Array<PriceFlag & { y: number }> {
@@ -1291,12 +1514,16 @@ function numericPlanItem(item: PositionActionPlanItem | null | undefined): Numer
   return typeof item?.price === "number" && Number.isFinite(item.price) ? item as NumericPlanItem : null;
 }
 
-function firstWatchPrice(triggers: PositionWatchTrigger[] | undefined): number | null {
+function firstWatchPrice(triggers: PositionWatchTrigger[] | undefined, referencePrice: number | null): number | null {
+  // 조건 문구에는 가격이 아닌 숫자(OI %, 펀딩률, 밀집대 % 등)가 섞인다.
+  // 현재가 대비 그럴듯한 범위(0.2x~5x)의 숫자만 가격으로 인정한다.
+  if (!Number.isFinite(referencePrice) || referencePrice === null || referencePrice <= 0) return null;
   for (const trigger of triggers ?? []) {
-    const match = trigger.condition.match(/-?\d+(?:\.\d+)?/);
-    if (!match) continue;
-    const value = Number(match[0]);
-    if (Number.isFinite(value) && value > 0) return value;
+    const matches = trigger.condition.match(/-?\d+(?:\.\d+)?/g) ?? [];
+    for (const raw of matches) {
+      const value = Number(raw);
+      if (Number.isFinite(value) && value >= referencePrice * 0.2 && value <= referencePrice * 5) return value;
+    }
   }
   return null;
 }

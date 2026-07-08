@@ -34,6 +34,7 @@ export function TerminalCommandPalette({
       command("nav-scout", "스카우트 열기", "이동", "관심종목 스캔과 진입 전 분석", ["scout", "watchlist", "gs", "스카우트", "관심종목", "검색", "symbol"], () => router.push("/scout"), "g s"),
       command("nav-trades", "거래 복기 열기", "이동", "종료 거래 기록과 복기", ["journal", "trades", "history", "gt", "거래", "복기"], () => router.push("/trades"), "g t"),
       command("nav-calibration", "판단 성적표 열기", "이동", "엔진 판단 적중률, 신뢰도 곡선, 파라미터 제안", ["calibration", "scorecard", "confidence", "gc", "성적표", "캘리브레이션", "판단"], () => router.push("/calibration"), "g c"),
+      command("nav-performance", "계좌 성적표 열기", "이동", "PF, MDD, Sortino, 계좌 단위 성과", ["performance", "account", "mdd", "pf", "ga", "계좌", "성과"], () => router.push("/performance"), "g a"),
       command("nav-settings", "설정 열기", "이동", "API와 터미널 설정", ["settings", "config", "설정"], () => router.push("/settings"), "g ,"),
       command("sync-positions", "/포지션 동기화", "실행", "Bitget read-only 포지션 동기화와 결정론적 분석", ["bitget", "private", "positions", "sync", "동기화"], async () => {
         const result = await api.syncLivePositions();

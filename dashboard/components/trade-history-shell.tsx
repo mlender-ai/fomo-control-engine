@@ -30,18 +30,14 @@ export function TradeHistoryShell() {
     }
   }
 
-  async function updateSuggestion(suggestionId: string, action: "approve" | "reject") {
+  async function vetoSuggestion(suggestionId: string) {
     setCalibrationBusy(suggestionId);
     setError("");
     try {
-      if (action === "approve") {
-        await api.approveCalibrationSuggestion(suggestionId);
-      } else {
-        await api.rejectCalibrationSuggestion(suggestionId);
-      }
+      await api.vetoCalibrationSuggestion(suggestionId);
       setCalibration(await api.reviewCalibration());
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Calibration update failed");
+      setError(err instanceof Error ? err.message : "Calibration veto failed");
     } finally {
       setCalibrationBusy("");
     }
@@ -90,30 +86,27 @@ export function TradeHistoryShell() {
             <ConfidenceCurve rows={calibration.confidence_curve ?? []} />
           </TerminalPanel>
 
-          <TerminalPanel title="파라미터 조정 제안" subtitle="자동 적용 없이 승인/거절만 기록합니다" status={calibration.suggestions.length ? "warning" : "neutral"}>
+          <TerminalPanel title="파라미터 자율 피드" subtitle="조임 변경은 거부권 창 이후 자동 적용됩니다" status={calibration.suggestions.length ? "warning" : "neutral"}>
             {calibration.suggestion_status_counts ? (
               <div className="terminalMetaRow">
-                <span>대기 {calibration.suggestion_status_counts.pending ?? 0}</span>
-                <span>승인 {calibration.suggestion_status_counts.approved ?? 0}</span>
-                <span>거절 {calibration.suggestion_status_counts.rejected ?? 0}</span>
+                <span>예정 {calibration.suggestion_status_counts.scheduled ?? 0}</span>
+                <span>실험 {calibration.suggestion_status_counts.experiment ?? 0}</span>
+                <span>자율 적용 {calibration.suggestion_status_counts.adopted ?? 0}</span>
               </div>
             ) : null}
             {calibration.suggestions.length ? (
               <div className="eventTimeline">
                 {calibration.suggestions.map((suggestion) => (
-                  <div className={`eventItem severity-${suggestion.status === "approved" ? "low" : "medium"}`} key={suggestion.id}>
+                  <div className={`eventItem severity-${suggestion.status === "adopted" || suggestion.status === "approved" ? "low" : "medium"}`} key={suggestion.id}>
                     <div>
                       <strong>{suggestion.title}</strong>
                       <span>{suggestion.status} · N={suggestion.sample_size}</span>
                     </div>
                     <p>{suggestion.rationale}</p>
-                    {suggestion.status === "pending" ? (
+                    {["pending", "scheduled", "experiment"].includes(suggestion.status) ? (
                       <div className="actionGroup">
-                        <button className="button secondary" onClick={() => updateSuggestion(suggestion.id, "approve")} disabled={calibrationBusy === suggestion.id}>
-                          승인
-                        </button>
-                        <button className="button secondary" onClick={() => updateSuggestion(suggestion.id, "reject")} disabled={calibrationBusy === suggestion.id}>
-                          거절
+                        <button className="button secondary" onClick={() => vetoSuggestion(suggestion.id)} disabled={calibrationBusy === suggestion.id}>
+                          거부
                         </button>
                       </div>
                     ) : null}

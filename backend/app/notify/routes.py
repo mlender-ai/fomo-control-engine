@@ -124,4 +124,7 @@ def _known_rule_order() -> list[str]:
         "intent_zone_entered",
         "intent_zone_entered_partial",
         "intent_invalidated",
+        "universe_discovery",
+        "mdd_limit_warn",
+        "mdd_limit_critical",
     ]

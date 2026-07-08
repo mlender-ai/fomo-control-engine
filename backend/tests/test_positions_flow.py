@@ -54,3 +54,9 @@ def test_position_monitor_exit_review_flow(client) -> None:
     calibration_response = client.get("/api/review/calibration")
     assert calibration_response.status_code == 200
     assert "sample_warning" in calibration_response.json()
+
+    performance_response = client.get("/api/performance")
+    assert performance_response.status_code == 200
+    performance = performance_response.json()
+    assert performance["overall"]["sample_size"] == 1
+    assert "equity_curve" in performance

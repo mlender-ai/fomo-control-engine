@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.analyst.confluence import build_confluence
+from app.backtest.statistics import bootstrap_ci_from_counts, format_stat_line
 from app.db.models import JudgmentScore
 
 
@@ -167,17 +168,33 @@ def _hit_rate_lines(confluence: dict[str, Any], historical_backtest: Any = None)
         if engine in seen:
             continue
         seen.add(engine)
-        lines.append(f"라이브 {_engine_label(engine)} {calibration.get('accuracy_pct')}% (N={calibration.get('tested')})")
+        # WO-36 §7: 모든 승률/적중률 표기에 CI 병기.
+        ci = bootstrap_ci_from_counts(int(calibration.get("correct") or 0), int(calibration.get("tested") or 0))
+        ci_text = f", CI {ci[0]}~{ci[1]}%" if ci else ""
+        lines.append(f"라이브 {_engine_label(engine)} {calibration.get('accuracy_pct')}% (N={calibration.get('tested')}{ci_text})")
     if isinstance(historical_backtest, dict):
+        sample_floor = int(historical_backtest.get("sample_floor") or 10)
+        current = historical_backtest.get("current_regime") if isinstance(historical_backtest.get("current_regime"), dict) else {}
+        current_regime = str(current.get("regime")) if current.get("regime") else None
+        if current.get("regime_label"):
+            regime_line = f"현재 레짐 {current.get('regime_label')}"
+            if current.get("market_regime_label"):
+                regime_line += f" · 시장(BTC) {current.get('market_regime_label')}"
+            lines.append(regime_line)
         for stat in _dict_list(historical_backtest.get("stats"))[:3]:
             n = int(stat.get("sample_size") or 0)
             if n <= 0:
                 continue
-            label = stat.get("label") or "동일 시그니처"
-            if n < int(historical_backtest.get("sample_floor") or 10):
-                lines.append(f"백테스트 {label} 표본 부족 (N={n})")
-            else:
-                lines.append(f"백테스트 {label} 1R {stat.get('win_1r_pct')}% (N={n})")
+            # WO-37: 격리된 시그니처는 브리핑 증거에서 제외 (복귀 판정용 데이터는 계속 수집).
+            state = stat.get("lifecycle_state")
+            if state == "quarantined":
+                continue
+            # WO-36 §5/§7: 현재 레짐 기준 통계 우선 + CI·N·레짐 표기 표준.
+            line = "백테스트 " + format_stat_line(stat, sample_floor=sample_floor, current_regime=current_regime)
+            # WO-37: 성능 저하 관찰 중 표기.
+            if state == "degraded":
+                line += " · 성능 저하 관찰 중"
+            lines.append(line)
     return lines
 
 

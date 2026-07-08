@@ -20,6 +20,7 @@ from app.notify.rules import (
     cooldown_seconds,
     evaluate_data_stall,
     evaluate_derivative_alerts,
+    evaluate_performance_alerts,
     evaluate_position_alerts,
     morning_summary_due,
     quiet_hours_active,
@@ -73,6 +74,14 @@ class AlertEngine:
         self._rearm_derivatives(snapshots, candidates)
         sent = 0
         for candidate in candidates:
+            sent += await self._fire_if_allowed(candidate)
+        return sent
+
+    async def evaluate_performance(self, payload: dict[str, Any]) -> int:
+        if not self.settings.telegram_alerts_enabled or self.state.is_muted():
+            return 0
+        sent = 0
+        for candidate in evaluate_performance_alerts(payload, self.settings):
             sent += await self._fire_if_allowed(candidate)
         return sent
 

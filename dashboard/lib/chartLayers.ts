@@ -1,5 +1,6 @@
 export type TaFocusLayer = "levels" | "volume_profile" | "wyckoff" | "liquidity" | "harmonic" | "indicators";
 export type ChartLayerId = "plan" | "scenario" | "flow" | TaFocusLayer;
+export type MinimalEvidenceLayer = "plan" | "levels" | "liquidity" | "wyckoff" | "harmonic" | "flow";
 
 export type ChartLayerState = {
   plan: boolean;
@@ -8,7 +9,21 @@ export type ChartLayerState = {
   ta: TaFocusLayer[];
 };
 
+export type MinimalChartEvidence = {
+  layer: MinimalEvidenceLayer;
+  label: string;
+  price?: number | null;
+  time?: number | null;
+};
+
 export const DEFAULT_LAYER_STATE: ChartLayerState = {
+  plan: true,
+  scenario: false,
+  flow: false,
+  ta: []
+};
+
+export const MINIMAL_FIXED_LAYER_STATE: ChartLayerState = {
   plan: true,
   scenario: false,
   flow: false,

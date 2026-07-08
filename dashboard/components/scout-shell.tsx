@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { MapPin, Radar, RefreshCw, Search, Star, Trash2 } from "lucide-react";
+import { PositionChart } from "@/components/position/PositionChart";
 import { TerminalWarning } from "@/components/terminal";
 import { SymbolAnalysisView, useAnalysisWorkspace } from "@/components/symbol-analysis-view";
 import { EntrySimulator } from "@/components/entry-simulator";
@@ -16,9 +17,11 @@ import {
   type UniverseDiscovery,
   type WatchlistEntry
 } from "@/lib/api";
+import { MINIMAL_FIXED_LAYER_STATE, type MinimalChartEvidence, type MinimalEvidenceLayer } from "@/lib/chartLayers";
 import { formatPrice, signedPercent } from "@/lib/format";
 import { plainifyTaText, taShortLabel } from "@/lib/labels/taGlossary";
 import { phaseHintLabel, trendLabel, volumeStateLabel } from "@/lib/labels/marketStateLabels";
+import { loadFceViewMode, saveFceViewMode, type FceViewMode } from "@/lib/viewMode";
 
 type SortKey = "setup_proximity_pct" | "long_score" | "short_score" | "prz_distance_pct" | "nearest_level_distance_pct" | "liquidity_pool_distance_pct" | "change_24h" | "crowding_score" | "funding_rate";
 type AssetFilter = "all" | "crypto" | "stock_index" | "unknown";
@@ -36,6 +39,15 @@ const SORT_COLUMNS: Array<{ key: SortKey; label: string; direction: "asc" | "des
 ];
 
 const STALE_SECONDS = 300;
+
+type ScoutMinimalEvidence = {
+  key: string;
+  text: string;
+  layer: MinimalEvidenceLayer;
+  label: string;
+  price?: number | null;
+  time?: number | null;
+};
 
 const ASSET_FILTERS: Array<{ id: AssetFilter; label: string }> = [
   { id: "all", label: "전체" },
@@ -60,6 +72,16 @@ export function ScoutShell() {
   const [results, setResults] = useState<CatalogSymbolInfo[]>([]);
   const [activeSymbol, setActiveSymbol] = useState<string>("");
   const [assetFilter, setAssetFilter] = useState<AssetFilter>("all");
+  const [viewMode, setViewMode] = useState<FceViewMode>("minimal");
+
+  useEffect(() => {
+    setViewMode(loadFceViewMode());
+  }, []);
+
+  function updateViewMode(mode: FceViewMode) {
+    setViewMode(mode);
+    saveFceViewMode(mode);
+  }
 
   async function loadWatchlist() {
     try {
@@ -189,8 +211,9 @@ export function ScoutShell() {
     setError("");
     try {
       const response = await api.universeScan({ force: true });
-      setDiscoveries((items) => [...response.discoveries, ...items].slice(0, 20));
-      setNotice(`유니버스 스캔 완료 · 발견 기록 ${response.discoveries.length}건`);
+      setDiscoveries((items) => mergeUniverseDiscoveries(response.discoveries, items).slice(0, 50));
+      const passed = response.discoveries.filter((item) => item.gate_passed).length;
+      setNotice(`유니버스 스캔 완료 · 게이트 통과 ${passed}건 / 전체 기록 ${response.discoveries.length}건`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "유니버스 스캔에 실패했습니다.");
     } finally {
@@ -199,7 +222,7 @@ export function ScoutShell() {
   }
 
   if (activeSymbol) {
-    return <ScoutSymbolView symbol={activeSymbol} onBack={() => setActiveSymbol("")} />;
+    return <ScoutSymbolView symbol={activeSymbol} viewMode={viewMode} onViewModeChange={updateViewMode} onBack={() => setActiveSymbol("")} />;
   }
 
   return (
@@ -218,6 +241,7 @@ export function ScoutShell() {
           <button className="iconButton secondary" onClick={() => void runScan(true)} disabled={scanning || !watchlist.length} title="강제 재스캔">
             <RefreshCw size={16} />
           </button>
+          <ViewModeToggle mode={viewMode} onChange={updateViewMode} />
         </div>
       </header>
 
@@ -265,11 +289,20 @@ export function ScoutShell() {
         ))}
       </div>
 
-      <UniverseDiscoveryPanel discoveries={discoveries} onOpen={(symbol) => setActiveSymbol(symbol)} onScan={() => void runUniverseScan()} scanning={scanning} />
+      <UniverseDiscoveryPanel discoveries={discoveries} assetFilter={assetFilter} onOpen={(symbol) => setActiveSymbol(symbol)} onScan={() => void runUniverseScan()} scanning={scanning} />
 
       {watchlist.length ? (
         scanRows.length ? (
           <div className="scoutTableWrap">
+            {viewMode === "minimal" ? (
+              <ScoutMinimalTable
+                rows={sortedRows}
+                armedSetups={armedSetups}
+                entryIntents={entryIntents}
+                onOpen={(symbol) => setActiveSymbol(symbol)}
+                onRemove={(symbol) => void removeSymbol(symbol)}
+              />
+            ) : (
             <table className="scoutTable" data-testid="scout-table">
               <thead>
                 <tr>
@@ -306,6 +339,7 @@ export function ScoutShell() {
                 ))}
               </tbody>
             </table>
+            )}
           </div>
         ) : (
           <div className="scoutEmpty">
@@ -329,6 +363,116 @@ export function ScoutShell() {
         </div>
       )}
     </div>
+  );
+}
+
+function ViewModeToggle({ mode, onChange }: { mode: FceViewMode; onChange: (mode: FceViewMode) => void }) {
+  return (
+    <div className="viewModeToggle" role="group" aria-label="화면 모드">
+      <button className={mode === "minimal" ? "active" : ""} onClick={() => onChange("minimal")} type="button">
+        미니멀
+      </button>
+      <button className={mode === "pro" ? "active" : ""} onClick={() => onChange("pro")} type="button">
+        프로
+      </button>
+    </div>
+  );
+}
+
+function ScoutMinimalTable({
+  rows,
+  armedSetups,
+  entryIntents,
+  onOpen,
+  onRemove
+}: {
+  rows: ScoutScanRow[];
+  armedSetups: ArmedSetup[];
+  entryIntents: EntryIntent[];
+  onOpen: (symbol: string) => void;
+  onRemove: (symbol: string) => void;
+}) {
+  return (
+    <table className="scoutTable scoutMinimalTable" data-budget-columns-max="4" data-testid="scout-minimal-table">
+      <thead>
+        <tr>
+          <th>심볼</th>
+          <th>기울기</th>
+          <th>근거</th>
+          <th>트리거까지</th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row) => (
+          <ScoutMinimalRow
+            key={row.symbol}
+            row={row}
+            armedCount={armedSetups.filter((setup) => setup.symbol === row.symbol && setup.status === "armed").length}
+            intentCount={entryIntents.filter((intent) => intent.symbol === row.symbol && intent.status === "active").length}
+            onOpen={() => onOpen(row.symbol)}
+            onRemove={() => onRemove(row.symbol)}
+          />
+        ))}
+      </tbody>
+    </table>
+  );
+}
+
+function ScoutMinimalRow({
+  row,
+  armedCount,
+  intentCount,
+  onOpen,
+  onRemove
+}: {
+  row: ScoutScanRow;
+  armedCount: number;
+  intentCount: number;
+  onOpen: () => void;
+  onRemove: () => void;
+}) {
+  const tilt = scoutTilt(row);
+  const reasons = scoutMinimalReasons(row);
+  if (row.error) {
+    return (
+      <tr className="scoutRow error">
+        <td><strong>{row.symbol}</strong></td>
+        <td colSpan={2}>스캔 실패: {row.error}</td>
+        <td>
+          <button className="iconButton secondary" onClick={onRemove} type="button" aria-label="삭제"><Trash2 size={13} /></button>
+        </td>
+      </tr>
+    );
+  }
+  return (
+    <tr className="scoutRow scoutMinimalRow" data-testid="scout-row" onClick={onOpen}>
+      <td>
+        <strong>{row.symbol}</strong>
+        <span className="scoutSymbolMeta">
+          <AssetClassBadge assetClass={row.asset_class} />
+          {intentCount ? <em>의도 {intentCount}</em> : armedCount ? <em>무장 {armedCount}</em> : null}
+        </span>
+      </td>
+      <td>
+        <div className={`tiltGauge ${tilt.tone}`}>
+          <span>숏</span>
+          <i>
+            <b style={{ left: `${tilt.position}%` }} />
+          </i>
+          <span>롱</span>
+        </div>
+        <small>{tilt.label}</small>
+      </td>
+      <td>
+        <div className="minimalReasonBadges">
+          {reasons.map((reason) => <span key={reason}>{reason}</span>)}
+        </div>
+      </td>
+      <td>
+        <strong>{formatTriggerDistance(row)}</strong>
+        <button className="iconButton secondary" onClick={(event) => { event.stopPropagation(); onRemove(); }} type="button" aria-label="삭제"><Trash2 size={13} /></button>
+      </td>
+    </tr>
   );
 }
 
@@ -360,7 +504,8 @@ function ScanRow({
       <tr className="scoutRow error">
         <td><strong>{row.symbol}</strong></td>
         <td><AssetClassBadge assetClass={row.asset_class} /></td>
-        <td colSpan={SORT_COLUMNS.length + 6}>스캔 실패: {row.error}</td>
+        {/* 헤더 16열 = 심볼+클래스+무장 + 정렬 9 + 와이코프/거래량/기준 + 액션 → 나머지 13열 병합 */}
+        <td colSpan={SORT_COLUMNS.length + 4}>스캔 실패: {row.error}</td>
         <td>
           <button className="iconButton secondary" onClick={onRemove} type="button" aria-label="삭제"><Trash2 size={13} /></button>
         </td>
@@ -415,8 +560,8 @@ function ScanRow({
         )}
       </td>
       <td>{formatPct(row.setup_proximity_pct)}</td>
-      <td className={scoreTone(row.long_score)}>{row.long_score ?? "-"}</td>
-      <td className={scoreTone(row.short_score)}>{row.short_score ?? "-"}</td>
+      <td className={scoreTone(row.long_score)}>{formatDirectionScore(row.long_score, row.long_evidence_count)}</td>
+      <td className={scoreTone(row.short_score)}>{formatDirectionScore(row.short_score, row.short_evidence_count)}</td>
       <td>{row.harmonic_active ? formatPct(row.prz_distance_pct) : "패턴 없음"}</td>
       <td>{formatPct(row.nearest_level_distance_pct)}</td>
       <td title={row.liquidity_nearest_pool?.label ?? ""}>{row.liquidity_nearest_pool ? `${formatPct(row.liquidity_pool_distance_pct)} · ${row.liquidity_nearest_pool.grade ?? "-"}` : "-"}</td>
@@ -437,22 +582,24 @@ function ScanRow({
 
 function UniverseDiscoveryPanel({
   discoveries,
+  assetFilter,
   scanning,
   onOpen,
   onScan
 }: {
   discoveries: UniverseDiscovery[];
+  assetFilter: AssetFilter;
   scanning: boolean;
   onOpen: (symbol: string) => void;
   onScan: () => void;
 }) {
-  const latest = discoveries.slice(0, 6);
+  const latest = useMemo(() => visibleUniverseDiscoveries(discoveries, assetFilter).slice(0, 6), [assetFilter, discoveries]);
   return (
     <section className="universeDiscoveryPanel" data-testid="universe-discoveries">
       <div className="universeDiscoveryHeader">
         <div>
           <p className="eyebrow">유니버스 발견</p>
-          <h2>검증된 시그니처 포착 이력</h2>
+          <h2>게이트 통과 시그니처</h2>
         </div>
         <button className="button secondary" type="button" onClick={onScan} disabled={scanning}>
           <Radar size={14} />
@@ -470,23 +617,34 @@ function UniverseDiscoveryPanel({
               </span>
               <span className="universeDiscoverySignal">{String(item.signature.label ?? item.signature.event_type ?? "시그니처")}</span>
               <span className="universeDiscoveryStats">
-                신뢰도 {item.confidence ?? "-"} · N {item.sample_size ?? "-"} · 1R {formatNullablePct(item.win_1r_pct)}
+                신뢰도 {item.confidence ?? "-"} · N {item.sample_size ?? "-"} · 1R {formatWinCi(item.win_1r_pct, item.win_1r_ci)}
               </span>
               <span className="universeDiscoveryReasons">{gateReasonSummary(item.gate_reasons)}</span>
             </button>
           ))}
         </div>
       ) : (
-        <div className="universeDiscoveryEmpty">아직 발견 이력이 없습니다. 유니버스 스캔은 관심종목 밖의 확정 셋업만 저소음으로 기록합니다.</div>
+        <div className="universeDiscoveryEmpty">현재 필터에서 게이트를 통과한 발견이 없습니다. 차단 기록은 저장되지만 메인 화면에는 반복 노출하지 않습니다.</div>
       )}
     </section>
   );
 }
 
-function ScoutSymbolView({ symbol, onBack }: { symbol: string; onBack: () => void }) {
+function ScoutSymbolView({
+  symbol,
+  viewMode,
+  onViewModeChange,
+  onBack
+}: {
+  symbol: string;
+  viewMode: FceViewMode;
+  onViewModeChange: (mode: FceViewMode) => void;
+  onBack: () => void;
+}) {
   const workspace = useAnalysisWorkspace();
   const [data, setData] = useState<ScoutAnalysisResponse | null>(null);
   const [intents, setIntents] = useState<EntryIntent[]>([]);
+  const loadRequestRef = useRef("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -497,18 +655,24 @@ function ScoutSymbolView({ symbol, onBack }: { symbol: string; onBack: () => voi
   async function load(force = false) {
     setLoading(true);
     setError("");
+    // 심볼/타임프레임 연속 전환 시 늦게 도착한 이전 응답이 최신 선택을 덮어쓰지 않게,
+    // 마지막으로 발행한 요청만 화면에 반영한다.
+    const requestKey = `${symbol}:${timeframe}:${Date.now()}`;
+    loadRequestRef.current = requestKey;
     try {
       const [analysisResponse, intentResponse] = await Promise.all([
         api.scoutAnalysis(symbol, timeframe, force),
         api.entryIntents(symbol, "active")
       ]);
+      if (loadRequestRef.current !== requestKey) return;
       setData(analysisResponse);
       setIntents(intentResponse.intents);
     } catch (err) {
+      if (loadRequestRef.current !== requestKey) return;
       setData(null);
       setError(err instanceof Error ? err.message : "분석 데이터를 불러오지 못했습니다.");
     } finally {
-      setLoading(false);
+      if (loadRequestRef.current === requestKey) setLoading(false);
     }
   }
 
@@ -566,49 +730,140 @@ function ScoutSymbolView({ symbol, onBack }: { symbol: string; onBack: () => voi
             <RefreshCw size={14} />
             재분석
           </button>
+          <ViewModeToggle mode={viewMode} onChange={onViewModeChange} />
         </div>
       </header>
 
       {error ? <TerminalWarning tone="error">{error}</TerminalWarning> : null}
       {notice ? <TerminalWarning tone="info">{notice}</TerminalWarning> : null}
 
-      <SymbolAnalysisView
-        chartAnalysis={analysis}
-        chartLoading={loading}
-        chartError={error}
-        onRetryChart={() => void load(true)}
-        trendSummary={analysis ? trendLabel((analysis.wyckoff as { trend?: { direction?: string } })?.trend?.direction) : "구조 확인 중"}
-        plan={null}
-        analystBriefing={data?.analyst_briefing ?? null}
-        workspace={workspace}
-        intentZoneSelector={{
-          enabled: zonePickEnabled,
-          draft: zoneDraft,
-          onDraftChange: (lower, upper) => setZoneDraft({ lower, upper }),
-          onComplete: (lower, upper) => {
-            setZoneDraft({ lower, upper });
-            setZonePickEnabled(false);
+      {viewMode === "minimal" ? (
+        <ScoutMinimalAnalysisView
+          symbol={symbol}
+          data={data}
+          analysis={analysis}
+          loading={loading}
+          error={error}
+          timeframe={timeframe}
+          workspace={workspace}
+          onRetry={() => void load(true)}
+          onShowPro={() => onViewModeChange("pro")}
+        />
+      ) : (
+        <SymbolAnalysisView
+          chartAnalysis={analysis}
+          chartLoading={loading}
+          chartError={error}
+          onRetryChart={() => void load(true)}
+          trendSummary={analysis ? trendLabel((analysis.wyckoff as { trend?: { direction?: string } })?.trend?.direction) : "구조 확인 중"}
+          plan={null}
+          analystBriefing={data?.analyst_briefing ?? null}
+          workspace={workspace}
+          intentZoneSelector={{
+            enabled: zonePickEnabled,
+            draft: zoneDraft,
+            onDraftChange: (lower, upper) => setZoneDraft({ lower, upper }),
+            onComplete: (lower, upper) => {
+              setZoneDraft({ lower, upper });
+              setZonePickEnabled(false);
+            }
+          }}
+          gridClassName="positionDetailMain"
+          sidePanel={
+            <div className="scoutSidePanel">
+              <EntryIntentPanel
+                intents={intents}
+                markPrice={analysis?.mark_price ?? null}
+                zoneDraft={zoneDraft}
+                chartPickEnabled={zonePickEnabled}
+                onToggleChartPick={() => setZonePickEnabled((enabled) => !enabled)}
+                onCancel={(intentId) => void cancelIntent(intentId)}
+                onCreate={(payload) => void createIntent(payload)}
+              />
+              <EntrySimulator symbol={symbol} markPrice={analysis?.mark_price ?? null} timeframe={timeframe} />
+              <ScenarioPanel scenarios={scenarios} asOf={data?.as_of} />
+            </div>
           }
-        }}
-        gridClassName="positionDetailMain"
-        sidePanel={
-          <div className="scoutSidePanel">
-            <EntryIntentPanel
-              intents={intents}
-              markPrice={analysis?.mark_price ?? null}
-              zoneDraft={zoneDraft}
-              chartPickEnabled={zonePickEnabled}
-              onToggleChartPick={() => setZonePickEnabled((enabled) => !enabled)}
-              onCancel={(intentId) => void cancelIntent(intentId)}
-              onCreate={(payload) => void createIntent(payload)}
-            />
-            <EntrySimulator symbol={symbol} markPrice={analysis?.mark_price ?? null} timeframe={timeframe} />
-            <ScenarioPanel scenarios={scenarios} asOf={data?.as_of} />
-          </div>
-        }
-        historyExtras={<HistoricalBacktestPanel context={data?.historical_backtest ?? analysis?.historical_backtest ?? null} />}
-      />
+          historyExtras={<HistoricalBacktestPanel context={data?.historical_backtest ?? analysis?.historical_backtest ?? null} />}
+        />
+      )}
     </div>
+  );
+}
+
+function ScoutMinimalAnalysisView({
+  symbol,
+  data,
+  analysis,
+  loading,
+  error,
+  timeframe,
+  workspace,
+  onRetry,
+  onShowPro
+}: {
+  symbol: string;
+  data: ScoutAnalysisResponse | null;
+  analysis: ScoutAnalysisResponse["analysis"] | null;
+  loading: boolean;
+  error: string;
+  timeframe: string;
+  workspace: ReturnType<typeof useAnalysisWorkspace>;
+  onRetry: () => void;
+  onShowPro: () => void;
+}) {
+  const verdict = scoutAnalysisVerdict(symbol, data);
+  const minimalEvidence: MinimalChartEvidence = {
+    layer: verdict.evidence.layer,
+    label: verdict.evidence.label,
+    price: verdict.evidence.price ?? null,
+    time: verdict.evidence.time ?? null
+  };
+  return (
+    <section className="minimalPositionWorkspace scoutMinimalWorkspace" data-testid="scout-one-question">
+      <article className={`oneQuestionCard scoutOneQuestion state-${verdict.tone}`} data-budget-numbers-max="7" data-budget-buttons-max="3">
+        <div className="oneQuestionTop">
+          <div>
+            <strong>{symbol}</strong>
+            <span>{timeframe} · 진입 전</span>
+          </div>
+          <em>{analysis?.mark_price ? formatPrice(analysis.mark_price) : "가격 확인 중"}</em>
+        </div>
+        <div className="oneQuestionAnswer">
+          <span className="oneQuestionDot" aria-hidden="true" />
+          <h2>{verdict.label}</h2>
+        </div>
+        <div className="oneQuestionReasons">
+          <p><b>왜:</b> {verdict.why}</p>
+          <p><b>반대:</b> {verdict.counter}</p>
+        </div>
+        <div className="oneQuestionNext">
+          <span>트리거</span>
+          <strong>{verdict.trigger}</strong>
+          <em>조건 확인 후 판단</em>
+        </div>
+        <div className="oneQuestionActions">
+          <button className="button secondary" onClick={onRetry} type="button">재분석</button>
+          <button className="button" onClick={onShowPro} type="button">자세히 →</button>
+        </div>
+      </article>
+      <div className="minimalChartShell">
+        <PositionChart
+          analysis={analysis}
+          loading={loading}
+          error={error}
+          onRetry={onRetry}
+          trendSummary={analysis ? trendLabel((analysis.wyckoff as { trend?: { direction?: string } })?.trend?.direction) : "구조 확인 중"}
+          plan={null}
+          layers={MINIMAL_FIXED_LAYER_STATE}
+          onToggleLayer={workspace.handleToggleLayer}
+          highlightPrice={verdict.evidence.price ?? workspace.highlightPrice}
+          density="simple"
+          layerMode="minimal"
+          minimalEvidence={minimalEvidence}
+        />
+      </div>
+    </section>
   );
 }
 
@@ -830,14 +1085,16 @@ function HistoricalBacktestPanel({ context }: { context: HistoricalBacktest | nu
                 <span>{stat.sample_warning ?? `N=${stat.sample_size}`}</span>
               </div>
               <div className="historicalBacktestMetrics">
-                <span>1R {formatNullablePct(stat.win_1r_pct)}</span>
+                <span>1R {formatWinCi(stat.win_1r_pct, stat.win_1r_ci)}</span>
                 <span>2R {formatNullablePct(stat.win_2r_pct)}</span>
                 <span>중앙 {formatNullableR(stat.median_rr)}</span>
+                {stat.unstable ? <span className="historicalBacktestUnstable">OOS 불안정</span> : null}
               </div>
+              {stat.lifecycle_note ? <p className="historicalLifecycleNote">{stat.lifecycle_note}</p> : null}
               {stat.cases?.length ? (
                 <div className="historicalCaseGrid">
-                  {stat.cases.slice(0, 3).map((item) => (
-                    <div className="historicalCaseCard" key={`${stat.signature_key}-${item.as_of}`}>
+                  {stat.cases.slice(0, 3).map((item, index) => (
+                    <div className="historicalCaseCard" key={`${stat.signature_key}-${item.as_of}-${index}`}>
                       <MiniPricePath points={item.price_path} />
                       <span>{new Date(item.as_of).toLocaleDateString()} · {item.outcome.win_1r ? "1R 도달" : "무효화 우선"}</span>
                       <em>MFE {item.outcome.mfe_r}R · MAE {item.outcome.mae_r}R</em>
@@ -911,6 +1168,110 @@ function ScenarioBlock({ title, scenario }: { title: string; scenario: { invalid
   );
 }
 
+function scoutTilt(row: ScoutScanRow): { position: number; label: string; tone: "long" | "short" | "neutral" | "insufficient" } {
+  const longEvidence = row.long_evidence_count ?? 0;
+  const shortEvidence = row.short_evidence_count ?? 0;
+  const longScore = typeof row.long_score === "number" ? row.long_score : null;
+  const shortScore = typeof row.short_score === "number" ? row.short_score : null;
+  if (longEvidence + shortEvidence < 3 || longScore === null || shortScore === null) {
+    return { position: 50, label: "근거 부족", tone: "insufficient" };
+  }
+  const diff = longScore - shortScore;
+  if (Math.abs(diff) < 10) return { position: 50, label: "충돌", tone: "neutral" };
+  const position = Math.max(8, Math.min(92, 50 + diff / 2));
+  return diff > 0
+    ? { position, label: "롱 근거 우세", tone: "long" }
+    : { position, label: "숏 근거 우세", tone: "short" };
+}
+
+function scoutMinimalReasons(row: ScoutScanRow): string[] {
+  const reasons = [
+    row.top_event?.label ? taShortLabel(row.top_event.label) : "",
+    row.liquidity_nearest_pool?.label ? plainifyTaText(row.liquidity_nearest_pool.label) : "",
+    row.harmonic_active ? "반전 후보 구간" : "",
+    row.funding_state ? `펀딩 ${plainifyTaText(row.funding_state)}` : "",
+    row.wyckoff_phase ? phaseHintLabel(row.wyckoff_phase) : "",
+    row.volume_state ? volumeStateLabel(row.volume_state) : ""
+  ]
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return Array.from(new Set(reasons)).slice(0, 2).map((item) => clampScoutText(item, 24));
+}
+
+function formatTriggerDistance(row: ScoutScanRow): string {
+  if (typeof row.entry_intent_distance_pct === "number") return `의도 ${formatPct(row.entry_intent_distance_pct)}`;
+  if (typeof row.setup_proximity_pct === "number") return formatPct(row.setup_proximity_pct);
+  if (typeof row.liquidity_pool_distance_pct === "number") return `유동성 ${formatPct(row.liquidity_pool_distance_pct)}`;
+  if (typeof row.nearest_level_distance_pct === "number") return `구조 ${formatPct(row.nearest_level_distance_pct)}`;
+  return "대기";
+}
+
+function scoutAnalysisVerdict(symbol: string, data: ScoutAnalysisResponse | null): { tone: string; label: string; why: string; counter: string; trigger: string; evidence: ScoutMinimalEvidence } {
+  const confluence = data?.analyst_briefing?.confluence;
+  const summary = data?.summary;
+  const tilt = summary ? scoutTilt(summary) : { position: 50, label: "근거 부족", tone: "insufficient" as const };
+  const label = confluence?.stance_label
+    ? scoutStanceLabel(confluence.stance, confluence.stance_label)
+    : tilt.label;
+  const primary = confluence?.stance === "short_leaning" ? confluence.short_evidence : confluence?.long_evidence;
+  const primaryEvidence = primary?.[0];
+  const why = primary?.slice(0, 2).map((item) => item.claim).join(". ")
+    || (summary ? scoutMinimalReasons(summary).join(" · ") : "")
+    || `${symbol}은 아직 방향 근거가 충분하지 않습니다.`;
+  const counter = confluence?.counter_evidence?.[0]?.claim || "반대 근거는 아직 강하게 확인되지 않았습니다.";
+  return {
+    tone: confluence?.stance ?? tilt.tone,
+    label,
+    why: clampScoutText(plainifyTaText(why), 104),
+    counter: clampScoutText(plainifyTaText(counter), 82),
+    trigger: summary ? formatTriggerDistance(summary) : "대기",
+    evidence: scoutEvidenceFromClaim(primaryEvidence?.engine, primaryEvidence?.claim || why, primaryEvidence?.as_of)
+  };
+}
+
+function scoutEvidenceFromClaim(engine: string | undefined, claim: string, asOf?: string | null): ScoutMinimalEvidence {
+  const text = plainifyTaText(claim);
+  return {
+    key: `${engine ?? "summary"}:${text}`,
+    text,
+    layer: scoutEvidenceLayer(engine, text),
+    label: text.split(/[.·]/)[0]?.trim() || "스카우트 근거",
+    price: scoutEvidencePrice(text),
+    time: asOf ? Math.floor(new Date(asOf).getTime() / 1000) : null
+  };
+}
+
+function scoutEvidenceLayer(engine: string | undefined, claim: string): MinimalEvidenceLayer {
+  const value = `${engine ?? ""} ${claim}`.toLowerCase();
+  if (value.includes("wyckoff") || value.includes("spring") || value.includes("utad") || value.includes("와이코프")) return "wyckoff";
+  if (value.includes("liquidity") || value.includes("sweep") || value.includes("스윕") || value.includes("유동성")) return "liquidity";
+  if (value.includes("harmonic") || value.includes("prz") || value.includes("하모닉") || value.includes("반전 후보")) return "harmonic";
+  if (value.includes("flow") || value.includes("funding") || value.includes("oi") || value.includes("체결") || value.includes("수급") || value.includes("펀딩")) return "flow";
+  if (value.includes("level") || value.includes("support") || value.includes("resistance") || value.includes("지지") || value.includes("저항")) return "levels";
+  return "plan";
+}
+
+function scoutEvidencePrice(claim: string): number | null {
+  const match = claim.match(/(?:\d{1,3}(?:,\d{3})+|\d+\.\d+|\d{4,})/);
+  if (!match) return null;
+  const parsed = Number(match[0].replace(/,/g, ""));
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function scoutStanceLabel(stance: string, fallback: string): string {
+  if (stance === "long_leaning") return "롱 근거 우세";
+  if (stance === "short_leaning") return "숏 근거 우세";
+  if (stance === "conflicted") return "근거 충돌";
+  if (stance === "insufficient") return "근거 부족";
+  return plainifyTaText(fallback);
+}
+
+function clampScoutText(value: string, maxLength: number): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength - 1).trim()}…`;
+}
+
 function directionLabel(direction: "long" | "short" | string): string {
   return direction === "short" ? "숏" : "롱";
 }
@@ -949,6 +1310,13 @@ function formatNullablePct(value: number | null | undefined): string {
   return `${value.toFixed(1)}%`;
 }
 
+// WO-36 §7: CI 없는 승률 표기 금지 — CI가 없으면 결론 유보로 낮춰 표기한다.
+function formatWinCi(pct: number | null | undefined, ci: [number, number] | null | undefined): string {
+  if (typeof pct !== "number") return "-";
+  if (!Array.isArray(ci) || ci.length !== 2) return "표본 부족";
+  return `${pct.toFixed(0)}% (CI ${ci[0].toFixed(0)}~${ci[1].toFixed(0)}%)`;
+}
+
 function formatNullableR(value: number | null | undefined): string {
   if (typeof value !== "number") return "-";
   return `${value.toFixed(2)}R`;
@@ -968,6 +1336,11 @@ function scoreTone(score: number | null | undefined): string {
   return "";
 }
 
+function formatDirectionScore(score: number | null | undefined, evidenceCount: number | null | undefined): string {
+  if (typeof evidenceCount === "number" && evidenceCount < 3) return "표본 부족";
+  return typeof score === "number" ? String(score) : "표본 부족";
+}
+
 function formatFunding(value: number | null | undefined): string {
   if (typeof value !== "number") return "-";
   return `${value > 0 ? "+" : ""}${(value * 100).toFixed(4)}%`;
@@ -977,6 +1350,32 @@ function discoveryStatusLabel(item: UniverseDiscovery): string {
   if (item.status === "alerted") return "알림 발송";
   if (item.status === "stored") return "탭 적재";
   return "게이트 차단";
+}
+
+function mergeUniverseDiscoveries(next: UniverseDiscovery[], current: UniverseDiscovery[]): UniverseDiscovery[] {
+  const seen = new Set<string>();
+  const merged: UniverseDiscovery[] = [];
+  for (const item of [...next, ...current]) {
+    const key = item.id || `${item.symbol}:${item.signature_key}:${item.timeframe}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(item);
+  }
+  return merged;
+}
+
+function visibleUniverseDiscoveries(discoveries: UniverseDiscovery[], assetFilter: AssetFilter): UniverseDiscovery[] {
+  const seen = new Set<string>();
+  const visible: UniverseDiscovery[] = [];
+  for (const item of discoveries) {
+    if (!item.gate_passed || item.status === "rejected") continue;
+    if (!assetMatchesFilter(item.asset_class, assetFilter)) continue;
+    const key = `${item.symbol}:${item.signature_key}:${item.timeframe}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    visible.push(item);
+  }
+  return visible;
 }
 
 function gateReasonSummary(reasons: UniverseDiscovery["gate_reasons"]): string {
@@ -990,6 +1389,7 @@ function gateReasonLabel(code: string): string {
     confidence: "신뢰도 부족",
     backtest_sample: "백테스트 N 부족",
     backtest_win_1r: "1R 기준 미달",
+    backtest_win_1r_ci_low: "1R CI 하한 미달",
     live_backtest_divergence: "라이브 괴리",
     liquidity_floor: "거래대금 부족",
     earnings_window: "실적 구간",

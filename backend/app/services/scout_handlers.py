@@ -18,7 +18,8 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
 from app.analyst.briefing import build_analyst_briefing
-from app.backtest.service import backtest_line, historical_context_for_analysis
+from app.backtest.regimes import label_regime
+from app.backtest.service import _regime_params, backtest_line, historical_context_for_analysis
 from app.services import http_handlers as runtime
 from app.db.models import (
     CatalogSymbol,
@@ -34,6 +35,7 @@ from app.derivatives.context import derivative_context_for_chart
 from app.exchange.bitget.provider import BitgetMarketDataProvider
 from app.indicators.engine import calculate_indicators
 from app.marketdata.assets import classify_asset_class
+from app.performance.metrics import attach_kelly_to_simulation
 from app.positions.chart_analysis import build_chart_analysis
 from app.positions.engine import direction_aware_score
 from app.positions.simulator import simulate_entry
@@ -55,6 +57,8 @@ SCAN_CACHE_TTL_SECONDS = 300  # 심볼+타임프레임당 최소 재계산 간�
 CATALOG_REFRESH_SECONDS = 86400  # 카탈로그 일 1회 갱신
 
 _ANALYSIS_CACHE: dict[tuple[str, str], dict[str, Any]] = {}
+_BTC_REGIME_CACHE: dict[str, Any] = {}
+BTC_REGIME_TTL_SECONDS = 900  # BTC 레짐은 자주 안 바뀌므로 15분 캐시 (레이트리밋 방어)
 logger = logging.getLogger(__name__)
 
 
@@ -72,8 +76,24 @@ def _provider():
     return runtime.market_provider
 
 
+def _btc_market_regime(timeframe: str) -> dict[str, Any] | None:
+    """WO-36 §5: 크립토 알트 신호에 병기할 BTC 시장 레짐 (15분 캐시)."""
+    cache = _BTC_REGIME_CACHE.get(timeframe)
+    now = time.monotonic()
+    if cache and now - cache["cached_at_monotonic"] < BTC_REGIME_TTL_SECONDS:
+        return cache["regime"]
+    try:
+        snapshot = _provider().get_snapshot("BTCUSDT", timeframe)
+        regime = label_regime(snapshot.candles, **_regime_params(runtime.settings))
+    except Exception:
+        return cache["regime"] if cache else None
+    _BTC_REGIME_CACHE[timeframe] = {"regime": regime, "cached_at_monotonic": now}
+    return regime
+
+
 def reset_scout_cache() -> None:
     _ANALYSIS_CACHE.clear()
+    _BTC_REGIME_CACHE.clear()
 
 
 def _ensure_catalog() -> None:
@@ -280,6 +300,9 @@ def _analysis_entry(symbol: str, timeframe: str, force: bool, include_trade_flow
         analysis = build_chart_analysis(snapshot, None, trade_flow, derivatives=derivatives)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    market_regime = None
+    if str(analysis.get("asset_class") or "").startswith("crypto") and snapshot.symbol.upper() not in {"BTCUSDT", "BTCUSD"}:
+        market_regime = _btc_market_regime(snapshot.timeframe)
     historical = historical_context_for_analysis(
         _repo(),
         runtime.settings,
@@ -288,6 +311,7 @@ def _analysis_entry(symbol: str, timeframe: str, force: bool, include_trade_flow
         analysis=analysis,
         candles=snapshot.candles,
         force=force,
+        market_regime=market_regime,
     )
     analysis["historical_backtest"] = historical
     entry = {
@@ -343,12 +367,18 @@ def _summary_row(
     funding = signals.get("funding_state") if isinstance(signals.get("funding_state"), dict) else None
     setup_candidates = setup_candidates_from_analysis(symbol, snapshot.timeframe, analysis, runtime.settings)
     _attach_backtest_to_candidates(setup_candidates, analysis.get("historical_backtest"))
+    long_evidence = _direction_evidence_count("long", structure, indicators)
+    short_evidence = _direction_evidence_count("short", structure, indicators)
+    long_score = direction_aware_score("long", structure, indicators) if long_evidence >= 3 else None
+    short_score = direction_aware_score("short", structure, indicators) if short_evidence >= 3 else None
     return {
         "symbol": symbol.upper(),
         "asset_class": analysis.get("asset_class") or classify_asset_class(symbol),
         "session": analysis.get("session"),
-        "long_score": direction_aware_score("long", structure, indicators),
-        "short_score": direction_aware_score("short", structure, indicators),
+        "long_score": long_score,
+        "short_score": short_score,
+        "long_evidence_count": long_evidence,
+        "short_evidence_count": short_evidence,
         "wyckoff_phase": analysis.get("wyckoff_phase", {}).get("phase", "undetermined"),
         "top_event": {
             "label": top_event.get("label"),
@@ -373,6 +403,35 @@ def _summary_row(
         "setup_candidates": setup_candidates,
         "backtest_summary": backtest_line(analysis.get("historical_backtest")),
     }
+
+
+def _direction_evidence_count(direction: str, structure: dict[str, Any], indicators: dict[str, Any]) -> int:
+    trend = structure.get("trend") if isinstance(structure.get("trend"), dict) else {}
+    wyckoff = structure.get("wyckoff") if isinstance(structure.get("wyckoff"), dict) else {}
+    count = 0
+    if trend.get("direction") not in (None, "", "unknown"):
+        count += 1
+    if direction == "long":
+        count += int(bool(trend.get("higher_low")))
+        count += int(bool(wyckoff.get("spring_candidate")))
+        count += int(bool(wyckoff.get("sos_confirmed")))
+        count += int(_safe_float(wyckoff.get("accumulation_score")) > 0)
+    else:
+        count += int(bool(trend.get("lower_high")))
+        count += int(bool(wyckoff.get("utad_candidate")))
+        count += int(bool(wyckoff.get("sow_confirmed")))
+        count += int(_safe_float(wyckoff.get("distribution_score")) > 0)
+    for key in ("last_close", "rsi", "macd", "bollinger_upper", "bollinger_lower"):
+        if indicators.get(key) is not None:
+            count += 1
+    return count
+
+
+def _safe_float(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _quote_volume_24h(candles: list[Any]) -> float | None:
@@ -719,6 +778,7 @@ def _simulate(request: SimulateRequest) -> dict[str, Any]:
     briefing = _briefing_for_entry(symbol, request.timeframe, entry, action_plan=result.get("action_plan"), context="pre_entry")
     result["analyst_briefing"] = briefing
     result["briefing_direction_conflict"] = _briefing_direction_conflict(briefing, request.direction)
+    attach_kelly_to_simulation(result, entry.get("historical_backtest"))
     return result
 
 

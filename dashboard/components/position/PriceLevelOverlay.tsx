@@ -1,5 +1,4 @@
-import type { PositionActionPlan, PositionChartAnalysis } from "@/lib/api";
-import type { ChartLayerState } from "@/lib/chartLayers";
+import type { PositionChartAnalysis } from "@/lib/api";
 import { flagColor } from "@/lib/chartTheme";
 
 export type ChartPriceLine = {
@@ -11,11 +10,7 @@ export type ChartPriceLine = {
   opacity: number;
 };
 
-export function priceLinesForAnalysis(
-  analysis: PositionChartAnalysis,
-  _plan: PositionActionPlan | null,
-  _layers: ChartLayerState
-): ChartPriceLine[] {
+export function priceLinesForAnalysis(analysis: PositionChartAnalysis): ChartPriceLine[] {
   const lines: ChartPriceLine[] = [baseLine("현재", analysis.price_levels.mark, "mark", 0, 2)];
   return lines.filter((line) => Number.isFinite(line.price));
 }

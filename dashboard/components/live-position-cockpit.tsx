@@ -14,15 +14,18 @@ import {
   TestTube2,
   UploadCloud
 } from "lucide-react";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
+import { PositionChart } from "@/components/position/PositionChart";
 import { TerminalPanel, TerminalWarning } from "@/components/terminal";
 import {
+  chartOverlayFromPayload,
   SymbolAnalysisView,
   useAnalysisWorkspace,
   type MetricTone
 } from "@/components/symbol-analysis-view";
 import {
   api,
+  type AnalystEvidence,
   type BitgetConnectionTest,
   type LivePositionDetail,
   type LivePositionPayload,
@@ -31,12 +34,23 @@ import {
   type PositionChartAnalysis,
   type ScenarioMatchResponse
 } from "@/lib/api";
+import { MINIMAL_FIXED_LAYER_STATE, type MinimalChartEvidence, type MinimalEvidenceLayer } from "@/lib/chartLayers";
 import { type Density } from "@/lib/density";
 import { formatPrice, signedPercent } from "@/lib/format";
 import { plainifyTaText } from "@/lib/labels/taGlossary";
 import { connectionStatusLabel, directionLabel, localizeMarketCodes, trendLabel } from "@/lib/labels/marketStateLabels";
+import { loadFceViewMode, saveFceViewMode, type FceViewMode } from "@/lib/viewMode";
 
 const LIVE_POSITION_SYNC_INTERVAL_SECONDS = 30;
+
+type MinimalEvidenceChoice = {
+  key: string;
+  text: string;
+  layer: MinimalEvidenceLayer;
+  label: string;
+  price?: number | null;
+  time?: number | null;
+};
 
 export function LivePositionCockpit() {
   const [data, setData] = useState<LivePositionsResponse | null>(null);
@@ -51,9 +65,19 @@ export function LivePositionCockpit() {
   const [selectedChartError, setSelectedChartError] = useState("");
   const [selectedDetail, setSelectedDetail] = useState<LivePositionDetail | null>(null);
   const [stripChartAnalysis, setStripChartAnalysis] = useState<Record<string, PositionChartAnalysis>>({});
+  const [viewMode, setViewMode] = useState<FceViewMode>("minimal");
   const workspace = useAnalysisWorkspace();
 
-  async function load(sync = false) {
+  useEffect(() => {
+    setViewMode(loadFceViewMode());
+  }, []);
+
+  function updateViewMode(mode: FceViewMode) {
+    setViewMode(mode);
+    saveFceViewMode(mode);
+  }
+
+  async function load(sync = false): Promise<boolean> {
     setError("");
     try {
       const next = sync ? await api.syncLivePositions() : await api.livePositions();
@@ -67,8 +91,10 @@ export function LivePositionCockpit() {
       };
       setData(normalized);
       setSelectedId((current) => current || normalized.positions[0]?.position.id || "");
+      return true;
     } catch (err) {
       setError(err instanceof Error ? err.message : "라이브 포지션 데이터를 불러오지 못했습니다.");
+      return false;
     } finally {
       setLoading(false);
     }
@@ -85,8 +111,10 @@ export function LivePositionCockpit() {
   async function syncPositions() {
     setActionLoading("sync");
     setNotice("");
-    await load(true);
-    setNotice("Bitget read-only 포지션 동기화와 상태 분석을 갱신했습니다.");
+    const succeeded = await load(true);
+    if (succeeded) {
+      setNotice("Bitget read-only 포지션 동기화와 상태 분석을 갱신했습니다.");
+    }
     setActionLoading("");
   }
 
@@ -226,6 +254,7 @@ export function LivePositionCockpit() {
           <button className="iconButton secondary" onClick={testConnection} disabled={actionLoading === "test"} title="Bitget 연결 테스트">
             <TestTube2 size={16} />
           </button>
+          <ViewModeToggle mode={viewMode} onChange={updateViewMode} />
         </div>
       </header>
 
@@ -252,33 +281,49 @@ export function LivePositionCockpit() {
           />
           {selectedPayload ? (
             <>
-              <PositionVerdictBar
-                payload={selectedPayload}
-                onRefresh={() => void refreshSelected(selectedPayload.position.id)}
-                refreshing={actionLoading === `refresh:${selectedPayload.position.id}`}
-              />
-              <SymbolAnalysisView
-                chartAnalysis={selectedChartAnalysis}
-                chartLoading={selectedChartLoading}
-                chartError={selectedChartError}
-                onRetryChart={() => void loadSelectedChart(selectedPayload.position.id)}
-                trendSummary={trendLabel(selectedPayload.state.analysis.technical.trend)}
-                plan={actionPlanForPayload(selectedPayload)}
-                payload={selectedPayload}
-                analystBriefing={selectedPayload.analyst_briefing ?? null}
-                workspace={workspace}
-                gridClassName="cockpitMainGrid"
-                sidePanel={
-                  <ActionPlanPanel
+              {viewMode === "minimal" ? (
+                <MinimalPositionWorkspace
+                  payload={selectedPayload}
+                  chartAnalysis={selectedChartAnalysis}
+                  chartLoading={selectedChartLoading}
+                  chartError={selectedChartError}
+                  onRetryChart={() => void loadSelectedChart(selectedPayload.position.id)}
+                  onRefresh={() => void refreshSelected(selectedPayload.position.id)}
+                  refreshing={actionLoading === `refresh:${selectedPayload.position.id}`}
+                  onShowPro={() => updateViewMode("pro")}
+                  workspace={workspace}
+                />
+              ) : (
+                <>
+                  <PositionVerdictBar
                     payload={selectedPayload}
-                    highlightPrice={workspace.highlightPrice}
-                    onSelectPrice={workspace.setHighlightPrice}
-                    onCreateInsight={() => createInsight(selectedPayload.position.id)}
-                    busy={actionLoading === `insight:${selectedPayload.position.id}`}
-                    density={workspace.density}
+                    onRefresh={() => void refreshSelected(selectedPayload.position.id)}
+                    refreshing={actionLoading === `refresh:${selectedPayload.position.id}`}
                   />
-                }
-              />
+                  <SymbolAnalysisView
+                    chartAnalysis={selectedChartAnalysis}
+                    chartLoading={selectedChartLoading}
+                    chartError={selectedChartError}
+                    onRetryChart={() => void loadSelectedChart(selectedPayload.position.id)}
+                    trendSummary={trendLabel(selectedPayload.state.analysis.technical.trend)}
+                    plan={actionPlanForPayload(selectedPayload)}
+                    payload={selectedPayload}
+                    analystBriefing={selectedPayload.analyst_briefing ?? null}
+                    workspace={workspace}
+                    gridClassName="cockpitMainGrid"
+                    sidePanel={
+                      <ActionPlanPanel
+                        payload={selectedPayload}
+                        highlightPrice={workspace.highlightPrice}
+                        onSelectPrice={workspace.setHighlightPrice}
+                        onCreateInsight={() => createInsight(selectedPayload.position.id)}
+                        busy={actionLoading === `insight:${selectedPayload.position.id}`}
+                        density={workspace.density}
+                      />
+                    }
+                  />
+                </>
+              )}
             </>
           ) : null}
         </>
@@ -329,6 +374,7 @@ function PositionStrip({
             <div className="stripCardMetrics">
               <em className={`pnlFlash ${item.state.pnl_percent >= 0 ? "successText pnlFlashUp" : "dangerText pnlFlashDown"}`}>
                 {signedPercent(item.state.pnl_percent)}
+                {roeContextLabel(item) ? <small>{roeContextLabel(item)}</small> : null}
               </em>
               <StatusPill status={item.state.status} label={item.state.status_label} />
             </div>
@@ -401,6 +447,322 @@ function PositionMiniSparkline({
   );
 }
 
+function ViewModeToggle({ mode, onChange }: { mode: FceViewMode; onChange: (mode: FceViewMode) => void }) {
+  return (
+    <div className="viewModeToggle" role="group" aria-label="화면 모드">
+      <button className={mode === "minimal" ? "active" : ""} onClick={() => onChange("minimal")} type="button" data-testid="minimal-mode-button">
+        미니멀
+      </button>
+      <button className={mode === "pro" ? "active" : ""} onClick={() => onChange("pro")} type="button" data-testid="pro-mode-button">
+        프로
+      </button>
+    </div>
+  );
+}
+
+function MinimalPositionWorkspace({
+  payload,
+  chartAnalysis,
+  chartLoading,
+  chartError,
+  onRetryChart,
+  onRefresh,
+  refreshing,
+  onShowPro,
+  workspace
+}: {
+  payload: LivePositionPayload;
+  chartAnalysis: PositionChartAnalysis | null;
+  chartLoading: boolean;
+  chartError: string;
+  onRetryChart: () => void;
+  onRefresh: () => void;
+  refreshing: boolean;
+  onShowPro: () => void;
+  workspace: ReturnType<typeof useAnalysisWorkspace>;
+}) {
+  const plan = actionPlanForPayload(payload);
+  const copy = minimalPositionCopy(payload);
+  const [selectedEvidenceKey, setSelectedEvidenceKey] = useState(copy.whyEvidence.key);
+  const selectedEvidence = [copy.whyEvidence, copy.counterEvidence].find((item) => item.key === selectedEvidenceKey) ?? copy.whyEvidence;
+  const minimalChartEvidence: MinimalChartEvidence = {
+    layer: selectedEvidence.layer,
+    label: selectedEvidence.label,
+    price: selectedEvidence.price ?? null,
+    time: selectedEvidence.time ?? null
+  };
+  // 미니멀 차트는 layers prop으로 MINIMAL_FIXED_LAYER_STATE를 직접 받으므로
+  // workspace.setLayers 호출이 불필요하다 — 호출하면 localStorage에 저장돼
+  // 프로 모드에서 사용자가 설정한 레이어를 영구히 덮어쓴다.
+  useEffect(() => {
+    setSelectedEvidenceKey(copy.whyEvidence.key);
+  }, [payload.position.id, copy.whyEvidence.key]);
+  return (
+    <section className="minimalPositionWorkspace" data-testid="minimal-position-workspace">
+      <MinimalPositionVerdictCard
+        payload={payload}
+        copy={copy}
+        selectedEvidenceKey={selectedEvidence.key}
+        onSelectEvidence={(evidence) => {
+          setSelectedEvidenceKey(evidence.key);
+          workspace.setHighlightPrice(evidence.price ?? null);
+        }}
+        onChart={() => document.getElementById("position-minimal-chart")?.scrollIntoView({ block: "start" })}
+        onRefresh={onRefresh}
+        refreshing={refreshing}
+        onShowPro={onShowPro}
+      />
+      <div className="minimalChartShell" id="position-minimal-chart">
+        <PositionChart
+          analysis={chartAnalysis}
+          loading={chartLoading}
+          error={chartError}
+          onRetry={onRetryChart}
+          trendSummary={trendLabel(payload.state.analysis.technical.trend)}
+          plan={plan}
+          layers={MINIMAL_FIXED_LAYER_STATE}
+          onToggleLayer={workspace.handleToggleLayer}
+          highlightPrice={selectedEvidence.price ?? workspace.highlightPrice}
+          positionOverlay={chartOverlayFromPayload(payload)}
+          density="simple"
+          layerMode="minimal"
+          minimalEvidence={minimalChartEvidence}
+        />
+      </div>
+    </section>
+  );
+}
+
+function MinimalPositionVerdictCard({
+  payload,
+  copy,
+  selectedEvidenceKey,
+  onSelectEvidence,
+  onChart,
+  onRefresh,
+  refreshing,
+  onShowPro
+}: {
+  payload: LivePositionPayload;
+  copy: MinimalPositionCopy;
+  selectedEvidenceKey: string;
+  onSelectEvidence: (evidence: MinimalEvidenceChoice) => void;
+  onChart: () => void;
+  onRefresh: () => void;
+  refreshing: boolean;
+  onShowPro: () => void;
+}) {
+  const trigger = nearestActionTrigger(payload);
+  const pnlPrimary = minimalPnlPrimary(payload);
+  const pnlSecondary = minimalPnlSecondary(payload);
+  return (
+    <article
+      className={`oneQuestionCard positionOneQuestion state-${copy.state}`}
+      data-budget-numbers-max="7"
+      data-budget-buttons-max="4"
+      data-testid="position-one-question-card"
+    >
+      <div className="oneQuestionTop">
+        <div>
+          <strong>{payload.position.symbol} {directionLabel(payload.position.direction)} {payload.position.leverage}x</strong>
+          <span>{marginModeLabel(payload.position.margin_mode ?? "")}</span>
+        </div>
+        <em className={payload.state.pnl_percent >= 0 ? "successText" : "dangerText"}>
+          {pnlPrimary}
+          {pnlSecondary ? <small>{pnlSecondary}</small> : null}
+        </em>
+      </div>
+      <div className="oneQuestionAnswer">
+        <span className="oneQuestionDot" aria-hidden="true" />
+        <h2>{copy.label}</h2>
+      </div>
+      <div className="oneQuestionReasons">
+        <button
+          className={`oneQuestionEvidence ${selectedEvidenceKey === copy.whyEvidence.key ? "active" : ""}`}
+          onClick={() => onSelectEvidence(copy.whyEvidence)}
+          type="button"
+        >
+          <b>왜:</b> <span>{copy.why}</span>
+        </button>
+        <button
+          className={`oneQuestionEvidence ${selectedEvidenceKey === copy.counterEvidence.key ? "active" : ""}`}
+          onClick={() => onSelectEvidence(copy.counterEvidence)}
+          type="button"
+        >
+          <b>반대:</b> <span>{copy.counter}</span>
+        </button>
+      </div>
+      <div className="oneQuestionNext">
+        <span>다음 가격</span>
+        <strong>{trigger ? `${trigger.price} ${trigger.distanceLabel}` : copy.next}</strong>
+        <em>{trigger ? plainifyTaText(trigger.action) : "조건 확인"}</em>
+      </div>
+      {liquidationMissing(payload) ? (
+        <div className="oneQuestionWarning">
+          <AlertTriangle size={14} />
+          청산가 미수신 · 거래소에서 수동 확인
+        </div>
+      ) : null}
+      <div className="oneQuestionActions">
+        <button className="button secondary" onClick={onChart} type="button">차트</button>
+        <button className="button secondary" onClick={onRefresh} disabled={refreshing} type="button">
+          {refreshing ? "갱신 중" : "갱신"}
+        </button>
+        <button className="button" onClick={onShowPro} type="button">자세히 →</button>
+      </div>
+    </article>
+  );
+}
+
+type MinimalPositionCopy = {
+  state: string;
+  label: string;
+  why: string;
+  counter: string;
+  next: string;
+  whyEvidence: MinimalEvidenceChoice;
+  counterEvidence: MinimalEvidenceChoice;
+};
+
+function minimalPositionCopy(payload: LivePositionPayload): MinimalPositionCopy {
+  const plan = actionPlanForPayload(payload);
+  const verdictState = plan?.verdict_state ?? "holding";
+  const label = minimalVerdictLabel(verdictState, payload.state.severity_rank);
+  const briefing = payload.analyst_briefing?.confluence;
+  const sameDirection = payload.position.direction === "short" ? briefing?.short_evidence : briefing?.long_evidence;
+  const oppositeDirection = payload.position.direction === "short" ? briefing?.long_evidence : briefing?.short_evidence;
+  const riskState = verdictState === "danger" || verdictState === "weakening" || payload.state.severity_rank >= 2;
+  const whySource = riskState ? dedupeEvidence(oppositeDirection) : dedupeEvidence(sameDirection);
+  const counterSource = riskState ? dedupeEvidence(sameDirection) : dedupeEvidence([...(briefing?.counter_evidence ?? []), ...(oppositeDirection ?? [])]);
+  const whyEvidence = evidenceChoiceFromAnalyst(
+    whySource[0],
+    plan?.headline_action || headlineForPayload(payload),
+    "why",
+    nearestActionTriggerPrice(payload)
+  );
+  const counterEvidence = evidenceChoiceFromAnalyst(
+    counterSource[0],
+    standbyReferenceText(plan) || "반대 근거는 아직 강하게 확인되지 않았습니다.",
+    "counter",
+    nearestActionTriggerPrice(payload)
+  );
+  const why = plainifyTaText(whyEvidence.text);
+  const counter = plainifyTaText(counterEvidence.text);
+  return {
+    state: verdictState,
+    label,
+    why: clampSentence(why, 108),
+    counter: clampSentence(counter, 82),
+    next: plan?.standby_reason ? plainifyTaText(plan.standby_reason) : "가까운 트리거 대기",
+    whyEvidence,
+    counterEvidence
+  };
+}
+
+function dedupeEvidence(items: AnalystEvidence[] | undefined): AnalystEvidence[] {
+  const seen = new Set<string>();
+  const result: AnalystEvidence[] = [];
+  for (const item of items ?? []) {
+    const key = `${item.engine}:${plainifyTaText(item.claim).replace(/[.\s]+$/g, "").toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(item);
+  }
+  return result;
+}
+
+function evidenceChoiceFromAnalyst(
+  evidence: AnalystEvidence | undefined,
+  fallbackText: string,
+  prefix: "why" | "counter",
+  fallbackPrice: number | null
+): MinimalEvidenceChoice {
+  if (!evidence) {
+    return {
+      key: `${prefix}:plan:${fallbackText}`,
+      text: fallbackText,
+      layer: "plan",
+      label: prefix === "why" ? "판정 근거" : "반대 근거",
+      price: fallbackPrice
+    };
+  }
+  const text = plainifyTaText(evidence.claim);
+  return {
+    key: `${prefix}:${evidence.engine}:${text}`,
+    text,
+    layer: evidenceLayerFromAnalyst(evidence),
+    label: evidenceShortLabel(evidence),
+    price: evidencePrice(evidence) ?? fallbackPrice,
+    time: evidence.as_of ? Math.floor(new Date(evidence.as_of).getTime() / 1000) : null
+  };
+}
+
+function evidenceLayerFromAnalyst(evidence: AnalystEvidence): MinimalEvidenceLayer {
+  const value = `${evidence.engine} ${evidence.claim} ${evidence.source ?? ""}`.toLowerCase();
+  if (value.includes("wyckoff") || value.includes("spring") || value.includes("utad") || value.includes("와이코프")) return "wyckoff";
+  if (value.includes("liquidity") || value.includes("sweep") || value.includes("스윕") || value.includes("유동성")) return "liquidity";
+  if (value.includes("harmonic") || value.includes("prz") || value.includes("하모닉") || value.includes("반전 후보")) return "harmonic";
+  if (value.includes("flow") || value.includes("funding") || value.includes("oi") || value.includes("체결") || value.includes("수급") || value.includes("펀딩")) return "flow";
+  if (value.includes("level") || value.includes("support") || value.includes("resistance") || value.includes("지지") || value.includes("저항")) return "levels";
+  return "plan";
+}
+
+function evidenceShortLabel(evidence: AnalystEvidence): string {
+  const text = plainifyTaText(evidence.claim);
+  if (text.includes("스윕")) return "스윕 근거";
+  if (text.includes("반전 후보")) return "반전 후보";
+  if (text.includes("지지") || text.includes("저항")) return "구조 레벨";
+  if (text.includes("체결") || text.includes("수급") || text.includes("펀딩")) return "수급 근거";
+  return text.split(/[.·]/)[0]?.trim() || "판정 근거";
+}
+
+function evidencePrice(evidence: AnalystEvidence): number | null {
+  if (typeof evidence.score === "number" && Number.isFinite(evidence.score) && evidence.score > 0) return null;
+  const match = evidence.claim.match(/(?:\d{1,3}(?:,\d{3})+|\d+\.\d+|\d{4,})/);
+  if (!match) return null;
+  const parsed = Number(match[0].replace(/,/g, ""));
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function nearestActionTriggerPrice(payload: LivePositionPayload): number | null {
+  // 표시용 문자열을 역파싱하면 로케일 그룹핑(1.234,56 등)에서 자릿수가 깨진다 — 원본 숫자 사용.
+  return nearestActionTrigger(payload)?.priceValue ?? null;
+}
+
+function minimalVerdictLabel(verdictState: string, severityRank: number): string {
+  if (verdictState === "danger" || severityRank >= 4) return "위험 확인 필요";
+  if (verdictState === "standby") return "판단 유보";
+  if (verdictState === "weakening" || severityRank >= 2) return "근거 약화";
+  return "유지 근거 우세";
+}
+
+function standbyReferenceText(plan: PositionActionPlan | null): string {
+  const zone = plan?.reference_zones?.[0];
+  if (!zone) return "";
+  return `${zone.basis || "참조 존"} 기준은 약하므로 알림 트리거로 쓰지 않습니다.`;
+}
+
+function minimalPnlPrimary(payload: LivePositionPayload): string {
+  const amount = payload.state.pnl_amount ?? payload.position.unrealized_pl;
+  if (typeof amount === "number" && Number.isFinite(amount)) {
+    const sign = amount > 0 ? "+" : "";
+    return `${sign}${formatPrice(amount)} USDT`;
+  }
+  return signedPercent(payload.state.pnl_percent);
+}
+
+function minimalPnlSecondary(payload: LivePositionPayload): string {
+  const roe = signedPercent(payload.state.pnl_percent);
+  const context = roeContextLabel(payload);
+  return context ? `${roe} · ${context}` : roe;
+}
+
+function clampSentence(value: string, maxLength: number): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, maxLength - 1).trim()}…`;
+}
+
 function PositionVerdictBar({
   payload,
   onRefresh,
@@ -413,8 +775,14 @@ function PositionVerdictBar({
   const { position, state } = payload;
   const plan = actionPlanForPayload(payload);
   const asOf = plan?.as_of ? new Date(plan.as_of) : null;
-  // 벽시계 대신 최신 분석 시각(state.as_of) 대비 나이로 신선도를 판정 (렌더 순수성 유지)
-  const ageMinutes = asOf ? (new Date(payload.state.as_of).getTime() - asOf.getTime()) / 60000 : null;
+  // state.as_of와 plan.as_of는 같은 응답에서 함께 생성돼 차이가 항상 ~0 —
+  // 폴링이 멈춰도 "유효"로 보이는 버그가 있었다. 벽시계 틱(30s)으로 실제 나이를 계산한다.
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  useEffect(() => {
+    const interval = window.setInterval(() => setNowTick(Date.now()), 30_000);
+    return () => window.clearInterval(interval);
+  }, []);
+  const ageMinutes = asOf ? (nowTick - asOf.getTime()) / 60000 : null;
   const freshness = freshnessCountdownLabel(ageMinutes);
   const statusIcon = state.severity_rank >= 3
     ? <AlertTriangle size={26} aria-hidden="true" />
@@ -436,6 +804,7 @@ function PositionVerdictBar({
             >
               {signedPercent(state.pnl_percent)}
               {state.pnl_source === "exchange" ? <Landmark size={12} /> : <Calculator size={12} />}
+              {roeContextLabel(payload) ? <small>{roeContextLabel(payload)}</small> : null}
             </em>
             <StatusPill status={state.status} label={`${state.status_label} (${state.health_score}/100)`} />
           </div>
@@ -626,6 +995,7 @@ function InsightEvidence({
 export function PositionDetailShell({ positionId }: { positionId: string }) {
   const [detail, setDetail] = useState<LivePositionDetail | null>(null);
   const [chartAnalysis, setChartAnalysis] = useState<PositionChartAnalysis | null>(null);
+  const chartRequestRef = useRef("");
   const [loading, setLoading] = useState(true);
   const [chartLoading, setChartLoading] = useState(true);
   const [chartError, setChartError] = useState("");
@@ -681,13 +1051,20 @@ export function PositionDetailShell({ positionId }: { positionId: string }) {
   async function loadChart(nextTimeframe = timeframe, showSpinner = true) {
     setChartError("");
     if (showSpinner) setChartLoading(true);
+    // 타임프레임/포지션 연속 전환 시 늦게 도착한 이전 응답이 최신 선택을 덮어쓰지 않게,
+    // 마지막으로 발행한 요청만 화면에 반영한다.
+    const requestKey = `${positionId}:${nextTimeframe}`;
+    chartRequestRef.current = requestKey;
     try {
-      setChartAnalysis(await api.positionChartAnalysis(positionId, nextTimeframe));
+      const next = await api.positionChartAnalysis(positionId, nextTimeframe);
+      if (chartRequestRef.current !== requestKey) return;
+      setChartAnalysis(next);
     } catch (err) {
+      if (chartRequestRef.current !== requestKey) return;
       if (showSpinner) setChartAnalysis(null);
       setChartError(err instanceof Error ? err.message : "차트 분석 데이터를 불러오지 못했습니다.");
     } finally {
-      if (showSpinner) setChartLoading(false);
+      if (showSpinner && chartRequestRef.current === requestKey) setChartLoading(false);
     }
   }
 
@@ -1053,11 +1430,13 @@ function headlineForPayload(payload: LivePositionPayload): string {
   return (
     plan?.headline_action ??
     deriveHeadlineAction(plan, payload.position.direction) ??
-    "지금 볼 것: 액션 플랜 근거 부족. 갱신 후 다시 확인."
+    "채점 가능한 구조 없음 — 데이터 표본 축적 중. 참조 존 형성 대기."
   );
 }
 
-function nearestActionTrigger(payload: LivePositionPayload): { distance_pct: number | null } | null {
+function nearestActionTrigger(
+  payload: LivePositionPayload
+): { distance_pct: number | null; distanceLabel: string; price: string; priceValue: number | null; action: string } | null {
   const plan = actionPlanForPayload(payload);
   if (!plan) return null;
   const current = markPriceForPayload(payload);
@@ -1070,9 +1449,20 @@ function nearestActionTrigger(payload: LivePositionPayload): { distance_pct: num
           : typeof item.price === "number" && current !== null
             ? distancePctFromCurrent(item.price, current)
             : null;
-      return derivedDistance === null ? null : { distance_pct: derivedDistance };
+      return derivedDistance === null
+        ? null
+        : {
+            distance_pct: derivedDistance,
+            distanceLabel: formatDistance(derivedDistance),
+            price: formatNullablePrice(item.price),
+            priceValue: typeof item.price === "number" && Number.isFinite(item.price) ? item.price : null,
+            action: item.action || item.basis || "조건 확인"
+          };
     })
-    .filter((item): item is { distance_pct: number } => item !== null);
+    .filter(
+      (item): item is { distance_pct: number; distanceLabel: string; price: string; priceValue: number | null; action: string } =>
+        item !== null
+    );
   if (!candidates.length) return null;
   return candidates.reduce((left, right) => (Math.abs(right.distance_pct) < Math.abs(left.distance_pct) ? right : left));
 }
@@ -1176,6 +1566,16 @@ function actionPlanRows(plan: PositionActionPlan | null) {
       priceValue: null
     });
   }
+  for (const reference of (plan.reference_zones ?? []).slice(0, 3)) {
+    rows.push({
+      kind: "참조",
+      price: `${formatNullablePrice(reference.price)} · ${formatDistance(reference.distance_pct)}`,
+      action: reference.action ?? "알림 미사용 · 수동 참고",
+      basis: reference.basis ?? reference.label ?? "근거 약함 · 참고 전용",
+      tone: "neutral",
+      priceValue: reference.price
+    });
+  }
   if (typeof plan.liquidation?.price === "number") {
     rows.push({
       kind: "청산가",
@@ -1186,7 +1586,7 @@ function actionPlanRows(plan: PositionActionPlan | null) {
       priceValue: plan.liquidation.price
     });
   }
-  return rows.slice(0, 6);
+  return rows.slice(0, 8);
 }
 
 /** 간단 모드에서는 점수 수치를 숨기고 문장 라벨만 남긴다. */
@@ -1233,6 +1633,19 @@ function clamp(value: number, min: number, max: number): number {
 
 function pnlSourceLabel(source: "exchange" | "computed"): string {
   return source === "exchange" ? "거래소" : "계산";
+}
+
+function roeContextLabel(payload: LivePositionPayload): string | null {
+  if (Math.abs(payload.state.pnl_percent) <= 100) return null;
+  const mode = payload.position.margin_mode ? marginModeLabel(payload.position.margin_mode) : "ROE";
+  return `${mode} · -100% 초과 가능`;
+}
+
+function marginModeLabel(mode: string): string {
+  const normalized = mode.toLowerCase();
+  if (normalized.includes("cross")) return "교차";
+  if (normalized.includes("isolated") || normalized.includes("fixed")) return "격리";
+  return mode;
 }
 
 function liquidationMissing(payload: LivePositionPayload): boolean {

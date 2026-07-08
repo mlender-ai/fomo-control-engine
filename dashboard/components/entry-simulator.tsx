@@ -143,6 +143,8 @@ function SimulationResult({ sim, onSave, saving }: { sim: EntrySimulation; onSav
         </div>
       ) : null}
 
+      <KellyReferenceBlock sim={sim} />
+
       {sim.survives_to_invalidation === false ? (
         <div className="simDangerBanner">
           <CircleAlert size={16} />
@@ -181,6 +183,33 @@ function SimulationResult({ sim, onSave, saving }: { sim: EntrySimulation; onSav
         <Bookmark size={16} />
         {saving ? "저장 중" : "시나리오 저장"}
       </button>
+    </div>
+  );
+}
+
+function KellyReferenceBlock({ sim }: { sim: EntrySimulation }) {
+  const kelly = sim.kelly_reference;
+  if (!kelly) return null;
+  if (!kelly.available) {
+    return (
+      <div className="simKellyBlock muted">
+        <strong>켈리 참고치</strong>
+        <span>{kelly.reason ?? "검증된 시그니처 통계 부족"}</span>
+        <small>{kelly.disclaimer}</small>
+      </div>
+    );
+  }
+  return (
+    <div className="simKellyBlock">
+      <div>
+        <strong>하프 켈리 참고 상한</strong>
+        <b>{kelly.half_kelly_fraction_pct?.toFixed(2)}%</b>
+      </div>
+      <span>
+        {kelly.label ?? "동일 시그니처"} · N={kelly.sample_size ?? "-"} · 1R 승률 CI 하한 {kelly.win_rate_ci_low_pct?.toFixed(1)}% · 중앙 손익비 {kelly.median_rr?.toFixed(2)}R
+      </span>
+      <small>{kelly.disclaimer}</small>
+      {kelly.position_sizing_note ? <small>{kelly.position_sizing_note}</small> : null}
     </div>
   );
 }

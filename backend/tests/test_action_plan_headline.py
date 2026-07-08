@@ -157,7 +157,7 @@ def test_headline_falls_back_to_watch_trigger() -> None:
     assert headline.startswith("지금 볼 것: 최다 거래 가격(POC) 108")
 
 
-def test_headline_none_when_no_triggers() -> None:
+def test_headline_standby_when_no_triggers() -> None:
     position = Position(
         symbol="BTCUSDT",
         direction=Direction.long,
@@ -168,7 +168,49 @@ def test_headline_none_when_no_triggers() -> None:
     )
     plan = build_action_plan(position, _snapshot(position, 110.0), _chart_analysis(110.0))
 
-    assert plan["headline_action"] is None
+    assert plan["verdict_state"] == "standby"
+    assert plan["headline_action"].startswith("채점 가능한 구조 없음")
+    assert plan["standby_reason"]
+
+
+def test_reference_zone_uses_weak_level_without_alerting() -> None:
+    position = Position(
+        symbol="BTCUSDT",
+        direction=Direction.long,
+        entry_price=100.0,
+        quantity=1.0,
+        leverage=3,
+        mark_price=110.0,
+    )
+    analysis = _chart_analysis(
+        110.0,
+        support=[{"price": 103.0, "score": 35, "label": "약한 S1"}],
+    )
+    plan = build_action_plan(position, _snapshot(position, 110.0), analysis)
+
+    assert plan["invalidation"] is None
+    assert plan["verdict_state"] == "standby"
+    assert plan["reference_zones"][0]["reference_only"] is True
+    assert plan["reference_zones"][0]["source"] == "weak_structure_level"
+
+
+def test_reference_zone_not_rendered_when_invalidation_exists() -> None:
+    position = Position(
+        symbol="BTCUSDT",
+        direction=Direction.long,
+        entry_price=100.0,
+        quantity=1.0,
+        leverage=3,
+        mark_price=110.0,
+    )
+    analysis = _chart_analysis(
+        110.0,
+        support=[{"price": 103.0, "score": 55, "label": "유효 S1"}],
+    )
+    plan = build_action_plan(position, _snapshot(position, 110.0), analysis)
+
+    assert plan["invalidation"] is not None
+    assert plan["reference_zones"] == []
 
 
 def test_derivative_watch_triggers_are_not_hidden_by_volume_triggers() -> None:

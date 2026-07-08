@@ -233,6 +233,9 @@ export type PositionActionPlanItem = {
   basis: string;
   distance_pct: number | null;
   action: string;
+  label?: string;
+  source?: string;
+  reference_only?: boolean;
 };
 
 export type PositionWatchTrigger = {
@@ -247,10 +250,13 @@ export type PositionActionPlan = {
   engine_invalidation: PositionActionPlanItem | null;
   take_profit: PositionActionPlanItem[];
   watch_triggers: PositionWatchTrigger[];
+  reference_zones?: PositionActionPlanItem[];
   liquidation: {
     price: number | null;
     warning: string | null;
   };
+  verdict_state?: "holding" | "weakening" | "danger" | "standby" | string;
+  standby_reason?: string | null;
   headline_action?: string | null;
 };
 
@@ -600,8 +606,10 @@ export type ScoutScanRow = {
   as_of?: string;
   note?: string;
   error?: string;
-  long_score?: number;
-  short_score?: number;
+  long_score?: number | null;
+  short_score?: number | null;
+  long_evidence_count?: number;
+  short_evidence_count?: number;
   wyckoff_phase?: string;
   top_event?: { label: string; confidence: number } | null;
   harmonic_active?: boolean;
@@ -659,11 +667,15 @@ export type BacktestStat = {
   scope?: string;
   sample_size: number;
   win_1r_pct: number | null;
+  win_1r_ci?: [number, number] | null;
   win_2r_pct: number | null;
   median_rr: number | null;
   avg_mfe_r: number | null;
   avg_mae_r: number | null;
   avg_resolution_bars?: number | null;
+  unstable?: boolean | null;
+  lifecycle_state?: "candidate" | "validated" | "degraded" | "quarantined" | string | null;
+  lifecycle_note?: string | null;
   sample_warning?: string | null;
   disclaimer: string;
   cases: BacktestCase[];
@@ -745,6 +757,7 @@ export type UniverseDiscovery = {
   gate_reasons: Array<{ code: string; passed: boolean; value?: unknown; threshold?: unknown }>;
   confidence: number | null;
   win_1r_pct: number | null;
+  win_1r_ci?: [number, number] | null;
   sample_size: number | null;
   quote_volume_24h: number | null;
   current_price: number | null;
@@ -803,6 +816,25 @@ export type EntrySimulation = {
   analysis_as_of?: string;
   analyst_briefing?: AnalystBriefing | null;
   briefing_direction_conflict?: boolean;
+  kelly_reference?: KellyReference | null;
+};
+
+export type KellyReference = {
+  available: boolean;
+  published: boolean;
+  reason?: string;
+  disclaimer: string;
+  basis?: string;
+  signature_key?: string | null;
+  label?: string;
+  sample_size?: number;
+  win_rate_ci_low_pct?: number;
+  median_rr?: number;
+  kelly_fraction_pct?: number;
+  half_kelly_fraction_pct?: number;
+  state?: string;
+  input_margin_usdt?: number;
+  position_sizing_note?: string;
 };
 
 export type EntryScenario = {
@@ -1137,7 +1169,26 @@ export type CalibrationSuggestion = {
   rationale: string;
   proposed_change: Record<string, unknown>;
   sample_size: number;
-  status: "pending" | "approved" | "rejected";
+  status:
+    | "pending"
+    | "scheduled"
+    | "experiment"
+    | "adopted"
+    | "approved"
+    | "rejected"
+    | "vetoed"
+    | "discarded"
+    | "dwell_blocked"
+    | "rolled_back";
+  autonomy?: Record<string, unknown>;
+  // WO-36 §4: 제안 근거가 검증기간(OOS)에서도 성립하는지 — 승인 화면 필수 첨부.
+  oos_validation?: {
+    split_ratio?: number;
+    train?: { sample_size?: number; rate_pct?: number | null };
+    validation?: { sample_size?: number; rate_pct?: number | null };
+    holds_in_validation?: boolean;
+    sample_state?: string;
+  } | null;
   created_at: string;
   updated_at: string;
 };
@@ -1149,6 +1200,8 @@ export type EngineParamVersion = {
   new_value: unknown;
   suggestion_id: string | null;
   status: "active" | "superseded";
+  adopted_by?: "manual" | "autonomy" | "rollback" | string;
+  metadata?: Record<string, unknown>;
   approved_at: string;
   created_at: string;
 };
@@ -1168,10 +1221,52 @@ export type CalibrationSummary = {
   briefing_performance?: Record<string, unknown>;
   wyckoff_confidence: Array<Record<string, unknown>>;
   suggestion_status_counts?: Record<string, number>;
+  autonomy?: Record<string, unknown>;
   weekly_report?: Record<string, unknown>;
   engine_params?: EngineParamVersion[];
   suggestions: CalibrationSuggestion[];
   sample_warning: string;
+};
+
+export type PerformanceMetrics = {
+  sample_size: number;
+  sample_sufficient: boolean;
+  sample_warning?: string | null;
+  gross_profit_usdt: number;
+  gross_loss_usdt: number;
+  net_profit_usdt: number;
+  profit_factor: number | null;
+  profit_factor_refs?: Record<string, number>;
+  win_rate_pct: number | null;
+  avg_win_usdt: number | null;
+  avg_loss_usdt: number | null;
+  payoff_ratio: number | null;
+  avg_r: number | null;
+  avg_r_method?: string;
+  max_drawdown_pct: number | null;
+  max_drawdown_usdt: number | null;
+  max_drawdown_period?: Record<string, string | null>;
+  longest_recovery_days: number;
+  annualized_return_pct: number | null;
+  calmar: number | null;
+  calmar_published: boolean;
+  sharpe: number | null;
+  sortino: number | null;
+  recovery_factor: number | null;
+  risk_of_ruin: Record<string, unknown>;
+  warnings: string[];
+};
+
+export type PerformanceSummary = {
+  as_of: string;
+  sample_floor: number;
+  capital_base_usdt: number;
+  disclaimer: string;
+  overall: PerformanceMetrics;
+  equity_curve: Array<Record<string, unknown>>;
+  breakdowns: Record<string, Record<string, PerformanceMetrics>>;
+  mdd_guard: Record<string, unknown>;
+  scoreboard_cross_view: Record<string, unknown>;
 };
 
 export type MarketSummary = {
@@ -1484,6 +1579,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload)
     }),
+  performance: () => request<PerformanceSummary>("/api/performance"),
   saveScenario: (payload: { symbol: string; direction: "long" | "short"; entry_price: number; leverage: number; margin_usdt?: number | null; margin_mode?: string; timeframe?: string; note?: string }) =>
     request<{ scenario: EntryScenario }>("/api/scout/scenarios", {
       method: "POST",
@@ -1539,8 +1635,16 @@ export const api = {
     request<CalibrationSuggestion>(`/api/review/calibration/suggestions/${suggestionId}/approve`, {
       method: "POST"
     }),
+  vetoCalibrationSuggestion: (suggestionId: string) =>
+    request<CalibrationSuggestion>(`/api/review/calibration/suggestions/${suggestionId}/veto`, {
+      method: "POST"
+    }),
   rejectCalibrationSuggestion: (suggestionId: string) =>
     request<CalibrationSuggestion>(`/api/review/calibration/suggestions/${suggestionId}/reject`, {
+      method: "POST"
+    }),
+  approveSignatureRecovery: (signatureKey: string) =>
+    request<Record<string, unknown>>(`/api/review/signatures/${encodeURIComponent(signatureKey)}/recover`, {
       method: "POST"
     }),
   updateTradeMemo: (tradeId: string, memo: string) =>

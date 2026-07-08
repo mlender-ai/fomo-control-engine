@@ -6,6 +6,7 @@ import {
   Activity,
   FileClock,
   Gauge,
+  LineChart,
   Radar,
   Settings,
   SlidersHorizontal,
@@ -26,7 +27,8 @@ const sections = [
     heading: "복기",
     items: [
       { href: "/trades", label: "거래 복기", icon: FileClock, shortcut: "G T" },
-      { href: "/calibration", label: "판단 성적표", icon: SlidersHorizontal, shortcut: "G C" }
+      { href: "/calibration", label: "판단 성적표", icon: SlidersHorizontal, shortcut: "G C" },
+      { href: "/performance", label: "계좌 성적표", icon: LineChart, shortcut: "G A" }
     ]
   },
   {

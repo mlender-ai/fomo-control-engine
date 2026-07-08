@@ -23,6 +23,7 @@ def get_worker_status() -> dict[str, Any]:
                 "database_backup": {"status": "not_started"},
                 "detect_closures": {"status": "not_started"},
                 "evaluate_alerts": {"status": "not_started"},
+                "evaluate_performance_alerts": {"status": "not_started"},
                 "daily_summary": {"status": "not_started"},
                 "weekly_calibration_report": {"status": "not_started"},
                 "interim_scoring": {"status": "not_started"},

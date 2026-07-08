@@ -37,6 +37,8 @@ from app.review.engine import (
     generate_calibration_suggestions,
     score_interim_judgments,
 )
+from app.review.autonomy import process_parameter_autonomy, veto_suggestion
+from app.validation.decay import build_self_audit, run_decay_sweep
 from app.review.alert_responses import (
     alert_history_line,
     detect_alert_response,
@@ -642,9 +644,14 @@ def calibration_snapshot() -> dict[str, Any]:
     for suggestion in generate_calibration_suggestions(scores):
         if runtime.repository.get_calibration_suggestion(suggestion.id) is None:
             runtime.repository.add_calibration_suggestion(suggestion)
+    suggestions = process_parameter_autonomy(
+        runtime.settings,
+        runtime.repository,
+        runtime.repository.list_calibration_suggestions(limit=100),
+    )
     return build_calibration_summary(
         scores,
-        runtime.repository.list_calibration_suggestions(limit=100),
+        suggestions,
         runtime.repository.list_alert_responses(limit=2000),
     )
 
@@ -654,11 +661,43 @@ def weekly_calibration_report() -> dict[str, Any]:
     for suggestion in generate_calibration_suggestions(scores):
         if runtime.repository.get_calibration_suggestion(suggestion.id) is None:
             runtime.repository.add_calibration_suggestion(suggestion)
-    return build_weekly_calibration_report(
-        scores,
+    suggestions = process_parameter_autonomy(
+        runtime.settings,
+        runtime.repository,
         runtime.repository.list_calibration_suggestions(limit=100),
-        runtime.repository.list_alert_responses(limit=2000),
     )
+    # WO-37: 주간 부패 스윕 (자율 강등/격리 + 복귀 제안) → 셀프 오딧 첨부.
+    sweep = run_decay_sweep(runtime.repository, runtime.settings)
+    self_audit = build_self_audit(runtime.repository, sweep=sweep)
+    payload = build_weekly_calibration_report(
+        scores,
+        suggestions,
+        runtime.repository.list_alert_responses(limit=2000),
+        self_audit=self_audit,
+    )
+    payload["performance"] = performance_summary()
+    return payload
+
+
+def veto_calibration_suggestion(suggestion_id: str) -> dict[str, Any]:
+    suggestion = veto_suggestion(runtime.repository, UUID(str(suggestion_id)))
+    return suggestion.model_dump(mode="json")
+
+
+def calibration_experiments() -> dict[str, Any]:
+    payload = calibration_snapshot()
+    return {
+        "autonomy": payload.get("autonomy", {}),
+        "suggestions": [
+            item
+            for item in payload.get("suggestions", [])
+            if item.get("status") in {"scheduled", "experiment"}
+        ],
+    }
+
+
+def performance_summary() -> dict[str, Any]:
+    return runtime.performance_summary()
 
 
 def _attach_scout_previews(payload: dict[str, Any]) -> dict[str, Any]:

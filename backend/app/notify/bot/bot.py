@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from html import escape
 from typing import Any, Awaitable, Callable
 
 from app.core.config import Settings
@@ -15,6 +16,7 @@ from app.notify.bot.formatters import (
     format_help,
     format_entry_intents,
     format_insight,
+    format_performance,
     format_position_verdict,
     format_positions_summary,
     format_reviews,
@@ -131,6 +133,15 @@ class TelegramBotSupervisor:
         async def calib(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await guarded(update, self._calib, context)
 
+        async def perf(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+            await guarded(update, self._perf, context)
+
+        async def veto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+            await guarded(update, self._veto, context)
+
+        async def experiments(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+            await guarded(update, self._experiments, context)
+
         async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await guarded(update, self._status, context)
 
@@ -156,6 +167,9 @@ class TelegramBotSupervisor:
         app.add_handler(CommandHandler("sim", sim))
         app.add_handler(CommandHandler("review", review))
         app.add_handler(CommandHandler("calib", calib))
+        app.add_handler(CommandHandler("perf", perf))
+        app.add_handler(CommandHandler("veto", veto))
+        app.add_handler(CommandHandler("experiments", experiments))
         app.add_handler(CommandHandler("status", status))
         app.add_handler(CommandHandler("mute", mute))
         app.add_handler(CommandHandler("unmute", unmute))
@@ -257,6 +271,26 @@ class TelegramBotSupervisor:
     async def _calib(self, update: Any, context: Any) -> None:
         payload = await self._run(service.weekly_calibration_report)
         await self._reply(update.effective_message, format_weekly_calibration(payload))
+
+    async def _perf(self, update: Any, context: Any) -> None:
+        payload = await self._run(service.performance_summary)
+        await self._reply(update.effective_message, format_performance(payload))
+
+    async def _veto(self, update: Any, context: Any) -> None:
+        suggestion_id = _first_arg(context.args)
+        if not suggestion_id:
+            await self._reply(update.effective_message, "사용법: /veto <suggestion_id>")
+            return
+        try:
+            suggestion = await self._run(service.veto_calibration_suggestion, suggestion_id)
+        except Exception:
+            await self._reply(update.effective_message, "거부권 처리 실패: 제안 ID를 확인해주세요.")
+            return
+        await self._reply(update.effective_message, f"거부권 처리 완료: {suggestion.get('title', suggestion_id)}")
+
+    async def _experiments(self, update: Any, context: Any) -> None:
+        payload = await self._run(service.calibration_experiments)
+        await self._reply(update.effective_message, _format_experiments(payload))
 
     async def _status(self, update: Any, context: Any) -> None:
         payload = get_worker_status()
@@ -580,6 +614,28 @@ def _candidate_rows(candidates: list[dict[str, Any]]) -> list[list[dict[str, str
         for item in candidates[:8]
     ]
     return [buttons[index : index + 2] for index in range(0, len(buttons), 2)]
+
+
+def _format_experiments(payload: dict[str, Any]) -> str:
+    autonomy = payload.get("autonomy") if isinstance(payload.get("autonomy"), dict) else {}
+    suggestions = payload.get("suggestions") if isinstance(payload.get("suggestions"), list) else []
+    lines = [
+        "<b>파라미터 자율 피드</b>",
+        f"예정 {autonomy.get('scheduled', 0)}건 · 실험 {autonomy.get('experiments', 0)}건 · 자율 적용 {autonomy.get('autonomy_adopted', 0)}건",
+    ]
+    if not suggestions:
+        lines.append("현재 거부권 대기 또는 섀도 실험 중인 항목이 없습니다.")
+        return "\n".join(lines)
+    for item in suggestions[:8]:
+        if not isinstance(item, dict):
+            continue
+        meta = item.get("autonomy") if isinstance(item.get("autonomy"), dict) else {}
+        lines.append(
+            "• "
+            f"{escape(str(item.get('title', '-')))} · {escape(str(item.get('status', '-')))} · "
+            f"{escape(str(meta.get('change_direction', '-')))} · /veto {escape(str(item.get('id', '')))}"
+        )
+    return "\n".join(lines)
 
 
 def _insight_keyboard_rows(payload: dict[str, Any]) -> list[list[dict[str, str]]]:

@@ -176,6 +176,10 @@ class WorkerManager:
             "evaluate_alerts",
             lambda: self.alerts.evaluate_positions(payload.get("positions", [])),
         )
+        await self._run_hook(
+            "evaluate_performance_alerts",
+            lambda: self.alerts.evaluate_performance(service.performance_summary()),
+        )
         await self._run_hook("daily_summary", lambda: self.alerts.maybe_send_daily_summary(payload))
         return {
             "open_count": payload.get("open_count"),
@@ -283,6 +287,12 @@ class WorkerManager:
             ),
             "evaluate_alerts": WorkerJob(
                 "evaluate_alerts",
+                self.settings.worker_sync_positions_interval_seconds,
+                None,
+                scheduled=False,
+            ),
+            "evaluate_performance_alerts": WorkerJob(
+                "evaluate_performance_alerts",
                 self.settings.worker_sync_positions_interval_seconds,
                 None,
                 scheduled=False,

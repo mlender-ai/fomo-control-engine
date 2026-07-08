@@ -372,6 +372,86 @@ class Settings(BaseSettings):
         10,
         validation_alias=AliasChoices("FCE_BACKTEST_SAMPLE_FLOOR", "BACKTEST_SAMPLE_FLOOR"),
     )
+    backtest_taker_fee_pct: float = Field(
+        0.06,
+        validation_alias=AliasChoices("FCE_BACKTEST_TAKER_FEE_PCT", "BACKTEST_TAKER_FEE_PCT"),
+    )
+    backtest_slippage_crypto_pct: float = Field(
+        0.03,
+        validation_alias=AliasChoices("FCE_BACKTEST_SLIPPAGE_CRYPTO_PCT", "BACKTEST_SLIPPAGE_CRYPTO_PCT"),
+    )
+    backtest_slippage_stock_pct: float = Field(
+        0.08,
+        validation_alias=AliasChoices("FCE_BACKTEST_SLIPPAGE_STOCK_PCT", "BACKTEST_SLIPPAGE_STOCK_PCT"),
+    )
+    backtest_slippage_index_pct: float = Field(
+        0.05,
+        validation_alias=AliasChoices("FCE_BACKTEST_SLIPPAGE_INDEX_PCT", "BACKTEST_SLIPPAGE_INDEX_PCT"),
+    )
+    backtest_slippage_shallow_extra_pct: float = Field(
+        0.05,
+        validation_alias=AliasChoices("FCE_BACKTEST_SLIPPAGE_SHALLOW_EXTRA_PCT", "BACKTEST_SLIPPAGE_SHALLOW_EXTRA_PCT"),
+    )
+    backtest_shallow_quote_volume_24h: float = Field(
+        3_000_000.0,
+        validation_alias=AliasChoices("FCE_BACKTEST_SHALLOW_QUOTE_VOLUME_24H", "BACKTEST_SHALLOW_QUOTE_VOLUME_24H"),
+    )
+    backtest_data_quality_floor: int = Field(
+        70,
+        validation_alias=AliasChoices("FCE_BACKTEST_DATA_QUALITY_FLOOR", "BACKTEST_DATA_QUALITY_FLOOR"),
+    )
+    backtest_cache_ttl_hours: int = Field(
+        24,
+        validation_alias=AliasChoices("FCE_BACKTEST_CACHE_TTL_HOURS", "BACKTEST_CACHE_TTL_HOURS"),
+    )
+    backtest_bootstrap_iterations: int = Field(
+        1000,
+        validation_alias=AliasChoices("FCE_BACKTEST_BOOTSTRAP_ITERATIONS", "BACKTEST_BOOTSTRAP_ITERATIONS"),
+    )
+    backtest_ci_confidence: float = Field(
+        0.95,
+        validation_alias=AliasChoices("FCE_BACKTEST_CI_CONFIDENCE", "BACKTEST_CI_CONFIDENCE"),
+    )
+    backtest_oos_validation_ratio: float = Field(
+        0.30,
+        validation_alias=AliasChoices("FCE_BACKTEST_OOS_VALIDATION_RATIO", "BACKTEST_OOS_VALIDATION_RATIO"),
+    )
+    backtest_oos_unstable_gap_pct: float = Field(
+        15.0,
+        validation_alias=AliasChoices("FCE_BACKTEST_OOS_UNSTABLE_GAP_PCT", "BACKTEST_OOS_UNSTABLE_GAP_PCT"),
+    )
+    backtest_walk_forward_window_days: int = Field(
+        180,
+        validation_alias=AliasChoices("FCE_BACKTEST_WALK_FORWARD_WINDOW_DAYS", "BACKTEST_WALK_FORWARD_WINDOW_DAYS"),
+    )
+    backtest_walk_forward_step_days: int = Field(
+        60,
+        validation_alias=AliasChoices("FCE_BACKTEST_WALK_FORWARD_STEP_DAYS", "BACKTEST_WALK_FORWARD_STEP_DAYS"),
+    )
+    backtest_overlap_threshold: float = Field(
+        0.7,
+        validation_alias=AliasChoices("FCE_BACKTEST_OVERLAP_THRESHOLD", "BACKTEST_OVERLAP_THRESHOLD"),
+    )
+    regime_ma_period: int = Field(
+        200,
+        validation_alias=AliasChoices("FCE_REGIME_MA_PERIOD", "REGIME_MA_PERIOD"),
+    )
+    regime_ma_slope_window: int = Field(
+        20,
+        validation_alias=AliasChoices("FCE_REGIME_MA_SLOPE_WINDOW", "REGIME_MA_SLOPE_WINDOW"),
+    )
+    regime_ma_slope_threshold_pct: float = Field(
+        1.0,
+        validation_alias=AliasChoices("FCE_REGIME_MA_SLOPE_THRESHOLD_PCT", "REGIME_MA_SLOPE_THRESHOLD_PCT"),
+    )
+    regime_atr_lookback: int = Field(
+        120,
+        validation_alias=AliasChoices("FCE_REGIME_ATR_LOOKBACK", "REGIME_ATR_LOOKBACK"),
+    )
+    regime_atr_high_percentile: float = Field(
+        70.0,
+        validation_alias=AliasChoices("FCE_REGIME_ATR_HIGH_PERCENTILE", "REGIME_ATR_HIGH_PERCENTILE"),
+    )
     universe_scanner_enabled: bool = Field(
         True,
         validation_alias=AliasChoices("FCE_UNIVERSE_SCANNER_ENABLED", "UNIVERSE_SCANNER_ENABLED"),
@@ -410,6 +490,31 @@ class Settings(BaseSettings):
     universe_backtest_min_win_1r_pct: float = Field(
         55.0,
         validation_alias=AliasChoices("FCE_UNIVERSE_BACKTEST_MIN_WIN_1R_PCT", "UNIVERSE_BACKTEST_MIN_WIN_1R_PCT"),
+    )
+    universe_backtest_min_ci_low_pct: float = Field(
+        50.0,
+        validation_alias=AliasChoices("FCE_UNIVERSE_BACKTEST_MIN_CI_LOW_PCT", "UNIVERSE_BACKTEST_MIN_CI_LOW_PCT"),
+    )
+    # WO-37 자율 검증 루프 — 비대칭 자율 (강등/격리 자율, 승격/복귀 제안-승인).
+    autonomy_enabled: bool = Field(
+        True,
+        validation_alias=AliasChoices("FCE_AUTONOMY_ENABLED", "AUTONOMY_ENABLED"),
+    )
+    autonomy_weekly_transition_cap: int = Field(
+        5,
+        validation_alias=AliasChoices("FCE_AUTONOMY_WEEKLY_TRANSITION_CAP", "AUTONOMY_WEEKLY_TRANSITION_CAP"),
+    )
+    decay_live_divergence_pct: float = Field(
+        20.0,
+        validation_alias=AliasChoices("FCE_DECAY_LIVE_DIVERGENCE_PCT", "DECAY_LIVE_DIVERGENCE_PCT"),
+    )
+    decay_live_min_sample: int = Field(
+        15,
+        validation_alias=AliasChoices("FCE_DECAY_LIVE_MIN_SAMPLE", "DECAY_LIVE_MIN_SAMPLE"),
+    )
+    signature_validated_min_sample: int = Field(
+        30,
+        validation_alias=AliasChoices("FCE_SIGNATURE_VALIDATED_MIN_SAMPLE", "SIGNATURE_VALIDATED_MIN_SAMPLE"),
     )
     universe_daily_alert_limit: int = Field(
         3,
@@ -499,7 +604,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("FCE_TELEGRAM_QUIET_HOURS_TIMEZONE", "TELEGRAM_QUIET_HOURS_TIMEZONE"),
     )
     alert_rules_enabled: str = Field(
-        "trigger_near,invalidation_breach,take_profit_hit,status_worsened,health_drop,liq_proximity,liq_unknown_high_lev,wyckoff_event,data_stall,funding_extreme,oi_divergence,liq_cluster_near,setup_near,setup_triggered,setup_invalidated,intent_approaching,intent_zone_entered,intent_zone_entered_partial,intent_invalidated,universe_discovery",
+        "trigger_near,invalidation_breach,take_profit_hit,status_worsened,health_drop,liq_proximity,liq_unknown_high_lev,wyckoff_event,data_stall,funding_extreme,oi_divergence,liq_cluster_near,setup_near,setup_triggered,setup_invalidated,intent_approaching,intent_zone_entered,intent_zone_entered_partial,intent_invalidated,universe_discovery,mdd_limit_warn,mdd_limit_critical",
         validation_alias=AliasChoices("FCE_ALERT_RULES_ENABLED", "ALERT_RULES_ENABLED"),
     )
     alert_trigger_near_pct: float = Field(
@@ -560,6 +665,18 @@ class Settings(BaseSettings):
             "FCE_INSIGHT_MIN_REGENERATION_INTERVAL_MINUTES",
             "INSIGHT_MIN_REGENERATION_INTERVAL_MINUTES",
         ),
+    )
+    param_autonomy_enabled: bool = Field(
+        True,
+        validation_alias=AliasChoices("FCE_PARAM_AUTONOMY_ENABLED", "PARAM_AUTONOMY_ENABLED"),
+    )
+    performance_capital_base_usdt: float = Field(
+        10000.0,
+        validation_alias=AliasChoices("FCE_PERFORMANCE_CAPITAL_BASE_USDT", "PERFORMANCE_CAPITAL_BASE_USDT"),
+    )
+    performance_monthly_mdd_limit_pct: float = Field(
+        0.0,
+        validation_alias=AliasChoices("FCE_PERFORMANCE_MONTHLY_MDD_LIMIT_PCT", "PERFORMANCE_MONTHLY_MDD_LIMIT_PCT"),
     )
 
     model_config = SettingsConfigDict(

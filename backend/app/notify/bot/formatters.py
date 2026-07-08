@@ -121,6 +121,9 @@ def format_help() -> str:
             "/sim BASED long 10 [0.09] — 진입 시뮬레이션",
             "/review — 최근 복기 3건",
             "/calib — 캘리브레이션 스냅샷",
+            "/perf — 계좌 성과 요약",
+            "/experiments — 파라미터 자율 예정·섀도 실험",
+            "/veto ID — 파라미터 자율 채택 거부",
             "/status — 워커·알림 상태",
             "/mute 2h / /unmute — 알림 일시 무음",
         ]
@@ -326,13 +329,15 @@ def format_calibration(payload: dict[str, Any]) -> str:
     take_profit = payload.get("take_profit", {})
     confidence_curve = payload.get("confidence_curve", [])
     status_counts = payload.get("suggestion_status_counts", {})
+    autonomy = payload.get("autonomy", {})
     warning = payload.get("sample_warning", "표본 부족 구간은 결론을 내리지 않습니다.")
     lines = [
         "<b>캘리브레이션</b>",
         f"전체 판단 N={totals.get('total', 0)} · 검증 {totals.get('tested', 0)} · 적중률 {_nullable_pct(totals.get('accuracy_pct'))}",
         f"무효화 N={invalidation.get('total', 0)} · 적중률 {_nullable_pct(invalidation.get('accuracy_pct'))}",
         f"익절 N={take_profit.get('total', 0)} · 도달률 {_nullable_pct(take_profit.get('reach_rate_pct'))}",
-        f"대기 제안 {status_counts.get('pending', 0)}건 · 승인 {status_counts.get('approved', 0)}건",
+        f"예정 {status_counts.get('scheduled', 0)}건 · 실험 {status_counts.get('experiment', 0)}건 · 자율 적용 {status_counts.get('adopted', 0)}건",
+        f"거부권 창 {autonomy.get('veto_window_hours', 48)}h · /veto <id> 로 차단",
     ]
     if confidence_curve:
         lines.append("신뢰도 곡선")
@@ -355,9 +360,11 @@ def format_weekly_calibration(payload: dict[str, Any]) -> str:
     overconfident = [
         item for item in curve if isinstance(item, dict) and item.get("calibration_state") == "overconfident" and int(item.get("tested") or 0) >= 10
     ]
+    totals_ci = totals.get("accuracy_ci")
+    ci_text = f" (CI {totals_ci[0]}~{totals_ci[1]}%)" if isinstance(totals_ci, list) and len(totals_ci) == 2 else ""
     lines = [
         "<b>주간 판단 성적표</b>",
-        f"{escape(str(period.get('label', '최근 7일')))} · 검증 N={totals.get('tested', 0)} · 적중률 {_nullable_pct(totals.get('accuracy_pct'))}",
+        f"{escape(str(period.get('label', '최근 7일')))} · 검증 N={totals.get('tested', 0)} · 적중률 {_nullable_pct(totals.get('accuracy_pct'))}{ci_text}",
     ]
     if highlights:
         lines.extend(f"• {escape(item)}" for item in highlights[:3])
@@ -392,14 +399,92 @@ def format_weekly_calibration(payload: dict[str, Any]) -> str:
             "브리핑 성적: "
             f"N={briefing.get('total', 0)} · 검증 {summary.get('tested', 0)} · 적중률 {_nullable_pct(summary.get('accuracy_pct'))}"
         )
-    pending = payload.get("pending_suggestions", [])
-    if pending:
+    performance = payload.get("performance") if isinstance(payload.get("performance"), dict) else {}
+    overall = performance.get("overall") if isinstance(performance.get("overall"), dict) else {}
+    if overall:
+        lines.append(
+            "계좌 성과: "
+            f"N={overall.get('sample_size', 0)} · 순손익 {_number(overall.get('net_profit_usdt'))} USDT · "
+            f"MDD {_signed_pct(overall.get('max_drawdown_pct'))} · PF {escape(str(overall.get('profit_factor') if overall.get('profit_factor') is not None else '유보'))}"
+        )
+    scheduled = payload.get("scheduled_suggestions", [])
+    experiments = payload.get("experiment_suggestions", [])
+    if scheduled or experiments:
         lines.append("")
-        lines.append(f"대기 제안 {payload.get('pending_suggestions_count', len(pending))}건")
-        for suggestion in pending[:3]:
-            lines.append(f"• {escape(suggestion.get('title', '-'))} · N={suggestion.get('sample_size', 0)}")
+        if scheduled:
+            lines.append(f"거부권 대기 {payload.get('scheduled_suggestions_count', len(scheduled))}건")
+            for suggestion in scheduled[:3]:
+                deadline = suggestion.get("autonomy", {}).get("veto_deadline_at") if isinstance(suggestion.get("autonomy"), dict) else None
+                lines.append(f"• {escape(suggestion.get('title', '-'))} · N={suggestion.get('sample_size', 0)} · /veto {escape(str(suggestion.get('id', '')))} · 기한 {escape(str(deadline or '-'))}")
+        if experiments:
+            lines.append(f"섀도 실험 {payload.get('experiment_suggestions_count', len(experiments))}건")
+            for suggestion in experiments[:3]:
+                lines.append(f"• {escape(suggestion.get('title', '-'))} · N={suggestion.get('sample_size', 0)}")
+    audit = payload.get("self_audit") if isinstance(payload.get("self_audit"), dict) else {}
+    if audit:
+        lines.extend(_format_self_audit(audit))
     lines.append("")
     lines.append(escape(payload.get("sample_warning") or "표본 N < 10 구간은 결론을 보류합니다."))
+    return "\n".join(lines)
+
+
+def _format_self_audit(audit: dict[str, Any]) -> list[str]:
+    """WO-37 셀프 오딧 — 자율/승인 2단 가시화."""
+    lines = ["", "<b>자율 검증 리포트</b>"]
+    if audit.get("critical"):
+        lines.append("🚨 전 시그니처 격리 — 엔진 전면 불신 상태 · 신규 자율 강등 동결")
+    did = audit.get("engine_did_autonomously") if isinstance(audit.get("engine_did_autonomously"), dict) else {}
+    waiting = audit.get("awaiting_approval") if isinstance(audit.get("awaiting_approval"), dict) else {}
+    lines.append(f"■ {escape(str(did.get('label', '엔진이 스스로 한 일')))} ({did.get('count', 0)}건)")
+    for row in (did.get("transitions") or [])[:5]:
+        regime = f" · {escape(str(row.get('regime')))} 한정" if row.get("regime") else ""
+        lines.append(
+            f"• {escape(str(row.get('signature_key', '-')))}: {escape(str(row.get('from')))}→{escape(str(row.get('to')))}{regime} ({escape(str(row.get('reason', '-')))})"
+        )
+    if not (did.get("transitions") or []):
+        lines.append("• 이번 주 자율 전이 없음")
+    lines.append(f"■ {escape(str(waiting.get('label', '승인 대기 중인 일')))} ({waiting.get('count', 0)}건)")
+    for row in (waiting.get("transitions") or [])[:5]:
+        lines.append(f"• {escape(str(row.get('signature_key', '-')))}: {escape(str(row.get('transition', '-')))} ({escape(str(row.get('reason', '-')))})")
+    pending = waiting.get("recovery_pending") or []
+    if pending:
+        lines.append(f"• 복귀 제안 대기 {len(pending)}건: {escape(', '.join(str(k) for k in pending[:3]))}")
+    if not (waiting.get("transitions") or []) and not pending:
+        lines.append("• 승인 대기 항목 없음")
+    meta = audit.get("meta_integrity") if isinstance(audit.get("meta_integrity"), dict) else {}
+    if meta.get("misjudgment_rate_pct") is not None:
+        lines.append(f"자율 강등 오판율: {_nullable_pct(meta.get('misjudgment_rate_pct'))} (N={meta.get('autonomous_downgrades', 0)})")
+    return lines
+
+
+def format_performance(payload: dict[str, Any]) -> str:
+    overall = payload.get("overall") if isinstance(payload.get("overall"), dict) else {}
+    guard = payload.get("mdd_guard") if isinstance(payload.get("mdd_guard"), dict) else {}
+    cross = payload.get("scoreboard_cross_view") if isinstance(payload.get("scoreboard_cross_view"), dict) else {}
+    ruin = overall.get("risk_of_ruin") if isinstance(overall.get("risk_of_ruin"), dict) else {}
+    warnings = [str(item) for item in overall.get("warnings", []) if item]
+    lines = [
+        "<b>계좌 성과</b>",
+        f"기준 {_time(payload.get('as_of'))} · 종료 거래 N={overall.get('sample_size', 0)}",
+        f"순손익 {_number(overall.get('net_profit_usdt'))} USDT · 승률 {_nullable_pct(overall.get('win_rate_pct'))} · 평균 R {escape(str(overall.get('avg_r') if overall.get('avg_r') is not None else '-'))}",
+        f"PF {escape(str(overall.get('profit_factor') if overall.get('profit_factor') is not None else '유보'))} · MDD {_signed_pct(overall.get('max_drawdown_pct'))} · Sortino {escape(str(overall.get('sortino') if overall.get('sortino') is not None else '유보'))}",
+        f"리커버리 {escape(str(overall.get('recovery_factor') if overall.get('recovery_factor') is not None else '유보'))} · 파산확률 {_nullable_pct(ruin.get('probability_pct') if ruin.get('published') else None)}",
+    ]
+    if guard.get("configured"):
+        lines.append(
+            f"월 MDD 한도 {guard.get('limit_pct')}% · 사용률 {guard.get('usage_pct')}% · {escape(str(guard.get('status', '-')))}"
+        )
+    else:
+        lines.append("월 MDD 한도: 미설정")
+    lines.append(
+        f"3성적표: 엔진 적중·계좌 손실 {cross.get('engine_right_but_account_lost', 0)}건 · "
+        f"엔진 오판 우세 {cross.get('engine_wrong_dominant', 0)}건 · 셋업 경유 {cross.get('setup_linked_trades', 0)}건"
+    )
+    if warnings:
+        lines.append("")
+        lines.extend(f"주의: {escape(item)}" for item in warnings[:3])
+    lines.append("")
+    lines.append(escape(str(payload.get("disclaimer") or "성과 지표는 표본과 기준 자본을 함께 봐야 합니다.")))
     return "\n".join(lines)
 
 
@@ -462,7 +547,7 @@ def _headline(payload: dict[str, Any]) -> str:
     plan = _plan(payload)
     if plan and plan.get("headline_action"):
         return str(plan["headline_action"])
-    return "지금 볼 것: 액션 플랜 근거를 확인하세요."
+    return "채점 가능한 구조 없음 — 데이터 표본 축적 중. 참조 존 형성 대기."
 
 
 def _freshness(payload: dict[str, Any]) -> str:

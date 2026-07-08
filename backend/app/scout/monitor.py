@@ -5,6 +5,7 @@ from html import escape
 from typing import Any
 from uuid import UUID, NAMESPACE_URL, uuid5
 
+from app.backtest.statistics import format_stat_line
 from app.core.config import Settings
 from app.db.models import (
     ArmedSetup,
@@ -1048,9 +1049,15 @@ def _row_backtest_summary(row: dict[str, Any]) -> str | None:
         return None
     stat = stats[0]
     n = int(stat.get("sample_size") or 0)
-    if n < 10:
-        return f"백테스트: 과거 {n}회 · 표본 부족 — 결론 유보" if n > 0 else None
-    return f"백테스트: 동일 시그니처 과거 {n}회 · 1R {stat.get('win_1r_pct')}% · 중앙 {stat.get('median_rr')}R"
+    if n <= 0:
+        return None
+    current = context.get("current_regime") if isinstance(context.get("current_regime"), dict) else {}
+    # WO-36 §7: 승률 발행은 표기 표준(CI·N·레짐) 경유.
+    return "백테스트: " + format_stat_line(
+        stat,
+        sample_floor=int(context.get("sample_floor") or 10),
+        current_regime=str(current.get("regime")) if current.get("regime") else None,
+    )
 
 
 def _distance_pct(base: float, target: float) -> float:

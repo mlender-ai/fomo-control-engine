@@ -1,7 +1,7 @@
 "use client";
 
 import type { PositionActionPlan, PositionChartAnalysis } from "@/lib/api";
-import type { ChartLayerId, ChartLayerState } from "@/lib/chartLayers";
+import type { ChartLayerId, ChartLayerState, MinimalChartEvidence } from "@/lib/chartLayers";
 import type { Density } from "@/lib/density";
 import { PositionCandlestickChart } from "./PositionCandlestickChart";
 
@@ -17,7 +17,9 @@ export function PositionChart({
   highlightPrice,
   positionOverlay,
   density = "simple",
-  intentZoneSelector
+  intentZoneSelector,
+  layerMode = "pro",
+  minimalEvidence = null
 }: {
   analysis: PositionChartAnalysis | null;
   loading: boolean;
@@ -30,6 +32,8 @@ export function PositionChart({
   highlightPrice?: number | null;
   positionOverlay?: PositionChartOverlay | null;
   density?: Density;
+  layerMode?: "minimal" | "pro";
+  minimalEvidence?: MinimalChartEvidence | null;
   intentZoneSelector?: {
     enabled: boolean;
     draft: { lower: number | null; upper: number | null };
@@ -86,6 +90,8 @@ export function PositionChart({
         positionOverlay={positionOverlay}
         density={density}
         intentZoneSelector={intentZoneSelector}
+        layerMode={layerMode}
+        minimalEvidence={minimalEvidence}
       />
     </section>
   );

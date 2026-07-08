@@ -14,23 +14,31 @@ def score_event_outcome(
     invalidation_price: float | None = None,
     atr_value: float | None = None,
     max_bars: int = 48,
+    cost_pct: float = 0.0,
 ) -> dict[str, Any]:
     if entry_price <= 0:
         raise ValueError("entry_price must be positive")
     ordered = sorted(future_candles, key=lambda candle: candle.timestamp)[:max_bars]
     if not ordered:
-        return _empty(entry_price, invalidation_price, atr_value)
+        return _empty(entry_price, invalidation_price, atr_value, cost_pct, direction=direction)
 
     risk = _risk_distance(entry_price, invalidation_price, atr_value)
     fallback = invalidation_price is None or invalidation_price <= 0
+    # 비용(수수료 왕복 + 슬리피지)을 가격으로 환산 — 목표는 비용을 덮고 나서야 net 달성.
+    cost_price = entry_price * max(0.0, cost_pct) / 100.0
+    cost_r = round(cost_price / risk, 4) if risk else 0.0
     stop = entry_price - risk if direction == "long" else entry_price + risk
-    target_1r = entry_price + risk if direction == "long" else entry_price - risk
-    target_2r = entry_price + risk * 2 if direction == "long" else entry_price - risk * 2
+    target_1r = entry_price + (risk + cost_price) if direction == "long" else entry_price - (risk + cost_price)
+    target_2r = entry_price + (risk * 2 + cost_price) if direction == "long" else entry_price - (risk * 2 + cost_price)
+    gross_target_1r = entry_price + risk if direction == "long" else entry_price - risk
+    gross_target_2r = entry_price + risk * 2 if direction == "long" else entry_price - risk * 2
 
     mfe = 0.0
     mae = 0.0
     win_1r: bool | None = None
     win_2r: bool | None = None
+    gross_win_1r = False
+    gross_win_2r = False
     resolved_bars: int | None = None
     realized_rr: float | None = None
 
@@ -43,15 +51,21 @@ def score_event_outcome(
         stop_hit = candle.low <= stop if direction == "long" else candle.high >= stop
         one_hit = candle.high >= target_1r if direction == "long" else candle.low <= target_1r
         two_hit = candle.high >= target_2r if direction == "long" else candle.low <= target_2r
+        if win_1r is None and not gross_win_1r:
+            gross_win_1r = candle.high >= gross_target_1r if direction == "long" else candle.low <= gross_target_1r
+        if win_2r is None and not gross_win_2r:
+            gross_win_2r = candle.high >= gross_target_2r if direction == "long" else candle.low <= gross_target_2r
 
         # Same-candle stop/target is intentionally conservative: loss first.
         if stop_hit:
-            if win_1r is None:
-                win_1r = False
-            if win_2r is None:
+            if win_1r:
+                # 1R은 이미 확보 — rr은 1R 익절 기준을 유지해야 win_1r 집계와 정합.
                 win_2r = False
+                break
+            win_1r = False
+            win_2r = False
             resolved_bars = offset
-            realized_rr = -1.0
+            realized_rr = round(-1.0 - cost_r, 3)
             break
         if one_hit and win_1r is None:
             win_1r = True
@@ -63,19 +77,33 @@ def score_event_outcome(
             realized_rr = 2.0
             break
 
+    if realized_rr is None and ordered:
+        # 목표/스탑 미도달 타임아웃 — 최종 종가 마크(net). 피크(MFE) 기준은 낙관 편향.
+        final_close = ordered[-1].close
+        mark = (final_close - entry_price) / risk if direction == "long" else (entry_price - final_close) / risk
+        realized_rr = round(mark - cost_r, 3)
+
     return {
         "entry_price": round(entry_price, 8),
         "invalidation_price": round(stop, 8),
         "risk_distance": round(risk, 8),
         "risk_fallback": fallback,
+        "cost_pct": round(max(0.0, cost_pct), 4),
+        "cost_r": cost_r,
         "win_1r": bool(win_1r) if win_1r is not None else False,
         "win_2r": bool(win_2r) if win_2r is not None else False,
         "mfe_r": round(mfe, 3),
         "mae_r": round(mae, 3),
         "resolved_bars": resolved_bars or len(ordered),
-        "realized_rr": round(realized_rr if realized_rr is not None else min(mfe, 0.99), 3),
+        "realized_rr": round(realized_rr if realized_rr is not None else 0.0, 3),
         "bars_evaluated": len(ordered),
-        "policy": "가상 진입은 확정 캔들 종가, 같은 캔들 목표/무효화 동시 도달은 보수적으로 실패 처리",
+        # gross는 내부 디버그 전용 — 집계·발행 금지.
+        "gross_debug": {"win_1r": gross_win_1r or bool(win_1r), "win_2r": gross_win_2r or bool(win_2r)},
+        "policy": (
+            "가상 진입은 확정 캔들 종가, 같은 캔들 목표/무효화 동시 도달은 보수적으로 실패 처리, "
+            "1R/2R 판정은 비용(수수료·슬리피지) 차감 후 net 기준. "
+            "realized_rr: 도달 목표 기준(1R/2R), 스탑 -1R-비용, 미해결 타임아웃은 최종 종가 마크"
+        ),
     }
 
 
@@ -129,13 +157,23 @@ def _risk_distance(entry_price: float, invalidation_price: float | None, atr_val
     return max(fallback * 1.5, entry_price * 0.003)
 
 
-def _empty(entry_price: float, invalidation_price: float | None, atr_value: float | None) -> dict[str, Any]:
+def _empty(
+    entry_price: float,
+    invalidation_price: float | None,
+    atr_value: float | None,
+    cost_pct: float = 0.0,
+    *,
+    direction: str = "long",
+) -> dict[str, Any]:
     risk = _risk_distance(entry_price, invalidation_price, atr_value)
+    fallback_stop = entry_price - risk if direction == "long" else entry_price + risk
     return {
         "entry_price": round(entry_price, 8),
-        "invalidation_price": round(invalidation_price or entry_price - risk, 8),
+        "invalidation_price": round(invalidation_price or fallback_stop, 8),
         "risk_distance": round(risk, 8),
         "risk_fallback": invalidation_price is None,
+        "cost_pct": round(max(0.0, cost_pct), 4),
+        "cost_r": round(entry_price * max(0.0, cost_pct) / 100.0 / risk, 4) if risk else 0.0,
         "win_1r": False,
         "win_2r": False,
         "mfe_r": 0.0,
@@ -143,6 +181,7 @@ def _empty(entry_price: float, invalidation_price: float | None, atr_value: floa
         "resolved_bars": 0,
         "realized_rr": 0.0,
         "bars_evaluated": 0,
+        "gross_debug": {"win_1r": False, "win_2r": False},
         "policy": "평가 가능한 미래 캔들이 없습니다.",
     }
 
