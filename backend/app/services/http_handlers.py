@@ -1578,6 +1578,12 @@ def review_calibration() -> dict:
         self_audit=build_self_audit(repository),
     )
     summary["engine_params"] = [param.model_dump(mode="json") for param in repository.list_engine_params(limit=100)]
+    # WO-45: 대시보드 개선 카드가 이 경로의 weekly_report를 소비한다 — 다이제스트 임베드.
+    weekly = summary.get("weekly_report")
+    if isinstance(weekly, dict):
+        from app.services import runtime as service_runtime
+
+        weekly["improvement_digest"] = service_runtime.improvement_digest(scores=scores, suggestions=suggestions)
     return summary
 
 
