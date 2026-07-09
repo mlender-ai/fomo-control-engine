@@ -5,7 +5,7 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 from fastapi import HTTPException
 
 from app.agents.orchestrator import create_research_run
-from app.analyst.briefing import build_analyst_briefing
+from app.analyst.briefing import build_analyst_briefing, hysteresis_params_from_settings, load_directional_prior
 from app.core.config import get_settings
 from app.db.models import (
     CalibrationSuggestion,
@@ -1145,13 +1145,17 @@ def _build_position_analyst_briefing(
     chart_analysis: dict,
     action_plan: dict,
 ) -> dict:
+    timeframe = chart_analysis.get("timeframe") or "4h"
+    # WO-53: 포지션 브리핑도 직전 방향 히스테리시스 상태를 이어받아 전환에 관성.
     briefing = build_analyst_briefing(
         symbol=position.symbol,
-        timeframe=chart_analysis.get("timeframe") or "4h",
+        timeframe=timeframe,
         analysis=chart_analysis,
         action_plan=action_plan,
         calibration_scores=repository.list_judgment_scores(limit=2000),
         context="position",
+        prior_state=load_directional_prior(repository, position.symbol, timeframe),
+        hysteresis_params=hysteresis_params_from_settings(settings),
     )
     _store_analyst_briefing_judgment(position, snapshot, briefing)
     return briefing

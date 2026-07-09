@@ -11,6 +11,79 @@ CALIBRATION_SAMPLE_FLOOR = 20
 CONFLICT_RATIO = 0.25
 MIN_DIRECTIONAL_EVIDENCE = 3
 
+# WO-51: 증거의 "방향 기여"에 시간 감쇠를 곱한다. 존재/역사성은 삭제하지 않고
+# (레벨은 계속 관측·표기), 방향 기여만 감쇠한다. 반감기는 절대 시간이 아니라
+# 타임프레임 상대값(캔들 수)이다 — 4h·15m 어디서도 동일 규범이 성립하도록.
+#   recency = floor + (1 - floor) * 0.5 ** (age_bars / half_life_bars)
+# 유형별 반감기·floor (docs/DirectionalEngine.md 표와 동기화):
+#   - event    : 스윕·와이코프 마커·BOS/CHoCH·하모닉 — 방금 발생이 중요, 급감쇠.
+#   - structure: 지지/저항·POC·국면 — 오래 유효하나 마지막 터치 기준 완만 감쇠, 존재는 유지(높은 floor).
+#   - state    : 펀딩·OI 등 현재 상태값 — stale이면 거의 0.
+DECAY_PROFILES: dict[str, tuple[float, float]] = {
+    # class: (half_life_bars, floor)
+    "event": (6.0, 0.05),
+    "structure": (30.0, 0.35),
+    "state": (3.0, 0.0),
+}
+DEFAULT_DECAY_CLASS = "event"
+
+# TF→분. analyst 계층이 exchange 세부에 역결합되지 않도록 로컬 상수로 둔다.
+TIMEFRAME_MINUTES: dict[str, float] = {
+    "1m": 1.0,
+    "3m": 3.0,
+    "5m": 5.0,
+    "15m": 15.0,
+    "30m": 30.0,
+    "1h": 60.0,
+    "2h": 120.0,
+    "4h": 240.0,
+    "6h": 360.0,
+    "12h": 720.0,
+    "1d": 1440.0,
+    "1w": 10080.0,
+}
+DEFAULT_BAR_MINUTES = 240.0
+
+# WO-52: HTF(상위 TF) 추세를 방향 산출의 기준선(baseline)으로 승격.
+# 하위 증거는 이 기준선에 대한 편차로 해석 — 정렬 증거는 증폭, 역행 증거는 감쇠(0으로 죽이지 않음).
+# 배수는 HTF 명확도(strength)에 비례: HTF가 불명확하면 배수≈1 → 하위 증거 비중 자연 회복.
+HTF_MAX_BOOST = 0.25  # 정렬 증거 최대 ×1.25
+HTF_MAX_DAMP = 0.45  # 역행 증거 최대 ×0.55 (floor, 절대 0 아님)
+# htf_trend 라벨 → 방향 성향 [-1, 1] (양수 롱).
+HTF_TREND_SCORES: dict[str, float] = {
+    "bullish": 1.0,
+    "neutral_to_bullish": 0.5,
+    "neutral": 0.0,
+    "undetermined": 0.0,
+    "bearish_to_neutral": -0.5,
+    "bearish": -1.0,
+}
+HTF_BIAS_THRESHOLD = 0.25  # |bias score| 이 값 이상이어야 방향 기준선 성립
+HTF_GUARD_STRENGTH = 0.40  # 이 강도 이상의 HTF 기준선에 한해 반대-방향 판정을 보수화
+# HTF 반대 방향(또는 엔진이 conflicting 선언)으로 기울려면 이 비율 이상 압도해야 함 —
+# 그 미만이면 conflicted(전환 관찰은 WO-53). 통상 정렬 케이스는 CONFLICT_RATIO(0.25) 그대로.
+HTF_STRONG_MARGIN = 0.50
+HTF_ABSENT_COMPOSITE_CAP = 75.0  # HTF 부재 시 종합 신뢰도 상한 (하위만으로 강한 확정 금지)
+
+# WO-53: 방향 히스테리시스 — 전환에 관성. 경계 진동(분단위 반전)을 흡수하되 진짜 전환은 통과.
+# Schmitt 트리거(enter>exit) + EMA 평활 + 연속 확인(persist)의 3중 방어.
+# 초기값은 "진동 흡수용"이지 "추세 차단용"이 아니다 — 둔감/민감 트레이드오프는 docs 참조.
+#   enter(0.25) > exit(0.10): 방향을 켜기는 어렵게, 끄기도 어렵게 → [0.10,0.25] 데드존이 진동 흡수.
+#   flip_margin(0.30): 방향→반대방향은 반대가 명확히 앞설 때만 (지속 확인과 결합).
+# 주 방어는 persist(연속 확인)다 — 1바 스파이크는 persist 미달로 흡수. EMA·margin은 보조.
+# 그래서 span은 짧게(반응성 유지), 강한 지속 전환은 2~3바에 통과한다(둔감 방지).
+HYSTERESIS_EMA_SPAN = 2.0  # 짧은 span: 노이즈만 제거, 반응성 유지
+HYSTERESIS_FLIP_MARGIN = 0.30  # 방향→반대방향 flip: EMA 상대우세가 이 이상 반대로
+HYSTERESIS_ENTER_MARGIN = 0.25  # conflicted→방향 진입 문턱 (= CONFLICT_RATIO)
+HYSTERESIS_EXIT_MARGIN = 0.10  # 방향→conflicted 이탈 문턱 (우세가 이 밑으로 줄면)
+HYSTERESIS_FLIP_PERSIST = 2  # 상태 변경 채택에 필요한 연속 확인 횟수(주 진동 방어)
+# WO-39 자율 튜닝 대상 + hard bound. 상한은 "진동 흡수 범위를 넘어 추세를 막지 못하도록" 고정.
+HYSTERESIS_PARAM_BOUNDS: dict[str, tuple[float, float]] = {
+    "directional_ema_span": (1.0, 10.0),
+    "directional_flip_margin": (0.25, 0.60),
+    "directional_flip_persist": (1.0, 5.0),
+}
+
 ENGINE_BASE_WEIGHTS: dict[str, float] = {
     "liquidity": 18.0,
     "wyckoff": 18.0,
@@ -39,17 +112,28 @@ def build_confluence(
     calibration_scores: list[JudgmentScore] | None = None,
     generated_at: datetime | None = None,
     overlap_groups: list[dict[str, Any]] | None = None,
+    prior_state: dict[str, Any] | None = None,
+    hysteresis_params: dict[str, Any] | None = None,
+    directional_v2: bool = True,
 ) -> dict[str, Any]:
     """Normalize existing engine outputs into long/short evidence stacks.
 
     This function does not recompute indicators. It only reads the already
     calculated chart-analysis payload and applies documented weighting.
+
+    WO-53: 순수 함수를 유지한다. 히스테리시스 상태는 ``prior_state``로 주입받아
+    새 상태를 ``stance_state``로 반환할 뿐, 저장/조회 I/O는 호출자(라이브·백테스트
+    공유 래퍼)가 담당한다 — 전환 로직 자체는 여기 한 곳에만 있어 이중화가 없다.
     """
 
     now = generated_at or utc_now()
     calibration = _calibration_index(calibration_scores or [])
-    raw_evidence = _collect_evidence(analysis)
-    evidence = [_apply_weight(item, calibration, now) for item in raw_evidence]
+    htf_context = _htf_context(analysis)
+    raw_evidence = _collect_evidence(analysis, htf_context)
+    bar_minutes = _timeframe_minutes(timeframe)
+    evidence = [
+        _apply_weight(item, calibration, now, bar_minutes, htf_context, apply_recency=directional_v2, apply_htf=directional_v2) for item in raw_evidence
+    ]
     if overlap_groups is None:
         historical = analysis.get("historical_backtest") if isinstance(analysis.get("historical_backtest"), dict) else {}
         overlap_groups = historical.get("overlap_groups") if isinstance(historical.get("overlap_groups"), list) else []
@@ -59,10 +143,23 @@ def build_confluence(
     short_evidence = sorted([item for item in directional if item["direction"] == "short"], key=_evidence_sort_key, reverse=True)
     long_score = round(sum(item["score"] for item in long_evidence), 2)
     short_score = round(sum(item["score"] for item in short_evidence), 2)
-    stance = _stance(long_evidence, short_evidence, long_score, short_score)
-    stronger = max(long_score, short_score)
-    total = long_score + short_score
-    composite = round((stronger / total) * 100, 1) if total > 0 else 0.0
+    # v1(재설계 전) 재현 시 HTF 가드도 끈다.
+    raw_stance = _stance(long_evidence, short_evidence, long_score, short_score, htf_context if directional_v2 else None)
+    # WO-53: 히스테리시스 — 직전 상태(prior_state) 대비 전환에 관성을 적용.
+    # stance는 "유지 중인(held)" 방향, raw_stance는 순간 스냅샷. 전환 로직은 이 한 곳에만.
+    params = _hysteresis_params(hysteresis_params)
+    if directional_v2:
+        stance_state = _resolve_stance_state(raw_stance, long_score, short_score, prior_state, now, params)
+    else:
+        stance_state = _legacy_stance_state(raw_stance, long_score, short_score, now)
+    stance = str(stance_state["stance"])
+    long_ema = float(stance_state["long_score_ema"])
+    short_ema = float(stance_state["short_score_ema"])
+    composite = _composite_score(stance, long_ema, short_ema, long_score, short_score)
+    # WO-52 금지 규정: 방향성 HTF 기준선이 없으면(데이터 부재 또는 횡보/전환) 하위 증거만으로
+    # 강한 방향 확정 금지 → 종합 신뢰도 상한.
+    if htf_context["bias"] == "neutral" and stance in {"long_leaning", "short_leaning"}:
+        composite = min(composite, HTF_ABSENT_COMPOSITE_CAP)
     counter = _counter_evidence(stance, long_evidence, short_evidence)
 
     return {
@@ -72,7 +169,10 @@ def build_confluence(
         "data_as_of": _analysis_as_of(analysis),
         "max_engine_age_minutes": _max_engine_age_minutes(evidence, now),
         "stance": stance,
+        "raw_stance": raw_stance,
+        "stance_state": stance_state,
         "stance_label": _stance_label(stance),
+        "htf_context": htf_context,
         "composite_score": composite if stance not in {"insufficient"} else 0.0,
         "long_score": long_score,
         "short_score": short_score,
@@ -84,15 +184,17 @@ def build_confluence(
         "overlap_suppressed": overlap_suppressed,
         "calibration_policy": {
             "sample_floor": CALIBRATION_SAMPLE_FLOOR,
-            "formula": "effective_score = base_weight × confidence/100 × calibration_factor",
+            "formula": "effective_score = base_weight × confidence/100 × calibration_factor × recency_factor",
             "calibration_factor": "N>=20이면 적중률 CI 하한/70을 0.60~1.25 사이로 클램프 (점추정 아님, WO-36)",
+            "recency_policy": "방향 기여는 마지막 발생/터치 시각 기준 시간 감쇠 (WO-51). 반감기는 TF 상대값 — event 6·structure 30·state 3 캔들, floor 0.05/0.35/0.0. 존재/관측 표기는 불변, 방향 기여만 감쇠.",
             "conflict_ratio": CONFLICT_RATIO,
             "overlap_policy": "같은 overlap_group 증거는 최강 1개만 가중 반영, 나머지는 동근원 확인으로 표기만",
+            "hysteresis_policy": f"방향 전환에 관성 (WO-53). EMA(span {params['ema_span']}) 평활 + Schmitt(enter {params['enter_margin']}/exit {params['exit_margin']}) + flip 문턱 {params['flip_margin']}·연속 {int(params['flip_persist'])}회. stance=유지 방향, raw_stance=순간, stance_state.transitioning=전환 관찰 중.",
         },
     }
 
 
-def _collect_evidence(analysis: dict[str, Any]) -> list[dict[str, Any]]:
+def _collect_evidence(analysis: dict[str, Any], htf_context: dict[str, Any], directional_v2: bool = True) -> list[dict[str, Any]]:
     evidence: list[dict[str, Any]] = []
     as_of = _analysis_as_of(analysis)
     evidence.extend(_level_evidence(analysis, as_of))
@@ -101,7 +203,7 @@ def _collect_evidence(analysis: dict[str, Any]) -> list[dict[str, Any]]:
     evidence.extend(_harmonic_evidence(analysis, as_of))
     evidence.extend(_volume_evidence(analysis, as_of))
     evidence.extend(_derivative_evidence(analysis, as_of))
-    evidence.extend(_mtf_evidence(analysis, as_of))
+    evidence.extend(_mtf_evidence(analysis, as_of, htf_context, directional_v2))
     return evidence
 
 
@@ -117,7 +219,9 @@ def _level_evidence(analysis: dict[str, Any], as_of: str | None) -> list[dict[st
                 f"구조 지지 {support['price']} · 터치 {support.get('touches', support.get('touch_count', '-'))}",
                 "long",
                 _num(support.get("score"), 55),
-                as_of,
+                # WO-51: 레벨의 방향 기여는 "마지막 터치 시각" 기준으로 감쇠 —
+                # 오래 안 건드린 레벨은 방향 기여가 줄되(존재는 유지) 3주 전 터치가 방금 반등과 동급이 되지 않게.
+                support.get("last_touch_at") or as_of,
                 price=support.get("price"),
                 source=support,
             )
@@ -129,7 +233,7 @@ def _level_evidence(analysis: dict[str, Any], as_of: str | None) -> list[dict[st
                 f"구조 저항 {resistance['price']} · 터치 {resistance.get('touches', resistance.get('touch_count', '-'))}",
                 "short",
                 _num(resistance.get("score"), 55),
-                as_of,
+                resistance.get("last_touch_at") or as_of,
                 price=resistance.get("price"),
                 source=resistance,
             )
@@ -226,7 +330,8 @@ def _harmonic_evidence(analysis: dict[str, Any], as_of: str | None) -> list[dict
                 f"{pattern.get('label') or pattern.get('name') or '하모닉'} PRZ 반전 후보",
                 direction,
                 _num(pattern.get("confidence"), 55),
-                as_of,
+                # WO-51: 패턴 완성 시각 기준 감쇠 (없으면 분석 as_of로 폴백).
+                _harmonic_time(pattern) or as_of,
                 price=prz.get("mid"),
                 source=pattern,
             )
@@ -265,7 +370,11 @@ def _derivative_evidence(analysis: dict[str, Any], as_of: str | None) -> list[di
         direction = "long" if state in {"price_up_oi_up", "price_up_oi_down"} else "short" if state in {"price_down_oi_up", "price_down_oi_down"} else None
         if direction:
             confidence = 62 if state in {"price_up_oi_up", "price_down_oi_up"} else 55
-            result.append(_evidence("derivatives", str(divergence.get("label") or "OI/가격 변화"), direction, confidence, signals.get("as_of") or as_of, source=divergence))
+            result.append(
+                _evidence(
+                    "derivatives", str(divergence.get("label") or "OI/가격 변화"), direction, confidence, signals.get("as_of") or as_of, source=divergence
+                )
+            )
 
     funding = signals.get("funding_state") if isinstance(signals.get("funding_state"), dict) else None
     crowding = signals.get("crowding_score") if isinstance(signals.get("crowding_score"), dict) else None
@@ -274,23 +383,44 @@ def _derivative_evidence(analysis: dict[str, Any], as_of: str | None) -> list[di
     if funding and funding.get("state") == "extreme" and funding_value is not None:
         direction = "short" if funding_value > 0 else "long"
         confidence = min(80, 58 + (crowd_score or 0) * 0.2)
-        result.append(_evidence("derivatives", f"{funding.get('label')} + 쏠림 {crowd_score or '-'}", direction, confidence, signals.get("as_of") or as_of, source={"funding": funding, "crowding": crowding}))
+        result.append(
+            _evidence(
+                "derivatives",
+                f"{funding.get('label')} + 쏠림 {crowd_score or '-'}",
+                direction,
+                confidence,
+                signals.get("as_of") or as_of,
+                source={"funding": funding, "crowding": crowding},
+            )
+        )
     return result
 
 
-def _mtf_evidence(analysis: dict[str, Any], as_of: str | None) -> list[dict[str, Any]]:
-    mtf = analysis.get("wyckoff_mtf") if isinstance(analysis.get("wyckoff_mtf"), dict) else {}
-    phase = str(mtf.get("htf_phase") or mtf.get("htf_trend") or "")
-    if not phase:
+def _mtf_evidence(analysis: dict[str, Any], as_of: str | None, htf_context: dict[str, Any], directional_v2: bool = True) -> list[dict[str, Any]]:
+    # WO-52: HTF는 더 이상 60점 동급 투표자가 아니라 기준선(앵커)이다.
+    # 앵커 증거의 신뢰도는 추세 명확도(strength)에 비례 — 명확할수록 강하게 앵커,
+    # 횡보/전환이면 약해져 하위 증거 비중이 자연히 회복된다.
+    # v1(재설계 전)은 옛 약한 단일 투표(conf 60)로 되돌린다 — WO-54 전후 대조/백테스트.
+    bias = htf_context.get("bias")
+    if bias not in {"long", "short"}:
         return []
-    if "accumulation" in phase or "bull" in phase:
-        return [_evidence("mtf", f"상위 TF {phase}", "long", 60, as_of, source=mtf)]
-    if "distribution" in phase or "bear" in phase:
-        return [_evidence("mtf", f"상위 TF {phase}", "short", 60, as_of, source=mtf)]
-    return []
+    mtf = analysis.get("wyckoff_mtf") if isinstance(analysis.get("wyckoff_mtf"), dict) else {}
+    strength = float(htf_context.get("strength") or 0.0)
+    confidence = round(50 + 40 * strength) if directional_v2 else 60
+    label = htf_context.get("htf_trend") or htf_context.get("htf_phase") or ("상승" if bias == "long" else "하락")
+    return [_evidence("mtf", f"상위 TF {label} 추세 (기준선)", bias, confidence, as_of, source=mtf)]
 
 
-def _apply_weight(evidence: dict[str, Any], calibration: dict[tuple[str, int], dict[str, Any]], now: datetime) -> dict[str, Any]:
+def _apply_weight(
+    evidence: dict[str, Any],
+    calibration: dict[tuple[str, int], dict[str, Any]],
+    now: datetime,
+    bar_minutes: float = DEFAULT_BAR_MINUTES,
+    htf_context: dict[str, Any] | None = None,
+    *,
+    apply_recency: bool = True,
+    apply_htf: bool = True,
+) -> dict[str, Any]:
     engine = str(evidence["engine"])
     confidence = _num(evidence.get("confidence"), 50)
     base_weight = ENGINE_BASE_WEIGHTS.get(engine, 8.0)
@@ -318,16 +448,344 @@ def _apply_weight(evidence: dict[str, Any], calibration: dict[tuple[str, int], d
         if calibration_payload
         else None
     )
-    score = round(base_weight * (confidence / 100.0) * factor, 2)
     as_of = evidence.get("as_of")
+    # WO-51: 시간 감쇠를 score에 곱한다. is_stale(하드 boolean)은 UI 표기로만 유지하고,
+    # 방향 기여는 연속 감쇠(recency)로 대체 — 하드 컷 대신 소프트 감쇠.
+    decay_class = _decay_class(engine, str(evidence.get("claim") or ""))
+    # apply_recency/apply_htf=False는 재설계 이전(v1) 엔진 재현용 — WO-54 전후 대조/백테스트 비교.
+    recency = _recency_factor(as_of, now, decay_class, bar_minutes) if apply_recency else 1.0
+    # WO-52: HTF 기준선 배수 — 정렬 증거 증폭, 역행 증거 감쇠(0으로 죽지 않음).
+    # mtf 앵커 자신은 기준선이므로 자기 배수를 적용하지 않는다(순환 방지).
+    htf_factor = 1.0 if (engine == "mtf" or not apply_htf) else _htf_factor(str(evidence.get("direction") or ""), htf_context)
+    score = round(base_weight * (confidence / 100.0) * factor * recency * htf_factor, 2)
     return {
         **evidence,
         "base_weight": base_weight,
         "calibration_factor": round(factor, 3),
+        "recency_factor": recency,
+        "decay_class": decay_class,
+        "htf_factor": round(htf_factor, 3),
         "score": score,
         "is_stale": _is_stale(as_of, now),
         "calibration": calibration_meta,
     }
+
+
+def _timeframe_minutes(timeframe: Any) -> float:
+    return TIMEFRAME_MINUTES.get(str(timeframe).lower(), DEFAULT_BAR_MINUTES)
+
+
+def _htf_context(analysis: dict[str, Any]) -> dict[str, Any]:
+    """상위 TF 추세 기준선. wyckoff_mtf(htf_phase·htf_trend·alignment)에서 방향 성향과
+    명확도(strength)를 도출한다. 수치 strength가 원천에 없으므로 라벨에서 계산한다."""
+    mtf_raw = analysis.get("wyckoff_mtf")
+    mtf: dict[str, Any] = mtf_raw if isinstance(mtf_raw, dict) else {}
+    htf_phase = str(mtf.get("htf_phase") or "")
+    htf_trend = str(mtf.get("htf_trend") or "")
+    alignment = str(mtf.get("alignment") or "neutral")
+    available = bool(htf_phase or htf_trend)  # HTF 원천 데이터 존재 여부(정보성)
+    bias, strength = _htf_bias_strength(htf_phase, htf_trend)
+    return {
+        "bias": bias,
+        "strength": strength,
+        "alignment": alignment,
+        "htf_phase": htf_phase or None,
+        "htf_trend": htf_trend or None,
+        "available": available,
+    }
+
+
+def _htf_bias_strength(htf_phase: str, htf_trend: str) -> tuple[str, float]:
+    """추세 라벨(60%) + 국면 라벨(40%)을 [-1,1] 성향 점수로 합성. 부호=방향, 크기=명확도."""
+    phase = htf_phase.lower()
+    trend_score = HTF_TREND_SCORES.get(htf_trend.lower(), 0.0)
+    if "accumulation" in phase:  # reaccumulation 포함
+        phase_score = 1.0
+    elif "distribution" in phase:  # redistribution 포함
+        phase_score = -1.0
+    else:
+        phase_score = 0.0
+    raw = 0.6 * trend_score + 0.4 * phase_score
+    strength = round(min(1.0, abs(raw)), 3)
+    if raw >= HTF_BIAS_THRESHOLD:
+        return "long", strength
+    if raw <= -HTF_BIAS_THRESHOLD:
+        return "short", strength
+    return "neutral", strength
+
+
+def _htf_factor(direction: str, htf_context: dict[str, Any] | None) -> float:
+    """HTF 기준선 대비 정렬/역행 배수. 역행도 0으로 죽이지 않고 감쇠만(전환 감지 보존).
+
+    단, 엔진이 alignment="conflicting"(HTF-하위 정면 충돌)을 선언하면 배수를 적용하지 않는다.
+    앵커 배수는 "하위 신호가 HTF 추세 내 편차(되돌림)"라는 전제 위에서만 성립한다 —
+    정면 충돌은 되돌림이 아니라 전환/충돌이므로 증폭·감쇠 대신 conflicted 판정(_stance 가드)에 맡긴다.
+    """
+    if not htf_context or htf_context.get("alignment") == "conflicting":
+        return 1.0
+    bias = htf_context.get("bias")
+    strength = float(htf_context.get("strength") or 0.0)
+    if bias not in {"long", "short"} or direction not in {"long", "short"}:
+        return 1.0
+    if direction == bias:
+        return 1.0 + HTF_MAX_BOOST * strength
+    return 1.0 - HTF_MAX_DAMP * strength  # >= 1 - HTF_MAX_DAMP (절대 0 아님)
+
+
+def _hysteresis_params(overrides: dict[str, Any] | None) -> dict[str, float]:
+    """튜닝 오버라이드(WO-39 자율 채택 대상)를 hard bound로 클램프해 병합한다."""
+    values = {
+        "ema_span": HYSTERESIS_EMA_SPAN,
+        "flip_margin": HYSTERESIS_FLIP_MARGIN,
+        "enter_margin": HYSTERESIS_ENTER_MARGIN,
+        "exit_margin": HYSTERESIS_EXIT_MARGIN,
+        "flip_persist": float(HYSTERESIS_FLIP_PERSIST),
+    }
+    if not overrides:
+        return values
+    bound_key = {
+        "ema_span": "directional_ema_span",
+        "flip_margin": "directional_flip_margin",
+        "flip_persist": "directional_flip_persist",
+    }
+    for key in values:
+        raw = _optional_float(overrides.get(key))
+        if raw is None:
+            continue
+        bounds = HYSTERESIS_PARAM_BOUNDS.get(bound_key.get(key, ""))
+        values[key] = _clamp(raw, bounds[0], bounds[1]) if bounds else raw
+    return values
+
+
+def _resolve_stance_state(
+    raw_stance: str,
+    long_score: float,
+    short_score: float,
+    prior_state: dict[str, Any] | None,
+    now: datetime,
+    params: dict[str, float],
+) -> dict[str, Any]:
+    """방향 히스테리시스 상태 전이. 순수 함수 — prior_state를 받아 새 상태를 돌려줄 뿐 I/O 없음.
+
+    라이브(스카우트 스냅샷)와 백테스트(인메모리 스레딩)가 이 한 함수를 공유한다(이중화 0).
+    """
+    prior = prior_state if isinstance(prior_state, dict) else {}
+    prior_stance = prior.get("stance")
+    alpha = 2.0 / (max(float(params["ema_span"]), 1.0) + 1.0)
+    long_ema = _ema(prior.get("long_score_ema"), long_score, alpha)
+    short_ema = _ema(prior.get("short_score_ema"), short_score, alpha)
+    now_iso = now.isoformat()
+
+    def build(
+        stance: str,
+        *,
+        transitioning: bool,
+        target: str | None,
+        pending: str | None,
+        pending_count: int,
+        since: str | None,
+        last_flip_at: str | None,
+        candles: int,
+        progress: float,
+        flipped: bool,
+    ) -> dict[str, Any]:
+        return {
+            "stance": stance,
+            "previous_stance": prior_stance,
+            "transitioning": transitioning,
+            "target": target,
+            "pending_stance": pending,
+            "pending_count": pending_count,
+            "since": since or now_iso,
+            "last_flip_at": last_flip_at,
+            "candles_in_state": candles,
+            "flip_threshold_progress": round(progress, 2),
+            "flipped": flipped,
+            "long_score_ema": long_ema,
+            "short_score_ema": short_ema,
+        }
+
+    prior_candles = int(_optional_float(prior.get("candles_in_state")) or 0)
+
+    # 증거 부족은 방향 게이트가 이긴다 — 히스테리시스로 방향을 붙들지 않는다.
+    if raw_stance == "insufficient":
+        changed = prior_stance != "insufficient"
+        return build(
+            "insufficient",
+            transitioning=False,
+            target=None,
+            pending=None,
+            pending_count=0,
+            since=None if changed else prior.get("since"),
+            last_flip_at=prior.get("last_flip_at"),
+            candles=1 if changed else prior_candles + 1,
+            progress=0.0,
+            flipped=False,
+        )
+
+    stronger = max(long_ema, short_ema)
+    rel = (long_ema - short_ema) / stronger if stronger > 0 else 0.0
+
+    # 부트스트랩: 유효한 직전 held stance 없음 → 즉시 채택(관성 없음).
+    if prior_stance not in {"long_leaning", "short_leaning", "conflicted"}:
+        return build(
+            raw_stance,
+            transitioning=False,
+            target=None,
+            pending=None,
+            pending_count=0,
+            since=None,
+            last_flip_at=prior.get("last_flip_at"),
+            candles=1,
+            progress=0.0,
+            flipped=prior_stance is not None and raw_stance != prior_stance,
+        )
+
+    cand = _hysteresis_candidate(str(prior_stance), rel, float(params["flip_margin"]), float(params["enter_margin"]), float(params["exit_margin"]))
+
+    # 후보가 현 상태와 같으면 건강하게 유지.
+    if cand == prior_stance:
+        return build(
+            str(prior_stance),
+            transitioning=False,
+            target=None,
+            pending=None,
+            pending_count=0,
+            since=prior.get("since"),
+            last_flip_at=prior.get("last_flip_at"),
+            candles=prior_candles + 1,
+            progress=0.0,
+            flipped=False,
+        )
+
+    # 후보가 다르면 연속 확인(persist) 카운트.
+    pending = prior.get("pending_stance")
+    pending_count = int(_optional_float(prior.get("pending_count")) or 0)
+    pending_count = pending_count + 1 if pending == cand else 1
+    required = max(1, int(float(params["flip_persist"])))
+    if pending_count >= required:
+        directional_flip = prior_stance in {"long_leaning", "short_leaning"} and cand in {"long_leaning", "short_leaning"}
+        return build(
+            cand,
+            transitioning=False,
+            target=None,
+            pending=None,
+            pending_count=0,
+            since=None,
+            last_flip_at=now_iso if directional_flip else prior.get("last_flip_at"),
+            candles=1,
+            progress=1.0,
+            flipped=True,
+        )
+    # 문턱 미달 → 현 상태 HOLD, 전환 관찰 중.
+    return build(
+        str(prior_stance),
+        transitioning=True,
+        target=cand,
+        pending=cand,
+        pending_count=pending_count,
+        since=prior.get("since"),
+        last_flip_at=prior.get("last_flip_at"),
+        candles=prior_candles + 1,
+        progress=pending_count / required,
+        flipped=False,
+    )
+
+
+def _legacy_stance_state(raw_stance: str, long_score: float, short_score: float, now: datetime) -> dict[str, Any]:
+    """v1(재설계 전) 재현: 히스테리시스 없이 순간 stance를 그대로 사용. WO-54 전후 대조용."""
+    return {
+        "stance": raw_stance,
+        "previous_stance": None,
+        "transitioning": False,
+        "target": None,
+        "pending_stance": None,
+        "pending_count": 0,
+        "since": now.isoformat(),
+        "last_flip_at": None,
+        "candles_in_state": 1,
+        "flip_threshold_progress": 0.0,
+        "flipped": False,
+        "long_score_ema": round(long_score, 3),
+        "short_score_ema": round(short_score, 3),
+    }
+
+
+def _hysteresis_candidate(held: str, rel: float, flip_margin: float, enter_margin: float, exit_margin: float) -> str:
+    """Schmitt 트리거: enter(방향 진입) > exit(방향 이탈)로 데드존을 만들어 진동을 흡수."""
+    if held == "long_leaning":
+        if rel <= -flip_margin:
+            return "short_leaning"
+        if rel < exit_margin:
+            return "conflicted"
+        return "long_leaning"
+    if held == "short_leaning":
+        if rel >= flip_margin:
+            return "long_leaning"
+        if rel > -exit_margin:
+            return "conflicted"
+        return "short_leaning"
+    # conflicted에서 방향으로 나가려면 enter 문턱을 넘어야 한다.
+    if rel >= enter_margin:
+        return "long_leaning"
+    if rel <= -enter_margin:
+        return "short_leaning"
+    return "conflicted"
+
+
+def _ema(prev: Any, current: float, alpha: float) -> float:
+    prev_f = _optional_float(prev)
+    if prev_f is None:
+        return round(current, 3)
+    return round(alpha * current + (1.0 - alpha) * prev_f, 3)
+
+
+def _composite_score(stance: str, long_ema: float, short_ema: float, long_score: float, short_score: float) -> float:
+    """종합 신뢰도. 방향 판정 시 held 방향의 EMA 점유율 — 전환 중이면 자연히 낮아져
+    약한 확신을 정직하게 표현한다. conflicted/insufficient는 순간 우세 비율."""
+    total_ema = long_ema + short_ema
+    if stance == "long_leaning" and total_ema > 0:
+        return round(long_ema / total_ema * 100, 1)
+    if stance == "short_leaning" and total_ema > 0:
+        return round(short_ema / total_ema * 100, 1)
+    total = long_score + short_score
+    return round(max(long_score, short_score) / total * 100, 1) if total > 0 else 0.0
+
+
+def _decay_class(engine: str, claim: str) -> str:
+    """증거 유형 → 감쇠 클래스. WO-51 설계표와 일치."""
+    if engine == "derivatives":
+        return "state"
+    if engine in {"level", "volume", "mtf"}:
+        return "structure"
+    if engine == "wyckoff" and "국면" in claim:
+        # 매집/분산 국면은 레짐 성격 — 이벤트 마커보다 완만하게.
+        return "structure"
+    # liquidity 스윕 · wyckoff 마커 · harmonic PRZ · structure(BOS/CHoCH·존) = 이벤트성.
+    return "event"
+
+
+def _recency_factor(as_of: Any, now: datetime, decay_class: str, bar_minutes: float) -> float:
+    """방향 기여의 시간 감쇠 계수 (0~1). 시각 불명이면 감쇠 없음(1.0)."""
+    parsed = _parse_dt(as_of)
+    if parsed is None:
+        return 1.0
+    half_life_bars, floor = DECAY_PROFILES.get(decay_class, DECAY_PROFILES[DEFAULT_DECAY_CLASS])
+    age_minutes = max(0.0, (now - parsed).total_seconds() / 60.0)
+    age_bars = age_minutes / max(bar_minutes, 1.0)
+    decay = 0.5 ** (age_bars / half_life_bars) if half_life_bars > 0 else 0.0
+    return round(floor + (1.0 - floor) * decay, 4)
+
+
+def _harmonic_time(pattern: dict[str, Any]) -> Any:
+    for key in ("detected_at", "completed_at", "as_of", "time"):
+        value = pattern.get(key)
+        if value is not None:
+            return value
+    points = pattern.get("points")
+    if isinstance(points, list) and points and isinstance(points[-1], dict):
+        return points[-1].get("time")
+    return None
 
 
 def _evidence_family(item: dict[str, Any]) -> tuple[str, str, str] | None:
@@ -427,7 +885,13 @@ def _calibration_summary(scores: list[JudgmentScore]) -> dict[str, Any]:
     }
 
 
-def _stance(long_evidence: list[dict[str, Any]], short_evidence: list[dict[str, Any]], long_score: float, short_score: float) -> str:
+def _stance(
+    long_evidence: list[dict[str, Any]],
+    short_evidence: list[dict[str, Any]],
+    long_score: float,
+    short_score: float,
+    htf_context: dict[str, Any] | None = None,
+) -> str:
     if len(long_evidence) + len(short_evidence) < MIN_DIRECTIONAL_EVIDENCE:
         return "insufficient"
     if not long_evidence or not short_evidence:
@@ -435,9 +899,24 @@ def _stance(long_evidence: list[dict[str, Any]], short_evidence: list[dict[str, 
     stronger = max(long_score, short_score)
     if stronger <= 0:
         return "insufficient"
-    if abs(long_score - short_score) / stronger < CONFLICT_RATIO:
+    margin = abs(long_score - short_score) / stronger
+    if margin < CONFLICT_RATIO:
         return "conflicted"
-    return "long_leaning" if long_score > short_score else "short_leaning"
+    leaning = "long_leaning" if long_score > short_score else "short_leaning"
+    # WO-52: HTF 기준선을 거스르는 판정, 또는 엔진이 명시적으로 conflicting을 선언한 경우
+    # 강한 우세(HTF_STRONG_MARGIN)가 아니면 conflicted로 보수화한다.
+    # (역행 증거는 이미 감쇠만 됐고 여기서 삭제하지 않음 — 진짜 압도적 전환은 그대로 통과.)
+    if htf_context and margin < HTF_STRONG_MARGIN:
+        bias = htf_context.get("bias")
+        strength = float(htf_context.get("strength") or 0.0)
+        opposes_htf = (
+            bias in {"long", "short"}
+            and strength >= HTF_GUARD_STRENGTH
+            and ((bias == "long" and leaning == "short_leaning") or (bias == "short" and leaning == "long_leaning"))
+        )
+        if opposes_htf or htf_context.get("alignment") == "conflicting":
+            return "conflicted"
+    return leaning
 
 
 def _counter_evidence(stance: str, long_evidence: list[dict[str, Any]], short_evidence: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -514,6 +993,18 @@ def _is_stale(value: Any, now: datetime) -> bool:
 def _parse_dt(value: Any) -> datetime | None:
     if isinstance(value, datetime):
         return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        # WO-51: 와이코프 마커·하모닉 time은 epoch 초(정수) — 현행 _parse_dt는 이를 놓쳐
+        # 마커 staleness가 늘 False였다. epoch(초/밀리초)를 UTC로 정규화한다.
+        seconds = float(value)
+        if seconds > 1e12:
+            seconds /= 1000.0
+        try:
+            return datetime.fromtimestamp(seconds, tz=timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return None
     if not isinstance(value, str):
         return None
     try:
@@ -528,6 +1019,13 @@ def _iso(value: Any) -> str | None:
         return value.isoformat()
     if isinstance(value, str):
         return value
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        # WO-51: epoch(초/밀리초) 정수를 ISO로 정규화 — 종전엔 None으로 버려져
+        # 마커·하모닉 as_of가 소실되고 is_stale이 늘 False였다.
+        parsed = _parse_dt(value)
+        return parsed.isoformat() if parsed else None
     return None
 
 

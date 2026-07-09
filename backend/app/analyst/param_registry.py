@@ -67,6 +67,26 @@ PARAM_REGISTRY: dict[str, ParamDefinition] = {
         hard_min=0.5,
         hard_max=1.5,
     ),
+    # WO-53: 방향 히스테리시스. flip 문턱↑·persist↑·ema_span↑ = 전환에 더 둔감(=tighten).
+    # 상한은 "진동 흡수 범위를 넘어 추세를 막지 못하도록" 고정 (WO-53 금지: 둔감으로 추세 놓침).
+    "directional_flip_margin": ParamDefinition(
+        name="directional_flip_margin",
+        tighten_when="increase",
+        hard_min=0.25,
+        hard_max=0.60,
+    ),
+    "directional_ema_span": ParamDefinition(
+        name="directional_ema_span",
+        tighten_when="increase",
+        hard_min=1.0,
+        hard_max=10.0,
+    ),
+    "directional_flip_persist": ParamDefinition(
+        name="directional_flip_persist",
+        tighten_when="increase",
+        hard_min=1.0,
+        hard_max=5.0,
+    ),
 }
 
 

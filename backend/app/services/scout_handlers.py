@@ -17,7 +17,7 @@ from uuid import UUID, NAMESPACE_URL, uuid5
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
-from app.analyst.briefing import build_analyst_briefing
+from app.analyst.briefing import build_analyst_briefing, hysteresis_params_from_settings, load_directional_prior
 from app.backtest.regimes import label_regime
 from app.backtest.service import _regime_params, backtest_line, historical_context_for_analysis
 from app.services import http_handlers as runtime
@@ -812,6 +812,7 @@ def _briefing_for_entry(
     action_plan: dict[str, Any] | None,
     context: str,
 ) -> dict[str, Any]:
+    # WO-53: 직전 방향 히스테리시스 상태를 최근 스냅샷에서 로드해 주입 (전환에 관성).
     return build_analyst_briefing(
         symbol=symbol,
         timeframe=timeframe,
@@ -819,6 +820,8 @@ def _briefing_for_entry(
         action_plan=action_plan,
         calibration_scores=_repo().list_judgment_scores(limit=2000),
         context=context,
+        prior_state=load_directional_prior(_repo(), symbol, timeframe),
+        hysteresis_params=hysteresis_params_from_settings(runtime.settings),
     )
 
 
