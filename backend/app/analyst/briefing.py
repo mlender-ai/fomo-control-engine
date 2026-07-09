@@ -15,12 +15,18 @@ def build_analyst_briefing(
     action_plan: dict[str, Any] | None = None,
     calibration_scores: list[JudgmentScore] | None = None,
     context: str = "pre_entry",
+    prior_state: dict[str, Any] | None = None,
+    hysteresis_params: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    # WO-53: 히스테리시스 상태(prior_state)는 호출자가 저장소에서 로드해 주입한다.
+    # 전환 로직은 build_confluence 한 곳에만 있어 라이브·백테스트가 이를 공유한다.
     confluence = build_confluence(
         symbol=symbol,
         timeframe=timeframe,
         analysis=analysis,
         calibration_scores=calibration_scores or [],
+        prior_state=prior_state,
+        hysteresis_params=hysteresis_params,
     )
     scenario = _scenario_lines(confluence, action_plan or {}, analysis)
     hit_rates = _hit_rate_lines(confluence, analysis.get("historical_backtest"))
@@ -251,3 +257,35 @@ def _price(value: Any) -> str:
 
 def _dict_list(value: Any) -> list[dict[str, Any]]:
     return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+
+
+def hysteresis_params_from_settings(settings: Any) -> dict[str, Any]:
+    """WO-53/39: 자율 튜닝 가능한 방향 히스테리시스 파라미터를 Settings에서 읽어 온다.
+    build_confluence가 hard bound로 클램프하므로 여기선 존재하는 값만 모아 넘긴다."""
+    params: dict[str, Any] = {}
+    for settings_key, param_key in (
+        ("directional_ema_span", "ema_span"),
+        ("directional_flip_margin", "flip_margin"),
+        ("directional_flip_persist", "flip_persist"),
+    ):
+        value = getattr(settings, settings_key, None)
+        if value is not None:
+            params[param_key] = value
+    return params
+
+
+def load_directional_prior(repo: Any, symbol: str, timeframe: str) -> dict[str, Any] | None:
+    """WO-53: 직전 방향 히스테리시스 상태를 최근 스카우트 스냅샷에서 조회한다.
+    상태 저장은 스냅샷에 브리핑(confluence.stance_state)이 실려 자연히 영속된다 — 별도 테이블 없음."""
+    try:
+        snapshot = repo.latest_scout_snapshot(symbol, timeframe)
+    except Exception:
+        return None
+    if snapshot is None:
+        return None
+    summary = getattr(snapshot, "summary", None)
+    summary = summary if isinstance(summary, dict) else {}
+    briefing = summary.get("analyst_briefing") if isinstance(summary.get("analyst_briefing"), dict) else {}
+    confluence = briefing.get("confluence") if isinstance(briefing.get("confluence"), dict) else {}
+    state = confluence.get("stance_state")
+    return state if isinstance(state, dict) else None

@@ -185,6 +185,20 @@ class Settings(BaseSettings):
         40,
         validation_alias=AliasChoices("FCE_MIN_INVALIDATION_LEVEL_SCORE", "MIN_INVALIDATION_LEVEL_SCORE"),
     )
+    # WO-53: 방향 히스테리시스 튜너블 (hard bound는 param_registry.py). 전환 관성 파라미터 —
+    # 진동 흡수용이며, build_confluence가 bound로 클램프한다.
+    directional_ema_span: float = Field(
+        2.0,
+        validation_alias=AliasChoices("FCE_DIRECTIONAL_EMA_SPAN", "DIRECTIONAL_EMA_SPAN"),
+    )
+    directional_flip_margin: float = Field(
+        0.30,
+        validation_alias=AliasChoices("FCE_DIRECTIONAL_FLIP_MARGIN", "DIRECTIONAL_FLIP_MARGIN"),
+    )
+    directional_flip_persist: int = Field(
+        2,
+        validation_alias=AliasChoices("FCE_DIRECTIONAL_FLIP_PERSIST", "DIRECTIONAL_FLIP_PERSIST"),
+    )
     run_live_bitget_tests: bool = Field(
         False,
         validation_alias=AliasChoices("FCE_RUN_LIVE_BITGET_TESTS", "RUN_LIVE_BITGET_TESTS"),
