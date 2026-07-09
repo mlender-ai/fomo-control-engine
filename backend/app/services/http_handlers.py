@@ -854,6 +854,7 @@ def sync_live_positions() -> dict:
     sync_result = _sync_bitget_positions()
     all_positions = repository.list_positions()
     positions = [position for position in all_positions if position.status == PositionStatus.open]
+    scout_tracking_removed = _clear_watchlist_for_open_positions(positions)
     analyzed = []
     for position in positions:
         try:
@@ -864,6 +865,7 @@ def sync_live_positions() -> dict:
         **sync_result,
         "positions": analyzed,
         "open_count": len(positions),
+        "scout_tracking_removed": scout_tracking_removed,
         "needs_exit_record_count": len(
             [
                 position
@@ -877,6 +879,16 @@ def sync_live_positions() -> dict:
         ),
         "timestamp": utc_now(),
     }
+
+
+def _clear_watchlist_for_open_positions(open_positions: list[Position]) -> list[str]:
+    open_symbols = {position.symbol.upper() for position in open_positions if position.status == PositionStatus.open}
+    removed: list[str] = []
+    for item in list(repository.list_watchlist()):
+        symbol = item.symbol.upper()
+        if symbol in open_symbols and repository.remove_watchlist_item(symbol):
+            removed.append(symbol)
+    return removed
 
 
 def get_live_position(position_id: UUID) -> dict:
@@ -1410,7 +1422,9 @@ def create_position(request: PositionCreate):
         planned_take_profit_price=request.planned_take_profit_price,
         thesis_text=request.thesis_text,
     )
-    return repository.add_position(position)
+    saved = repository.add_position(position)
+    _clear_watchlist_for_open_positions([saved])
+    return saved
 
 
 def monitor_position(position_id: UUID):

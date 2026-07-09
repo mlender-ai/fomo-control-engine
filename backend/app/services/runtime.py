@@ -67,7 +67,11 @@ def provider_name() -> str:
 
 def sync_and_analyze_positions() -> dict[str, Any]:
     """Sync Bitget positions and analyze open positions using the same route path."""
-    return runtime.sync_live_positions()
+    payload = runtime.sync_live_positions()
+    removed = [str(symbol).upper() for symbol in payload.get("scout_tracking_removed", [])]
+    removed.extend(clear_scout_tracking_for_open_positions()["removed"])
+    payload["scout_tracking_removed"] = sorted(set(removed))
+    return payload
 
 
 def apply_engine_param_overrides() -> dict[str, Any]:
@@ -129,7 +133,7 @@ def refresh_market_data() -> dict[str, Any]:
 
 def tracked_symbols() -> list[str]:
     symbols = {position.symbol.upper() for position in runtime.repository.list_positions(PositionStatus.open)}
-    symbols.update(item.symbol.upper() for item in runtime.repository.list_watchlist())
+    symbols.update(item.symbol.upper() for item in runtime.repository.list_watchlist() if item.symbol.upper() not in symbols)
     if not symbols:
         symbols.update(runtime.settings.symbol_list)
     return sorted(symbols)
@@ -605,9 +609,92 @@ def scout_scan(limit: int = 5) -> dict[str, Any]:
     }
 
 
+def scout_tracking_status() -> dict[str, Any]:
+    """Return persistent scout tracking symbols without running a market scan."""
+    cleanup = clear_scout_tracking_for_open_positions()
+    open_symbols = {position.symbol.upper() for position in runtime.repository.list_positions(PositionStatus.open)}
+    items = [
+        item.model_dump(mode="json")
+        for item in runtime.repository.list_watchlist()
+        if item.symbol.upper() not in open_symbols
+    ]
+    return {
+        "items": items,
+        "count": len(items),
+        "scout_tracking_removed": cleanup["removed"],
+    }
+
+
 def scout_quick_answer(symbol: str, timeframe: str = "4h") -> dict[str, Any]:
     """Single-symbol scout answer used by the web quick card and Telegram /q."""
     return scout_handlers.scout_analysis(symbol, timeframe=timeframe, force=False)
+
+
+def start_scout_tracking(symbol: str, timeframe: str = "4h") -> dict[str, Any]:
+    """Register a symbol for persistent scout tracking until the user stops it or a live position appears."""
+    normalized = scout_handlers.normalize_scout_symbol(symbol)
+    open_position = next(
+        (
+            position
+            for position in runtime.repository.list_positions(PositionStatus.open)
+            if position.symbol.upper() == normalized
+        ),
+        None,
+    )
+    if open_position is not None:
+        removed = runtime.repository.remove_watchlist_item(normalized)
+        return {
+            "symbol": normalized,
+            "timeframe": timeframe,
+            "tracking": {
+                "active": False,
+                "mode": "position",
+                "removed_watchlist": removed,
+                "message": "이미 열린 포지션입니다. 스카우트 추적은 포지션 관제로 전환됩니다.",
+            },
+            "position_payload": live_position_detail(open_position.id),
+        }
+    watchlist = scout_handlers.add_watchlist_item(
+        scout_handlers.WatchlistRequest(
+            symbol=normalized,
+            note="telegram scout tracking",
+            default_timeframe=timeframe,
+        )
+    )
+    payload = scout_handlers.scout_analysis(normalized, timeframe=timeframe, force=True)
+    return {
+        **payload,
+        "tracking": {
+            "active": True,
+            "mode": "scout",
+            "watchlist_item": watchlist.get("item"),
+            "message": "스카우트 추적을 시작했습니다. 포지션 진입 전까지 워커가 계속 관제합니다.",
+        },
+    }
+
+
+def stop_scout_tracking(symbol: str) -> dict[str, Any]:
+    normalized = scout_handlers.normalize_scout_symbol(symbol)
+    removed = runtime.repository.remove_watchlist_item(normalized)
+    return {
+        "symbol": normalized,
+        "removed": removed,
+        "tracking": {
+            "active": False,
+            "mode": "stopped",
+            "message": "스카우트 추적을 중지했습니다." if removed else "이미 스카우트 추적 대상이 아닙니다.",
+        },
+    }
+
+
+def clear_scout_tracking_for_open_positions() -> dict[str, Any]:
+    open_symbols = {position.symbol.upper() for position in runtime.repository.list_positions(PositionStatus.open)}
+    removed: list[str] = []
+    for item in list(runtime.repository.list_watchlist()):
+        symbol = item.symbol.upper()
+        if symbol in open_symbols and runtime.repository.remove_watchlist_item(symbol):
+            removed.append(symbol)
+    return {"removed": removed, "count": len(removed)}
 
 
 def entry_intents(symbol: str | None = None, status: str | None = None) -> dict[str, Any]:

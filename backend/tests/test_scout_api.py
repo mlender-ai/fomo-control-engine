@@ -1,6 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
+from app.services import runtime as service
 from app.services.scout_handlers import reset_scout_cache
 from app.main import app
 
@@ -60,6 +61,22 @@ def test_watchlist_crud(client: TestClient) -> None:
 
     missing = client.delete("/api/watchlist/ETHUSDT")
     assert missing.status_code == 404
+
+
+def test_telegram_scout_tracking_normalizes_adds_and_stops(client: TestClient) -> None:
+    payload = service.start_scout_tracking("btc")
+
+    assert payload["symbol"] == "BTCUSDT"
+    assert payload["tracking"]["active"] is True
+    assert [item["symbol"] for item in client.get("/api/watchlist").json()["items"]] == ["BTCUSDT"]
+    status = service.scout_tracking_status()
+    assert status["count"] == 1
+    assert status["items"][0]["symbol"] == "BTCUSDT"
+
+    stopped = service.stop_scout_tracking("btc")
+    assert stopped["symbol"] == "BTCUSDT"
+    assert stopped["removed"] is True
+    assert client.get("/api/watchlist").json()["items"] == []
 
 
 def test_scout_analysis_returns_scenarios_without_position(client: TestClient) -> None:

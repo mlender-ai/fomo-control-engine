@@ -8,6 +8,7 @@ import { SymbolAnalysisView, useAnalysisWorkspace } from "@/components/symbol-an
 import { EntrySimulator } from "@/components/entry-simulator";
 import {
   api,
+  type AnalystConfluence,
   type ArmedSetup,
   type CatalogSymbolInfo,
   type EntryIntent,
@@ -41,6 +42,7 @@ const SORT_COLUMNS: Array<{ key: SortKey; label: string; direction: "asc" | "des
 ];
 
 const STALE_SECONDS = 300;
+const SCOUT_ENTRY_TOOLS_VISIBLE = false;
 
 type ScoutMinimalEvidence = {
   key: string;
@@ -49,6 +51,19 @@ type ScoutMinimalEvidence = {
   label: string;
   price?: number | null;
   time?: number | null;
+};
+
+type ScoutVerdictTone = "long" | "short" | "neutral" | "conflicted" | "insufficient";
+
+type ScoutAnalysisVerdict = {
+  tone: ScoutVerdictTone;
+  label: string;
+  why: string;
+  counter: string;
+  trigger: string;
+  position: number;
+  counts: { up: number; down: number; neutral: number; unknown: number };
+  evidence: ScoutMinimalEvidence;
 };
 
 const ASSET_FILTERS: Array<{ id: AssetFilter; label: string }> = [
@@ -96,7 +111,7 @@ export function ScoutShell() {
       const response = await api.watchlist();
       setWatchlist(response.items);
       const [intents, discoveryResponse] = await Promise.all([
-        api.entryIntents(undefined, "active"),
+        SCOUT_ENTRY_TOOLS_VISIBLE ? api.entryIntents(undefined, "active") : Promise.resolve({ intents: [] as EntryIntent[] }),
         api.universeDiscoveries({ limit: 20 })
       ]);
       setEntryIntents(intents.intents);
@@ -168,7 +183,9 @@ export function ScoutShell() {
       const response = await api.scoutScan({ force });
       setScanRows(response.rows);
       setArmedSetups(response.armed_setups ?? []);
-      setEntryIntents((current) => response.entry_intents ?? current);
+      if (SCOUT_ENTRY_TOOLS_VISIBLE) {
+        setEntryIntents((current) => response.entry_intents ?? current);
+      }
       setScannedAt(response.scanned_at);
       const discoveryResponse = await api.universeDiscoveries({ limit: 20 });
       setDiscoveries(discoveryResponse.discoveries);
@@ -366,7 +383,7 @@ export function ScoutShell() {
                 <ScoutMinimalTable
                   rows={sortedRows}
                   armedSetups={armedSetups}
-                  entryIntents={entryIntents}
+                  entryIntents={SCOUT_ENTRY_TOOLS_VISIBLE ? entryIntents : []}
                   onOpen={(symbol) => setActiveSymbol(symbol)}
                   onRemove={(symbol) => void removeSymbol(symbol)}
                 />
@@ -397,7 +414,7 @@ export function ScoutShell() {
                       key={row.symbol}
                       row={row}
                       armedSetups={armedSetups.filter((setup) => setup.symbol === row.symbol && setup.status === "armed")}
-                      entryIntents={entryIntents.filter((intent) => intent.symbol === row.symbol && intent.status === "active")}
+                      entryIntents={SCOUT_ENTRY_TOOLS_VISIBLE ? entryIntents.filter((intent) => intent.symbol === row.symbol && intent.status === "active") : []}
                       scanReference={scannedAt}
                       onOpen={() => setActiveSymbol(row.symbol)}
                       onRemove={() => void removeSymbol(row.symbol)}
@@ -495,9 +512,11 @@ function ScoutQuickAnswerCard({
             <RefreshCw size={14} />
             갱신
           </button>
-          <button className="button secondary" type="button" onClick={() => symbol && onOpen(symbol)} disabled={!symbol}>
-            의도 등록
-          </button>
+          {SCOUT_ENTRY_TOOLS_VISIBLE ? (
+            <button className="button secondary" type="button" onClick={() => symbol && onOpen(symbol)} disabled={!symbol}>
+              의도 등록
+            </button>
+          ) : null}
           <button className="button" type="button" onClick={() => symbol && onOpen(symbol)} disabled={!symbol}>
             자세히
           </button>
@@ -835,7 +854,7 @@ function ScoutSymbolView({
     try {
       const [analysisResponse, intentResponse] = await Promise.all([
         api.scoutAnalysis(symbol, timeframe, force),
-        api.entryIntents(symbol, "active")
+        SCOUT_ENTRY_TOOLS_VISIBLE ? api.entryIntents(symbol, "active") : Promise.resolve({ intents: [] as EntryIntent[] })
       ]);
       if (loadRequestRef.current !== requestKey) return;
       setData(analysisResponse);
@@ -856,6 +875,7 @@ function ScoutSymbolView({
 
   const analysis = data?.analysis ?? null;
   const scenarios = analysis?.scenarios ?? null;
+  const verdict = scoutAnalysisVerdict(symbol, data);
 
   async function createIntent(payload: {
     direction: "long" | "short";
@@ -882,7 +902,7 @@ function ScoutSymbolView({
   }
 
   return (
-    <div className="page positionDetailPage" data-testid="scout-analysis-view">
+    <div className="page positionDetailPage scoutDetailPage" data-testid="scout-analysis-view">
       <header className="cockpitToolbar positionDetailToolbar">
         <div>
           <p className="eyebrow">진입 전 분석 · 포지션 없음</p>
@@ -909,6 +929,7 @@ function ScoutSymbolView({
 
       {error ? <TerminalWarning tone="error">{error}</TerminalWarning> : null}
       {notice ? <TerminalWarning tone="info">{notice}</TerminalWarning> : null}
+      {viewMode === "pro" ? <ScoutDirectionBanner verdict={verdict} loading={loading} /> : null}
 
       {viewMode === "minimal" ? (
         <ScoutMinimalAnalysisView
@@ -932,7 +953,7 @@ function ScoutSymbolView({
           plan={null}
           analystBriefing={data?.analyst_briefing ?? null}
           workspace={workspace}
-          intentZoneSelector={{
+          intentZoneSelector={SCOUT_ENTRY_TOOLS_VISIBLE ? {
             enabled: zonePickEnabled,
             draft: zoneDraft,
             onDraftChange: (lower, upper) => setZoneDraft({ lower, upper }),
@@ -940,9 +961,9 @@ function ScoutSymbolView({
               setZoneDraft({ lower, upper });
               setZonePickEnabled(false);
             }
-          }}
-          gridClassName="positionDetailMain"
-          sidePanel={
+          } : undefined}
+          gridClassName={SCOUT_ENTRY_TOOLS_VISIBLE ? "positionDetailMain" : "scoutDetailMain"}
+          sidePanel={SCOUT_ENTRY_TOOLS_VISIBLE ? (
             <div className="scoutSidePanel">
               <EntryIntentPanel
                 intents={intents}
@@ -956,7 +977,7 @@ function ScoutSymbolView({
               <EntrySimulator symbol={symbol} markPrice={analysis?.mark_price ?? null} timeframe={timeframe} />
               <ScenarioPanel scenarios={scenarios} asOf={data?.as_of} />
             </div>
-          }
+          ) : null}
           historyExtras={<HistoricalBacktestPanel context={data?.historical_backtest ?? analysis?.historical_backtest ?? null} />}
         />
       )}
@@ -1006,6 +1027,7 @@ function ScoutMinimalAnalysisView({
           <span className="oneQuestionDot" aria-hidden="true" />
           <h2>{verdict.label}</h2>
         </div>
+        <ScoutDirectionGauge verdict={verdict} />
         <div className="oneQuestionReasons">
           <p><b>왜:</b> {verdict.why}</p>
           <p><b>반대:</b> {verdict.counter}</p>
@@ -1037,6 +1059,37 @@ function ScoutMinimalAnalysisView({
         />
       </div>
     </section>
+  );
+}
+
+function ScoutDirectionBanner({ verdict, loading }: { verdict: ScoutAnalysisVerdict; loading: boolean }) {
+  return (
+    <section className={`scoutDirectionBanner tone-${verdict.tone}`} data-testid="scout-direction-banner">
+      <div className="scoutDirectionMain">
+        <span>스카우트 결론</span>
+        <strong>{loading ? "판단 갱신 중" : verdict.label}</strong>
+      </div>
+      <ScoutDirectionGauge verdict={verdict} />
+      <div className="scoutDirectionReasons">
+        <p><b>왜</b>{verdict.why}</p>
+        <p><b>반대</b>{verdict.counter}</p>
+      </div>
+    </section>
+  );
+}
+
+function ScoutDirectionGauge({ verdict }: { verdict: ScoutAnalysisVerdict }) {
+  return (
+    <div className={`scoutDirectionGauge tone-${verdict.tone}`}>
+      <span>숏</span>
+      <i aria-hidden="true">
+        <b style={{ left: `${verdict.position}%` }} />
+      </i>
+      <span>롱</span>
+      <em>
+        상방 {verdict.counts.up} · 하방 {verdict.counts.down} · 중립 {verdict.counts.neutral} · 판단불가 {verdict.counts.unknown}
+      </em>
+    </div>
   );
 }
 
@@ -1422,33 +1475,86 @@ function scoutMinimalReasons(row: ScoutScanRow): string[] {
 }
 
 function formatTriggerDistance(row: ScoutScanRow): string {
-  if (typeof row.entry_intent_distance_pct === "number") return `의도 ${formatPct(row.entry_intent_distance_pct)}`;
+  if (SCOUT_ENTRY_TOOLS_VISIBLE && typeof row.entry_intent_distance_pct === "number") return `의도 ${formatPct(row.entry_intent_distance_pct)}`;
   if (typeof row.setup_proximity_pct === "number") return formatPct(row.setup_proximity_pct);
   if (typeof row.liquidity_pool_distance_pct === "number") return `유동성 ${formatPct(row.liquidity_pool_distance_pct)}`;
   if (typeof row.nearest_level_distance_pct === "number") return `구조 ${formatPct(row.nearest_level_distance_pct)}`;
   return "대기";
 }
 
-function scoutAnalysisVerdict(symbol: string, data: ScoutAnalysisResponse | null): { tone: string; label: string; why: string; counter: string; trigger: string; evidence: ScoutMinimalEvidence } {
+function scoutAnalysisVerdict(symbol: string, data: ScoutAnalysisResponse | null): ScoutAnalysisVerdict {
   const confluence = data?.analyst_briefing?.confluence;
   const summary = data?.summary;
   const tilt = summary ? scoutTilt(summary) : { position: 50, label: "근거 부족", tone: "insufficient" as const };
+  const tone = confluence ? scoutToneFromStance(confluence.stance) : tilt.tone;
+  const position = confluence ? scoutPositionFromConfluence(confluence, tone) : tilt.position;
   const label = confluence?.stance_label
     ? scoutStanceLabel(confluence.stance, confluence.stance_label)
     : tilt.label;
-  const primary = confluence?.stance === "short_leaning" ? confluence.short_evidence : confluence?.long_evidence;
+  const primary = confluence ? scoutPrimaryEvidence(confluence, tone) : undefined;
   const primaryEvidence = primary?.[0];
   const why = primary?.slice(0, 2).map((item) => item.claim).join(". ")
     || (summary ? scoutMinimalReasons(summary).join(" · ") : "")
     || `${symbol}은 아직 방향 근거가 충분하지 않습니다.`;
   const counter = confluence?.counter_evidence?.[0]?.claim || "반대 근거는 아직 강하게 확인되지 않았습니다.";
   return {
-    tone: confluence?.stance ?? tilt.tone,
+    tone,
     label,
     why: clampScoutText(plainifyTaText(why), 104),
     counter: clampScoutText(plainifyTaText(counter), 82),
     trigger: summary ? formatTriggerDistance(summary) : "대기",
+    position,
+    counts: scoutVerdictCounts(data, confluence),
     evidence: scoutEvidenceFromClaim(primaryEvidence?.engine, primaryEvidence?.claim || why, primaryEvidence?.as_of)
+  };
+}
+
+function scoutToneFromStance(stance: string): ScoutVerdictTone {
+  if (stance === "long_leaning") return "long";
+  if (stance === "short_leaning") return "short";
+  if (stance === "conflicted") return "conflicted";
+  if (stance === "insufficient") return "insufficient";
+  return "neutral";
+}
+
+function scoutPositionFromConfluence(confluence: AnalystConfluence, tone: ScoutVerdictTone): number {
+  if (tone === "insufficient") return 50;
+  const diff = confluence.long_score - confluence.short_score;
+  if (tone === "conflicted" || Math.abs(diff) < 1) return 50;
+  return Math.max(8, Math.min(92, 50 + diff / 2));
+}
+
+function scoutPrimaryEvidence(
+  confluence: AnalystConfluence,
+  tone: ScoutVerdictTone
+) {
+  if (tone === "short") return confluence.short_evidence;
+  if (tone === "long") return confluence.long_evidence;
+  const longTop = confluence.long_evidence[0];
+  const shortTop = confluence.short_evidence[0];
+  if (!longTop) return confluence.short_evidence;
+  if (!shortTop) return confluence.long_evidence;
+  return confluence.long_score >= confluence.short_score ? confluence.long_evidence : confluence.short_evidence;
+}
+
+function scoutVerdictCounts(
+  data: ScoutAnalysisResponse | null,
+  confluence: AnalystConfluence | undefined
+): ScoutAnalysisVerdict["counts"] {
+  const counts = data?.analysis?.one_liners?.counts;
+  if (counts) {
+    return {
+      up: counts["상방"] ?? 0,
+      down: counts["하방"] ?? 0,
+      neutral: counts["횡보"] ?? 0,
+      unknown: counts["판단불가"] ?? 0
+    };
+  }
+  return {
+    up: confluence?.long_evidence.length ?? 0,
+    down: confluence?.short_evidence.length ?? 0,
+    neutral: confluence?.neutral_evidence?.length ?? 0,
+    unknown: confluence ? Math.max(0, confluence.evidence_count - confluence.long_evidence.length - confluence.short_evidence.length - (confluence.neutral_evidence?.length ?? 0)) : 0
   };
 }
 

@@ -15,6 +15,7 @@ ALLOWED_CALLBACK_ACTIONS = {
     "one_liners",
     "review",
     "scout",
+    "unscout",
     "status",
     "sim",
 }

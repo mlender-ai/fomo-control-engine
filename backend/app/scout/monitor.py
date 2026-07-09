@@ -100,7 +100,11 @@ def arm_auto_setups(repo: Any, settings: Settings, row: dict[str, Any], snapshot
         existing = by_id.get(setup_id) or repo.get_armed_setup(setup_id)
         if existing and existing.status in {"triggered", "invalidated", "disarmed"}:
             continue
-        preview = candidate.get("preview") if isinstance(candidate.get("preview"), dict) else {}
+        preview = dict(candidate.get("preview")) if isinstance(candidate.get("preview"), dict) else {}
+        one_liners = _row_one_liners(row)
+        if one_liners:
+            preview.setdefault("scout_overall_stance", one_liners.get("overall_stance"))
+            preview.setdefault("scout_counts_summary", one_liners.get("summary"))
         now = utc_now()
         setup = ArmedSetup(
             id=setup_id,
@@ -609,16 +613,18 @@ def _setup_candidate(rule_id: str, severity: str, setup: ArmedSetup, current: fl
     }
     emoji = "🎯" if rule_id == "setup_near" else "🟢" if rule_id == "setup_triggered" else "🟡"
     preview = _preview_line(setup)
+    context = _setup_context_line(setup)
     briefing = _briefing_preview_line(setup)
     backtest = _backtest_preview_line(setup)
     title = title_map.get(rule_id, "셋업")
     lines = [
         f"{emoji} <b>{escape(setup.symbol)}</b> — {escape(title)}",
         f"{escape(setup.trigger_label)} {_price(setup.trigger_price)} (거리 {_signed_pct(distance)}) · 신뢰도 {setup.confidence or '-'}",
+        context,
         preview,
         backtest,
         briefing,
-        "→ 진입 판단은 사용자 몫. 시뮬레이션으로 R:R과 무효화를 다시 확인하세요.",
+        "→ 종합 판정과 셋업 방향이 충돌하면 보류 신호입니다. 시뮬레이션으로 R:R과 무효화를 다시 확인하세요.",
     ]
     return AlertCandidate(
         rule_id=rule_id,
@@ -1019,7 +1025,8 @@ def _preview_line(setup: ArmedSetup) -> str:
         checks = f" · 체크 {preview.get('checklist_passed')}/{preview.get('checklist_total')}"
     if rr is None and inv is None and not checks:
         return ""
-    return f"프리뷰({setup.direction or '-'} 10x 가정): R:R {rr or '-'} · 무효화 {_signed_pct(inv)}{checks}"
+    direction = _direction_label(setup.direction) if setup.direction else "-"
+    return f"프리뷰({direction} 10x 가정): R:R {rr or '-'} · 무효화 {_signed_pct(inv)}{checks}"
 
 
 def _backtest_preview_line(setup: ArmedSetup) -> str:
@@ -1032,11 +1039,50 @@ def _briefing_preview_line(setup: ArmedSetup) -> str:
     preview = setup.preview if isinstance(setup.preview, dict) else {}
     summary = preview.get("briefing_summary")
     if isinstance(summary, str) and summary.strip():
-        return f"브리핑: {escape(summary.strip())}"
+        return f"종합 브리핑: {escape(_strip_briefing_prefix(summary))}"
     stance = preview.get("briefing_stance")
     if isinstance(stance, str) and stance.strip():
-        return f"브리핑: {escape(stance.strip())}"
+        return f"종합 브리핑: {escape(_strip_briefing_prefix(stance))}"
     return ""
+
+
+def _setup_context_line(setup: ArmedSetup) -> str:
+    direction = _direction_label(setup.direction) if setup.direction else "미지정"
+    preview = setup.preview if isinstance(setup.preview, dict) else {}
+    stance = str(preview.get("scout_overall_stance") or "").strip()
+    if not stance:
+        return f"셋업 방향: {direction} · 개별 이벤트 기준"
+    stance_label = _stance_label(stance)
+    expected = "상방" if setup.direction == "long" else "하방" if setup.direction == "short" else ""
+    conflict = " · 충돌" if expected and stance in {"상방", "하방"} and stance != expected else ""
+    return f"셋업 방향: {direction} · 현재 종합: {stance_label}{conflict}"
+
+
+def _stance_label(stance: str) -> str:
+    labels = {
+        "상방": "상방 근거 우세",
+        "하방": "하방 근거 우세",
+        "횡보": "중립",
+        "판단불가": "근거 부족",
+    }
+    return labels.get(stance, stance)
+
+
+def _strip_briefing_prefix(value: str) -> str:
+    text = value.strip()
+    for prefix in ("브리핑:", "브리핑："):
+        if text.startswith(prefix):
+            return text[len(prefix) :].strip()
+    return text
+
+
+def _row_one_liners(row: dict[str, Any]) -> dict[str, Any]:
+    analysis = row.get("analysis") if isinstance(row.get("analysis"), dict) else {}
+    one_liners = analysis.get("one_liners")
+    if not isinstance(one_liners, dict):
+        chart_analysis = row.get("chart_analysis") if isinstance(row.get("chart_analysis"), dict) else {}
+        one_liners = chart_analysis.get("one_liners")
+    return one_liners if isinstance(one_liners, dict) else {}
 
 
 def _row_backtest_summary(row: dict[str, Any]) -> str | None:

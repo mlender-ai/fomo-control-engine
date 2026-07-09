@@ -123,10 +123,15 @@ export function PositionCandlestickChart({
   }, [viewportKey]);
 
   useEffect(() => {
+    if (layerMode === "minimal") {
+      setGuideOpen(false);
+      return;
+    }
     setGuideOpen(window.localStorage.getItem(GUIDE_STORAGE_KEY) === "true");
-  }, []);
+  }, [layerMode]);
 
   function toggleGuide() {
+    if (layerMode === "minimal") return;
     setGuideOpen((current) => {
       const next = !current;
       window.localStorage.setItem(GUIDE_STORAGE_KEY, String(next));
@@ -506,9 +511,11 @@ export function PositionCandlestickChart({
         </div>
         <div className="positionChartHeaderActions">
           <span className="positionChartTrendPill">{trendSummary}</span>
-          <button className={`chartGuideButton ${guideOpen ? "active" : ""}`} onClick={toggleGuide} type="button" aria-pressed={guideOpen} title="해설 오버레이 켜기/끄기">
-            해설
-          </button>
+          {layerMode === "pro" ? (
+            <button className={`chartGuideButton ${guideOpen ? "active" : ""}`} onClick={toggleGuide} type="button" aria-pressed={guideOpen} title="해설 오버레이 켜기/끄기">
+              해설
+            </button>
+          ) : null}
         </div>
       </div>
       {layerMode === "pro" ? (
@@ -925,11 +932,14 @@ function minimalWyckoffNodes(context: OverlayContext, evidence: MinimalChartEvid
     });
   const marker = events[0];
   if (marker) {
-    return minimalDashedPriceLine(context, marker.price, `${eventShortLabel(marker)} ${Math.round(marker.confidence)}`, marker.side === "distribution" ? "red" : "amber");
+    const label = marker.side === "distribution"
+      ? `숏 근거 · ${eventShortLabel(marker)}`
+      : `롱 근거 · ${eventShortLabel(marker)}`;
+    return minimalDashedPriceLine(context, marker.price, label, marker.side === "distribution" ? "red" : "amber");
   }
   return [
-    ...minimalDashedPriceLine(context, range.resistance.price, "레인지 상단", "red", "top"),
-    ...minimalDashedPriceLine(context, range.support.price, "레인지 하단", "amber", "bottom")
+    ...minimalDashedPriceLine(context, range.resistance.price, "숏 경계 · 상단", "red", "top"),
+    ...minimalDashedPriceLine(context, range.support.price, "롱 경계 · 하단", "amber", "bottom")
   ];
 }
 
@@ -948,7 +958,8 @@ function minimalHarmonicNodes(context: OverlayContext, pattern: PositionChartAna
   const przBottom = context.series.priceToCoordinate(pattern.prz.low);
   if (przTop === null || przBottom === null) return [];
   const price = (pattern.prz.high + pattern.prz.low) / 2;
-  return minimalDashedPriceLine(context, price, `반전 후보 ${Math.round(pattern.confidence)}`, "amber");
+  const direction = pattern.direction === "bearish" ? "숏 후보" : "롱 후보";
+  return minimalDashedPriceLine(context, price, `${direction} · 반전`, pattern.direction === "bearish" ? "red" : "amber");
 }
 
 function minimalFlowBadge(context: OverlayContext, label: string): string {
@@ -990,25 +1001,25 @@ function minimalFloatingLabel(context: OverlayContext, label: string, x: number,
 
 function minimalEvidenceLabel(label: string, fallback: "support" | "resistance" | "flow"): string {
   const plain = label.replace(/\s+/g, " ").trim();
-  if (plain.includes("스윕") || plain.includes("청소")) return plain.includes("고점") || plain.includes("상위") ? "고점 청소" : "저점 청소";
-  if (plain.includes("UTAD")) return "UTAD";
-  if (plain.includes("Spring") || plain.includes("스프링")) return "스프링";
-  if (plain.includes("반전")) return "반전 후보";
-  if (plain.includes("지지")) return "지지 확인";
-  if (plain.includes("저항")) return "저항 확인";
-  if (fallback === "support") return "지지 확인";
-  if (fallback === "resistance") return "저항 확인";
+  if (plain.includes("스윕") || plain.includes("청소")) return plain.includes("고점") || plain.includes("상위") ? "숏 근거 · 고점 청소" : "롱 근거 · 저점 청소";
+  if (plain.includes("UTAD")) return "숏 근거 · UTAD";
+  if (plain.includes("Spring") || plain.includes("스프링")) return "롱 근거 · 스프링";
+  if (plain.includes("반전")) return plain.includes("하락") || plain.includes("숏") ? "숏 후보 · 반전" : "롱 후보 · 반전";
+  if (plain.includes("지지")) return "롱 근거 · 지지";
+  if (plain.includes("저항")) return "숏 근거 · 저항";
+  if (fallback === "support") return "롱 근거 · 지지";
+  if (fallback === "resistance") return "숏 근거 · 저항";
   return plain || "수급 근거";
 }
 
 function liquiditySweepMinimalLabel(sweep: LiquiditySweep): string {
-  if (sweep.side === "buy_side" || sweep.pool_kind.includes("high")) return "고점 청소";
-  return "저점 청소";
+  if (sweep.side === "buy_side" || sweep.pool_kind.includes("high")) return "숏 근거 · 고점 청소";
+  return "롱 근거 · 저점 청소";
 }
 
 function liquidityPoolMinimalLabel(pool: LiquidityPool): string {
-  if (pool.side === "buy_side" || pool.kind.includes("high") || pool.kind === "eqh") return "고점 유동성";
-  return "저점 유동성";
+  if (pool.side === "buy_side" || pool.kind.includes("high") || pool.kind === "eqh") return "상방 목표 · 고점 풀";
+  return "하방 목표 · 저점 풀";
 }
 
 function nearestByPrice<T extends { price: number }>(items: T[], price: number): T | null {

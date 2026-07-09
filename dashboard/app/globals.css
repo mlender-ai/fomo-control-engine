@@ -1875,6 +1875,134 @@ h3 {
   align-items: stretch;
 }
 
+.scoutDetailPage {
+  max-width: 1280px;
+  margin-inline: auto;
+}
+
+.scoutDetailMain {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+  align-items: stretch;
+}
+
+.scoutDetailMain .positionChartPanel {
+  min-height: min(740px, calc(100vh - 290px));
+}
+
+.scoutDirectionBanner {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.52fr) minmax(260px, 0.78fr) minmax(360px, 1fr);
+  gap: 14px;
+  align-items: center;
+  border: 1px solid var(--terminal-line);
+  border-left: 4px solid var(--terminal-muted);
+  border-radius: 8px;
+  background: rgba(12, 16, 23, 0.92);
+  padding: 14px 16px;
+}
+
+.scoutDirectionBanner.tone-long {
+  border-left-color: var(--terminal-positive);
+}
+
+.scoutDirectionBanner.tone-short {
+  border-left-color: var(--terminal-negative);
+}
+
+.scoutDirectionBanner.tone-conflicted,
+.scoutDirectionBanner.tone-neutral {
+  border-left-color: var(--terminal-amber);
+}
+
+.scoutDirectionMain {
+  display: grid;
+  gap: 5px;
+}
+
+.scoutDirectionMain span {
+  color: var(--terminal-muted);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.scoutDirectionMain strong {
+  color: var(--terminal-text);
+  font-size: 24px;
+  line-height: 1.1;
+}
+
+.scoutDirectionGauge {
+  display: grid;
+  grid-template-columns: auto minmax(140px, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.scoutDirectionGauge span,
+.scoutDirectionGauge em {
+  color: var(--terminal-muted);
+  font-size: 11px;
+  font-weight: 820;
+}
+
+.scoutDirectionGauge i {
+  position: relative;
+  height: 10px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(255, 99, 99, 0.36), rgba(166, 176, 195, 0.2), rgba(105, 226, 138, 0.36));
+}
+
+.scoutDirectionGauge b {
+  position: absolute;
+  top: 50%;
+  width: 17px;
+  height: 17px;
+  border: 2px solid #090d13;
+  border-radius: 50%;
+  background: var(--terminal-muted);
+  transform: translate(-50%, -50%);
+}
+
+.scoutDirectionGauge.tone-long b {
+  background: var(--terminal-positive);
+}
+
+.scoutDirectionGauge.tone-short b {
+  background: var(--terminal-negative);
+}
+
+.scoutDirectionGauge.tone-conflicted b,
+.scoutDirectionGauge.tone-neutral b {
+  background: var(--terminal-amber);
+}
+
+.scoutDirectionGauge em {
+  grid-column: 1 / -1;
+}
+
+.scoutDirectionReasons {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.scoutDirectionReasons p {
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
+  gap: 8px;
+  margin: 0;
+  color: var(--terminal-text);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.scoutDirectionReasons b {
+  color: var(--terminal-muted);
+}
+
 .positionChartPanel,
 .positionInsightRail,
 .analysisPanel {
@@ -5782,6 +5910,16 @@ button.actionPlanRow:not(:disabled):hover {
   box-shadow: 0 0 0 6px rgba(105, 226, 138, 0.1);
 }
 
+.oneQuestionCard.state-long .oneQuestionDot {
+  background: var(--terminal-positive);
+  box-shadow: 0 0 0 6px rgba(105, 226, 138, 0.1);
+}
+
+.oneQuestionCard.state-short .oneQuestionDot {
+  background: var(--terminal-negative);
+  box-shadow: 0 0 0 6px rgba(255, 99, 99, 0.11);
+}
+
 .oneQuestionCard.state-danger .oneQuestionDot,
 .oneQuestionCard.state-critical .oneQuestionDot {
   background: var(--terminal-negative);
@@ -6129,7 +6267,18 @@ button.actionPlanRow:not(:disabled):hover {
   max-width: none;
 }
 
+.scoutOneQuestion .scoutDirectionGauge {
+  border: 1px solid var(--terminal-line);
+  border-radius: 7px;
+  background: rgba(7, 10, 14, 0.36);
+  padding: 11px 12px;
+}
+
 @media (max-width: 1280px) {
+  .scoutDirectionBanner {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .positionOneQuestion {
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas:

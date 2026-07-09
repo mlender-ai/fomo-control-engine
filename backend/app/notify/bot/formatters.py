@@ -146,6 +146,17 @@ def setup_alert_keyboard(symbol: str, direction: str | None = None) -> list[list
     ]
 
 
+def scout_tracking_keyboard(symbol: str) -> list[list[dict[str, str]]]:
+    return [
+        [
+            {"text": "갱신", "callback_data": encode_callback("scout", symbol)},
+            {"text": "브리핑", "callback_data": encode_callback("brief", symbol)},
+            {"text": "추적 중지", "callback_data": encode_callback("unscout", symbol)},
+        ],
+        [{"text": "◀ 스카우트", "callback_data": encode_callback("scout")}],
+    ]
+
+
 def format_help() -> str:
     return "\n".join(
         [
@@ -158,7 +169,10 @@ def format_help() -> str:
             "/insight BASED — 최신 인사이트",
             "/flow BASED — 펀딩·OI·롱숏비",
             "/brief BASED — 애널리스트 브리핑",
-            "/scout — 관심종목 스캔 상위 5",
+            "/scout — 티커 입력 안내와 현재 스카우트 추적 목록",
+            "/scout SOL — SOLUSDT 스카우트 지속 추적 시작",
+            "SOL 또는 SOLUSDT — 티커만 보내도 스카우트 추적 시작",
+            "/unscout SOL — 스카우트 추적 중지",
             "/q SOL — 심볼 즉답 판정",
             "/intents — 등록한 진입 의도",
             "/intent TSLA long 240-250 — 진입 의도 등록",
@@ -372,6 +386,33 @@ def format_scout(payload: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def format_scout_prompt(payload: dict[str, Any] | None = None) -> str:
+    payload = payload or {}
+    items = payload.get("items") if isinstance(payload.get("items"), list) else []
+    lines = [
+        "<b>스카우트 추적</b>",
+        "보고 싶은 티커를 보내세요.",
+        "예: <code>BTC</code>, <code>ETHUSDT</code>, <code>TSLA</code>",
+        "",
+        "/scout BTC 로도 시작할 수 있습니다.",
+        "포지션 진입이 감지되면 스카우트는 자동 종료되고 포지션 관제로 전환됩니다.",
+        "",
+    ]
+    if not items:
+        lines.append("현재 추적 중인 스카우트가 없습니다.")
+        return "\n".join(lines)
+    lines.append("<b>현재 추적</b>")
+    for item in items[:12]:
+        if not isinstance(item, dict):
+            continue
+        symbol = escape(str(item.get("symbol") or "-").upper())
+        timeframe = escape(str(item.get("default_timeframe") or "4h"))
+        note = str(item.get("note") or "").strip()
+        suffix = f" · {escape(note)}" if note and note != "telegram scout tracking" else ""
+        lines.append(f"• <b>{symbol}</b> · {timeframe}{suffix}")
+    return "\n".join(lines)
+
+
 def format_scout_quick_answer(payload: dict[str, Any]) -> str:
     symbol = str(payload.get("symbol") or "-").upper()
     timeframe = str(payload.get("timeframe") or "4h")
@@ -381,7 +422,7 @@ def format_scout_quick_answer(payload: dict[str, Any]) -> str:
     tilt = _scout_tilt_label(summary, one_liners)
     as_of = _time(payload.get("as_of"))
     lines = [
-        f"<b>{escape(symbol)}</b> · 기준 {as_of} · {escape(timeframe)}",
+        f"<b>{escape(symbol)}</b> · 현재 종합 판정 · 기준 {as_of} · {escape(timeframe)}",
         tilt,
     ]
     if strip:
@@ -392,8 +433,44 @@ def format_scout_quick_answer(payload: dict[str, Any]) -> str:
     trigger = _scout_trigger(summary)
     if trigger:
         lines.extend(["", f"트리거까지: {escape(trigger)}"])
+    lines.append("셋업 트리거는 개별 조건 알림입니다. 종합과 충돌하면 보류 신호로 보세요.")
     lines.append("과거 통계와 현재 판정은 판단 보조입니다.")
     return "\n".join(lines)
+
+
+def format_scout_tracking(payload: dict[str, Any]) -> str:
+    tracking = _dump(payload.get("tracking"))
+    mode = str(tracking.get("mode") or "scout")
+    symbol = str(payload.get("symbol") or "-").upper()
+    if mode == "position":
+        return "\n".join(
+            [
+                f"<b>{escape(symbol)}</b>",
+                "이미 열린 포지션입니다.",
+                escape(str(tracking.get("message") or "스카우트 추적은 포지션 관제로 전환됩니다.")),
+            ]
+        )
+    quick = format_scout_quick_answer(payload)
+    return "\n".join(
+        [
+            quick,
+            "",
+            f"📡 <b>스카우트 추적 시작</b> · {escape(symbol)}",
+            escape(str(tracking.get("message") or "포지션 진입 전까지 워커가 계속 관제합니다.")),
+            f"중지: /unscout {escape(symbol.replace('USDT', ''))}",
+        ]
+    )
+
+
+def format_scout_stopped(payload: dict[str, Any]) -> str:
+    symbol = str(payload.get("symbol") or "-").upper()
+    tracking = _dump(payload.get("tracking"))
+    return "\n".join(
+        [
+            f"<b>{escape(symbol)}</b>",
+            escape(str(tracking.get("message") or "스카우트 추적을 중지했습니다.")),
+        ]
+    )
 
 
 def format_improvement_digest(payload: dict[str, Any]) -> str:

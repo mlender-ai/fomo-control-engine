@@ -25,7 +25,15 @@ def _settings(**overrides) -> Settings:
     return Settings(**defaults)
 
 
-def _scan_payload(symbol: str, mark: float, trigger: float, *, direction: str = "short") -> dict:
+def _scan_payload(
+    symbol: str,
+    mark: float,
+    trigger: float,
+    *,
+    direction: str = "short",
+    analysis: dict | None = None,
+    preview: dict | None = None,
+) -> dict:
     distance = ((trigger - mark) / mark) * 100
     return {
         "rows": [
@@ -49,9 +57,11 @@ def _scan_payload(symbol: str, mark: float, trigger: float, *, direction: str = 
                             "rr_ratio": 2.4,
                             "checklist_passed": 5,
                             "checklist_total": 6,
+                            **(preview or {}),
                         },
                     }
                 ],
+                "analysis": analysis or {},
             }
         ],
         "scanned_at": utc_now().isoformat(),
@@ -96,6 +106,39 @@ def test_scout_auto_arm_setup_near_then_triggered_alert_chain() -> None:
     )
     assert triggered["alert_candidates"][0]["setup_id"] == str(near["armed_setups"][0]["id"])
     assert repo.list_armed_setups(symbol="PENGUUSDT", status="triggered")
+
+
+def test_scout_setup_alert_distinguishes_overall_stance_from_trigger_direction() -> None:
+    repo = MemoryRepository()
+    settings = _settings()
+    analysis = {
+        "one_liners": {
+            "overall_stance": "상방",
+            "summary": "상방 3 · 하방 1 · 중립 2 · 판단불가 1",
+        }
+    }
+    preview = {
+        "briefing_summary": "브리핑: 숏 우위 · 롱 26.14 / 숏 35.13",
+        "invalidation_distance_pct": -3.2,
+    }
+
+    process_scout_scan(
+        repo,
+        settings,
+        _scan_payload("SOXLUSDT", mark=100, trigger=101, direction="short", analysis=analysis, preview=preview),
+    )
+    triggered = process_scout_scan(
+        repo,
+        settings,
+        _scan_payload("SOXLUSDT", mark=101.1, trigger=101, direction="short", analysis=analysis, preview=preview),
+    )
+
+    message = triggered["_alert_candidate_objects"][0].message
+    assert "셋업 방향: 숏 · 현재 종합: 상방 근거 우세 · 충돌" in message
+    assert "프리뷰(숏 10x 가정)" in message
+    assert "종합 브리핑: 숏 우위" in message
+    assert "브리핑: 브리핑" not in message
+    assert "short 10x" not in message
 
 
 def test_scout_setup_scores_without_position_after_price_path() -> None:

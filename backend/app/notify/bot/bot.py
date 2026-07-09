@@ -21,14 +21,17 @@ from app.notify.bot.formatters import (
     format_position_verdict,
     format_positions_summary,
     format_reviews,
-    format_scout,
+    format_scout_prompt,
     format_scout_quick_answer,
+    format_scout_stopped,
+    format_scout_tracking,
     format_simulation,
     format_status,
     format_weekly_calibration,
     insight_keyboard,
     main_menu_keyboard,
     positions_keyboard,
+    scout_tracking_keyboard,
     split_telegram_text,
 )
 from app.notify.bot.security import ChatGuard
@@ -76,6 +79,8 @@ class TelegramBotSupervisor:
                 CallbackQueryHandler,
                 CommandHandler,
                 ContextTypes,
+                MessageHandler,
+                filters,
             )
         except ModuleNotFoundError as exc:
             raise RuntimeError("python-telegram-bot is not installed") from exc
@@ -123,6 +128,9 @@ class TelegramBotSupervisor:
         async def quick(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await guarded(update, self._quick, context)
 
+        async def unscout(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+            await guarded(update, self._unscout, context)
+
         async def intents(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await guarded(update, self._intents, context)
 
@@ -159,6 +167,9 @@ class TelegramBotSupervisor:
         async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await guarded(update, self._callback, context)
 
+        async def symbol_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+            await guarded(update, self._symbol_text, context)
+
         app = Application.builder().token(self.settings.telegram_bot_token).build()
         app.add_handler(CommandHandler(["start", "help"], start))
         app.add_handler(CommandHandler(["positions", "p"], positions))
@@ -167,6 +178,7 @@ class TelegramBotSupervisor:
         app.add_handler(CommandHandler("flow", flow))
         app.add_handler(CommandHandler("brief", brief))
         app.add_handler(CommandHandler("scout", scout))
+        app.add_handler(CommandHandler(["unscout", "stopscout"], unscout))
         app.add_handler(CommandHandler(["q", "quick"], quick))
         app.add_handler(CommandHandler("intents", intents))
         app.add_handler(CommandHandler("intent", intent))
@@ -180,6 +192,7 @@ class TelegramBotSupervisor:
         app.add_handler(CommandHandler("mute", mute))
         app.add_handler(CommandHandler("unmute", unmute))
         app.add_handler(CallbackQueryHandler(callback))
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, symbol_text))
 
         await app.initialize()
         await app.start()
@@ -241,8 +254,33 @@ class TelegramBotSupervisor:
         await self._send_brief(update, context, symbol)
 
     async def _scout(self, update: Any, context: Any) -> None:
-        payload = await self._run(service.scout_scan)
-        await self._reply(update.effective_message, format_scout(payload))
+        symbol = _first_arg(context.args)
+        if symbol:
+            await self._reply_scout_tracking(update.effective_message, context, symbol)
+            return
+        payload = await self._run(service.scout_tracking_status)
+        await self._reply(
+            update.effective_message,
+            format_scout_prompt(payload),
+            reply_markup=_markup(main_menu_keyboard(), context),
+        )
+
+    async def _symbol_text(self, update: Any, context: Any) -> None:
+        text = str(getattr(update.effective_message, "text", "") or "").strip()
+        if not text:
+            return
+        if not _looks_like_symbol(text):
+            await self._reply(update.effective_message, "티커만 입력해주세요. 예: BTC, ETHUSDT, TSLA")
+            return
+        await self._reply_scout_tracking(update.effective_message, context, text)
+
+    async def _unscout(self, update: Any, context: Any) -> None:
+        symbol = _first_arg(context.args)
+        if not symbol:
+            await self._reply(update.effective_message, "사용법: /unscout SOL")
+            return
+        payload = await self._run(service.stop_scout_tracking, symbol)
+        await self._reply(update.effective_message, format_scout_stopped(payload), reply_markup=_markup(main_menu_keyboard(), context))
 
     async def _quick(self, update: Any, context: Any) -> None:
         symbol = _first_arg(context.args)
@@ -346,10 +384,28 @@ class TelegramBotSupervisor:
                 reply_markup=_markup(positions_keyboard(payload), context),
             )
         elif parsed.action == "scout":
-            payload = await self._run(service.scout_scan)
+            if parsed.symbol:
+                payload = await self._run(service.start_scout_tracking, parsed.symbol)
+                normalized = str(payload.get("symbol") or parsed.symbol).upper()
+                tracking = payload.get("tracking") if isinstance(payload.get("tracking"), dict) else {}
+                keyboard = detail_keyboard(normalized) if tracking.get("mode") == "position" else scout_tracking_keyboard(normalized)
+                await self._edit(
+                    query,
+                    format_scout_tracking(payload),
+                    reply_markup=_markup(keyboard, context),
+                )
+            else:
+                payload = await self._run(service.scout_tracking_status)
+                await self._edit(
+                    query,
+                    format_scout_prompt(payload),
+                    reply_markup=_markup(main_menu_keyboard(), context),
+                )
+        elif parsed.action == "unscout":
+            payload = await self._run(service.stop_scout_tracking, parsed.symbol)
             await self._edit(
                 query,
-                format_scout(payload),
+                format_scout_stopped(payload),
                 reply_markup=_markup(main_menu_keyboard(), context),
             )
         elif parsed.action == "status":
@@ -392,6 +448,21 @@ class TelegramBotSupervisor:
         elif parsed.action == "refresh":
             await self._run(service.sync_and_analyze_positions)
             await self._edit_detail(query, context, parsed.symbol)
+
+    async def _reply_scout_tracking(self, message: Any, context: Any, symbol: str) -> None:
+        try:
+            payload = await self._run(service.start_scout_tracking, symbol)
+        except Exception as exc:
+            await self._reply(message, f"스카우트 추적 시작 실패: {exc}")
+            return
+        tracking = payload.get("tracking") if isinstance(payload.get("tracking"), dict) else {}
+        normalized = str(payload.get("symbol") or symbol).upper()
+        keyboard = detail_keyboard(normalized) if tracking.get("mode") == "position" else scout_tracking_keyboard(normalized)
+        await self._reply(
+            message,
+            format_scout_tracking(payload),
+            reply_markup=_markup(keyboard, context),
+        )
 
     async def _send_detail(self, update: Any, context: Any, symbol: str) -> None:
         payload = await self._detail_payload(symbol)
@@ -664,6 +735,16 @@ def parse_duration_seconds(value: str) -> int:
 
 def _first_arg(args: list[str] | tuple[str, ...] | None) -> str | None:
     return args[0] if args else None
+
+
+def _looks_like_symbol(value: str) -> bool:
+    raw = (value or "").strip()
+    if not raw or raw.startswith("/"):
+        return False
+    if any(char.isspace() for char in raw):
+        return False
+    normalized = raw.upper().replace("/", "").replace("-", "")
+    return bool(re.fullmatch(r"[A-Z0-9]{2,18}", normalized))
 
 
 def _symbol_direction(value: str) -> tuple[str, str]:

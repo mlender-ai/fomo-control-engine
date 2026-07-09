@@ -144,15 +144,32 @@ def search_symbols(query: str = "", limit: int = 20) -> dict:
     return {"symbols": [_resolve_catalog_asset_class(item).model_dump(mode="json") for item in symbols]}
 
 
+def normalize_scout_symbol(symbol: str) -> str:
+    """Normalize Telegram/API shorthand such as BTC into the Bitget contract symbol."""
+    raw = symbol.strip().upper().replace("/", "")
+    if not raw:
+        raise HTTPException(status_code=422, detail="symbol이 비어 있습니다.")
+    _ensure_catalog()
+    matches = _repo().search_symbols(raw, 50)
+    exact = next((item for item in matches if item.symbol.upper() == raw), None)
+    if exact is not None:
+        return exact.symbol.upper()
+    base = next((item for item in matches if item.base_coin.upper() == raw), None)
+    if base is not None:
+        return base.symbol.upper()
+    usdt_symbol = raw if raw.endswith("USDT") else f"{raw}USDT"
+    appended = next((item for item in matches if item.symbol.upper() == usdt_symbol), None)
+    if appended is not None:
+        return appended.symbol.upper()
+    return usdt_symbol
+
+
 def list_watchlist() -> dict:
     return {"items": [item.model_dump(mode="json") for item in _repo().list_watchlist()]}
 
 
 def add_watchlist_item(request: WatchlistRequest) -> dict:
-    symbol = request.symbol.strip().upper()
-    if not symbol:
-        raise HTTPException(status_code=422, detail="symbol이 비어 있습니다.")
-    _ensure_catalog()
+    symbol = normalize_scout_symbol(request.symbol)
     catalog = next((item for item in _repo().search_symbols(symbol, 20) if item.symbol.upper() == symbol), None)
     asset_class = catalog.asset_class if catalog and catalog.asset_class != "unknown" else classify_asset_class(symbol)
     item = WatchlistItem(symbol=symbol, note=request.note, default_timeframe=request.default_timeframe, asset_class=asset_class)
@@ -161,10 +178,11 @@ def add_watchlist_item(request: WatchlistRequest) -> dict:
 
 
 def remove_watchlist_item(symbol: str) -> dict:
-    removed = _repo().remove_watchlist_item(symbol)
+    normalized = normalize_scout_symbol(symbol)
+    removed = _repo().remove_watchlist_item(normalized)
     if not removed:
         raise HTTPException(status_code=404, detail="관심종목에 없는 심볼입니다.")
-    return {"removed": symbol.upper()}
+    return {"removed": normalized}
 
 
 def _catalog_has_stale_asset_classes(repo: Any) -> bool:
@@ -183,10 +201,11 @@ def _resolve_catalog_asset_class(item: CatalogSymbol) -> CatalogSymbol:
 
 
 def scout_analysis(symbol: str, timeframe: str = "4h", force: bool = False) -> dict:
+    symbol = normalize_scout_symbol(symbol)
     entry = _analysis_entry(symbol, timeframe, force=force, include_trade_flow=True)
     briefing = _briefing_for_entry(symbol, timeframe, entry, action_plan=None, context="pre_entry")
     return {
-        "symbol": symbol.upper(),
+        "symbol": symbol,
         "timeframe": timeframe,
         "as_of": entry["as_of"],
         "cache_age_seconds": round(time.monotonic() - entry["cached_at_monotonic"], 1),
@@ -198,10 +217,11 @@ def scout_analysis(symbol: str, timeframe: str = "4h", force: bool = False) -> d
 
 
 def scout_briefing(symbol: str, timeframe: str = "4h", force: bool = False) -> dict:
+    symbol = normalize_scout_symbol(symbol)
     entry = _analysis_entry(symbol, timeframe, force=force, include_trade_flow=True)
     briefing = _briefing_for_entry(symbol, timeframe, entry, action_plan=None, context="pre_entry")
     return {
-        "symbol": symbol.upper(),
+        "symbol": symbol,
         "timeframe": timeframe,
         "as_of": entry["as_of"],
         "historical_backtest": entry["historical_backtest"],
@@ -210,9 +230,10 @@ def scout_briefing(symbol: str, timeframe: str = "4h", force: bool = False) -> d
 
 
 def scout_backtest(symbol: str, timeframe: str = "4h", force: bool = False) -> dict:
+    symbol = normalize_scout_symbol(symbol)
     entry = _analysis_entry(symbol, timeframe, force=force, include_trade_flow=False)
     return {
-        "symbol": symbol.upper(),
+        "symbol": symbol,
         "timeframe": timeframe,
         "as_of": entry["as_of"],
         "historical_backtest": entry["historical_backtest"],
@@ -282,6 +303,7 @@ def scan_universe(request: ScanRequest | None = None) -> dict:
 
 
 def _analysis_entry(symbol: str, timeframe: str, force: bool, include_trade_flow: bool) -> dict[str, Any]:
+    symbol = normalize_scout_symbol(symbol)
     key = (symbol.upper(), timeframe)
     cached = _ANALYSIS_CACHE.get(key)
     now = time.monotonic()

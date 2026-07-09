@@ -1,7 +1,7 @@
 from datetime import timedelta
 
 from app.api.deps import configure_runtime
-from app.db.models import MarketSnapshot, utc_now
+from app.db.models import MarketSnapshot, WatchlistItem, utc_now
 from app.db.repository import MemoryRepository
 from app.exchange.bitget.client import BitgetClient
 from app.exchange.bitget.provider import BitgetMarketDataProvider
@@ -205,3 +205,31 @@ def test_bitget_sync_auto_records_missing_position_exit(client) -> None:
     live = client.get("/api/live/positions").json()
     assert live["positions"] == []
     assert live["open_count"] == 0
+
+
+def test_bitget_sync_clears_scout_tracking_for_open_position(client) -> None:
+    repo = MemoryRepository()
+    provider = SyncClosingBitgetProvider()
+    provider.positions = [
+        BitgetPosition(
+            symbol="PLTRUSDT",
+            hold_side="long",
+            margin_coin="USDT",
+            total=2,
+            leverage=3,
+            open_price_avg=100,
+            mark_price=112,
+            unrealized_pl=24,
+            margin_size=200,
+            created_at=utc_now() - timedelta(hours=4),
+        )
+    ]
+    repo.upsert_watchlist_item(WatchlistItem(symbol="PLTRUSDT", asset_class="stock"))
+    configure_runtime(repo=repo, provider=provider)
+
+    sync = client.post("/api/live/positions/sync")
+
+    assert sync.status_code == 200
+    assert sync.json()["created"] == 1
+    assert sync.json()["scout_tracking_removed"] == ["PLTRUSDT"]
+    assert repo.list_watchlist() == []

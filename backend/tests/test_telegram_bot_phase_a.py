@@ -12,16 +12,21 @@ from app.notify.bot.formatters import (
     detail_keyboard,
     format_action_plan,
     format_flow,
+    format_help,
     format_insight,
     lifecycle_alert_keyboard,
     format_one_liner_strip,
     format_position_verdict,
     format_positions_summary,
     format_scout,
+    format_scout_prompt,
     format_scout_quick_answer,
+    format_scout_stopped,
+    format_scout_tracking,
     format_simulation,
     insight_keyboard,
     main_menu_keyboard,
+    scout_tracking_keyboard,
     split_telegram_text,
 )
 from app.notify.bot.security import ChatGuard
@@ -162,11 +167,48 @@ def test_scout_quick_answer_uses_one_liner_strip() -> None:
     )
 
     assert "SOLUSDT" in text
+    assert "현재 종합 판정" in text
     assert "하방 근거 우세" in text
     assert "와이코프 ● 분산 우세" in text
     assert "종합: 상방 0 · 하방 2 · 중립 1 · 판단불가 1" in text
+    assert "셋업 트리거는 개별 조건 알림" in text
     assert "매수하세요" not in text
     assert "매도하세요" not in text
+
+
+def test_scout_tracking_formatter_and_callbacks() -> None:
+    payload = {
+        "symbol": "SOLUSDT",
+        "timeframe": "4h",
+        "as_of": "2026-07-08T01:00:00+00:00",
+        "tracking": {"active": True, "mode": "scout", "message": "스카우트 추적을 시작했습니다."},
+        "analysis": {"one_liners": {"lines": [], "counts": {}}},
+        "summary": {
+            "setup_proximity_pct": 1.2,
+            "long_score": 30,
+            "short_score": 70,
+            "long_evidence_count": 1,
+            "short_evidence_count": 3,
+        },
+    }
+
+    text = format_scout_tracking(payload)
+    stopped = format_scout_stopped({"symbol": "SOLUSDT", "tracking": {"message": "스카우트 추적을 중지했습니다."}})
+    keyboard = scout_tracking_keyboard("SOLUSDT")
+
+    assert "스카우트 추적 시작" in text
+    assert "/unscout SOL" in text
+    assert "스카우트 추적을 중지했습니다." in stopped
+    assert any(button["callback_data"] == "v1:unscout:SOLUSDT" for row in keyboard for button in row)
+    assert any(button["text"] == "갱신" and button["callback_data"] == "v1:scout:SOLUSDT" for row in keyboard for button in row)
+    prompt = format_scout_prompt({"items": [{"symbol": "SOLUSDT", "default_timeframe": "4h", "note": "telegram scout tracking"}]})
+    assert "보고 싶은 티커를 보내세요" in prompt
+    assert "SOLUSDT" in prompt
+    assert "상위 5" not in prompt
+    assert "/scout — 티커 입력 안내" in format_help()
+    assert "/scout SOL" in format_help()
+    assert "/unscout SOL" in format_help()
+    assert parse_callback("v1:unscout:SOLUSDT").action == "unscout"
 
 
 def test_insight_formatter_uses_regenerate_button_without_pre() -> None:
@@ -268,6 +310,7 @@ def test_callback_parser_and_chat_guard() -> None:
     assert parse_callback("v1:one_liners:BTCUSDT").action == "one_liners"
     assert parse_callback("v1:chart:BTCUSDT").action == "chart"
     assert parse_callback("v1:review:").action == "review"
+    assert parse_callback("v1:unscout:BTCUSDT").action == "unscout"
 
     guard = ChatGuard([123, 456])
     assert guard.is_allowed(123) is True
