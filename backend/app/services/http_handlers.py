@@ -6,6 +6,7 @@ from fastapi import HTTPException
 
 from app.agents.orchestrator import create_research_run
 from app.analyst.briefing import build_analyst_briefing, hysteresis_params_from_settings, load_directional_prior
+from app.analyst.gauges import build_gauges
 from app.core.config import get_settings
 from app.db.models import (
     CalibrationSuggestion,
@@ -1054,11 +1055,22 @@ def _live_position_detail(position: Position) -> dict:
                 "insight_status": insight_status,
             }
     insights = repository.list_position_insights(position.id, limit=20)
+    # WO-55A: 압축 차트 2게이지 — 포지션 보유이므로 익절 게이지 활성.
+    briefing_confluence: dict = analyst_briefing["confluence"] if isinstance(analyst_briefing.get("confluence"), dict) else {}
+    gauges = build_gauges(
+        analysis=chart_analysis,
+        confluence=briefing_confluence,
+        historical_backtest=chart_analysis.get("historical_backtest") if isinstance(chart_analysis.get("historical_backtest"), dict) else None,
+        position={"direction": position.direction.value, "entry_price": position.entry_price},
+        now=utc_now(),
+        timeframe=str(chart_analysis.get("timeframe") or "4h"),
+    )
     return {
         **payload,
         "action_plan": current_action_plan,
         "analyst_briefing": analyst_briefing,
         "chart_analysis": chart_analysis,
+        "gauges": gauges,
         "snapshots": repository.list_position_snapshots(position.id, limit=50),
         "insights": [_insight_payload(insight, _insight_status(insight, snapshot)) for insight in insights],
         "events": repository.list_position_events(position.id, limit=50),

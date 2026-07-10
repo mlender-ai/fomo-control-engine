@@ -18,6 +18,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
 from app.analyst.briefing import build_analyst_briefing, hysteresis_params_from_settings, load_directional_prior
+from app.analyst.gauges import build_gauges
 from app.backtest.regimes import label_regime
 from app.backtest.service import _regime_params, backtest_line, historical_context_for_analysis
 from app.services import http_handlers as runtime
@@ -204,6 +205,16 @@ def scout_analysis(symbol: str, timeframe: str = "4h", force: bool = False) -> d
     symbol = normalize_scout_symbol(symbol)
     entry = _analysis_entry(symbol, timeframe, force=force, include_trade_flow=True)
     briefing = _briefing_for_entry(symbol, timeframe, entry, action_plan=None, context="pre_entry")
+    # WO-55A: 압축 차트 2게이지 — 스카우트는 포지션 없음 → 익절 게이지 비활성.
+    briefing_confluence: dict = briefing["confluence"] if isinstance(briefing.get("confluence"), dict) else {}
+    gauges = build_gauges(
+        analysis=entry["analysis"],
+        confluence=briefing_confluence,
+        historical_backtest=entry["historical_backtest"],
+        position=None,
+        now=utc_now(),
+        timeframe=timeframe,
+    )
     return {
         "symbol": symbol,
         "timeframe": timeframe,
@@ -213,6 +224,7 @@ def scout_analysis(symbol: str, timeframe: str = "4h", force: bool = False) -> d
         "summary": entry["summary"],
         "historical_backtest": entry["historical_backtest"],
         "analyst_briefing": briefing,
+        "gauges": gauges,
     }
 
 
