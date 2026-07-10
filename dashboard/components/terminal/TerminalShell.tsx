@@ -13,6 +13,7 @@ const routeShortcuts: Record<string, string> = {
   p: "/",
   l: "/",
   s: "/scout",
+  r: "/review",
   t: "/trades",
   h: "/trades",
   c: "/calibration",
@@ -76,7 +77,7 @@ export function TerminalShell({ children }: { children: React.ReactNode }) {
       }
       if (event.key.toLowerCase() === "g") {
         routeModeRef.current = true;
-        setNotice("이동 모드: P 포지션 관제 · T 거래 복기 · C 판단 성적표 · , 설정");
+        setNotice("이동 모드: P 포지션 관제 · S 스카우트 · R 복기 센터 · C 판단 성적표 · , 설정");
         return;
       }
       if (routeModeRef.current) {
@@ -91,7 +92,7 @@ export function TerminalShell({ children }: { children: React.ReactNode }) {
       if (event.key.toLowerCase() === "r") {
         event.preventDefault();
         void loadStatus();
-        router.refresh();
+        window.dispatchEvent(new Event("fce:refresh"));
       }
     }
 
@@ -115,7 +116,7 @@ export function TerminalShell({ children }: { children: React.ReactNode }) {
           onCommand={() => setPaletteOpen(true)}
           onRefresh={() => {
             void loadStatus();
-            router.refresh();
+            window.dispatchEvent(new Event("fce:refresh"));
           }}
         />
       }

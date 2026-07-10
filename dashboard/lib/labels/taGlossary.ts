@@ -347,7 +347,7 @@ export function taPlainTooltip(term: string | null | undefined, direction?: "lon
 }
 
 /** 백엔드 구버전/자유 텍스트에 남은 원어·snake_case 노출을 플레인 라벨로 치환한다. */
-export function plainifyTaText(text: string | null | undefined): string {
+export function plainifyTaText(text: unknown): string {
   if (!text) return "";
   let result = localizeMarketCodes(text);
   for (const [code, entry] of Object.entries(VOLUME_STATE_GLOSSARY)) {

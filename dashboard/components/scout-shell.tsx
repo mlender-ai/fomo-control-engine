@@ -110,12 +110,13 @@ export function ScoutShell() {
     try {
       const response = await api.watchlist();
       setWatchlist(response.items);
-      const [intents, discoveryResponse] = await Promise.all([
+      setError("");
+      const [intentsResult, discoveryResult] = await Promise.allSettled([
         SCOUT_ENTRY_TOOLS_VISIBLE ? api.entryIntents(undefined, "active") : Promise.resolve({ intents: [] as EntryIntent[] }),
         api.universeDiscoveries({ limit: 20 })
       ]);
-      setEntryIntents(intents.intents);
-      setDiscoveries(discoveryResponse.discoveries);
+      if (intentsResult.status === "fulfilled") setEntryIntents(intentsResult.value.intents);
+      if (discoveryResult.status === "fulfilled") setDiscoveries(discoveryResult.value.discoveries);
     } catch (err) {
       setError(err instanceof Error ? err.message : "관심종목을 불러오지 못했습니다.");
     }
@@ -152,7 +153,6 @@ export function ScoutShell() {
       }
     }, 200);
     return () => window.clearTimeout(handle);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query]);
 
   async function loadQuickAnswer(symbol: string, force = false) {
@@ -164,9 +164,10 @@ export function ScoutShell() {
     setQuickLoading(true);
     setQuickError("");
     try {
-      const response = await api.scoutAnalysis(normalized, "4h", force);
+      const response = await api.scoutAnalysis(normalized, "4h", force, false);
       if (quickRequestRef.current !== requestKey) return;
       setQuickAnswer(response);
+      setError("");
     } catch (err) {
       if (quickRequestRef.current !== requestKey) return;
       setQuickAnswer(null);
@@ -187,8 +188,14 @@ export function ScoutShell() {
         setEntryIntents((current) => response.entry_intents ?? current);
       }
       setScannedAt(response.scanned_at);
-      const discoveryResponse = await api.universeDiscoveries({ limit: 20 });
-      setDiscoveries(discoveryResponse.discoveries);
+      setError("");
+      try {
+        const discoveryResponse = await api.universeDiscoveries({ limit: 20 });
+        setDiscoveries(discoveryResponse.discoveries);
+      } catch {
+        // Universe history is supplementary; a failure must not hide a
+        // successful watchlist scan or quick symbol answer.
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "스캔에 실패했습니다.");
     } finally {
@@ -203,7 +210,6 @@ export function ScoutShell() {
     autoScanKeyRef.current = key;
     void runScan(false);
     // runScan intentionally stays out of deps; this is a one-shot scan per watchlist composition.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [watchlist, scanRows.length, scanning]);
 
   async function addSymbol(symbol: string) {
@@ -853,7 +859,7 @@ function ScoutSymbolView({
     loadRequestRef.current = requestKey;
     try {
       const [analysisResponse, intentResponse] = await Promise.all([
-        api.scoutAnalysis(symbol, timeframe, force),
+        api.scoutAnalysis(symbol, timeframe, force, true),
         SCOUT_ENTRY_TOOLS_VISIBLE ? api.entryIntents(symbol, "active") : Promise.resolve({ intents: [] as EntryIntent[] })
       ]);
       if (loadRequestRef.current !== requestKey) return;
@@ -949,7 +955,7 @@ function ScoutSymbolView({
           chartLoading={loading}
           chartError={error}
           onRetryChart={() => void load(true)}
-          trendSummary={analysis ? trendLabel((analysis.wyckoff as { trend?: { direction?: string } })?.trend?.direction) : "구조 확인 중"}
+          trendSummary={verdict.label}
           plan={null}
           analystBriefing={data?.analyst_briefing ?? null}
           workspace={workspace}

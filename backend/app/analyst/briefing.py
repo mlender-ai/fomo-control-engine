@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from app.analyst.confluence import build_confluence
 from app.backtest.statistics import bootstrap_ci_from_counts, format_stat_line
 from app.db.models import JudgmentScore
+
+logger = logging.getLogger(__name__)
 
 
 def build_analyst_briefing(
@@ -275,17 +278,26 @@ def hysteresis_params_from_settings(settings: Any) -> dict[str, Any]:
 
 
 def load_directional_prior(repo: Any, symbol: str, timeframe: str) -> dict[str, Any] | None:
-    """WO-53: 직전 방향 히스테리시스 상태를 최근 스카우트 스냅샷에서 조회한다.
-    상태 저장은 스냅샷에 브리핑(confluence.stance_state)이 실려 자연히 영속된다 — 별도 테이블 없음."""
+    """Load live hysteresis state independently of scout snapshot retention."""
     try:
-        snapshot = repo.latest_scout_snapshot(symbol, timeframe)
+        state = repo.get_directional_state(symbol, timeframe)
     except Exception:
         return None
-    if snapshot is None:
-        return None
-    summary = getattr(snapshot, "summary", None)
-    summary = summary if isinstance(summary, dict) else {}
-    briefing = summary.get("analyst_briefing") if isinstance(summary.get("analyst_briefing"), dict) else {}
-    confluence = briefing.get("confluence") if isinstance(briefing.get("confluence"), dict) else {}
-    state = confluence.get("stance_state")
     return state if isinstance(state, dict) else None
+
+
+def persist_directional_state(repo: Any, symbol: str, timeframe: str, briefing: dict[str, Any]) -> bool:
+    """Persist a state only when its confirmed-candle anchor advanced.
+
+    The in-progress candle belongs to ``preview``. Repository-level comparison
+    by ``last_bar_at`` makes repeated polling during that candle read-only.
+    """
+    confluence = briefing.get("confluence") if isinstance(briefing.get("confluence"), dict) else {}
+    state = confluence.get("stance_state") if isinstance(confluence.get("stance_state"), dict) else None
+    if not isinstance(state, dict) or not state.get("last_bar_at"):
+        return False
+    try:
+        return bool(repo.upsert_directional_state(symbol, timeframe, state))
+    except Exception:
+        logger.exception("failed to persist directional state", extra={"symbol": symbol.upper(), "timeframe": timeframe})
+        return False

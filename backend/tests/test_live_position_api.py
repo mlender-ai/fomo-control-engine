@@ -60,6 +60,13 @@ def test_live_position_analysis_insight_memo_and_exit_flow(client) -> None:
     assert analyzed["latest_snapshot"]["position_id"] == position["id"]
     assert 0 <= analyzed["state"]["health_score"] <= 100
 
+    compact_response = client.get("/api/live/positions?compact=true")
+    assert compact_response.status_code == 200
+    compact_position = compact_response.json()["positions"][0]
+    assert compact_position["latest_snapshot"]["id"] == analyzed["latest_snapshot"]["id"]
+    assert compact_position["state"]["analysis"] == analyzed["state"]["analysis"]
+    assert compact_position["action_plan"]["headline_action"]
+
     insight_response = client.post(f"/api/live/positions/{position['id']}/insight")
     assert insight_response.status_code == 200
     insight_payload = insight_response.json()
@@ -130,6 +137,7 @@ def test_live_position_chart_analysis_contract(client) -> None:
     response = client.get(f"/api/live/positions/{position['id']}/chart-analysis")
     assert response.status_code == 200
     payload = response.json()
+    assert payload["detail_level"] == "full"
     assert payload["position_id"] == position["id"]
     assert payload["timeframe"] == "4h"
     assert len(payload["candles"]) >= 100
@@ -147,6 +155,14 @@ def test_live_position_chart_analysis_contract(client) -> None:
     assert payload["volume_xray"]["method"] == "data_unavailable"
     assert isinstance(payload["volume_xray"]["notes"], list)
     assert isinstance(payload["wyckoff_markers"], list)
+
+    compact_response = client.get(f"/api/live/positions/{position['id']}/chart-analysis?compact=true")
+    assert compact_response.status_code == 200
+    compact = compact_response.json()
+    assert compact["detail_level"] == "compact"
+    assert 100 <= len(compact["candles"]) <= 120
+    assert compact["position_id"] == payload["position_id"]
+    assert compact["one_liners"] == payload["one_liners"]
 
 
 def test_bitget_sync_auto_records_missing_position_exit(client) -> None:

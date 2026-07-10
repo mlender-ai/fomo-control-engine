@@ -3,6 +3,8 @@ import math
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+
 from app.db.models import Direction, MarketCandle, MarketSnapshot, Position
 from app.positions.chart_analysis import PositionContext, build_chart_analysis
 
@@ -59,7 +61,7 @@ def test_position_mode_output_matches_pre_refactor_fixture() -> None:
 
     expected = json.loads(FIXTURE.read_text())
     actual = json.loads(json.dumps(_without_phase_l_fields(payload), sort_keys=True, default=str))
-    assert actual == expected
+    _assert_json_with_float_approx(actual, expected)
 
     assert payload["liquidity"]["method"] == "deterministic_ohlcv_liquidity_v2"
     assert "pools" in payload["liquidity"]
@@ -148,3 +150,24 @@ def _without_phase_l_fields(payload: dict) -> dict:
                 if isinstance(components, dict):
                     components.pop("liquidity_confirmation", None)
     return cleaned
+
+
+def _assert_json_with_float_approx(actual, expected) -> None:
+    """Fixture values remain fixed; only floating point representation is tolerant."""
+    if isinstance(expected, float):
+        assert isinstance(actual, (int, float))
+        assert actual == pytest.approx(expected, rel=1e-9)
+        return
+    if isinstance(expected, dict):
+        assert isinstance(actual, dict)
+        assert actual.keys() == expected.keys()
+        for key, value in expected.items():
+            _assert_json_with_float_approx(actual[key], value)
+        return
+    if isinstance(expected, list):
+        assert isinstance(actual, list)
+        assert len(actual) == len(expected)
+        for actual_item, expected_item in zip(actual, expected, strict=True):
+            _assert_json_with_float_approx(actual_item, expected_item)
+        return
+    assert actual == expected

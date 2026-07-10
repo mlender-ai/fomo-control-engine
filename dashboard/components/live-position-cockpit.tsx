@@ -66,10 +66,10 @@ export function LivePositionCockpit() {
   const [selectedChartAnalysis, setSelectedChartAnalysis] = useState<PositionChartAnalysis | null>(null);
   const [selectedChartLoading, setSelectedChartLoading] = useState(false);
   const [selectedChartError, setSelectedChartError] = useState("");
-  const [selectedDetail, setSelectedDetail] = useState<LivePositionDetail | null>(null);
   const [stripChartAnalysis, setStripChartAnalysis] = useState<Record<string, PositionChartAnalysis>>({});
   const [viewMode, setViewMode] = useState<FceViewMode>("minimal");
   const selectedChartRequestRef = useRef(0);
+  const hasPositionDataRef = useRef(false);
   const workspace = useAnalysisWorkspace();
 
   useEffect(() => {
@@ -82,7 +82,6 @@ export function LivePositionCockpit() {
   }
 
   async function load(sync = false): Promise<boolean> {
-    setError("");
     try {
       const next = sync ? await api.syncLivePositions() : await api.livePositions();
       const positions = next.positions ?? [];
@@ -94,10 +93,14 @@ export function LivePositionCockpit() {
         timestamp: next.timestamp ?? new Date().toISOString()
       };
       setData(normalized);
+      hasPositionDataRef.current = true;
+      setError("");
       setSelectedId((current) => current || normalized.positions[0]?.position.id || "");
       return true;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "라이브 포지션 데이터를 불러오지 못했습니다.");
+      if (sync || !hasPositionDataRef.current) {
+        setError(err instanceof Error ? err.message : "라이브 포지션 데이터를 불러오지 못했습니다.");
+      }
       return false;
     } finally {
       setLoading(false);
@@ -110,6 +113,12 @@ export function LivePositionCockpit() {
       void load(false);
     }, LIVE_POSITION_SYNC_INTERVAL_SECONDS * 1000);
     return () => window.clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    const refresh = () => void load(false);
+    window.addEventListener("fce:refresh", refresh);
+    return () => window.removeEventListener("fce:refresh", refresh);
   }, []);
 
   async function syncPositions() {
@@ -164,7 +173,7 @@ export function LivePositionCockpit() {
     setNotice("");
     try {
       await api.analyzeLivePosition(positionId);
-      await Promise.all([loadSelectedDetail(positionId), loadSelectedChart(positionId), load(false)]);
+      await Promise.all([loadSelectedChart(positionId, false), load(false)]);
       setNotice("포지션 상태와 액션 플랜을 갱신했습니다.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "상태 갱신에 실패했습니다.");
@@ -175,26 +184,17 @@ export function LivePositionCockpit() {
 
   const positions = data?.positions ?? [];
   const selected = positions.find((item) => item.position.id === selectedId) ?? positions[0];
-  const selectedDetailPayload = selectedDetail?.position.id === selected?.position.id ? selectedDetail : null;
-  const selectedPayload = selectedDetailPayload ?? selected;
+  const selectedPayload = selected;
   const selectedChartForPayload = selectedChartAnalysis?.position_id === selectedPayload?.position.id ? selectedChartAnalysis : null;
   const stripChartKey = positions.map((item) => item.position.id).join("|");
 
-  async function loadSelectedDetail(positionId: string) {
-    try {
-      setSelectedDetail(await api.livePosition(positionId));
-    } catch {
-      setSelectedDetail(null);
-    }
-  }
-
-  async function loadSelectedChart(positionId: string, showSpinner = true) {
+  async function loadSelectedChart(positionId: string, showSpinner = true, compact = viewMode === "minimal") {
     const requestId = selectedChartRequestRef.current + 1;
     selectedChartRequestRef.current = requestId;
     if (showSpinner) setSelectedChartLoading(true);
     setSelectedChartError("");
     try {
-      const analysis = await api.positionChartAnalysis(positionId, "4h");
+      const analysis = await api.positionChartAnalysis(positionId, "4h", compact);
       if (selectedChartRequestRef.current !== requestId) return;
       setSelectedChartAnalysis(analysis);
     } catch (err) {
@@ -208,16 +208,18 @@ export function LivePositionCockpit() {
 
   useEffect(() => {
     if (!selected?.position.id) return;
-    void loadSelectedDetail(selected.position.id);
-    const hasCurrentChart = selectedChartAnalysis?.position_id === selected.position.id;
+    const desiredDetailLevel = viewMode === "minimal" ? "compact" : "full";
+    const hasCurrentChart =
+      selectedChartAnalysis?.position_id === selected.position.id &&
+      selectedChartAnalysis.detail_level === desiredDetailLevel;
     if (!hasCurrentChart) {
       setSelectedChartAnalysis(null);
     }
-    void loadSelectedChart(selected.position.id, !hasCurrentChart);
-  }, [selected?.position.id, data?.timestamp]);
+    void loadSelectedChart(selected.position.id, !hasCurrentChart, viewMode === "minimal");
+  }, [selected?.position.id, viewMode]);
 
   useEffect(() => {
-    if (!positions.length) {
+    if (viewMode !== "pro" || !positions.length) {
       setStripChartAnalysis({});
       return;
     }
@@ -225,7 +227,7 @@ export function LivePositionCockpit() {
     const ids = positions.slice(0, 10).map((item) => item.position.id);
     async function loadStripCharts() {
       const results = await Promise.allSettled(
-        ids.map(async (positionId) => [positionId, await api.positionChartAnalysis(positionId, "4h")] as const)
+        ids.map(async (positionId) => [positionId, await api.positionChartAnalysis(positionId, "4h", true)] as const)
       );
       if (cancelled) return;
       setStripChartAnalysis((current) => {
@@ -246,7 +248,7 @@ export function LivePositionCockpit() {
     return () => {
       cancelled = true;
     };
-  }, [stripChartKey, data?.timestamp]);
+  }, [stripChartKey, viewMode]);
 
   return (
     <div className="page cockpitPage">
@@ -290,7 +292,10 @@ export function LivePositionCockpit() {
             chartAnalysisById={stripChartAnalysis}
             positions={positions}
             selectedId={selected?.position.id ?? ""}
-            onSelect={setSelectedId}
+            onSelect={(positionId) => {
+              setSelectedId(positionId);
+              document.querySelector(".cockpitToolbar")?.scrollIntoView({ block: "start" });
+            }}
             compact={viewMode === "minimal"}
           />
           {selectedPayload ? (
@@ -567,7 +572,7 @@ function MinimalPositionWorkspace({
           loading={chartLoading}
           error={chartError}
           onRetry={onRetryChart}
-          trendSummary={trendLabel(payload.state.analysis.technical.trend)}
+          trendSummary={`${directionLabel(payload.position.direction)} 포지션 · ${copy.label}`}
           plan={plan}
           layers={MINIMAL_FIXED_LAYER_STATE}
           onToggleLayer={workspace.handleToggleLayer}
@@ -865,10 +870,15 @@ function minimalStatusLabel(payload: LivePositionPayload, verdictState: string):
 
 function minimalHeadlineText(payload: LivePositionPayload): string {
   const raw = plainifyTaText(headlineForPayload(payload));
-  return raw
+  const cleaned = raw
     .replace(/^→\s*/u, "")
     .replace(/^지금\s*볼\s*것\s*[:：]\s*/u, "")
-    .trim() || "현재 평결 기준을 확인하세요.";
+    .trim();
+  const triggerPrice = nearestActionTriggerPrice(payload);
+  const readable = triggerPrice === null
+    ? cleaned
+    : cleaned.replace(/\d+(?:\.\d+)?/u, formatPrice(triggerPrice));
+  return readable || "현재 평결 기준을 확인하세요.";
 }
 
 function dedupeEvidence(items: AnalystEvidence[] | undefined): AnalystEvidence[] {

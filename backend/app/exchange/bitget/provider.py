@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import threading
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -52,6 +54,7 @@ class BitgetMarketDataProvider(MarketDataProvider):
         trade_cache: BitgetTradeFillCache | None = None,
         trade_fill_lookback_hours: int = 48,
         trade_fill_cache_ttl_seconds: int = 60,
+        snapshot_cache_ttl_seconds: int = 20,
     ) -> None:
         self.client = client
         self.product_type = product_type.upper()
@@ -59,9 +62,25 @@ class BitgetMarketDataProvider(MarketDataProvider):
         self.trade_cache = trade_cache
         self.trade_fill_lookback_hours = trade_fill_lookback_hours
         self.trade_fill_cache_ttl_seconds = trade_fill_cache_ttl_seconds
+        self.snapshot_cache_ttl_seconds = max(0, snapshot_cache_ttl_seconds)
+        self._cache_guard = threading.Lock()
+        self._snapshot_locks: dict[tuple[str, str], threading.Lock] = {}
+        self._trade_flow_locks: dict[tuple[str, str], threading.Lock] = {}
+        self._snapshot_cache: dict[tuple[str, str], tuple[float, MarketSnapshot]] = {}
 
     def get_snapshot(self, symbol: str, timeframe: str = "4h") -> MarketSnapshot:
-        return _run(self.get_market_snapshot(symbol, timeframe))
+        key = (normalize_symbol(symbol), timeframe.lower())
+        cached = self._fresh_snapshot(key)
+        if cached is not None:
+            return cached
+        lock = self._key_lock(self._snapshot_locks, key)
+        with lock:
+            cached = self._fresh_snapshot(key)
+            if cached is not None:
+                return cached
+            snapshot = _run(self.get_market_snapshot(key[0], timeframe))
+            self._snapshot_cache[key] = (time.monotonic(), snapshot)
+            return snapshot
 
     def get_positions(self) -> list[BitgetPosition]:
         return _run(self.get_account_positions())
@@ -384,20 +403,41 @@ class BitgetMarketDataProvider(MarketDataProvider):
         source = "bitget_fills_history_cache" if fills is not None else "bitget_fills_history"
         error_note = None
         if fills is None:
+            key_lock = self._key_lock(self._trade_flow_locks, (normalized, timeframe.lower()))
+            await asyncio.to_thread(key_lock.acquire)
             try:
-                fills = await self.get_trade_fills(normalized, start_time, end_time)
-                if self.trade_cache is not None:
-                    self.trade_cache.store_fills(normalized, timeframe, start_time, end_time, fills)
-            except BitgetAPIError as exc:
-                stale = self.trade_cache.stale_fills(normalized, start_time, end_time) if self.trade_cache else []
-                if not stale:
-                    return _empty_trade_flow(
-                        "fills_unavailable",
-                        "Bitget 실체결 데이터를 가져오지 못해 체결 델타 판정을 보류합니다.",
+                # Another request may have populated the cache while this request
+                # waited. Recheck before calling the paginated fills endpoint.
+                fills = (
+                    self.trade_cache.fresh_fills(
+                        normalized,
+                        timeframe,
+                        start_time,
+                        end_time,
+                        self.trade_fill_cache_ttl_seconds,
                     )
-                fills = stale
-                source = "bitget_fills_history_stale_cache"
-                error_note = str(exc)
+                    if self.trade_cache
+                    else None
+                )
+                if fills is not None:
+                    source = "bitget_fills_history_cache"
+                else:
+                    try:
+                        fills = await self.get_trade_fills(normalized, start_time, end_time)
+                        if self.trade_cache is not None:
+                            self.trade_cache.store_fills(normalized, timeframe, start_time, end_time, fills)
+                    except BitgetAPIError as exc:
+                        stale = self.trade_cache.stale_fills(normalized, start_time, end_time) if self.trade_cache else []
+                        if not stale:
+                            return _empty_trade_flow(
+                                "fills_unavailable",
+                                "Bitget 실체결 데이터를 가져오지 못해 체결 델타 판정을 보류합니다.",
+                            )
+                        fills = stale
+                        source = "bitget_fills_history_stale_cache"
+                        error_note = str(exc)
+            finally:
+                key_lock.release()
 
         buckets = aggregate_trade_buckets(fills, ordered, timeframe)
         notes = []
@@ -424,10 +464,12 @@ class BitgetMarketDataProvider(MarketDataProvider):
 
     async def get_market_snapshot(self, symbol: str, timeframe: str) -> MarketSnapshot:
         normalized = normalize_symbol(symbol)
-        candles = await self.get_ohlcv(normalized, timeframe, limit=200)
-        funding = await self.get_funding_rate(normalized)
-        open_interest = await self.get_open_interest(normalized)
-        ticker = await self._get_ticker(normalized)
+        candles, funding, open_interest, ticker = await asyncio.gather(
+            self.get_ohlcv(normalized, timeframe, limit=200),
+            self.get_funding_rate(normalized),
+            self.get_open_interest(normalized),
+            self._get_ticker(normalized),
+        )
         if len(candles) < 30:
             raise BitgetAPIError(
                 "insufficient_candles",
@@ -466,6 +508,23 @@ class BitgetMarketDataProvider(MarketDataProvider):
             provider=self.name,
             data_quality=data_quality,
         )
+
+    def _fresh_snapshot(self, key: tuple[str, str]) -> MarketSnapshot | None:
+        cached = self._snapshot_cache.get(key)
+        if cached is None:
+            return None
+        cached_at, snapshot = cached
+        if time.monotonic() - cached_at > self.snapshot_cache_ttl_seconds:
+            return None
+        return snapshot
+
+    def _key_lock(
+        self,
+        locks: dict[tuple[str, str], threading.Lock],
+        key: tuple[str, str],
+    ) -> threading.Lock:
+        with self._cache_guard:
+            return locks.setdefault(key, threading.Lock())
 
     async def get_account_positions(self) -> list[BitgetPosition]:
         payload = await self.client.private_get(

@@ -32,6 +32,7 @@ export function TerminalCommandPalette({
     () => [
       command("nav-live-positions", "라이브 포지션 열기", "이동", "실시간 포지션 관제 화면", ["positions", "live", "cockpit", "gp", "포지션", "관제"], () => router.push("/"), "g p"),
       command("nav-scout", "스카우트 열기", "이동", "관심종목 스캔과 진입 전 분석", ["scout", "watchlist", "gs", "스카우트", "관심종목", "검색", "symbol"], () => router.push("/scout"), "g s"),
+      command("nav-review", "복기 센터 열기", "이동", "거래·판단·계좌 성적표를 한곳에서 확인", ["review", "journal", "scorecard", "gr", "복기", "성적표"], () => router.push("/review"), "g r"),
       command("nav-trades", "거래 복기 열기", "이동", "종료 거래 기록과 복기", ["journal", "trades", "history", "gt", "거래", "복기"], () => router.push("/trades"), "g t"),
       command("nav-calibration", "판단 성적표 열기", "이동", "엔진 판단 적중률, 신뢰도 곡선, 파라미터 제안", ["calibration", "scorecard", "confidence", "gc", "성적표", "캘리브레이션", "판단"], () => router.push("/calibration"), "g c"),
       command("nav-performance", "계좌 성적표 열기", "이동", "PF, MDD, Sortino, 계좌 단위 성과", ["performance", "account", "mdd", "pf", "ga", "계좌", "성과"], () => router.push("/performance"), "g a"),
@@ -39,7 +40,7 @@ export function TerminalCommandPalette({
       command("sync-positions", "/포지션 동기화", "실행", "Bitget read-only 포지션 동기화와 결정론적 분석", ["bitget", "private", "positions", "sync", "동기화"], async () => {
         const result = await api.syncLivePositions();
         onNotice(`라이브 동기화 ${connectionStatusLabel(result.status)}: 생성 ${result.created}, 갱신 ${result.updated}, 분석 ${result.positions?.length ?? 0}`);
-        router.refresh();
+        window.dispatchEvent(new Event("fce:refresh"));
       }),
       command("test-bitget", "/Bitget 테스트", "실행", "공개 시세와 read-only 포지션 접근 확인", ["bitget", "test", "connection", "테스트"], async () => {
         const result = await api.testBitgetConnection();

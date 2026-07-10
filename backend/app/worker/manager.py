@@ -184,7 +184,7 @@ class WorkerManager:
         )
         await self._run_hook(
             "evaluate_performance_alerts",
-            lambda: self.alerts.evaluate_performance(service.performance_summary()),
+            lambda: self._evaluate_performance_alerts(),
         )
         await self._run_hook("periodic_pulse", lambda: self.alerts.maybe_send_pulse(payload))
         await self._run_hook("daily_summary", lambda: self.alerts.maybe_send_daily_summary(payload))
@@ -195,6 +195,10 @@ class WorkerManager:
             "created": payload.get("created"),
             "auto_closed": payload.get("auto_closed"),
         }
+
+    async def _evaluate_performance_alerts(self) -> int:
+        performance = await asyncio.to_thread(service.performance_summary)
+        return await self.alerts.evaluate_performance(performance)
 
     async def _daily_summary(self) -> dict[str, Any]:
         payload = await asyncio.to_thread(service.list_live_positions, store_snapshot=False)
@@ -404,7 +408,22 @@ class WorkerManager:
             return _next_daily_time(4, 0, self.settings.db_maintenance_timezone)
         if name == "database_backup":
             return _next_daily_time(4, 30, self.settings.db_maintenance_timezone)
-        return fallback
+        # Starting every network-heavy job on the same second caused duplicate
+        # Bitget requests and held SQLite writes long enough to starve API reads.
+        # Keep position sync immediate, then spread independent collectors.
+        startup_offsets = {
+            "sync_positions": 0,
+            "daily_summary": 12,
+            "weekly_calibration_report": 18,
+            "regen_stale_insights": 28,
+            "collect_derivatives": 40,
+            "refresh_market_data": 55,
+            "alert_response_scoring": 70,
+            "interim_scoring": 85,
+            "scout_scan": 105,
+            "universe_scan": 150,
+        }
+        return fallback + timedelta(seconds=startup_offsets.get(name, 0))
 
     def _persist(self, heartbeat: HeartbeatRecord) -> None:
         self.heartbeat_store.upsert(heartbeat)

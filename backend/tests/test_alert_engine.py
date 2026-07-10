@@ -195,7 +195,13 @@ async def test_short_take_profit_above_entry_is_not_alerted(repo) -> None:
 @pytest.mark.asyncio
 async def test_short_take_profit_alert_uses_directional_progress(repo) -> None:
     sender = FakeTelegramSender()
-    engine = AlertEngine(_settings(alert_trigger_near_pct=0.5), sender, NotificationState())
+    clock = datetime(2026, 7, 5, 12, 0, tzinfo=timezone.utc)
+    engine = AlertEngine(
+        _settings(alert_trigger_near_pct=0.5),
+        sender,
+        NotificationState(),
+        now_provider=lambda: clock,
+    )
     payload = _payload(
         direction="short",
         entry=100.0,

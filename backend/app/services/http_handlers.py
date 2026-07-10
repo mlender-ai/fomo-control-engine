@@ -5,7 +5,7 @@ from uuid import NAMESPACE_URL, UUID, uuid5
 from fastapi import HTTPException
 
 from app.agents.orchestrator import create_research_run
-from app.analyst.briefing import build_analyst_briefing, hysteresis_params_from_settings, load_directional_prior
+from app.analyst.briefing import build_analyst_briefing, hysteresis_params_from_settings, load_directional_prior, persist_directional_state
 from app.analyst.gauges import build_gauges
 from app.core.config import get_settings
 from app.db.models import (
@@ -108,7 +108,18 @@ def configure_runtime(repo: Repository | None = None, provider: MarketDataProvid
 def _generate_and_store_report(symbol: str, timeframe: str = "4h"):
     try:
         snapshot = market_provider.get_snapshot(symbol, timeframe)
-        return repository.add_report(generate_report(snapshot))
+        report = generate_report(snapshot)
+        latest = repository.latest_report(symbol)
+        same_closed_bar = bool(
+            latest
+            and latest.timeframe == report.timeframe
+            and latest.data_quality.last_candle_at
+            and latest.data_quality.last_candle_at == report.data_quality.last_candle_at
+        )
+        # The report payload contains candles and is intentionally large. Live
+        # monitoring may evaluate the same 4h bar dozens of times; return the
+        # fresh in-memory result but persist only once per bar.
+        return report if same_closed_bar else repository.add_report(report)
     except MarketDataError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
@@ -152,7 +163,11 @@ def _provider_name() -> str:
 
 def _database_status() -> str:
     try:
-        repository.recent_reports(1)
+        # ``reports`` is a large append-only table and has no global created_at
+        # index. Sorting it for every 30-second shell poll caused multi-second
+        # stalls. Positions are tiny and still prove the operational schema is
+        # readable without touching market or report generation paths.
+        repository.list_positions(status=PositionStatus.open)
         return "ok"
     except Exception:
         return "error"
@@ -195,6 +210,7 @@ def system_status() -> dict:
         },
         "engine_params": engine_param_snapshot(repository),
         "verdict_state_distribution": _verdict_state_distribution(),
+        "directional_states": repository.list_directional_states(limit=100),
         "timestamp": utc_now(),
     }
 
@@ -203,17 +219,23 @@ def _verdict_state_distribution() -> dict:
     counts = {"holding": 0, "weakening": 0, "danger": 0, "standby": 0, "unknown": 0}
     open_positions = [position for position in repository.list_positions() if position.status == PositionStatus.open]
     for position in open_positions:
-        try:
-            report = _generate_and_store_report(position.symbol)
-            derivatives = _derivative_context(position.symbol)
-            _attach_derivatives(report, derivatives)
-            previous_snapshots = repository.list_position_snapshots(position.id, limit=30)
-            state = build_position_state(position, report, previous_snapshots)
-            snapshot = make_snapshot(position, state)
-            plan = build_action_plan(position, snapshot, _action_plan_context_from_report(report, derivatives))
-            state_name = str(plan.get("verdict_state") or "unknown")
-        except Exception:
-            state_name = "unknown"
+        # System status is polled by the persistent app shell. It must never
+        # trigger live market analysis. Prefer the latest stored action plan,
+        # then map the last persisted severity to the four verdict states.
+        insights = repository.list_position_insights(position.id, limit=1)
+        plan = insights[0].action_plan if insights else {}
+        state_name = str(plan.get("verdict_state") or "") if isinstance(plan, dict) else ""
+        if state_name not in counts:
+            snapshots = repository.list_position_snapshots(position.id, limit=1)
+            severity = snapshots[0].severity_rank if snapshots else None
+            if severity is None:
+                state_name = "unknown"
+            elif severity >= 4:
+                state_name = "danger"
+            elif severity >= 1:
+                state_name = "weakening"
+            else:
+                state_name = "holding"
         counts[state_name if state_name in counts else "unknown"] += 1
     total = sum(counts.values())
     standby_ratio = round((counts["standby"] / total) * 100, 2) if total else 0.0
@@ -829,12 +851,15 @@ def _merge_bitget_position(position: Position, exchange_position: BitgetPosition
     return position
 
 
-def list_live_positions() -> dict:
+def list_live_positions(compact: bool = False) -> dict:
     all_positions = repository.list_positions()
     positions = [position for position in all_positions if position.status == PositionStatus.open]
     return {
         "provider": _provider_name(),
-        "positions": [_live_position_payload(position, store_snapshot=False) for position in positions],
+        "positions": [
+            _cached_live_position_payload(position) if compact else _live_position_payload(position, store_snapshot=False)
+            for position in positions
+        ],
         "open_count": len(positions),
         "needs_exit_record_count": len(
             [
@@ -899,18 +924,19 @@ def get_live_position(position_id: UUID) -> dict:
     return _live_position_detail(position)
 
 
-def get_position_chart_analysis(position_id: UUID, timeframe: str = "4h") -> dict:
+def get_position_chart_analysis(position_id: UUID, timeframe: str = "4h", compact: bool = False) -> dict:
     position = repository.get_position(position_id)
     if position is None:
         raise HTTPException(status_code=404, detail="Position not found")
     try:
         snapshot = market_provider.get_snapshot(position.symbol, timeframe)
-        return build_chart_analysis(
+        analysis = build_chart_analysis(
             snapshot,
             PositionContext.from_position(position),
-            _trade_flow_for_snapshot(position.symbol, timeframe, snapshot.candles),
+            None if compact else _trade_flow_for_snapshot(position.symbol, timeframe, snapshot.candles),
             derivatives=_derivative_context(position.symbol),
         )
+        return _compact_chart_analysis(analysis) if compact else {**analysis, "detail_level": "full"}
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except MarketDataError as exc:
@@ -1024,6 +1050,126 @@ def _live_position_payload(position: Position, store_snapshot: bool = False) -> 
         "insight_status": insight_status,
         "recent_events": latest_events if latest_events else events,
     }
+
+
+def _cached_live_position_payload(position: Position) -> dict:
+    """Serve the cockpit from worker-produced state without recalculating reports.
+
+    The browser polls this endpoint for display refreshes. Re-running the full
+    indicator/report pipeline here made navigation compete with the worker and
+    occasionally left a transient fetch error over otherwise valid data.
+    """
+
+    snapshots = repository.list_position_snapshots(position.id, limit=1)
+    if not snapshots:
+        return _live_position_payload(position, store_snapshot=False)
+
+    stored_snapshot = snapshots[0]
+    current_as_of = position.synced_at or stored_snapshot.as_of
+    snapshot = stored_snapshot.model_copy(
+        update={
+            "as_of": current_as_of,
+            "mark_price": position.mark_price or position.current_price or stored_snapshot.mark_price,
+            "pnl_percent": position.pnl_percent,
+            "pnl_amount": position.unrealized_pl if position.unrealized_pl is not None else stored_snapshot.pnl_amount,
+            "pnl_source": position.pnl_source,
+            "liquidation_price": position.liquidation_price,
+        }
+    )
+    position_analysis = snapshot.analysis_json.get("position_analysis", {})
+    score_json = snapshot.score_json if isinstance(snapshot.score_json, dict) else {}
+    state = {
+        "position": position.model_dump(mode="json"),
+        "as_of": snapshot.as_of,
+        "mark_price": snapshot.mark_price,
+        "pnl_percent": snapshot.pnl_percent,
+        "pnl_amount": snapshot.pnl_amount,
+        "pnl_source": snapshot.pnl_source,
+        "liquidation_distance_pct": snapshot.liquidation_distance_pct,
+        "health_score": snapshot.health_score,
+        "status": position_analysis.get("status", "unknown"),
+        "status_label": snapshot.status_label,
+        "severity_rank": snapshot.severity_rank,
+        "risk_score": snapshot.risk_score,
+        "score_change": score_json.get("score_change", 0),
+        "entry_direction_score": position_analysis.get("entry_direction_score", 50),
+        "current_direction_score": position_analysis.get("current_direction_score", 50),
+        "thesis_delta": position_analysis.get("thesis_delta", 0),
+        "entry_score": score_json.get("entry_score", position.entry_score or 0),
+        "current_score": score_json.get("current_score", position.current_score or 0),
+        "analysis": snapshot.analysis_json,
+        "score_json": score_json,
+    }
+    latest_insights = repository.list_position_insights(position.id, limit=1)
+    latest_insight = latest_insights[0] if latest_insights else None
+    insight_status = _insight_status(latest_insight, snapshot)
+    action_plan = build_action_plan(position, snapshot, _action_plan_context_from_snapshot(snapshot))
+    return {
+        "position": position,
+        "state": state,
+        "latest_snapshot": snapshot,
+        "action_plan": action_plan,
+        "latest_insight": _insight_payload(latest_insight, insight_status) if latest_insight else None,
+        "insight_status": insight_status,
+        "recent_events": repository.list_position_events(position.id, limit=5),
+    }
+
+
+def _action_plan_context_from_snapshot(snapshot: PositionSnapshot) -> dict[str, Any]:
+    analysis = snapshot.analysis_json if isinstance(snapshot.analysis_json, dict) else {}
+    risk = analysis.get("risk") if isinstance(analysis.get("risk"), dict) else {}
+    levels = risk.get("critical_levels") if isinstance(risk.get("critical_levels"), list) else []
+    support = [level for level in levels if isinstance(level, dict) and level.get("type") == "support"]
+    resistance = [level for level in levels if isinstance(level, dict) and level.get("type") == "resistance"]
+    position_analysis = analysis.get("position_analysis") if isinstance(analysis.get("position_analysis"), dict) else {}
+    direction = position_analysis.get("direction")
+    invalidation = support if direction == "long" else resistance if direction == "short" else []
+    return {
+        "mark_price": snapshot.mark_price,
+        "price_levels": {
+            "support": support,
+            "resistance": resistance,
+            "invalidation": invalidation,
+        },
+        "derivatives": analysis.get("derivatives", {}),
+        "liquidity": {},
+        "volume_profile": {},
+        "volume_xray": {},
+        "candles": [],
+    }
+
+
+def _compact_chart_analysis(analysis: dict[str, Any]) -> dict[str, Any]:
+    # PositionChart requires at least 100 candles. Keep a small safety margin
+    # while the minimal canvas still renders only its latest 72 candles.
+    compact_window = 120
+    compact = {**analysis, "detail_level": "compact"}
+    compact["candles"] = list(analysis.get("candles") or [])[-compact_window:]
+
+    trade_flow = analysis.get("trade_flow") if isinstance(analysis.get("trade_flow"), dict) else {}
+    compact["trade_flow"] = {
+        **trade_flow,
+        "buckets": list(trade_flow.get("buckets") or [])[-compact_window:],
+        "cvd": list(trade_flow.get("cvd") or [])[-compact_window:],
+    }
+
+    derivatives = analysis.get("derivatives") if isinstance(analysis.get("derivatives"), dict) else {}
+    compact["derivatives"] = {
+        **derivatives,
+        "metrics": list(derivatives.get("metrics") or [])[-compact_window:],
+        "liquidation_events": list(derivatives.get("liquidation_events") or [])[-24:],
+    }
+
+    indicators = analysis.get("indicators") if isinstance(analysis.get("indicators"), dict) else {}
+    bollinger = indicators.get("bollinger") if isinstance(indicators.get("bollinger"), dict) else {}
+    compact["indicators"] = {
+        **indicators,
+        "bollinger": {
+            key: list(points or [])[-compact_window:]
+            for key, points in bollinger.items()
+        },
+    }
+    return compact
 
 
 def _live_position_detail(position: Position) -> dict:
@@ -1158,7 +1304,7 @@ def _build_position_analyst_briefing(
     action_plan: dict,
 ) -> dict:
     timeframe = chart_analysis.get("timeframe") or "4h"
-    # WO-53: 포지션 브리핑도 직전 방향 히스테리시스 상태를 이어받아 전환에 관성.
+    # WO-57: 포지션도 스카우트 여부와 무관하게 심볼·TF 전용 상태를 이어받는다.
     briefing = build_analyst_briefing(
         symbol=position.symbol,
         timeframe=timeframe,
@@ -1169,6 +1315,7 @@ def _build_position_analyst_briefing(
         prior_state=load_directional_prior(repository, position.symbol, timeframe),
         hysteresis_params=hysteresis_params_from_settings(settings),
     )
+    persist_directional_state(repository, position.symbol, timeframe, briefing)
     _store_analyst_briefing_judgment(position, snapshot, briefing)
     return briefing
 

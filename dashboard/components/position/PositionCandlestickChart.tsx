@@ -88,6 +88,10 @@ export function PositionCandlestickChart({
   const [dragStartY, setDragStartY] = useState<number | null>(null);
   const [zoneBand, setZoneBand] = useState<{ top: number; bottom: number } | null>(null);
   const validation = useMemo(() => validateCandles(analysis.candles), [analysis.candles]);
+  const visibleCandles = useMemo(
+    () => (validation.valid && layerMode === "minimal" ? validation.candles.slice(-72) : validation.candles),
+    [layerMode, validation]
+  );
   const effectiveLayers = useMemo(
     () => (layerMode === "minimal" ? minimalLayersForEvidence(minimalEvidence) : layers),
     [layerMode, minimalEvidence, layers]
@@ -97,7 +101,7 @@ export function PositionCandlestickChart({
     [analysis, validation.valid]
   );
   const lastCandle = validation.candles.at(-1);
-  const averageVolume = validation.valid ? average(validation.candles.map((candle) => candle.volume)) : 0;
+  const averageVolume = validation.valid ? average(visibleCandles.map((candle) => candle.volume)) : 0;
   const harmonicFocused = layerMode === "pro" && effectiveLayers.ta.includes("harmonic");
   const harmonicPatterns = useMemo(
     () => [...analysis.harmonic_patterns].sort((left, right) => right.confidence - left.confidence),
@@ -216,7 +220,7 @@ export function PositionCandlestickChart({
       return typeof price === "number" && Number.isFinite(price) ? price : null;
     };
 
-    const candleData: CandlestickData[] = validation.candles.map((candle) => ({
+    const candleData: CandlestickData[] = visibleCandles.map((candle) => ({
       time: candle.time as Time,
       open: candle.open,
       high: candle.high,
@@ -235,7 +239,7 @@ export function PositionCandlestickChart({
       scaleMargins: { top: 0.76, bottom: 0 }
     });
 
-    const volumeData: HistogramData[] = validation.candles.map((candle) => ({
+    const volumeData: HistogramData[] = visibleCandles.map((candle) => ({
       time: candle.time as Time,
       value: candle.volume,
       color: effectiveLayers.flow ? volumeColorForCandle(analysis, candle, palette) : simpleVolumeColor(candle, palette)
@@ -253,7 +257,7 @@ export function PositionCandlestickChart({
         crosshairMarkerVisible: false
       });
       averageVolumeSeries.setData(
-        validation.candles.map((candle) => ({
+        visibleCandles.map((candle) => ({
           time: candle.time as Time,
           value: averageVolume
         }))
@@ -328,7 +332,7 @@ export function PositionCandlestickChart({
       }
     }
 
-    const labeled = mergeLineLabels(priceLines, container.clientHeight, validation.candles);
+    const labeled = mergeLineLabels(priceLines, container.clientHeight, visibleCandles);
     labeled.forEach((line) => {
       const highlighted = highlightPrice !== null && Math.abs(line.price - highlightPrice) <= Math.abs(highlightPrice) * 1e-9 + 1e-12;
       candleSeries.createPriceLine({
@@ -342,7 +346,7 @@ export function PositionCandlestickChart({
     });
 
     const spikeMarkers = effectiveLayers.flow
-      ? validation.candles
+      ? visibleCandles
           .filter((candle) => candle.volume >= averageVolume * 1.8)
           .slice(-3)
           .map((candle) => ({
@@ -375,7 +379,7 @@ export function PositionCandlestickChart({
         <span>고가 ${formatPrice(data.high)}</span>
         <span>저가 ${formatPrice(data.low)}</span>
         <span>종가 ${formatPrice(data.close)}</span>
-        <span>거래량 ${formatCompactNumber(volumeAtTime(validation.candles, Number(data.time)))}</span>
+        <span>거래량 ${formatCompactNumber(volumeAtTime(visibleCandles, Number(data.time)))}</span>
       `;
     });
 
@@ -435,7 +439,7 @@ export function PositionCandlestickChart({
       priceAtYRef.current = null;
       chart.remove();
     };
-  }, [analysis, averageVolume, priceLines, plan, effectiveLayers, highlightPrice, activeHarmonic, positionOverlay, validation, density, layerMode, minimalEvidence, viewportKey]);
+  }, [analysis, averageVolume, priceLines, plan, effectiveLayers, highlightPrice, activeHarmonic, positionOverlay, validation, visibleCandles, density, layerMode, minimalEvidence, viewportKey]);
 
   function pointerY(event: PointerEvent<HTMLDivElement>): number {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -518,6 +522,13 @@ export function PositionCandlestickChart({
           ) : null}
         </div>
       </div>
+      {layerMode === "minimal" ? (
+        <div className="minimalChartVerdict" data-testid="minimal-chart-verdict">
+          <span>현재 판정</span>
+          <strong>{trendSummary}</strong>
+          <small>{minimalEvidence?.label || "선택 근거를 차트에 표시합니다."}</small>
+        </div>
+      ) : null}
       {layerMode === "pro" ? (
         <ChartLayerControls
           layers={layers}
@@ -941,16 +952,6 @@ function minimalWyckoffNodes(context: OverlayContext, evidence: MinimalChartEvid
     ...minimalDashedPriceLine(context, range.resistance.price, "숏 경계 · 상단", "red", "top"),
     ...minimalDashedPriceLine(context, range.support.price, "롱 경계 · 하단", "amber", "bottom")
   ];
-}
-
-function wyckoffRangeBox(context: OverlayContext, range: NonNullable<PositionChartAnalysis["wyckoff_range"]>): { top: number; bottom: number; x: number; width: number } {
-  const top = context.series.priceToCoordinate(range.resistance.price) ?? 0;
-  const bottom = context.series.priceToCoordinate(range.support.price) ?? context.height;
-  const rawX1 = context.chart.timeScale().timeToCoordinate(range.start_time as Time);
-  const rawX2 = context.chart.timeScale().timeToCoordinate(range.end_time as Time);
-  const x1 = rawX1 ?? 0;
-  const x2 = rawX2 ?? context.width;
-  return { top, bottom, x: Math.min(x1, x2), width: Math.max(12, Math.abs(x2 - x1)) };
 }
 
 function minimalHarmonicNodes(context: OverlayContext, pattern: PositionChartAnalysis["harmonic_patterns"][number]): string[] {

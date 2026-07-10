@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import time
 import logging
+import threading
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID, NAMESPACE_URL, uuid5
@@ -17,10 +18,11 @@ from uuid import UUID, NAMESPACE_URL, uuid5
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
-from app.analyst.briefing import build_analyst_briefing, hysteresis_params_from_settings, load_directional_prior
+from app.analyst.briefing import build_analyst_briefing, hysteresis_params_from_settings, load_directional_prior, persist_directional_state
 from app.analyst.gauges import build_gauges
 from app.backtest.regimes import label_regime
 from app.backtest.service import _regime_params, backtest_line, historical_context_for_analysis
+from app.backtest.statistics import DISCLAIMER_NET
 from app.services import http_handlers as runtime
 from app.db.models import (
     CatalogSymbol,
@@ -57,7 +59,9 @@ SCENARIO_SLIPPAGE_FLAG_PCT = 1.5
 SCAN_CACHE_TTL_SECONDS = 300  # 심볼+타임프레임당 최소 재계산 간격 (Bitget 레이트리밋 방어)
 CATALOG_REFRESH_SECONDS = 86400  # 카탈로그 일 1회 갱신
 
-_ANALYSIS_CACHE: dict[tuple[str, str], dict[str, Any]] = {}
+_ANALYSIS_CACHE: dict[tuple[str, str, bool, bool], dict[str, Any]] = {}
+_ANALYSIS_LOCKS: dict[tuple[str, str, bool, bool], threading.Lock] = {}
+_ANALYSIS_LOCKS_GUARD = threading.Lock()
 _BTC_REGIME_CACHE: dict[str, Any] = {}
 BTC_REGIME_TTL_SECONDS = 900  # BTC 레짐은 자주 안 바뀌므로 15분 캐시 (레이트리밋 방어)
 logger = logging.getLogger(__name__)
@@ -201,9 +205,17 @@ def _resolve_catalog_asset_class(item: CatalogSymbol) -> CatalogSymbol:
     return item.model_copy(update={"asset_class": asset_class})
 
 
-def scout_analysis(symbol: str, timeframe: str = "4h", force: bool = False) -> dict:
+def scout_analysis(symbol: str, timeframe: str = "4h", force: bool = False, detail: bool = False) -> dict:
     symbol = normalize_scout_symbol(symbol)
-    entry = _analysis_entry(symbol, timeframe, force=force, include_trade_flow=True)
+    # Search results must answer quickly. Trade-fill collection and historical
+    # replay belong to the explicit detail view, not the type-ahead request.
+    entry = _analysis_entry(
+        symbol,
+        timeframe,
+        force=force,
+        include_trade_flow=detail,
+        include_history=detail,
+    )
     briefing = _briefing_for_entry(symbol, timeframe, entry, action_plan=None, context="pre_entry")
     # WO-55A: 압축 차트 2게이지 — 스카우트는 포지션 없음 → 익절 게이지 비활성.
     briefing_confluence: dict = briefing["confluence"] if isinstance(briefing.get("confluence"), dict) else {}
@@ -314,13 +326,38 @@ def scan_universe(request: ScanRequest | None = None) -> dict:
     return payload
 
 
-def _analysis_entry(symbol: str, timeframe: str, force: bool, include_trade_flow: bool) -> dict[str, Any]:
+def _analysis_entry(
+    symbol: str,
+    timeframe: str,
+    force: bool,
+    include_trade_flow: bool,
+    include_history: bool = True,
+) -> dict[str, Any]:
     symbol = normalize_scout_symbol(symbol)
-    key = (symbol.upper(), timeframe)
+    key = (symbol.upper(), timeframe, include_trade_flow, include_history)
     cached = _ANALYSIS_CACHE.get(key)
     now = time.monotonic()
     if cached and not force and now - cached["cached_at_monotonic"] < SCAN_CACHE_TTL_SECONDS:
         return cached
+    with _ANALYSIS_LOCKS_GUARD:
+        lock = _ANALYSIS_LOCKS.setdefault(key, threading.Lock())
+    with lock:
+        cached = _ANALYSIS_CACHE.get(key)
+        now = time.monotonic()
+        if cached and not force and now - cached["cached_at_monotonic"] < SCAN_CACHE_TTL_SECONDS:
+            return cached
+        return _compute_analysis_entry(symbol, timeframe, force, include_trade_flow, include_history, key, now)
+
+
+def _compute_analysis_entry(
+    symbol: str,
+    timeframe: str,
+    force: bool,
+    include_trade_flow: bool,
+    include_history: bool,
+    key: tuple[str, str, bool, bool],
+    now: float,
+) -> dict[str, Any]:
     provider = _provider()
     try:
         snapshot = provider.get_snapshot(symbol, timeframe)
@@ -337,15 +374,27 @@ def _analysis_entry(symbol: str, timeframe: str, force: bool, include_trade_flow
     market_regime = None
     if str(analysis.get("asset_class") or "").startswith("crypto") and snapshot.symbol.upper() not in {"BTCUSDT", "BTCUSD"}:
         market_regime = _btc_market_regime(snapshot.timeframe)
-    historical = historical_context_for_analysis(
-        _repo(),
-        runtime.settings,
-        symbol=snapshot.symbol,
-        timeframe=snapshot.timeframe,
-        analysis=analysis,
-        candles=snapshot.candles,
-        force=force,
-        market_regime=market_regime,
+    historical = (
+        historical_context_for_analysis(
+            _repo(),
+            runtime.settings,
+            symbol=snapshot.symbol,
+            timeframe=snapshot.timeframe,
+            analysis=analysis,
+            candles=snapshot.candles,
+            force=force,
+            market_regime=market_regime,
+        )
+        if include_history
+        else {
+            "symbol": snapshot.symbol,
+            "timeframe": snapshot.timeframe,
+            "source": "disabled",
+            "stats": [],
+            "case_count": 0,
+            "disclaimer": DISCLAIMER_NET,
+            "notes": ["자세히 보기에서 과거 통계를 계산합니다."],
+        }
     )
     analysis["historical_backtest"] = historical
     entry = {
@@ -824,8 +873,8 @@ def _briefing_for_entry(
     action_plan: dict[str, Any] | None,
     context: str,
 ) -> dict[str, Any]:
-    # WO-53: 직전 방향 히스테리시스 상태를 최근 스냅샷에서 로드해 주입 (전환에 관성).
-    return build_analyst_briefing(
+    # WO-57: scout 여부와 무관한 심볼·TF 전용 상태를 읽고 새 확정 캔들만 저장한다.
+    briefing = build_analyst_briefing(
         symbol=symbol,
         timeframe=timeframe,
         analysis=entry["analysis"],
@@ -835,6 +884,8 @@ def _briefing_for_entry(
         prior_state=load_directional_prior(_repo(), symbol, timeframe),
         hysteresis_params=hysteresis_params_from_settings(runtime.settings),
     )
+    persist_directional_state(_repo(), symbol, timeframe, briefing)
+    return briefing
 
 
 def _briefing_direction_conflict(briefing: dict[str, Any], direction: str) -> bool:

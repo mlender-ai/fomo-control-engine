@@ -1013,6 +1013,7 @@ export type OneLinerSummary = {
 };
 
 export type PositionChartAnalysis = {
+  detail_level?: "compact" | "full";
   position_id: string;
   symbol: string;
   timeframe: string;
@@ -1442,12 +1443,13 @@ export type DecisionMemory = {
 };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers = new Headers(init?.headers);
+  if (init?.body != null && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {})
-    },
+    headers,
     cache: "no-store"
   });
 
@@ -1488,14 +1490,16 @@ export const api = {
       method: "POST",
       body: JSON.stringify(ruleId ? { rule_id: ruleId } : {})
     }),
-  livePositions: () => request<LivePositionsResponse>("/api/live/positions"),
+  livePositions: () => request<LivePositionsResponse>("/api/live/positions?compact=true"),
   syncLivePositions: () =>
     request<BitgetSyncResult>("/api/live/positions/sync", {
       method: "POST"
     }),
   livePosition: (positionId: string) => request<LivePositionDetail>(`/api/live/positions/${positionId}`),
-  positionChartAnalysis: (positionId: string, timeframe = "4h") =>
-    request<PositionChartAnalysis>(`/api/live/positions/${positionId}/chart-analysis?timeframe=${encodeURIComponent(timeframe)}`),
+  positionChartAnalysis: (positionId: string, timeframe = "4h", compact = false) =>
+    request<PositionChartAnalysis>(
+      `/api/live/positions/${positionId}/chart-analysis?timeframe=${encodeURIComponent(timeframe)}${compact ? "&compact=true" : ""}`
+    ),
   analyzeLivePosition: (positionId: string) =>
     request<LivePositionPayload>(`/api/live/positions/${positionId}/analyze`, {
       method: "POST"
@@ -1537,8 +1541,8 @@ export const api = {
     request<{ removed: string }>(`/api/watchlist/${encodeURIComponent(symbol)}`, {
       method: "DELETE"
     }),
-  scoutAnalysis: (symbol: string, timeframe = "4h", force = false) =>
-    request<ScoutAnalysisResponse>(`/api/scout/${encodeURIComponent(symbol)}/analysis?timeframe=${encodeURIComponent(timeframe)}&force=${force}`),
+  scoutAnalysis: (symbol: string, timeframe = "4h", force = false, detail = false) =>
+    request<ScoutAnalysisResponse>(`/api/scout/${encodeURIComponent(symbol)}/analysis?timeframe=${encodeURIComponent(timeframe)}&force=${force}&detail=${detail}`),
   scoutBriefing: (symbol: string, timeframe = "4h", force = false) =>
     request<{ symbol: string; timeframe: string; as_of: string; historical_backtest?: HistoricalBacktest | null; analyst_briefing: AnalystBriefing }>(
       `/api/scout/${encodeURIComponent(symbol)}/briefing?timeframe=${encodeURIComponent(timeframe)}&force=${force}`

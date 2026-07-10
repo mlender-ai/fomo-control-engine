@@ -269,11 +269,33 @@ export function yesNoLabel(value: boolean): string {
   return value ? "예" : "아니오";
 }
 
-export function localizeMarketCodes(text: string): string {
-  const phraseLocalized = Object.entries(phraseLabels).reduce((current, [phrase, label]) => current.replaceAll(phrase, label), text);
+export function localizeMarketCodes(text: unknown): string {
+  const normalized = stringifyMarketText(text);
+  const phraseLocalized = Object.entries(phraseLabels).reduce((current, [phrase, label]) => current.replaceAll(phrase, label), normalized);
   return Object.entries(allCodeLabels)
     .sort(([left], [right]) => right.length - left.length)
     .reduce((current, [code, label]) => current.replace(new RegExp(`(^|[^A-Za-z0-9_])${escapeRegExp(code)}(?=$|[^A-Za-z0-9_])`, "g"), `$1${label}`), phraseLocalized);
+}
+
+function stringifyMarketText(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) return value.map((item) => stringifyMarketText(item)).filter(Boolean).join(" · ");
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const direct = record.text ?? record.label ?? record.claim ?? record.condition ?? record.action ?? record.basis ?? record.meaning;
+    if (direct !== undefined && direct !== value) return stringifyMarketText(direct);
+    const parts = [
+      record.price !== undefined ? stringifyMarketText(record.price) : "",
+      record.direction !== undefined ? stringifyMarketText(record.direction) : "",
+      record.type !== undefined ? stringifyMarketText(record.type) : "",
+      record.engine !== undefined ? stringifyMarketText(record.engine) : "",
+      record.implication !== undefined ? stringifyMarketText(record.implication) : "",
+    ].filter(Boolean);
+    if (parts.length) return parts.join(" · ");
+  }
+  return "";
 }
 
 function labelFromMap(map: Record<string, string>, value: string | null | undefined): string {

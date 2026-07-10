@@ -77,6 +77,9 @@ class Repository(Protocol):
     def add_scout_snapshot(self, snapshot: ScoutSnapshot) -> ScoutSnapshot: ...
     def list_scout_snapshots(self, symbol: str | None = None, limit: int = 100) -> list[ScoutSnapshot]: ...
     def latest_scout_snapshot(self, symbol: str, timeframe: str | None = None) -> ScoutSnapshot | None: ...
+    def get_directional_state(self, symbol: str, timeframe: str) -> dict | None: ...
+    def upsert_directional_state(self, symbol: str, timeframe: str, state: dict) -> bool: ...
+    def list_directional_states(self, limit: int = 100) -> list[dict]: ...
     def upsert_armed_setup(self, setup: ArmedSetup) -> ArmedSetup: ...
     def get_armed_setup(self, setup_id: UUID) -> ArmedSetup | None: ...
     def list_armed_setups(self, symbol: str | None = None, status: str | None = None, limit: int = 200) -> list[ArmedSetup]: ...
@@ -181,6 +184,7 @@ class MemoryRepository:
         self.alerts: dict[UUID, AlertRecord] = {}
         self.alert_responses: dict[UUID, AlertResponseRecord] = {}
         self.scout_snapshots: dict[UUID, ScoutSnapshot] = {}
+        self.directional_states: dict[tuple[str, str], dict] = {}
         self.armed_setups: dict[UUID, ArmedSetup] = {}
         self.entry_intents: dict[UUID, EntryIntent] = {}
         self.backtest_stats: dict[UUID, BacktestStat] = {}
@@ -317,6 +321,34 @@ class MemoryRepository:
         if timeframe:
             snapshots = [snapshot for snapshot in snapshots if snapshot.timeframe == timeframe]
         return snapshots[0] if snapshots else None
+
+    def get_directional_state(self, symbol: str, timeframe: str) -> dict | None:
+        state = self.directional_states.get((symbol.upper(), timeframe))
+        return dict(state) if isinstance(state, dict) else None
+
+    def upsert_directional_state(self, symbol: str, timeframe: str, state: dict) -> bool:
+        key = (symbol.upper(), timeframe)
+        current = self.directional_states.get(key)
+        if _same_directional_bar(current, state):
+            return False
+        persisted = dict(state)
+        persisted["updated_at"] = utc_now().isoformat()
+        self.directional_states[key] = persisted
+        return True
+
+    def list_directional_states(self, limit: int = 100) -> list[dict]:
+        rows = [
+            {
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "stance": state.get("stance"),
+                "since": state.get("since"),
+                "last_bar_at": state.get("last_bar_at"),
+                "updated_at": state.get("updated_at"),
+            }
+            for (symbol, timeframe), state in self.directional_states.items()
+        ]
+        return sorted(rows, key=lambda item: str(item.get("updated_at") or ""), reverse=True)[:limit]
 
     def upsert_armed_setup(self, setup: ArmedSetup) -> ArmedSetup:
         self.armed_setups[setup.id] = setup
@@ -713,12 +745,12 @@ class SQLiteRepository:
         return connect_sqlite(self.database_path)
 
     def _init_schema(self) -> None:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             run_migrations(connection)
 
     def add_report(self, report: Report) -> Report:
         payload = _dump_model(report)
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO reports
@@ -738,12 +770,12 @@ class SQLiteRepository:
         return report
 
     def get_report(self, report_id: UUID) -> Report | None:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             row = connection.execute("SELECT payload FROM reports WHERE id = ?", (str(report_id),)).fetchone()
         return Report.model_validate_json(row["payload"]) if row else None
 
     def latest_report(self, symbol: str) -> Report | None:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             row = connection.execute(
                 "SELECT payload FROM reports WHERE symbol = ? ORDER BY created_at DESC LIMIT 1",
                 (symbol.upper(),),
@@ -751,7 +783,7 @@ class SQLiteRepository:
         return Report.model_validate_json(row["payload"]) if row else None
 
     def recent_reports(self, limit: int = 8) -> list[Report]:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             rows = connection.execute("SELECT payload FROM reports ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
         return [Report.model_validate_json(row["payload"]) for row in rows]
 
@@ -765,12 +797,12 @@ class SQLiteRepository:
             query += " WHERE status = ?"
             params = (status.value,)
         query += " ORDER BY opened_at DESC"
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             rows = connection.execute(query, params).fetchall()
         return [Position.model_validate_json(row["payload"]) for row in rows]
 
     def get_position(self, position_id: UUID) -> Position | None:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             row = connection.execute("SELECT payload FROM positions WHERE id = ?", (str(position_id),)).fetchone()
         return Position.model_validate_json(row["payload"]) if row else None
 
@@ -778,7 +810,7 @@ class SQLiteRepository:
         return self._upsert_position(position)
 
     def add_monitoring_log(self, log: MonitoringLog) -> MonitoringLog:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO monitoring_logs
@@ -795,7 +827,7 @@ class SQLiteRepository:
         return log
 
     def list_monitoring_logs(self, position_id: UUID, limit: int = 50) -> list[MonitoringLog]:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             rows = connection.execute(
                 "SELECT payload FROM monitoring_logs WHERE position_id = ? ORDER BY created_at DESC LIMIT ?",
                 (str(position_id), limit),
@@ -803,7 +835,7 @@ class SQLiteRepository:
         return [MonitoringLog.model_validate_json(row["payload"]) for row in rows]
 
     def add_position_snapshot(self, snapshot: PositionSnapshot) -> PositionSnapshot:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO position_snapshots
@@ -821,7 +853,7 @@ class SQLiteRepository:
         return snapshot
 
     def list_position_snapshots(self, position_id: UUID, limit: int = 50) -> list[PositionSnapshot]:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             rows = connection.execute(
                 "SELECT payload FROM position_snapshots WHERE position_id = ? ORDER BY created_at DESC LIMIT ?",
                 (str(position_id), limit),
@@ -829,7 +861,7 @@ class SQLiteRepository:
         return [PositionSnapshot.model_validate_json(row["payload"]) for row in rows]
 
     def add_position_insight(self, insight: PositionInsight) -> PositionInsight:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO position_insights
@@ -847,7 +879,7 @@ class SQLiteRepository:
         return insight
 
     def list_position_insights(self, position_id: UUID, limit: int = 20) -> list[PositionInsight]:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             rows = connection.execute(
                 "SELECT payload FROM position_insights WHERE position_id = ? ORDER BY created_at DESC LIMIT ?",
                 (str(position_id), limit),
@@ -855,7 +887,7 @@ class SQLiteRepository:
         return [PositionInsight.model_validate_json(row["payload"]) for row in rows]
 
     def add_position_event(self, event: PositionEvent) -> PositionEvent:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO position_events
@@ -874,7 +906,7 @@ class SQLiteRepository:
         return event
 
     def list_position_events(self, position_id: UUID, limit: int = 50) -> list[PositionEvent]:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             rows = connection.execute(
                 "SELECT payload FROM position_events WHERE position_id = ? ORDER BY created_at DESC LIMIT ?",
                 (str(position_id), limit),
@@ -882,7 +914,7 @@ class SQLiteRepository:
         return [PositionEvent.model_validate_json(row["payload"]) for row in rows]
 
     def add_alert(self, alert: AlertRecord) -> AlertRecord:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO alerts
@@ -913,12 +945,12 @@ class SQLiteRepository:
         else:
             params = (limit,)
         query += " ORDER BY fired_at DESC LIMIT ?"
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             rows = connection.execute(query, params).fetchall()
         return [AlertRecord.model_validate_json(row["payload"]) for row in rows]
 
     def add_alert_response(self, response: AlertResponseRecord) -> AlertResponseRecord:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             connection.execute(
                 "DELETE FROM alert_responses WHERE alert_id = ? AND id != ?",
                 (str(response.alert_id), str(response.id)),
@@ -945,7 +977,7 @@ class SQLiteRepository:
         return response
 
     def get_alert_response(self, alert_id: UUID) -> AlertResponseRecord | None:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             row = connection.execute(
                 "SELECT payload FROM alert_responses WHERE alert_id = ? LIMIT 1",
                 (str(alert_id),),
@@ -971,12 +1003,12 @@ class SQLiteRepository:
             query += " WHERE " + " AND ".join(clauses)
         query += " ORDER BY detected_at DESC LIMIT ?"
         params.append(limit)
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             rows = connection.execute(query, tuple(params)).fetchall()
         return [AlertResponseRecord.model_validate_json(row["payload"]) for row in rows]
 
     def add_scout_snapshot(self, snapshot: ScoutSnapshot) -> ScoutSnapshot:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO scout_snapshots
@@ -1003,7 +1035,7 @@ class SQLiteRepository:
         else:
             params = (limit,)
         query += " ORDER BY as_of DESC LIMIT ?"
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             rows = connection.execute(query, params).fetchall()
         return [ScoutSnapshot.model_validate_json(row["payload"]) for row in rows]
 
@@ -1014,12 +1046,82 @@ class SQLiteRepository:
             query += " AND timeframe = ?"
             params.append(timeframe)
         query += " ORDER BY as_of DESC LIMIT 1"
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             row = connection.execute(query, tuple(params)).fetchone()
         return ScoutSnapshot.model_validate_json(row["payload"]) if row else None
 
+    def get_directional_state(self, symbol: str, timeframe: str) -> dict | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT state FROM directional_states WHERE symbol = ? AND timeframe = ?",
+                (symbol.upper(), timeframe),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            state = json.loads(row["state"])
+        except (TypeError, json.JSONDecodeError):
+            return None
+        return state if isinstance(state, dict) else None
+
+    def upsert_directional_state(self, symbol: str, timeframe: str, state: dict) -> bool:
+        normalized_symbol = symbol.upper()
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT state FROM directional_states WHERE symbol = ? AND timeframe = ?",
+                (normalized_symbol, timeframe),
+            ).fetchone()
+            current: dict | None = None
+            if row is not None:
+                try:
+                    decoded = json.loads(row["state"])
+                    current = decoded if isinstance(decoded, dict) else None
+                except (TypeError, json.JSONDecodeError):
+                    current = None
+            if _same_directional_bar(current, state):
+                return False
+            updated_at = utc_now().isoformat()
+            persisted = dict(state)
+            persisted["updated_at"] = updated_at
+            connection.execute(
+                """
+                INSERT INTO directional_states (symbol, timeframe, state, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(symbol, timeframe) DO UPDATE SET
+                    state = excluded.state,
+                    updated_at = excluded.updated_at
+                """,
+                (normalized_symbol, timeframe, json.dumps(persisted, ensure_ascii=False, sort_keys=True), updated_at),
+            )
+        return True
+
+    def list_directional_states(self, limit: int = 100) -> list[dict]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT symbol, timeframe, state, updated_at FROM directional_states ORDER BY updated_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+        result: list[dict] = []
+        for row in rows:
+            try:
+                state = json.loads(row["state"])
+            except (TypeError, json.JSONDecodeError):
+                state = {}
+            state = state if isinstance(state, dict) else {}
+            result.append(
+                {
+                    "symbol": row["symbol"],
+                    "timeframe": row["timeframe"],
+                    "stance": state.get("stance"),
+                    "since": state.get("since"),
+                    "last_bar_at": state.get("last_bar_at"),
+                    "updated_at": row["updated_at"],
+                }
+            )
+        return result
+
     def upsert_armed_setup(self, setup: ArmedSetup) -> ArmedSetup:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO armed_setups
@@ -1042,7 +1144,7 @@ class SQLiteRepository:
         return setup
 
     def get_armed_setup(self, setup_id: UUID) -> ArmedSetup | None:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             row = connection.execute("SELECT payload FROM armed_setups WHERE id = ?", (str(setup_id),)).fetchone()
         return ArmedSetup.model_validate_json(row["payload"]) if row else None
 
@@ -1060,14 +1162,14 @@ class SQLiteRepository:
             query += " WHERE " + " AND ".join(clauses)
         query += " ORDER BY updated_at DESC LIMIT ?"
         params.append(limit)
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             rows = connection.execute(query, tuple(params)).fetchall()
         return [ArmedSetup.model_validate_json(row["payload"]) for row in rows]
 
     def upsert_entry_intent(self, intent: EntryIntent) -> EntryIntent:
         normalized = intent.symbol.upper()
         saved = intent.model_copy(update={"symbol": normalized})
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO entry_intents
@@ -1091,7 +1193,7 @@ class SQLiteRepository:
         return saved
 
     def get_entry_intent(self, intent_id: UUID) -> EntryIntent | None:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             row = connection.execute("SELECT payload FROM entry_intents WHERE id = ?", (str(intent_id),)).fetchone()
         return EntryIntent.model_validate_json(row["payload"]) if row else None
 
@@ -1114,13 +1216,13 @@ class SQLiteRepository:
             query += " WHERE " + " AND ".join(clauses)
         query += " ORDER BY updated_at DESC LIMIT ?"
         params.append(limit)
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             rows = connection.execute(query, tuple(params)).fetchall()
         return [EntryIntent.model_validate_json(row["payload"]) for row in rows]
 
     def upsert_backtest_stat(self, stat: BacktestStat) -> BacktestStat:
         normalized = stat.model_copy(update={"symbol": stat.symbol.upper()})
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO backtest_stats
@@ -1160,13 +1262,13 @@ class SQLiteRepository:
             query += " WHERE " + " AND ".join(clauses)
         query += " ORDER BY generated_at DESC LIMIT ?"
         params.append(limit)
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             rows = connection.execute(query, tuple(params)).fetchall()
         return [BacktestStat.model_validate_json(row["payload"]) for row in rows]
 
     def upsert_universe_discovery(self, discovery: UniverseDiscovery) -> UniverseDiscovery:
         normalized = discovery.model_copy(update={"symbol": discovery.symbol.upper()})
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO universe_discoveries
@@ -1207,12 +1309,12 @@ class SQLiteRepository:
             query += " WHERE " + " AND ".join(clauses)
         query += " ORDER BY created_at DESC LIMIT ?"
         params.append(limit)
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             rows = connection.execute(query, tuple(params)).fetchall()
         return [UniverseDiscovery.model_validate_json(row["payload"]) for row in rows]
 
     def add_trade(self, trade: Trade) -> Trade:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO trades
@@ -1230,17 +1332,17 @@ class SQLiteRepository:
         return trade
 
     def get_trade(self, trade_id: UUID) -> Trade | None:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             row = connection.execute("SELECT payload FROM trades WHERE id = ?", (str(trade_id),)).fetchone()
         return Trade.model_validate_json(row["payload"]) if row else None
 
     def list_trades(self) -> list[Trade]:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             rows = connection.execute("SELECT payload FROM trades ORDER BY created_at DESC").fetchall()
         return [Trade.model_validate_json(row["payload"]) for row in rows]
 
     def add_judgment(self, judgment: JudgmentLedgerEntry) -> JudgmentLedgerEntry:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO judgment_ledger
@@ -1260,7 +1362,7 @@ class SQLiteRepository:
         return judgment
 
     def list_judgments(self, position_id: UUID, limit: int = 200) -> list[JudgmentLedgerEntry]:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             rows = connection.execute(
                 "SELECT payload FROM judgment_ledger WHERE position_id = ? ORDER BY as_of DESC LIMIT ?",
                 (str(position_id), limit),
@@ -1268,7 +1370,7 @@ class SQLiteRepository:
         return [JudgmentLedgerEntry.model_validate_json(row["payload"]) for row in rows]
 
     def add_judgment_score(self, score: JudgmentScore) -> JudgmentScore:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO judgment_scores
@@ -1306,12 +1408,12 @@ class SQLiteRepository:
             query += " WHERE " + " AND ".join(clauses)
         query += " ORDER BY created_at DESC LIMIT ?"
         params.append(limit)
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             rows = connection.execute(query, tuple(params)).fetchall()
         return [JudgmentScore.model_validate_json(row["payload"]) for row in rows]
 
     def add_calibration_suggestion(self, suggestion: CalibrationSuggestion) -> CalibrationSuggestion:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO calibration_suggestions
@@ -1328,7 +1430,7 @@ class SQLiteRepository:
         return suggestion
 
     def get_calibration_suggestion(self, suggestion_id: UUID) -> CalibrationSuggestion | None:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             row = connection.execute(
                 "SELECT payload FROM calibration_suggestions WHERE id = ?",
                 (str(suggestion_id),),
@@ -1344,12 +1446,12 @@ class SQLiteRepository:
         else:
             params = (limit,)
         query += " ORDER BY created_at DESC LIMIT ?"
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             rows = connection.execute(query, params).fetchall()
         return [CalibrationSuggestion.model_validate_json(row["payload"]) for row in rows]
 
     def add_engine_param_version(self, version: EngineParamVersion) -> EngineParamVersion:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             rows = connection.execute(
                 "SELECT id, payload FROM engine_params WHERE param = ? AND status = 'active'",
                 (version.param,),
@@ -1381,7 +1483,7 @@ class SQLiteRepository:
         return version
 
     def latest_engine_param(self, param: str) -> EngineParamVersion | None:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             row = connection.execute(
                 "SELECT payload FROM engine_params WHERE param = ? AND status = 'active' ORDER BY approved_at DESC LIMIT 1",
                 (param,),
@@ -1389,7 +1491,7 @@ class SQLiteRepository:
         return EngineParamVersion.model_validate_json(row["payload"]) if row else None
 
     def list_engine_params(self, limit: int = 100) -> list[EngineParamVersion]:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             rows = connection.execute(
                 "SELECT payload FROM engine_params ORDER BY approved_at DESC LIMIT ?",
                 (limit,),
@@ -1397,7 +1499,7 @@ class SQLiteRepository:
         return [EngineParamVersion.model_validate_json(row["payload"]) for row in rows]
 
     def add_autonomy_log(self, log: AutonomyLog) -> AutonomyLog:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO autonomy_log
@@ -1439,20 +1541,18 @@ class SQLiteRepository:
             query += " WHERE " + " AND ".join(clauses)
         query += " ORDER BY created_at DESC LIMIT ?"
         params.append(limit)
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             rows = connection.execute(query, tuple(params)).fetchall()
         return [AutonomyLog.model_validate_json(row["payload"]) for row in rows]
 
     def latest_autonomy_states(self) -> dict[str, str]:
         # SQLite bare-column + MAX 집계: 각 그룹에서 MAX(created_at) 행의 컬럼을 반환.
-        with self._lock, self._connect() as connection:
-            rows = connection.execute(
-                "SELECT signature_key, new_state, MAX(created_at) FROM autonomy_log GROUP BY signature_key"
-            ).fetchall()
+        with self._connect() as connection:
+            rows = connection.execute("SELECT signature_key, new_state, MAX(created_at) FROM autonomy_log GROUP BY signature_key").fetchall()
         return {str(row["signature_key"]): str(row["new_state"]) for row in rows}
 
     def add_market_snapshot(self, snapshot: MarketSnapshotRecord) -> MarketSnapshotRecord:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO market_snapshots
@@ -1471,7 +1571,7 @@ class SQLiteRepository:
         return snapshot
 
     def add_derivative_snapshot(self, snapshot: DerivativeDataSnapshot) -> DerivativeDataSnapshot:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO derivative_snapshots
@@ -1504,7 +1604,7 @@ class SQLiteRepository:
             query += " WHERE " + " AND ".join(clauses)
         query += " ORDER BY created_at DESC LIMIT ?"
         params.append(limit)
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             rows = connection.execute(query, tuple(params)).fetchall()
         return [DerivativeDataSnapshot.model_validate_json(row["payload"]) for row in rows]
 
@@ -1513,7 +1613,7 @@ class SQLiteRepository:
         return snapshots[0] if snapshots else None
 
     def delete_derivative_snapshots_before(self, cutoff: datetime) -> int:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             cursor = connection.execute(
                 "DELETE FROM derivative_snapshots WHERE as_of < ?",
                 (cutoff.isoformat(),),
@@ -1521,7 +1621,7 @@ class SQLiteRepository:
             return int(cursor.rowcount or 0)
 
     def add_derivative_metric(self, metric: DerivativeMetric) -> DerivativeMetric:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO deriv_metrics
@@ -1554,7 +1654,7 @@ class SQLiteRepository:
             query += " WHERE " + " AND ".join(clauses)
         query += " ORDER BY as_of DESC LIMIT ?"
         params.append(limit)
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             rows = connection.execute(query, tuple(params)).fetchall()
         return [DerivativeMetric.model_validate_json(row["payload"]) for row in rows]
 
@@ -1563,12 +1663,12 @@ class SQLiteRepository:
         return metrics[0] if metrics else None
 
     def delete_derivative_metrics_before(self, cutoff: datetime) -> int:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             cursor = connection.execute("DELETE FROM deriv_metrics WHERE as_of < ?", (cutoff.isoformat(),))
             return int(cursor.rowcount or 0)
 
     def add_liquidation_event(self, event: LiquidationEvent) -> LiquidationEvent:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO liquidation_events
@@ -1601,12 +1701,12 @@ class SQLiteRepository:
             query += " WHERE " + " AND ".join(clauses)
         query += " ORDER BY bucket_start DESC LIMIT ?"
         params.append(limit)
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             rows = connection.execute(query, tuple(params)).fetchall()
         return [LiquidationEvent.model_validate_json(row["payload"]) for row in rows]
 
     def delete_liquidation_events_before(self, cutoff: datetime) -> int:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             cursor = connection.execute(
                 "DELETE FROM liquidation_events WHERE bucket_start < ?",
                 (cutoff.isoformat(),),
@@ -1614,7 +1714,7 @@ class SQLiteRepository:
             return int(cursor.rowcount or 0)
 
     def add_database_maintenance_event(self, event: DatabaseMaintenanceEvent) -> DatabaseMaintenanceEvent:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO database_maintenance_events
@@ -1640,12 +1740,12 @@ class SQLiteRepository:
         else:
             params = (limit,)
         query += " ORDER BY created_at DESC LIMIT ?"
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             rows = connection.execute(query, params).fetchall()
         return [DatabaseMaintenanceEvent.model_validate_json(row["payload"]) for row in rows]
 
     def add_research_run(self, run: ResearchRun) -> ResearchRun:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO research_runs
@@ -1664,7 +1764,7 @@ class SQLiteRepository:
         return run
 
     def get_research_run(self, run_id: UUID) -> ResearchRun | None:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             row = connection.execute("SELECT payload FROM research_runs WHERE id = ?", (str(run_id),)).fetchone()
         return ResearchRun.model_validate_json(row["payload"]) if row else None
 
@@ -1676,12 +1776,12 @@ class SQLiteRepository:
             params = (symbol.upper(),)
         query += " ORDER BY created_at DESC LIMIT ?"
         params = (*params, limit)
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             rows = connection.execute(query, params).fetchall()
         return [ResearchRun.model_validate_json(row["payload"]) for row in rows]
 
     def add_agent_output(self, output: AgentOutput) -> AgentOutput:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO agent_outputs
@@ -1699,7 +1799,7 @@ class SQLiteRepository:
         return output
 
     def list_agent_outputs(self, research_run_id: UUID) -> list[AgentOutput]:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             rows = connection.execute(
                 "SELECT payload FROM agent_outputs WHERE research_run_id = ? ORDER BY created_at ASC",
                 (str(research_run_id),),
@@ -1707,7 +1807,7 @@ class SQLiteRepository:
         return [AgentOutput.model_validate_json(row["payload"]) for row in rows]
 
     def add_shadow_profile(self, profile: ShadowProfile) -> ShadowProfile:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             connection.execute(
                 "INSERT OR REPLACE INTO shadow_profiles (shadow_id, created_at, payload) VALUES (?, ?, ?)",
                 (
@@ -1719,12 +1819,12 @@ class SQLiteRepository:
         return profile
 
     def get_shadow_profile(self, shadow_id: str) -> ShadowProfile | None:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             row = connection.execute("SELECT payload FROM shadow_profiles WHERE shadow_id = ?", (shadow_id,)).fetchone()
         return ShadowProfile.model_validate_json(row["payload"]) if row else None
 
     def list_shadow_profiles(self, limit: int = 20) -> list[ShadowProfile]:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             rows = connection.execute(
                 "SELECT payload FROM shadow_profiles ORDER BY created_at DESC LIMIT ?",
                 (limit,),
@@ -1732,7 +1832,7 @@ class SQLiteRepository:
         return [ShadowProfile.model_validate_json(row["payload"]) for row in rows]
 
     def add_decision_memory(self, memory: DecisionMemory) -> DecisionMemory:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO decision_memories
@@ -1756,12 +1856,12 @@ class SQLiteRepository:
         else:
             query = "SELECT payload FROM decision_memories ORDER BY created_at DESC LIMIT ?"
             params = (limit,)
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             rows = connection.execute(query, params).fetchall()
         return [DecisionMemory.model_validate_json(row["payload"]) for row in rows]
 
     def add_validation_run(self, run: ValidationRun) -> ValidationRun:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO validation_runs
@@ -1780,12 +1880,12 @@ class SQLiteRepository:
         return run
 
     def get_validation_run(self, run_id: UUID) -> ValidationRun | None:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             row = connection.execute("SELECT payload FROM validation_runs WHERE id = ?", (str(run_id),)).fetchone()
         return ValidationRun.model_validate_json(row["payload"]) if row else None
 
     def list_validation_runs(self, limit: int = 20) -> list[ValidationRun]:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             rows = connection.execute(
                 "SELECT payload FROM validation_runs ORDER BY created_at DESC LIMIT ?",
                 (limit,),
@@ -1793,14 +1893,14 @@ class SQLiteRepository:
         return [ValidationRun.model_validate_json(row["payload"]) for row in rows]
 
     def list_watchlist(self) -> list[WatchlistItem]:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             rows = connection.execute("SELECT payload FROM watchlist ORDER BY added_at DESC").fetchall()
         return [WatchlistItem.model_validate_json(row["payload"]) for row in rows]
 
     def upsert_watchlist_item(self, item: WatchlistItem) -> WatchlistItem:
         normalized = item.symbol.upper()
         stored = item.model_copy(update={"symbol": normalized})
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             connection.execute(
                 "INSERT OR REPLACE INTO watchlist (symbol, added_at, asset_class, payload) VALUES (?, ?, ?, ?)",
                 (normalized, stored.added_at.isoformat(), stored.asset_class, _dump_model(stored)),
@@ -1808,12 +1908,12 @@ class SQLiteRepository:
         return stored
 
     def remove_watchlist_item(self, symbol: str) -> bool:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             cursor = connection.execute("DELETE FROM watchlist WHERE symbol = ?", (symbol.upper(),))
         return cursor.rowcount > 0
 
     def replace_symbol_catalog(self, symbols: list[CatalogSymbol]) -> int:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             connection.execute("DELETE FROM symbol_catalog")
             connection.executemany(
                 "INSERT OR REPLACE INTO symbol_catalog (symbol, updated_at, asset_class, payload) VALUES (?, ?, ?, ?)",
@@ -1831,7 +1931,7 @@ class SQLiteRepository:
 
     def search_symbols(self, query: str, limit: int = 20) -> list[CatalogSymbol]:
         needle = query.strip().upper()
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             if needle:
                 rows = connection.execute(
                     """
@@ -1851,13 +1951,13 @@ class SQLiteRepository:
         return [CatalogSymbol.model_validate_json(row["payload"]) for row in rows]
 
     def symbol_catalog_updated_at(self) -> datetime | None:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             row = connection.execute("SELECT MAX(updated_at) AS updated_at FROM symbol_catalog").fetchone()
         value = row["updated_at"] if row else None
         return datetime.fromisoformat(value) if value else None
 
     def add_entry_scenario(self, scenario: EntryScenario) -> EntryScenario:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO entry_scenarios
@@ -1876,12 +1976,12 @@ class SQLiteRepository:
         return scenario
 
     def get_entry_scenario(self, scenario_id: UUID) -> EntryScenario | None:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             row = connection.execute("SELECT payload FROM entry_scenarios WHERE id = ?", (str(scenario_id),)).fetchone()
         return EntryScenario.model_validate_json(row["payload"]) if row else None
 
     def list_entry_scenarios(self, symbol: str | None = None, limit: int = 50) -> list[EntryScenario]:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             if symbol:
                 rows = connection.execute(
                     "SELECT payload FROM entry_scenarios WHERE symbol = ? ORDER BY created_at DESC LIMIT ?",
@@ -1898,7 +1998,7 @@ class SQLiteRepository:
         from datetime import timedelta
 
         cutoff = (utc_now() - timedelta(hours=within_hours)).isoformat()
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             row = connection.execute(
                 """
                 SELECT payload FROM entry_scenarios
@@ -1917,7 +2017,7 @@ class SQLiteRepository:
         return self.add_entry_scenario(updated)
 
     def _upsert_position(self, position: Position) -> Position:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO positions
@@ -1946,6 +2046,15 @@ def create_repository(database_url: str) -> Repository:
 
 def _dump_model(model) -> str:
     return json.dumps(model.model_dump(mode="json"), ensure_ascii=False)
+
+
+def _same_directional_bar(current: dict | None, candidate: dict) -> bool:
+    """Only a newly confirmed candle may mutate a live hysteresis state."""
+    if not isinstance(current, dict) or not isinstance(candidate, dict):
+        return False
+    current_bar = current.get("last_bar_at")
+    candidate_bar = candidate.get("last_bar_at")
+    return bool(current_bar and candidate_bar and current_bar == candidate_bar)
 
 
 def _aware_dt(value: datetime) -> datetime:

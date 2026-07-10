@@ -104,7 +104,7 @@ class SQLiteHeartbeatStore:
     def list(self) -> dict[str, dict[str, Any]]:
         if self.database_path is None:
             return {}
-        with SQLITE_WRITE_LOCK, self._connect() as connection:
+        with self._connect() as connection:
             rows = connection.execute("SELECT * FROM worker_heartbeat ORDER BY job_name ASC").fetchall()
         return {row["job_name"]: _row_to_record(row).as_dict() for row in rows}
 

@@ -48,6 +48,10 @@ def configure_logging(settings: Settings) -> None:
     worker_logger.addHandler(_file_handler(log_dir / "worker.log", formatter, level))
     worker_logger.propagate = True
 
+    # httpx logs complete request URLs. Telegram Bot API embeds the secret token
+    # in the URL path, so INFO request logging would persist credentials on disk.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+
     _CONFIGURED = True
 
 

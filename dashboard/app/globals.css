@@ -329,6 +329,61 @@ h3 {
   box-shadow: var(--terminal-shadow);
 }
 
+.reviewSectionNav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--terminal-line);
+  overflow-x: auto;
+}
+
+.reviewSectionNav a {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 38px;
+  border-bottom: 2px solid transparent;
+  color: var(--terminal-muted);
+  padding: 0 12px;
+  white-space: nowrap;
+}
+
+.reviewSectionNav a:hover,
+.reviewSectionNav a.active {
+  border-bottom-color: var(--terminal-amber);
+  color: var(--terminal-text);
+  background: rgba(var(--chart-amber-rgb), 0.06);
+}
+
+.reviewOverviewPage { display: grid; gap: 14px; }
+.reviewOverviewHeader { display: grid; gap: 6px; padding: 10px 2px 2px; }
+.reviewOverviewHeader > p:last-child { color: var(--terminal-muted); }
+.reviewOverviewNotice { border-left: 3px solid var(--terminal-warning); background: rgba(var(--chart-amber-rgb), 0.08); padding: 10px 12px; }
+.reviewOverviewGrid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.reviewOverviewEntry {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 132px;
+  border: 1px solid var(--terminal-line);
+  border-radius: var(--fce-radius-md);
+  background: var(--terminal-panel);
+  padding: 16px;
+}
+.reviewOverviewEntry:hover { border-color: var(--terminal-line-strong); background: var(--terminal-panel-2); }
+.reviewOverviewIcon { display: grid; place-items: center; width: 38px; height: 38px; border: 1px solid var(--terminal-line-strong); border-radius: var(--fce-radius-sm); color: var(--terminal-amber); }
+.reviewOverviewEntry div { display: grid; gap: 5px; min-width: 0; }
+.reviewOverviewEntry div > span { color: var(--terminal-muted); font-size: var(--fce-type-sm); }
+.reviewOverviewEntry strong { font: 700 var(--fce-type-lg)/1.2 var(--fce-font-number); }
+.reviewOverviewEntry small { color: var(--terminal-muted); line-height: 1.4; }
+
+@media (max-width: 1100px) {
+  .reviewOverviewGrid { grid-template-columns: 1fr; }
+  .reviewOverviewEntry { min-height: 96px; }
+}
+
 .terminalCommandItem {
   display: flex;
   align-items: center;
@@ -6151,12 +6206,29 @@ button.actionPlanRow:not(:disabled):hover {
 }
 
 .minimalChartShell .positionChartPanel {
-  min-height: 640px;
+  min-height: auto;
+  padding: 14px;
 }
 
 .minimalChartShell .positionChartCanvasFrame {
+  min-height: 460px;
   background: rgb(var(--chart-panel-rgb));
 }
+
+.minimalChartVerdict {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border-left: 3px solid var(--terminal-amber);
+  background: rgba(var(--chart-amber-rgb), 0.065);
+  padding: 9px 11px;
+}
+
+.minimalChartVerdict span,
+.minimalChartVerdict small { color: var(--terminal-muted); font-size: var(--fce-type-sm); }
+.minimalChartVerdict strong { color: var(--terminal-text); font-size: var(--fce-type-md); }
+.minimalChartVerdict small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .minimalChartShell .chartHoverReadout {
   border-color: rgba(var(--chart-neutral-rgb), 0.34);
@@ -6306,6 +6378,9 @@ button.actionPlanRow:not(:disabled):hover {
   .minimalChartShell .positionChartPanel {
     min-height: auto;
   }
+
+  .minimalChartVerdict { grid-template-columns: auto minmax(0, 1fr); }
+  .minimalChartVerdict small { grid-column: 1 / -1; }
 }
 
 @media (max-width: 900px) {

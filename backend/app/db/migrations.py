@@ -25,6 +25,10 @@ def run_migrations(connection: sqlite3.Connection) -> MigrationResult:
     Startup must fail if any migration fails. This avoids booting against a
     partially upgraded schema after the background worker has started writing.
     """
+    # WAL is persistent database metadata. Setting it on every short-lived read
+    # connection can wait for active writers and turn a cheap SELECT into a full
+    # busy-timeout pause. Apply it once on the serialized startup path.
+    connection.execute("PRAGMA journal_mode=WAL")
     connection.execute(
         """
         CREATE TABLE IF NOT EXISTS schema_version (

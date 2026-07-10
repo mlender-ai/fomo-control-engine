@@ -2,8 +2,10 @@
 
 import { Badge } from "@astryxdesign/core/Badge";
 import { SideNav, SideNavItem, SideNavSection } from "@astryxdesign/core/SideNav";
+import Link from "next/link";
 import {
   Activity,
+  BookOpenCheck,
   FileClock,
   Gauge,
   LineChart,
@@ -26,6 +28,7 @@ const sections = [
   {
     heading: "복기",
     items: [
+      { href: "/review", label: "복기 센터", icon: BookOpenCheck, shortcut: "G R" },
       { href: "/trades", label: "거래 복기", icon: FileClock, shortcut: "G T" },
       { href: "/calibration", label: "판단 성적표", icon: SlidersHorizontal, shortcut: "G C" },
       { href: "/performance", label: "계좌 성적표", icon: LineChart, shortcut: "G A" }
@@ -67,6 +70,7 @@ export function TerminalSideNav({ pathname, status }: { pathname: string; status
         <SideNavSection title={section.heading} key={section.heading}>
           {section.items.map((item) => (
             <SideNavItem
+              as={Link}
               href={item.href}
               icon={item.icon}
               isSelected={isSelected(pathname, item.href)}
@@ -91,5 +95,6 @@ export function TerminalSideNav({ pathname, status }: { pathname: string; status
 
 function isSelected(pathname: string, href: string): boolean {
   if (href === "/") return pathname === "/" || pathname.startsWith("/positions");
+  if (href === "/review") return pathname === "/review";
   return pathname === href || pathname.startsWith(`${href}/`);
 }

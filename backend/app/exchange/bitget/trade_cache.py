@@ -27,7 +27,7 @@ class BitgetTradeFillCache:
         return connect_sqlite(self.database_path)
 
     def _init_schema(self) -> None:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             run_migrations(connection)
 
     def fresh_fills(
@@ -39,7 +39,7 @@ class BitgetTradeFillCache:
         max_age_seconds: int,
     ) -> list[BitgetTradeFill] | None:
         symbol_key = symbol.upper()
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             state = connection.execute(
                 """
                 SELECT start_at, end_at, fetched_at
@@ -67,7 +67,7 @@ class BitgetTradeFillCache:
         return [BitgetTradeFill.model_validate_json(row["payload"]) for row in rows]
 
     def stale_fills(self, symbol: str, start_at: datetime, end_at: datetime) -> list[BitgetTradeFill]:
-        with self._lock, self._connect() as connection:
+        with self._connect() as connection:
             rows = connection.execute(
                 """
                 SELECT payload
@@ -90,21 +90,23 @@ class BitgetTradeFillCache:
         now = datetime.now(timezone.utc).isoformat()
         symbol_key = symbol.upper()
         with self._lock, self._connect() as connection:
-            for fill in fills:
-                connection.execute(
-                    """
-                    INSERT OR REPLACE INTO bitget_trade_fills
-                        (symbol, trade_id, timestamp, payload, fetched_at)
-                    VALUES (?, ?, ?, ?, ?)
-                    """,
+            connection.executemany(
+                """
+                INSERT OR REPLACE INTO bitget_trade_fills
+                    (symbol, trade_id, timestamp, payload, fetched_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                [
                     (
                         symbol_key,
                         fill.trade_id,
                         fill.timestamp.isoformat(),
                         json.dumps(fill.model_dump(mode="json"), ensure_ascii=False),
                         now,
-                    ),
-                )
+                    )
+                    for fill in fills
+                ],
+            )
             connection.execute(
                 """
                 INSERT OR REPLACE INTO bitget_trade_fill_fetch_state
