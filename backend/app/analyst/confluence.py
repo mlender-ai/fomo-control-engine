@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.backtest.statistics import bootstrap_ci_from_counts
@@ -149,7 +149,9 @@ def build_confluence(
     # stance는 "유지 중인(held)" 방향, raw_stance는 순간 스냅샷. 전환 로직은 이 한 곳에만.
     params = _hysteresis_params(hysteresis_params)
     if directional_v2:
-        stance_state = _resolve_stance_state(raw_stance, long_score, short_score, prior_state, now, params)
+        # WO-56: 상태는 확정 캔들에서만 전진 — 스냅샷의 마지막 캔들이 미마감이면 그 직전 캔들이 앵커.
+        bar_at = _confirmed_bar_iso(analysis, bar_minutes, now)
+        stance_state = _resolve_stance_state(raw_stance, long_score, short_score, prior_state, now, params, bar_at=bar_at, bar_minutes=bar_minutes)
     else:
         stance_state = _legacy_stance_state(raw_stance, long_score, short_score, now)
     stance = str(stance_state["stance"])
@@ -564,17 +566,54 @@ def _resolve_stance_state(
     prior_state: dict[str, Any] | None,
     now: datetime,
     params: dict[str, float],
+    bar_at: str | None = None,
+    bar_minutes: float = DEFAULT_BAR_MINUTES,
 ) -> dict[str, Any]:
     """방향 히스테리시스 상태 전이. 순수 함수 — prior_state를 받아 새 상태를 돌려줄 뿐 I/O 없음.
 
     라이브(스카우트 스냅샷)와 백테스트(인메모리 스레딩)가 이 한 함수를 공유한다(이중화 0).
+
+    WO-56 시간축 규약: **상태는 확정 캔들에서만 전진한다.** ``bar_at``(마지막 확정 캔들
+    시각)이 직전 상태의 ``last_bar_at``과 같으면 EMA·persist·candles를 전진시키지 않고
+    상태를 그대로 반환한다 — 호출 빈도(워커 90s·스카우트 15m·온디맨드 연타)와 무관하게
+    persist=2는 정확히 "확정 캔들 2개 연속"을 의미하고, 같은 확정 캔들 = 같은 상태(재현성).
+    미마감 캔들의 최신 관측은 ``preview``로만 노출한다(상태와 프리뷰의 분리) —
+    프리뷰는 UI 잠정 표시 전용이며 알림·원장에 사용 금지.
     """
     prior = prior_state if isinstance(prior_state, dict) else {}
     prior_stance = prior.get("stance")
+    has_prior = prior_stance in {"long_leaning", "short_leaning", "conflicted", "insufficient"}
+    preview = {
+        "raw_stance": raw_stance,
+        "long_score": round(long_score, 2),
+        "short_score": round(short_score, 2),
+        "as_of": now.isoformat(),
+    }
+
+    # ── 캔들 앵커 동결 ──
+    # 같은 확정 캔들(또는 확정 캔들 시각 미상)에서는 상태를 전진시키지 않는다.
+    bar_dt = _parse_dt(bar_at)
+    prior_bar_dt = _parse_dt(prior.get("last_bar_at"))
+    if has_prior and prior_bar_dt is not None and (bar_dt is None or bar_dt <= prior_bar_dt):
+        return {**prior, "flipped": False, "preview": preview}
+    if has_prior and prior_bar_dt is None and bar_dt is None:
+        # 양쪽 다 시각 미상 — 전진 근거가 없으므로 동결 (구버전 스냅샷 + 데이터 결손 케이스).
+        return {**prior, "flipped": False, "preview": preview}
+    # prior에 last_bar_at이 없는 구버전 상태는 이번 확정 캔들에서 1회 전진하며 앵커를 획득한다(마이그레이션).
+
+    # 확정 캔들 전진: 여러 캔들 갭이면 관측은 1회(현재 분석 1개)지만
+    # 유지 상태의 경과 캔들 수(candles_in_state)에는 갭을 반영한다 (docs §시간축).
+    if bar_dt is not None and prior_bar_dt is not None:
+        gap_minutes = (bar_dt - prior_bar_dt).total_seconds() / 60.0
+        candles_advanced = max(1, int(round(gap_minutes / max(bar_minutes, 1.0))))
+    else:
+        candles_advanced = 1
+
     alpha = 2.0 / (max(float(params["ema_span"]), 1.0) + 1.0)
     long_ema = _ema(prior.get("long_score_ema"), long_score, alpha)
     short_ema = _ema(prior.get("short_score_ema"), short_score, alpha)
     now_iso = now.isoformat()
+    bar_iso = _iso(bar_at)
 
     def build(
         stance: str,
@@ -598,11 +637,13 @@ def _resolve_stance_state(
             "pending_count": pending_count,
             "since": since or now_iso,
             "last_flip_at": last_flip_at,
+            "last_bar_at": bar_iso,
             "candles_in_state": candles,
             "flip_threshold_progress": round(progress, 2),
             "flipped": flipped,
             "long_score_ema": long_ema,
             "short_score_ema": short_ema,
+            "preview": preview,
         }
 
     prior_candles = int(_optional_float(prior.get("candles_in_state")) or 0)
@@ -618,7 +659,7 @@ def _resolve_stance_state(
             pending_count=0,
             since=None if changed else prior.get("since"),
             last_flip_at=prior.get("last_flip_at"),
-            candles=1 if changed else prior_candles + 1,
+            candles=1 if changed else prior_candles + candles_advanced,
             progress=0.0,
             flipped=False,
         )
@@ -627,7 +668,8 @@ def _resolve_stance_state(
     rel = (long_ema - short_ema) / stronger if stronger > 0 else 0.0
 
     # 부트스트랩: 유효한 직전 held stance 없음 → 즉시 채택(관성 없음).
-    if prior_stance not in {"long_leaning", "short_leaning", "conflicted"}:
+    # WO-56: 부트스트랩 flip 오발화 방지 — flipped는 확정 캔들 전진의 실제 flip에만 True.
+    if not has_prior:
         return build(
             raw_stance,
             transitioning=False,
@@ -638,7 +680,7 @@ def _resolve_stance_state(
             last_flip_at=prior.get("last_flip_at"),
             candles=1,
             progress=0.0,
-            flipped=prior_stance is not None and raw_stance != prior_stance,
+            flipped=False,
         )
 
     cand = _hysteresis_candidate(str(prior_stance), rel, float(params["flip_margin"]), float(params["enter_margin"]), float(params["exit_margin"]))
@@ -653,12 +695,12 @@ def _resolve_stance_state(
             pending_count=0,
             since=prior.get("since"),
             last_flip_at=prior.get("last_flip_at"),
-            candles=prior_candles + 1,
+            candles=prior_candles + candles_advanced,
             progress=0.0,
             flipped=False,
         )
 
-    # 후보가 다르면 연속 확인(persist) 카운트.
+    # 후보가 다르면 연속 확인(persist) 카운트 — 확정 캔들 전진에서만 증가한다 (WO-56).
     pending = prior.get("pending_stance")
     pending_count = int(_optional_float(prior.get("pending_count")) or 0)
     pending_count = pending_count + 1 if pending == cand else 1
@@ -686,10 +728,26 @@ def _resolve_stance_state(
         pending_count=pending_count,
         since=prior.get("since"),
         last_flip_at=prior.get("last_flip_at"),
-        candles=prior_candles + 1,
+        candles=prior_candles + candles_advanced,
         progress=pending_count / required,
         flipped=False,
     )
+
+
+def _confirmed_bar_iso(analysis: dict[str, Any], bar_minutes: float, now: datetime) -> str | None:
+    """마지막 **확정** 캔들 시각 (WO-56 앵커). 스냅샷의 마지막 캔들이 진행 중이면 직전 캔들.
+
+    last_candle_at은 캔들 오픈 시각 — now가 오픈 + 1캔들을 지나기 전이면 그 캔들은 미마감이다.
+    """
+    quality = analysis.get("data_quality") if isinstance(analysis.get("data_quality"), dict) else {}
+    last_candle = _parse_dt(quality.get("last_candle_at") or analysis.get("as_of"))
+    if last_candle is None:
+        return None
+    elapsed_minutes = (now - last_candle).total_seconds() / 60.0
+    if elapsed_minutes >= bar_minutes:
+        return last_candle.isoformat()
+    confirmed = last_candle - timedelta(minutes=bar_minutes)
+    return confirmed.isoformat()
 
 
 def _legacy_stance_state(raw_stance: str, long_score: float, short_score: float, now: datetime) -> dict[str, Any]:
@@ -703,11 +761,13 @@ def _legacy_stance_state(raw_stance: str, long_score: float, short_score: float,
         "pending_count": 0,
         "since": now.isoformat(),
         "last_flip_at": None,
+        "last_bar_at": None,
         "candles_in_state": 1,
         "flip_threshold_progress": 0.0,
         "flipped": False,
         "long_score_ema": round(long_score, 3),
         "short_score_ema": round(short_score, 3),
+        "preview": None,
     }
 
 
