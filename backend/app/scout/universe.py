@@ -11,6 +11,7 @@ from app.backtest.signatures import signature_key, signature_label, signatures_f
 from app.backtest.statistics import bootstrap_ci_from_counts, format_stat_line
 from app.core.config import Settings
 from app.db.models import BacktestStat, JudgmentLedgerEntry, UniverseDiscovery, utc_now
+from app.marketdata.assets import base_ticker
 from app.notify.rules import AlertCandidate
 from app.review.params import engine_param_snapshot
 from app.scout.monitor import SCOUT_SENTINEL_POSITION_ID
@@ -142,6 +143,10 @@ def run_universe_scan(
 def build_universe(repo: Any, settings: Settings, *, ticker_rows: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     enabled_classes = settings.universe_enabled_class_set or {"crypto", "stock", "index"}
     blacklist = settings.universe_blacklist_set
+    # 유니버스 큐레이션(2026-07-10): 거래량 순위만으로는 마이크로캡 잡주가 올라온다.
+    # 코인=시총 10위권, 주식=미증 시총 상위+핫 종목 허용 리스트(base ticker). 빈 리스트면 비활성.
+    crypto_allow = settings.universe_crypto_allowlist_set
+    stock_allow = settings.universe_stock_allowlist_set
     excluded_existing = _existing_symbols(repo)
     quote_volume_by_symbol = _ticker_quote_volume_map(ticker_rows or [])
     catalog = repo.search_symbols("", limit=1000)
@@ -150,6 +155,7 @@ def build_universe(repo: Any, settings: Settings, *, ticker_rows: list[dict[str,
     for item in catalog:
         symbol = item.symbol.upper()
         asset_class = str(item.asset_class or "unknown")
+        ticker = base_ticker(symbol, str(getattr(item, "base_coin", "") or ""))
         reason = ""
         if symbol in blacklist:
             reason = "blacklist"
@@ -159,6 +165,10 @@ def build_universe(repo: Any, settings: Settings, *, ticker_rows: list[dict[str,
             reason = "asset_class_disabled"
         elif str(item.status or "").lower() in {"off", "delisted", "offline"}:
             reason = "contract_inactive"
+        elif asset_class == "crypto" and crypto_allow and ticker not in crypto_allow:
+            reason = "not_in_allowlist"
+        elif asset_class == "stock" and stock_allow and ticker not in stock_allow:
+            reason = "not_in_allowlist"
         if reason:
             excluded.append({"symbol": symbol, "reason": reason})
             continue

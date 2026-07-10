@@ -485,6 +485,21 @@ class Settings(BaseSettings):
         40,
         validation_alias=AliasChoices("FCE_UNIVERSE_STOCK_SYMBOL_LIMIT", "UNIVERSE_STOCK_SYMBOL_LIMIT"),
     )
+    # 유니버스 큐레이션(2026-07-10 사용자 지시): 거래량 순위만으로는 마이크로캡 잡주가 올라온다.
+    # base ticker CSV. 빈 문자열이면 허용 리스트 비활성(전체 카탈로그). 지수(index)는 6종 전부 메이저라 제외.
+    # 코인: 시총 10위권(스테이블 제외) — 정적 스냅샷이므로 순위 변동 시 env로 갱신.
+    universe_crypto_allowlist: str = Field(
+        "BTC,ETH,XRP,BNB,SOL,DOGE,ADA,TRX,LINK,HYPE",
+        validation_alias=AliasChoices("FCE_UNIVERSE_CRYPTO_ALLOWLIST", "UNIVERSE_CRYPTO_ALLOWLIST"),
+    )
+    # 주식: 미국 상장 시총 상위(메가캡) + 최근 핫한 기업(AI 인프라·퀀텀·우주·원전·크립토 프록시).
+    universe_stock_allowlist: str = Field(
+        "AAPL,MSFT,NVDA,GOOGL,AMZN,META,AVGO,TSLA,BRKB,LLY,JPM,WMT,V,UNH,XOM,ORCL,COST,NFLX,CRM,AMD,"
+        "ADBE,CSCO,MCD,IBM,QCOM,TXN,GE,ISRG,GS,INTC,MU,LRCX,ADI,KLAC,AMAT,PANW,CRWD,ETN,BA,KO,CAT,"
+        "LMT,NOW,TSM,ASML,BABA,MRVL,DELL,SNOW,ARM,NKE,"
+        "MSTR,COIN,HOOD,PLTR,SMCI,IONQ,RKLB,OKLO,SMR,CRWV,NBIS,IREN,RDDT,ASTS,JOBY",
+        validation_alias=AliasChoices("FCE_UNIVERSE_STOCK_ALLOWLIST", "UNIVERSE_STOCK_ALLOWLIST"),
+    )
     universe_round_robin_batch_size: int = Field(
         12,
         validation_alias=AliasChoices("FCE_UNIVERSE_ROUND_ROBIN_BATCH_SIZE", "UNIVERSE_ROUND_ROBIN_BATCH_SIZE"),
@@ -752,6 +767,14 @@ class Settings(BaseSettings):
     @property
     def universe_blacklist_set(self) -> set[str]:
         return {symbol.strip().upper() for symbol in self.universe_blacklist.split(",") if symbol.strip()}
+
+    @property
+    def universe_crypto_allowlist_set(self) -> set[str]:
+        return {ticker.strip().upper() for ticker in self.universe_crypto_allowlist.split(",") if ticker.strip()}
+
+    @property
+    def universe_stock_allowlist_set(self) -> set[str]:
+        return {ticker.strip().upper() for ticker in self.universe_stock_allowlist.split(",") if ticker.strip()}
 
 
 @lru_cache
