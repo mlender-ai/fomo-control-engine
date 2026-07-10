@@ -23,6 +23,9 @@ def _settings(**overrides) -> Settings:
         "universe_backtest_min_win_1r_pct": 55,
         "universe_daily_alert_limit": 3,
         "universe_symbol_cooldown_hours": 48,
+        # 합성 심볼(SYMn) 테스트가 큐레이션에 걸리지 않도록 기본 비활성 — 허용 리스트 동작은 전용 테스트에서 검증.
+        "universe_crypto_allowlist": "",
+        "universe_stock_allowlist": "",
     }
     defaults.update(overrides)
     return Settings(**defaults)
@@ -299,6 +302,37 @@ def test_universe_round_robin_batches_symbols() -> None:
 
     assert seen[:2] == ["SYM0USDT", "SYM1USDT"]
     assert seen[2:4] == ["SYM2USDT", "SYM3USDT"]
+
+
+def test_universe_allowlist_curates_microcaps_out() -> None:
+    """유니버스 큐레이션(2026-07-10): 코인=시총 10위권, 주식=미증 상위+핫 허용 리스트.
+    리스트 밖 마이크로캡은 not_in_allowlist로 제외되고, 리스트 안에서만 거래량 랭킹."""
+    repo = _repo_with_catalog(
+        [
+            ("BTCUSDT", "crypto"),
+            ("PEPECOINUSDT", "crypto"),  # 허용 리스트 밖 잡코인
+            ("NVDAUSDT", "stock"),
+            ("AEHRUSDT", "stock"),  # 마이크로캡 잡주
+        ]
+    )
+    settings = _settings(
+        universe_crypto_allowlist="BTC,ETH,XRP,BNB,SOL,DOGE,ADA,TRX,LINK,HYPE",
+        universe_stock_allowlist="NVDA,AAPL,MSFT,MSTR",
+    )
+
+    universe = build_universe(repo, settings)
+    symbols = {item["symbol"] for item in universe["symbols"]}
+
+    assert symbols == {"BTCUSDT", "NVDAUSDT"}
+    excluded = {e["symbol"]: e["reason"] for e in universe["excluded"]}
+    assert excluded["PEPECOINUSDT"] == "not_in_allowlist"
+    assert excluded["AEHRUSDT"] == "not_in_allowlist"
+
+
+def test_universe_empty_allowlist_disables_curation() -> None:
+    repo = _repo_with_catalog([("AAAUSDT", "crypto")])
+    universe = build_universe(repo, _settings())  # 허용 리스트 "" → 비활성
+    assert {item["symbol"] for item in universe["symbols"]} == {"AAAUSDT"}
 
 
 def test_universe_rate_budget_documents_round_robin() -> None:
