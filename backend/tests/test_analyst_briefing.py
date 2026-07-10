@@ -284,14 +284,33 @@ def test_hysteresis_exposes_transitioning_before_flip() -> None:
 
 
 def test_hysteresis_insufficient_bypasses_hold() -> None:
-    """WO-53: 증거 부족은 방향 게이트가 이긴다 — 히스테리시스로 방향을 붙들지 않는다."""
+    """WO-53/56: 증거 부족은 방향 게이트가 이긴다 — 단, 확정 캔들 전진에서 적용된다.
+    (같은 캔들 내 일시 데이터 결손은 상태를 지우지 않고 동결 — WO-56 시간축 규약)"""
+    base = utc_now().replace(microsecond=0)
+    long_state = build_confluence(symbol="X", timeframe="4h", analysis=_directional_analysis(88, 52, base), generated_at=base)["stance_state"]
+    # 다음 확정 캔들에서 증거 부족 관측 (as_of가 새 캔들, 그 캔들은 마감됨).
+    thin = {
+        "mark_price": 100.0,
+        "as_of": base.isoformat(),
+        "data_quality": {"last_candle_at": base.isoformat()},
+        "price_levels": {"support": [], "resistance": []},
+        "wyckoff_mtf": {},
+    }
+    c = build_confluence(symbol="X", timeframe="4h", analysis=thin, generated_at=base + timedelta(minutes=244), prior_state=long_state)
+
+    assert c["stance"] == "insufficient"
+    assert c["stance_state"]["transitioning"] is False
+
+
+def test_hysteresis_same_bar_data_glitch_freezes_state() -> None:
+    """WO-56: 앵커 미상(타임스탬프 결손) 관측은 held 상태를 지우지 못한다 — 동결 + 프리뷰만."""
     base = utc_now().replace(microsecond=0)
     long_state = build_confluence(symbol="X", timeframe="4h", analysis=_directional_analysis(88, 52, base), generated_at=base)["stance_state"]
     thin = {"mark_price": 100.0, "price_levels": {"support": [], "resistance": []}, "wyckoff_mtf": {}}
     c = build_confluence(symbol="X", timeframe="4h", analysis=thin, generated_at=base + timedelta(minutes=4), prior_state=long_state)
 
-    assert c["stance"] == "insufficient"
-    assert c["stance_state"]["transitioning"] is False
+    assert c["stance"] == "long_leaning"  # held 유지
+    assert c["stance_state"]["preview"]["raw_stance"] == "insufficient"  # 프리뷰는 정직
 
 
 def test_hysteresis_params_clamped_to_hard_bounds() -> None:
