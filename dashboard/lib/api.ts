@@ -374,10 +374,47 @@ export type LivePositionsResponse = {
 };
 
 export type LivePositionDetail = LivePositionPayload & {
+  chart_analysis?: PositionChartAnalysis | null;
+  gauges?: CompactChartGauges | null;
   snapshots: PositionSnapshot[];
   insights: PositionInsight[];
   events: PositionEvent[];
   monitoring_logs: Array<Record<string, unknown>>;
+};
+
+export type CompactChartGauges = {
+  direction: {
+    active: boolean;
+    needle: number;
+    stance: string;
+    stance_label: string;
+    transitioning: boolean;
+    target?: string | null;
+    flip_progress?: number | null;
+    candles_in_state?: number | null;
+    reason: string;
+  };
+  take_profit: {
+    active: boolean;
+    level: "낮음" | "중간" | "높음" | string | null;
+    pressure: number | null;
+    reason: string;
+    components?: Record<string, unknown>;
+  };
+  tier2_overlays: Array<{
+    engine: string;
+    engine_label?: string;
+    claim: string;
+    direction: "long" | "short" | "neutral" | string;
+    price?: number | null;
+    qualification?: string | null;
+  }>;
+  bar_state: {
+    provisional: boolean;
+    minutes_to_close?: number | null;
+    bar_close_at?: string | null;
+  };
+  policy?: Record<string, unknown>;
 };
 
 export type ChartCandle = {
@@ -778,6 +815,7 @@ export type ScoutAnalysisResponse = {
   summary: ScoutScanRow;
   historical_backtest?: HistoricalBacktest | null;
   analyst_briefing?: AnalystBriefing | null;
+  gauges?: CompactChartGauges | null;
 };
 
 export type EntryChecklistItem = {

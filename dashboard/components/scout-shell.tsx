@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { MapPin, Radar, RefreshCw, Search, Star, Trash2 } from "lucide-react";
-import { PositionChart } from "@/components/position/PositionChart";
+import { CompactChartWorkspace, type CompactNextPrice } from "@/components/position/CompactChartWorkspace";
 import { TerminalWarning } from "@/components/terminal";
 import { SymbolAnalysisView, useAnalysisWorkspace } from "@/components/symbol-analysis-view";
 import { EntrySimulator } from "@/components/entry-simulator";
@@ -20,7 +20,7 @@ import {
   type UniverseDiscovery,
   type WatchlistEntry
 } from "@/lib/api";
-import { MINIMAL_FIXED_LAYER_STATE, type MinimalChartEvidence, type MinimalEvidenceLayer } from "@/lib/chartLayers";
+import { type MinimalEvidenceLayer } from "@/lib/chartLayers";
 import { formatPrice, signedPercent } from "@/lib/format";
 import { plainifyTaText, taShortLabel } from "@/lib/labels/taGlossary";
 import { phaseHintLabel, trendLabel, volumeStateLabel } from "@/lib/labels/marketStateLabels";
@@ -502,10 +502,7 @@ function ScoutQuickAnswerCard({
   onOpen: (symbol: string) => void;
 }) {
   if (!symbol && !loading && !error) return null;
-  const oneLiners = data?.analysis?.one_liners ?? null;
   const tilt = quickTilt(data);
-  const rows = quickOneLinerRows(oneLiners);
-  const counts = quickOneLinerCounts(oneLiners);
   return (
     <section className={`scoutQuickAnswer ${loading ? "loading" : ""}`} data-testid="scout-quick-answer" data-budget-numbers-max="6">
       <div className="scoutQuickHeader">
@@ -539,25 +536,16 @@ function ScoutQuickAnswerCard({
       ) : null}
       {data ? (
         <>
-          <div className={`scoutQuickTilt ${tilt.tone}`}>
-            <span>숏</span>
-            <i><b style={{ left: `${tilt.position}%` }} /></i>
-            <span>롱</span>
-            <strong>{tilt.label}</strong>
-          </div>
-          <div className="scoutQuickStrip">
-            {rows.map((row) => (
-              <div className="scoutQuickStripRow" key={row.module}>
-                <span>{row.label}</span>
-                <i className={`stance-${row.stance}`} />
-                <strong>{row.phrase}</strong>
-              </div>
-            ))}
-          </div>
-          <div className="scoutQuickSummary">
-            종합: 상방 {counts.up} · 하방 {counts.down} · 중립 {counts.neutral} · 판단불가 {counts.unknown}
-            {counts.up > 0 && counts.down > 0 ? <em>충돌</em> : null}
-          </div>
+          <CompactChartWorkspace
+            analysis={data.analysis}
+            loading={loading}
+            error={error}
+            onRetry={() => onRefresh(symbol)}
+            trendSummary={tilt.label}
+            plan={null}
+            gauges={data.gauges ?? null}
+            nextPrice={scoutNextPrice(data.analysis, "조건 도달 시 구조 재확인")}
+          />
         </>
       ) : null}
     </section>
@@ -1013,59 +1001,37 @@ function ScoutMinimalAnalysisView({
   onShowPro: () => void;
 }) {
   const verdict = scoutAnalysisVerdict(symbol, data);
-  const minimalEvidence: MinimalChartEvidence = {
-    layer: verdict.evidence.layer,
-    label: verdict.evidence.label,
-    price: verdict.evidence.price ?? null,
-    time: verdict.evidence.time ?? null
-  };
+  void workspace;
   return (
-    <section className="minimalPositionWorkspace scoutMinimalWorkspace" data-testid="scout-one-question">
-      <article className={`oneQuestionCard scoutOneQuestion state-${verdict.tone}`} data-budget-numbers-max="7" data-budget-buttons-max="3">
-        <div className="oneQuestionTop">
-          <div>
-            <strong>{symbol}</strong>
-            <span>{timeframe} · 진입 전</span>
-          </div>
-          <em>{analysis?.mark_price ? formatPrice(analysis.mark_price) : "가격 확인 중"}</em>
-        </div>
-        <div className="oneQuestionAnswer">
-          <span className="oneQuestionDot" aria-hidden="true" />
-          <h2>{verdict.label}</h2>
-        </div>
-        <ScoutDirectionGauge verdict={verdict} />
-        <div className="oneQuestionReasons">
-          <p><b>왜:</b> {verdict.why}</p>
-          <p><b>반대:</b> {verdict.counter}</p>
-        </div>
-        <div className="oneQuestionNext">
-          <span>트리거</span>
-          <strong>{verdict.trigger}</strong>
-          <em>조건 확인 후 판단</em>
-        </div>
-        <div className="oneQuestionActions">
-          <button className="button secondary" onClick={onRetry} type="button">재분석</button>
-          <button className="button" onClick={onShowPro} type="button">자세히 →</button>
-        </div>
-      </article>
-      <div className="minimalChartShell">
-        <PositionChart
-          analysis={analysis}
-          loading={loading}
-          error={error}
-          onRetry={onRetry}
-          trendSummary={analysis ? trendLabel((analysis.wyckoff as { trend?: { direction?: string } })?.trend?.direction) : "구조 확인 중"}
-          plan={null}
-          layers={MINIMAL_FIXED_LAYER_STATE}
-          onToggleLayer={workspace.handleToggleLayer}
-          highlightPrice={verdict.evidence.price ?? workspace.highlightPrice}
-          density="simple"
-          layerMode="minimal"
-          minimalEvidence={minimalEvidence}
-        />
+    <section className="minimalPositionWorkspace scoutMinimalWorkspace" data-testid="scout-one-question" data-budget-numbers-max="7">
+      <CompactChartWorkspace
+        analysis={analysis}
+        loading={loading}
+        error={error}
+        onRetry={onRetry}
+        trendSummary={verdict.label}
+        plan={null}
+        gauges={data?.gauges ?? null}
+        nextPrice={analysis ? scoutNextPrice(analysis, verdict.trigger) : null}
+      />
+      <div className="compactScoutActions">
+        <button className="button secondary" onClick={onRetry} type="button">재분석</button>
+        <button className="button" onClick={onShowPro} type="button">자세히 →</button>
       </div>
     </section>
   );
+}
+
+function scoutNextPrice(analysis: ScoutAnalysisResponse["analysis"], detail: string): CompactNextPrice | null {
+  const levels = [...analysis.price_levels.support, ...analysis.price_levels.resistance]
+    .filter((level) => Number.isFinite(level.price));
+  if (!levels.length) return null;
+  const nearest = [...levels].sort((left, right) => Math.abs(left.price - analysis.mark_price) - Math.abs(right.price - analysis.mark_price))[0];
+  return {
+    label: nearest.kind === "resistance" ? "저항" : "지지",
+    price: nearest.price,
+    detail
+  };
 }
 
 function ScoutDirectionBanner({ verdict, loading }: { verdict: ScoutAnalysisVerdict; loading: boolean }) {

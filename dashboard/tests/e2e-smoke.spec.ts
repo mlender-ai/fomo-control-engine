@@ -5,14 +5,16 @@ test("live position cockpit smoke path", async ({ page }) => {
   await expect(page.getByTestId("demo-mode-badge")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("position-strip")).toBeVisible();
   await expect(page.getByTestId("position-card")).toHaveCount(3);
-  await expect(page.getByTestId("position-sparkline").first()).toBeVisible();
-  await expect(page.getByTestId("health-gauge").first()).toBeVisible();
-  await expect(page.getByTestId("verdict-bar")).toBeVisible();
-  await expect(page.getByTestId("action-plan")).toBeVisible();
+  await expect(page.getByTestId("compact-chart-workspace")).toBeVisible();
+  await expect(page.getByTestId("direction-gauge")).toBeVisible();
+  await expect(page.getByTestId("take-profit-gauge")).toBeVisible();
   await expect(page.getByTestId("position-chart")).toBeVisible();
   await expect(page.getByTestId("chart-canvas-frame")).toBeVisible();
-  await expect(page.getByTestId("trigger-meter")).toBeVisible();
+  await expect(page.locator("[data-testid^='chart-layer-']")).toHaveCount(0);
 
+  await page.getByTestId("pro-mode-button").click();
+  await expect(page.getByTestId("verdict-bar")).toBeVisible();
+  await expect(page.getByTestId("action-plan")).toBeVisible();
   await page.getByTestId("chart-layer-wyckoff").click();
   await expect(page.getByTestId("chart-overlay")).toBeVisible();
   await page.getByTestId("chart-layer-wyckoff").click();
@@ -25,15 +27,14 @@ test("scout, analysis, simulator and calibration smoke paths", async ({ page }) 
   await page.goto("/scout");
   await expect(page.getByTestId("demo-mode-badge")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("scout-page")).toBeVisible();
-  await page.getByRole("button", { name: "스캔", exact: true }).click();
-  await expect(page.getByTestId("scout-table")).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByTestId("scout-row").first()).toBeVisible();
-  await page.getByTestId("scout-row").first().click();
+  await page.getByPlaceholder("심볼 검색 (예: BTC, SOL) — 추가하면 관심종목에 담깁니다").fill("BTC");
+  await expect(page.getByTestId("scout-quick-answer")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("compact-chart-workspace")).toBeVisible({ timeout: 30_000 });
+  await page.getByTestId("scout-quick-answer").getByRole("button", { name: "자세히", exact: true }).click();
   await expect(page.getByTestId("scout-analysis-view")).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByTestId("entry-simulator")).toBeVisible();
-  await page.getByTestId("simulator-run").click();
-  await expect(page.getByTestId("simulator-result")).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByTestId("simulator-checklist")).toBeVisible();
+  await expect(page.getByTestId("compact-chart-workspace")).toBeVisible();
+  await expect(page.getByTestId("direction-gauge")).toBeVisible();
+  await expect(page.getByTestId("take-profit-gauge")).toHaveClass(/inactive/);
 
   await page.goto("/calibration");
   await expect(page.getByTestId("calibration-page")).toBeVisible({ timeout: 30_000 });

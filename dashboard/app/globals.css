@@ -5835,6 +5835,217 @@ button.actionPlanRow:not(:disabled):hover {
   align-items: start;
 }
 
+.compactChartWorkspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(260px, 310px);
+  gap: 12px;
+  min-width: 0;
+  align-items: stretch;
+}
+
+.compactChartMain,
+.compactChartMain .positionChartPanel {
+  min-width: 0;
+  height: 100%;
+}
+
+.compactChartMain .positionChartPanel {
+  padding: 12px;
+}
+
+.compactChartMain .positionChartCanvasFrame {
+  min-height: 560px;
+  background: rgb(var(--chart-panel-rgb));
+}
+
+.compactGaugePanel {
+  display: grid;
+  grid-template-rows: auto auto auto 1fr;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid var(--terminal-line);
+  border-radius: 8px;
+  background: var(--fce-surface-panel);
+  padding: 14px;
+}
+
+.compactGaugePanel > header,
+.compactGaugeTitle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.compactGaugePanel > header {
+  border-bottom: 1px solid var(--terminal-line);
+  padding-bottom: 11px;
+}
+
+.compactGaugePanel > header div,
+.compactGaugeTitle {
+  min-width: 0;
+}
+
+.compactGaugePanel > header div {
+  display: grid;
+  gap: 3px;
+}
+
+.compactGaugePanel > header span,
+.compactGaugeTitle span,
+.compactNextPrice > span {
+  color: var(--terminal-muted);
+  font-size: 11px;
+  font-weight: 780;
+}
+
+.compactGaugePanel > header strong,
+.compactGaugeTitle strong {
+  color: var(--terminal-text);
+  font-size: 12px;
+}
+
+.compactGaugePanel > header em {
+  color: var(--terminal-amber);
+  font-family: var(--fce-font-number);
+  font-size: 10px;
+  font-style: normal;
+  white-space: nowrap;
+}
+
+.compactGaugePanel.provisional .compactGaugeCard {
+  opacity: 0.58;
+}
+
+.compactGaugeCard,
+.compactNextPrice {
+  display: grid;
+  gap: 11px;
+  border: 1px solid var(--terminal-line);
+  border-radius: 7px;
+  background: var(--fce-surface-inset);
+  padding: 13px;
+}
+
+.compactGaugeCard.inactive {
+  opacity: 0.48;
+}
+
+.directionGaugeTrack {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  color: var(--terminal-muted);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.directionGaugeTrack i,
+.pressureGaugeTrack i {
+  position: relative;
+  display: block;
+  height: 7px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--terminal-negative), var(--terminal-muted) 50%, var(--terminal-positive));
+}
+
+.directionGaugeTrack b,
+.pressureGaugeTrack b {
+  position: absolute;
+  top: 50%;
+  width: 3px;
+  height: 18px;
+  border-radius: 2px;
+  background: var(--terminal-text);
+  box-shadow: 0 0 0 2px var(--fce-surface-inset);
+  transform: translate(-50%, -50%);
+}
+
+.pressureGaugeTrack {
+  display: grid;
+  gap: 6px;
+}
+
+.pressureGaugeTrack i {
+  background: linear-gradient(90deg, var(--terminal-positive), var(--terminal-amber) 50%, var(--terminal-negative));
+}
+
+.pressureGaugeTrack div {
+  display: flex;
+  justify-content: space-between;
+  color: var(--terminal-muted);
+  font-size: 9px;
+  font-weight: 760;
+}
+
+.compactGaugeCard p,
+.compactNextPrice p,
+.gaugeTransition {
+  margin: 0;
+  color: var(--terminal-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.gaugeTransition {
+  color: var(--terminal-amber);
+}
+
+.gaugeTransition b {
+  color: inherit;
+}
+
+.compactNextPrice {
+  align-content: center;
+}
+
+.compactNextPrice strong {
+  color: var(--terminal-text);
+  font-family: var(--fce-font-number);
+  font-size: 22px;
+}
+
+.compactScoutActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.scoutQuickAnswer .compactChartWorkspace {
+  margin-top: 12px;
+}
+
+@media (max-width: 1180px) {
+  .compactChartWorkspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .compactGaugePanel {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-rows: auto auto;
+  }
+
+  .compactGaugePanel > header {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 760px) {
+  .compactGaugePanel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .compactGaugePanel > header {
+    grid-column: auto;
+  }
+
+  .compactChartMain .positionChartCanvasFrame {
+    min-height: 420px;
+  }
+}
+
 .oneQuestionCard {
   display: grid;
   gap: 14px;
@@ -6351,6 +6562,13 @@ button.actionPlanRow:not(:disabled):hover {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .minimalChartShell .positionChartPanel {
+    min-height: auto;
+  }
+}
+
+@media (max-width: 900px) {
+
   .positionOneQuestion {
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas:
@@ -6375,15 +6593,9 @@ button.actionPlanRow:not(:disabled):hover {
     grid-template-columns: 1fr;
   }
 
-  .minimalChartShell .positionChartPanel {
-    min-height: auto;
-  }
-
   .minimalChartVerdict { grid-template-columns: auto minmax(0, 1fr); }
   .minimalChartVerdict small { grid-column: 1 / -1; }
-}
 
-@media (max-width: 900px) {
   .calibrationScoreRow,
   .confidenceChart {
     grid-template-columns: 1fr;

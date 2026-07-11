@@ -53,7 +53,7 @@ Phase B adds file-based migrations, daily SQLite backups, and retention cleanup.
 - Backups are kept for `FCE_DB_BACKUP_KEEP_DAYS` days and smoke-tested by opening a restored temp DB.
 - Retention keeps derivative snapshots for `FCE_DB_RETENTION_DAYS` days.
 - Closed-position snapshots older than `FCE_DB_CLOSED_SNAPSHOT_RETENTION_DAYS` are downsampled to `FCE_DB_SNAPSHOT_DOWNSAMPLE_MINUTES`; open positions are not downsampled.
-- Trade fills are retained for `FCE_DB_TRADE_FILL_RETENTION_DAYS`; alert logs for `FCE_DB_ALERT_RETENTION_DAYS`; worker heartbeat rows for `FCE_DB_WORKER_HEARTBEAT_RETENTION_DAYS`.
+- Trade fills are retained for `FCE_DB_TRADE_FILL_RETENTION_DAYS` (default 2 days, matching the 24-48h flow window); alert logs for `FCE_DB_ALERT_RETENTION_DAYS`; worker heartbeat rows for `FCE_DB_WORKER_HEARTBEAT_RETENTION_DAYS`.
 - Judgment ledger, judgment scores, scenarios, reviews, and trades are permanent and are not touched by retention.
 - Maintenance events are visible at `GET /api/system/database`.
 

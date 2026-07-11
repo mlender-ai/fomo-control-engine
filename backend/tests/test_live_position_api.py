@@ -1,12 +1,14 @@
 from datetime import timedelta
+from concurrent.futures import ThreadPoolExecutor
 
 from app.api.deps import configure_runtime
-from app.db.models import MarketSnapshot, WatchlistItem, utc_now
+from app.db.models import Direction, MarketSnapshot, Position, PositionSnapshot, WatchlistItem, utc_now
 from app.db.repository import MemoryRepository
 from app.exchange.bitget.client import BitgetClient
 from app.exchange.bitget.provider import BitgetMarketDataProvider
 from app.exchange.bitget.schemas import BitgetPosition
 from app.exchange.mock import MockMarketDataProvider
+from app.services import http_handlers as routes
 
 
 class SyncClosingBitgetProvider(BitgetMarketDataProvider):
@@ -23,6 +25,15 @@ class SyncClosingBitgetProvider(BitgetMarketDataProvider):
 
     def get_trade_flow(self, symbol: str, timeframe: str, candles: list) -> dict | None:
         return None
+
+
+class FixedSnapshotProvider(MockMarketDataProvider):
+    def __init__(self) -> None:
+        super().__init__()
+        self.snapshot = super().get_snapshot("BTCUSDT", "4h")
+
+    def get_snapshot(self, symbol: str, timeframe: str = "4h") -> MarketSnapshot:
+        return self.snapshot
 
 
 def test_live_position_analysis_insight_memo_and_exit_flow(client) -> None:
@@ -62,9 +73,12 @@ def test_live_position_analysis_insight_memo_and_exit_flow(client) -> None:
 
     compact_response = client.get("/api/live/positions?compact=true")
     assert compact_response.status_code == 200
+    assert len(compact_response.content) < 50_000
     compact_position = compact_response.json()["positions"][0]
     assert compact_position["latest_snapshot"]["id"] == analyzed["latest_snapshot"]["id"]
-    assert compact_position["state"]["analysis"] == analyzed["state"]["analysis"]
+    assert compact_position["state"]["analysis"]["technical"] == analyzed["state"]["analysis"]["technical"]
+    assert compact_position["recent_events"] == []
+    assert "entry_breakdown" not in compact_position["state"]["score_json"]
     assert compact_position["action_plan"]["headline_action"]
 
     insight_response = client.post(f"/api/live/positions/{position['id']}/insight")
@@ -74,6 +88,10 @@ def test_live_position_analysis_insight_memo_and_exit_flow(client) -> None:
     assert insight_payload["latest_insight"]["insight_source"] == "template"
     assert insight_payload["latest_insight"]["action_plan"]["invalidation"]["price"] == report["price"] * 0.96
     assert "단정하지 않습니다" not in insight_payload["latest_insight"]["insight_text"]
+
+    compact_after_insight = client.get("/api/live/positions?compact=true").json()["positions"][0]
+    assert compact_after_insight["latest_insight"]["input_json"] == {}
+    assert compact_after_insight["latest_insight"]["insight_text"] == ""
 
     memo_response = client.patch(
         f"/api/live/positions/{position['id']}/memo",
@@ -158,11 +176,65 @@ def test_live_position_chart_analysis_contract(client) -> None:
 
     compact_response = client.get(f"/api/live/positions/{position['id']}/chart-analysis?compact=true")
     assert compact_response.status_code == 200
+    assert len(compact_response.content) < 150_000
     compact = compact_response.json()
     assert compact["detail_level"] == "compact"
     assert 100 <= len(compact["candles"]) <= 120
     assert compact["position_id"] == payload["position_id"]
     assert compact["one_liners"] == payload["one_liners"]
+    assert all("raw_json" not in metric for metric in compact["derivatives"]["metrics"])
+    assert compact["liquidity"].get("rejected_sweeps") == []
+
+
+def test_cached_position_recalculates_liquidation_distance_from_current_mark() -> None:
+    repo = MemoryRepository()
+    configure_runtime(repo=repo, provider=MockMarketDataProvider())
+    position = repo.add_position(
+        Position(
+            symbol="BTCUSDT",
+            direction=Direction.long,
+            entry_price=100,
+            quantity=1,
+            leverage=10,
+            mark_price=120,
+            current_price=120,
+            liquidation_price=90,
+        )
+    )
+    repo.add_position_snapshot(
+        PositionSnapshot(
+            position_id=position.id,
+            symbol=position.symbol,
+            mark_price=100,
+            liquidation_price=90,
+            liquidation_distance_pct=10,
+            health_score=70,
+            status_label="관찰 필요",
+            risk_score=30,
+            score_json={"entry_score": 50, "current_score": 50, "score_change": 0},
+            analysis_json={
+                "position_analysis": {"direction": "long", "status": "watch"},
+                "technical": {},
+                "risk": {"critical_levels": []},
+            },
+        )
+    )
+
+    payload = routes._cached_live_position_payload(position)
+
+    assert payload["state"]["liquidation_distance_pct"] == 25.0
+    assert payload["latest_snapshot"].liquidation_distance_pct == 25.0
+
+
+def test_concurrent_report_generation_persists_one_closed_bar() -> None:
+    repo = MemoryRepository()
+    configure_runtime(repo=repo, provider=FixedSnapshotProvider())
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        reports = list(pool.map(lambda _: routes._generate_and_store_report("BTCUSDT", "4h"), range(16)))
+
+    assert len(repo.reports) == 1
+    assert len({report.data_quality.last_candle_at for report in reports}) == 1
 
 
 def test_bitget_sync_auto_records_missing_position_exit(client) -> None:

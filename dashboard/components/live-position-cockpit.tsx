@@ -15,7 +15,7 @@ import {
   UploadCloud
 } from "lucide-react";
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { PositionChart } from "@/components/position/PositionChart";
+import { CompactChartWorkspace, type CompactNextPrice } from "@/components/position/CompactChartWorkspace";
 import { TerminalPanel, TerminalWarning } from "@/components/terminal";
 import {
   chartOverlayFromPayload,
@@ -37,7 +37,7 @@ import {
   type PositionChartAnalysis,
   type ScenarioMatchResponse
 } from "@/lib/api";
-import { MINIMAL_FIXED_LAYER_STATE, type MinimalChartEvidence, type MinimalEvidenceLayer } from "@/lib/chartLayers";
+import { type MinimalEvidenceLayer } from "@/lib/chartLayers";
 import { type Density } from "@/lib/density";
 import { formatPrice, signedPercent } from "@/lib/format";
 import { plainifyTaText } from "@/lib/labels/taGlossary";
@@ -64,11 +64,13 @@ export function LivePositionCockpit() {
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [selectedChartAnalysis, setSelectedChartAnalysis] = useState<PositionChartAnalysis | null>(null);
+  const [selectedDetail, setSelectedDetail] = useState<LivePositionDetail | null>(null);
   const [selectedChartLoading, setSelectedChartLoading] = useState(false);
   const [selectedChartError, setSelectedChartError] = useState("");
   const [stripChartAnalysis, setStripChartAnalysis] = useState<Record<string, PositionChartAnalysis>>({});
   const [viewMode, setViewMode] = useState<FceViewMode>("minimal");
   const selectedChartRequestRef = useRef(0);
+  const selectedDetailRequestRef = useRef(0);
   const hasPositionDataRef = useRef(false);
   const workspace = useAnalysisWorkspace();
 
@@ -152,6 +154,9 @@ export function LivePositionCockpit() {
     setNotice("");
     try {
       const result = await api.createPositionInsight(positionId);
+      setSelectedDetail((current) =>
+        current?.position.id === positionId ? { ...current, ...result } : current
+      );
       setData((current) => {
         if (!current) return current;
         return {
@@ -173,7 +178,13 @@ export function LivePositionCockpit() {
     setNotice("");
     try {
       await api.analyzeLivePosition(positionId);
-      await Promise.all([loadSelectedChart(positionId, false), load(false)]);
+      const requests: Array<Promise<unknown>> = [loadSelectedChart(positionId, false), load(false)];
+      requests.push(
+        api.livePosition(positionId).then((detail) => {
+          setSelectedDetail(detail);
+        })
+      );
+      await Promise.all(requests);
       setNotice("포지션 상태와 액션 플랜을 갱신했습니다.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "상태 갱신에 실패했습니다.");
@@ -184,7 +195,7 @@ export function LivePositionCockpit() {
 
   const positions = data?.positions ?? [];
   const selected = positions.find((item) => item.position.id === selectedId) ?? positions[0];
-  const selectedPayload = selected;
+  const selectedPayload = selectedDetail?.position.id === selected?.position.id ? selectedDetail : selected;
   const selectedChartForPayload = selectedChartAnalysis?.position_id === selectedPayload?.position.id ? selectedChartAnalysis : null;
   const stripChartKey = positions.map((item) => item.position.id).join("|");
 
@@ -205,6 +216,24 @@ export function LivePositionCockpit() {
       if (selectedChartRequestRef.current === requestId && showSpinner) setSelectedChartLoading(false);
     }
   }
+
+  useEffect(() => {
+    if (!selected?.position.id) return;
+    const positionId = selected.position.id;
+    if (selectedDetail?.position.id === positionId) return;
+    const requestId = selectedDetailRequestRef.current + 1;
+    selectedDetailRequestRef.current = requestId;
+    void api
+      .livePosition(positionId)
+      .then((detail) => {
+        if (selectedDetailRequestRef.current === requestId) setSelectedDetail(detail);
+      })
+      .catch((err) => {
+        if (selectedDetailRequestRef.current === requestId) {
+          setError(err instanceof Error ? err.message : "상세 포지션 데이터를 불러오지 못했습니다.");
+        }
+      });
+  }, [selected?.position.id, selectedDetail?.position.id]);
 
   useEffect(() => {
     if (!selected?.position.id) return;
@@ -524,67 +553,38 @@ function MinimalPositionWorkspace({
 }) {
   const plan = actionPlanForPayload(payload);
   const copy = minimalPositionCopy(payload);
-  const taEvidenceChoices = oneLinerEvidenceChoices(chartAnalysis?.one_liners ?? null, payload);
-  const evidenceChoices = [copy.whyEvidence, copy.counterEvidence, ...taEvidenceChoices];
-  const [selectedEvidenceKey, setSelectedEvidenceKey] = useState(copy.whyEvidence.key);
-  const selectedEvidence = evidenceChoices.find((item) => item.key === selectedEvidenceKey) ?? copy.whyEvidence;
-  const minimalChartEvidence: MinimalChartEvidence = {
-    layer: selectedEvidence.layer,
-    label: selectedEvidence.label,
-    price: selectedEvidence.price ?? null,
-    time: selectedEvidence.time ?? null
-  };
-  // 미니멀 차트는 layers prop으로 MINIMAL_FIXED_LAYER_STATE를 직접 받으므로
-  // workspace.setLayers 호출이 불필요하다 — 호출하면 localStorage에 저장돼
-  // 프로 모드에서 사용자가 설정한 레이어를 영구히 덮어쓴다.
-  useEffect(() => {
-    setSelectedEvidenceKey(copy.whyEvidence.key);
-  }, [payload.position.id, copy.whyEvidence.key]);
+  const gauges = (payload as LivePositionDetail).gauges ?? null;
+  const nextPrice = compactNextPriceForPlan(plan, payload.latest_snapshot.mark_price);
+  void onRefresh;
+  void refreshing;
+  void onShowPro;
+  void workspace;
   return (
     <section className="minimalPositionWorkspace" data-testid="minimal-position-workspace">
-      <MinimalPositionVerdictCard
-        payload={payload}
-        copy={copy}
-        selectedEvidenceKey={selectedEvidence.key}
-        onSelectEvidence={(evidence) => {
-          setSelectedEvidenceKey(evidence.key);
-          workspace.setHighlightPrice(evidence.price ?? null);
-        }}
-        onChart={() => document.getElementById("position-minimal-chart")?.scrollIntoView({ block: "start" })}
-        onRefresh={onRefresh}
-        refreshing={refreshing}
-        onShowPro={onShowPro}
+      <CompactChartWorkspace
+        analysis={chartAnalysis}
+        loading={chartLoading}
+        error={chartError}
+        onRetry={onRetryChart}
+        trendSummary={`${directionLabel(payload.position.direction)} 포지션 · ${copy.label}`}
+        plan={plan}
+        gauges={gauges}
+        nextPrice={nextPrice}
+        positionOverlay={chartOverlayFromPayload(payload)}
       />
-      <TaOneLineStrip
-        loading={chartLoading && !chartAnalysis}
-        oneLiners={chartAnalysis?.one_liners ?? null}
-        payload={payload}
-        selectedEvidenceKey={selectedEvidence.key}
-        onSelectEvidence={(evidence) => {
-          setSelectedEvidenceKey(evidence.key);
-          workspace.setHighlightPrice(evidence.price ?? null);
-        }}
-        onShowPro={onShowPro}
-      />
-      <div className="minimalChartShell" id="position-minimal-chart">
-        <PositionChart
-          analysis={chartAnalysis}
-          loading={chartLoading}
-          error={chartError}
-          onRetry={onRetryChart}
-          trendSummary={`${directionLabel(payload.position.direction)} 포지션 · ${copy.label}`}
-          plan={plan}
-          layers={MINIMAL_FIXED_LAYER_STATE}
-          onToggleLayer={workspace.handleToggleLayer}
-          highlightPrice={selectedEvidence.price ?? workspace.highlightPrice}
-          positionOverlay={chartOverlayFromPayload(payload)}
-          density="simple"
-          layerMode="minimal"
-          minimalEvidence={minimalChartEvidence}
-        />
-      </div>
     </section>
   );
+}
+
+function compactNextPriceForPlan(plan: PositionActionPlan | null, markPrice: number | null): CompactNextPrice | null {
+  const candidates: CompactNextPrice[] = [];
+  const invalidation = numericPlanPrice(plan?.invalidation) ?? numericPlanPrice(plan?.engine_invalidation);
+  if (invalidation !== null) candidates.push({ label: "무효화", price: invalidation, detail: plan?.invalidation?.action || "이탈 시 논리 점검" });
+  const target = numericPlanPrice(plan?.take_profit?.[0]);
+  if (target !== null) candidates.push({ label: "익절", price: target, detail: plan?.take_profit?.[0]?.action || "도달 시 부분 익절 검토" });
+  if (!candidates.length) return null;
+  if (markPrice === null || !Number.isFinite(markPrice)) return candidates[0];
+  return [...candidates].sort((left, right) => Math.abs((left.price ?? markPrice) - markPrice) - Math.abs((right.price ?? markPrice) - markPrice))[0];
 }
 
 function TaOneLineStrip({

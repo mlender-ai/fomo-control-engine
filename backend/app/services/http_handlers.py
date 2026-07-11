@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from threading import Lock
 from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid5
 
@@ -57,6 +58,7 @@ from app.positions.chart_analysis import PositionContext, build_chart_analysis
 from app.positions.engine import (
     build_events,
     build_position_state,
+    calculate_liquidation_distance,
     direction_aware_score,
     make_snapshot,
 )
@@ -95,6 +97,8 @@ EXIT_RECORDABLE_STATUSES = {
     PositionStatus.missing_from_exchange,
     PositionStatus.needs_exit_record,
 }
+_report_locks_guard = Lock()
+_report_locks: dict[tuple[str, str], Lock] = {}
 
 
 def configure_runtime(repo: Repository | None = None, provider: MarketDataProvider | None = None) -> None:
@@ -106,22 +110,26 @@ def configure_runtime(repo: Repository | None = None, provider: MarketDataProvid
 
 
 def _generate_and_store_report(symbol: str, timeframe: str = "4h"):
-    try:
-        snapshot = market_provider.get_snapshot(symbol, timeframe)
-        report = generate_report(snapshot)
-        latest = repository.latest_report(symbol)
-        same_closed_bar = bool(
-            latest
-            and latest.timeframe == report.timeframe
-            and latest.data_quality.last_candle_at
-            and latest.data_quality.last_candle_at == report.data_quality.last_candle_at
-        )
-        # The report payload contains candles and is intentionally large. Live
-        # monitoring may evaluate the same 4h bar dozens of times; return the
-        # fresh in-memory result but persist only once per bar.
-        return report if same_closed_bar else repository.add_report(report)
-    except MarketDataError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    key = (symbol.upper(), timeframe)
+    with _report_locks_guard:
+        report_lock = _report_locks.setdefault(key, Lock())
+    with report_lock:
+        try:
+            snapshot = market_provider.get_snapshot(symbol, timeframe)
+            report = generate_report(snapshot)
+            latest = repository.latest_report(symbol)
+            same_closed_bar = bool(
+                latest
+                and latest.timeframe == report.timeframe
+                and latest.data_quality.last_candle_at
+                and latest.data_quality.last_candle_at == report.data_quality.last_candle_at
+            )
+            # Report payloads contain candles and are intentionally large. A
+            # symbol can be evaluated concurrently by sync, insight and API
+            # paths, so the latest-check and insert must remain one operation.
+            return report if same_closed_bar else repository.add_report(report)
+        except MarketDataError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 def _derivative_context(symbol: str) -> dict:
@@ -1066,14 +1074,20 @@ def _cached_live_position_payload(position: Position) -> dict:
 
     stored_snapshot = snapshots[0]
     current_as_of = position.synced_at or stored_snapshot.as_of
+    mark_price = position.mark_price or position.current_price or stored_snapshot.mark_price
+    compact_analysis = _compact_position_analysis(stored_snapshot.analysis_json)
+    compact_score = _compact_score_json(stored_snapshot.score_json)
     snapshot = stored_snapshot.model_copy(
         update={
             "as_of": current_as_of,
-            "mark_price": position.mark_price or position.current_price or stored_snapshot.mark_price,
+            "mark_price": mark_price,
             "pnl_percent": position.pnl_percent,
             "pnl_amount": position.unrealized_pl if position.unrealized_pl is not None else stored_snapshot.pnl_amount,
             "pnl_source": position.pnl_source,
             "liquidation_price": position.liquidation_price,
+            "liquidation_distance_pct": calculate_liquidation_distance(position, mark_price),
+            "analysis_json": compact_analysis,
+            "score_json": compact_score,
         }
     )
     position_analysis = snapshot.analysis_json.get("position_analysis", {})
@@ -1097,22 +1111,51 @@ def _cached_live_position_payload(position: Position) -> dict:
         "thesis_delta": position_analysis.get("thesis_delta", 0),
         "entry_score": score_json.get("entry_score", position.entry_score or 0),
         "current_score": score_json.get("current_score", position.current_score or 0),
-        "analysis": snapshot.analysis_json,
+        "analysis": compact_analysis,
         "score_json": score_json,
     }
     latest_insights = repository.list_position_insights(position.id, limit=1)
     latest_insight = latest_insights[0] if latest_insights else None
     insight_status = _insight_status(latest_insight, snapshot)
     action_plan = build_action_plan(position, snapshot, _action_plan_context_from_snapshot(snapshot))
+    public_snapshot = snapshot.model_copy(update={"analysis_json": {}, "score_json": {}})
     return {
         "position": position,
         "state": state,
-        "latest_snapshot": snapshot,
+        "latest_snapshot": public_snapshot,
         "action_plan": action_plan,
-        "latest_insight": _insight_payload(latest_insight, insight_status) if latest_insight else None,
+        "latest_insight": _compact_insight_payload(latest_insight, insight_status) if latest_insight else None,
         "insight_status": insight_status,
-        "recent_events": repository.list_position_events(position.id, limit=5),
+        "recent_events": [],
     }
+
+
+def _compact_position_analysis(analysis: Any) -> dict[str, Any]:
+    source = analysis if isinstance(analysis, dict) else {}
+    derivatives = source.get("derivatives") if isinstance(source.get("derivatives"), dict) else {}
+    return {
+        "position_analysis": source.get("position_analysis", {}),
+        "technical": source.get("technical", {}),
+        "derivatives": _slim_derivatives(derivatives, metric_limit=0, event_limit=0),
+        "risk": source.get("risk", {}),
+    }
+
+
+def _compact_score_json(score_json: Any) -> dict[str, Any]:
+    source = score_json if isinstance(score_json, dict) else {}
+    return {
+        key: source.get(key)
+        for key in ("entry_score", "current_score", "score_change", "health_components", "fomo_index")
+        if key in source
+    }
+
+
+def _compact_insight_payload(insight: PositionInsight, status: dict[str, Any]) -> dict[str, Any]:
+    payload = _insight_payload(insight, status)
+    payload["input_json"] = {}
+    payload["action_plan"] = {}
+    payload["insight_text"] = ""
+    return payload
 
 
 def _action_plan_context_from_snapshot(snapshot: PositionSnapshot) -> dict[str, Any]:
@@ -1143,6 +1186,7 @@ def _compact_chart_analysis(analysis: dict[str, Any]) -> dict[str, Any]:
     # PositionChart requires at least 100 candles. Keep a small safety margin
     # while the minimal canvas still renders only its latest 72 candles.
     compact_window = 120
+    indicator_window = 72
     compact = {**analysis, "detail_level": "compact"}
     compact["candles"] = list(analysis.get("candles") or [])[-compact_window:]
 
@@ -1154,22 +1198,90 @@ def _compact_chart_analysis(analysis: dict[str, Any]) -> dict[str, Any]:
     }
 
     derivatives = analysis.get("derivatives") if isinstance(analysis.get("derivatives"), dict) else {}
-    compact["derivatives"] = {
-        **derivatives,
-        "metrics": list(derivatives.get("metrics") or [])[-compact_window:],
-        "liquidation_events": list(derivatives.get("liquidation_events") or [])[-24:],
+    compact["derivatives"] = _slim_derivatives(derivatives, metric_limit=48, event_limit=12)
+
+    liquidity = analysis.get("liquidity") if isinstance(analysis.get("liquidity"), dict) else {}
+    compact["liquidity"] = {
+        **liquidity,
+        "pools": list(liquidity.get("pools") or [])[:12],
+        "sweeps": list(liquidity.get("sweeps") or [])[-12:],
+        "rejected_sweeps": [],
+        "htf_sweeps": list(liquidity.get("htf_sweeps") or [])[-4:],
+        "bos": list(liquidity.get("bos") or [])[-6:],
+        "choch": list(liquidity.get("choch") or [])[-6:],
     }
+    compact["wyckoff_markers_low_confidence"] = []
+    compact["harmonic_patterns"] = sorted(
+        list(analysis.get("harmonic_patterns") or []),
+        key=lambda item: float(item.get("confidence", 0)) if isinstance(item, dict) else 0,
+        reverse=True,
+    )[:2]
 
     indicators = analysis.get("indicators") if isinstance(analysis.get("indicators"), dict) else {}
     bollinger = indicators.get("bollinger") if isinstance(indicators.get("bollinger"), dict) else {}
     compact["indicators"] = {
         **indicators,
         "bollinger": {
-            key: list(points or [])[-compact_window:]
+            key: list(points or [])[-indicator_window:]
             for key, points in bollinger.items()
         },
     }
     return compact
+
+
+def _slim_derivatives(context: dict[str, Any], metric_limit: int, event_limit: int) -> dict[str, Any]:
+    latest = _without_raw_payload(context.get("latest"))
+    coinglass = _without_raw_payload(context.get("coinglass"))
+    metrics = [_slim_derivative_metric(item) for item in list(context.get("metrics") or [])[-metric_limit:]] if metric_limit else []
+    events = [_without_raw_payload(item) for item in list(context.get("liquidation_events") or [])[-event_limit:]] if event_limit else []
+    signals = context.get("signals") if isinstance(context.get("signals"), dict) else {}
+    return {
+        "symbol": context.get("symbol"),
+        "as_of": context.get("as_of"),
+        "latest": latest,
+        "coinglass": coinglass,
+        "signals": {
+            **signals,
+            "liquidation_clusters": list(signals.get("liquidation_clusters") or [])[:6],
+        },
+        "metrics": metrics,
+        "liquidation_events": events,
+        "source_status": context.get("source_status"),
+    }
+
+
+def _without_raw_payload(value: Any) -> Any:
+    if not isinstance(value, dict):
+        return value
+    return {
+        key: item
+        for key, item in value.items()
+        if key not in {"raw_json", "data_quality"}
+    }
+
+
+def _slim_derivative_metric(value: Any) -> Any:
+    if not isinstance(value, dict):
+        return value
+    keys = (
+        "symbol",
+        "source",
+        "tier",
+        "as_of",
+        "open_interest",
+        "open_interest_value",
+        "oi_change_pct",
+        "funding",
+        "funding_interval_hours",
+        "funding_next",
+        "taker_ls",
+        "top_ls",
+        "long_account_ratio",
+        "short_account_ratio",
+        "oi_weighted_funding",
+        "source_status",
+    )
+    return {key: value.get(key) for key in keys}
 
 
 def _live_position_detail(position: Position) -> dict:

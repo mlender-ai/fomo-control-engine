@@ -1,6 +1,6 @@
 "use client";
 
-import type { PositionActionPlan, PositionChartAnalysis } from "@/lib/api";
+import type { CompactChartGauges, PositionActionPlan, PositionChartAnalysis } from "@/lib/api";
 import type { ChartLayerId, ChartLayerState, MinimalChartEvidence } from "@/lib/chartLayers";
 import type { Density } from "@/lib/density";
 import { PositionCandlestickChart } from "./PositionCandlestickChart";
@@ -19,7 +19,9 @@ export function PositionChart({
   density = "simple",
   intentZoneSelector,
   layerMode = "pro",
-  minimalEvidence = null
+  minimalEvidence = null,
+  compressed = false,
+  gauges = null
 }: {
   analysis: PositionChartAnalysis | null;
   loading: boolean;
@@ -34,6 +36,8 @@ export function PositionChart({
   density?: Density;
   layerMode?: "minimal" | "pro";
   minimalEvidence?: MinimalChartEvidence | null;
+  compressed?: boolean;
+  gauges?: CompactChartGauges | null;
   intentZoneSelector?: {
     enabled: boolean;
     draft: { lower: number | null; upper: number | null };
@@ -92,6 +96,8 @@ export function PositionChart({
         intentZoneSelector={intentZoneSelector}
         layerMode={layerMode}
         minimalEvidence={minimalEvidence}
+        compressed={compressed}
+        gauges={gauges}
       />
     </section>
   );

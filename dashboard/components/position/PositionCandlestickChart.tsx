@@ -17,6 +17,7 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
 import type {
   ChartCandle,
   ChartPriceLevel,
+  CompactChartGauges,
   LiquidityPool,
   LiquiditySweep,
   PositionActionPlan,
@@ -45,8 +46,6 @@ import { VolumePanel } from "./VolumePanel";
 
 const LABEL_MERGE_PX = 8;
 const AXIS_GUTTER = 82;
-const GUIDE_STORAGE_KEY = "fce.chartGuide.enabled";
-
 export function PositionCandlestickChart({
   analysis,
   trendSummary,
@@ -58,7 +57,9 @@ export function PositionCandlestickChart({
   density = "simple",
   intentZoneSelector,
   layerMode = "pro",
-  minimalEvidence = null
+  minimalEvidence = null,
+  compressed = false,
+  gauges = null
 }: {
   analysis: PositionChartAnalysis;
   trendSummary: string;
@@ -70,6 +71,8 @@ export function PositionCandlestickChart({
   density?: Density;
   layerMode?: "minimal" | "pro";
   minimalEvidence?: MinimalChartEvidence | null;
+  compressed?: boolean;
+  gauges?: CompactChartGauges | null;
   intentZoneSelector?: {
     enabled: boolean;
     draft: { lower: number | null; upper: number | null };
@@ -81,6 +84,7 @@ export function PositionCandlestickChart({
   const overlayRef = useRef<SVGSVGElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
   const priceAtYRef = useRef<((y: number) => number | null) | null>(null);
+  const overlayDrawRef = useRef<(() => void) | null>(null);
   const viewportRef = useRef<{ key: string; locked: boolean; range: LogicalRange | null }>({ key: "", locked: false, range: null });
   const [harmonicIndex, setHarmonicIndex] = useState(0);
   const [guideOpen, setGuideOpen] = useState(false);
@@ -93,8 +97,15 @@ export function PositionCandlestickChart({
     [layerMode, validation]
   );
   const effectiveLayers = useMemo(
-    () => (layerMode === "minimal" ? minimalLayersForEvidence(minimalEvidence) : layers),
-    [layerMode, minimalEvidence, layers]
+    () => (layerMode === "minimal" ? (compressed ? MINIMAL_FIXED_LAYER_STATE : minimalLayersForEvidence(minimalEvidence)) : layers),
+    [compressed, layerMode, minimalEvidence, layers]
+  );
+  const seriesLayerState = useMemo(
+    () => ({
+      flow: effectiveLayers.flow,
+      indicators: effectiveLayers.ta.includes("indicators")
+    }),
+    [effectiveLayers.flow, effectiveLayers.ta]
   );
   const priceLines = useMemo(
     () => (validation.valid ? priceLinesForAnalysis(analysis) : []),
@@ -111,6 +122,36 @@ export function PositionCandlestickChart({
   const guideLayer = activeGuideLayer(effectiveLayers);
   const intentZoneDraft = intentZoneSelector?.draft ?? null;
   const viewportKey = `${analysis.position_id}:${analysis.timeframe}`;
+  const overlayInputsRef = useRef({
+    analysis,
+    plan,
+    layers: effectiveLayers,
+    activeHarmonic,
+    positionOverlay,
+    highlightPrice,
+    density,
+    layerMode,
+    minimalEvidence,
+    compressed,
+    gauges
+  });
+
+  useEffect(() => {
+    overlayInputsRef.current = {
+      analysis,
+      plan,
+      layers: effectiveLayers,
+      activeHarmonic,
+      positionOverlay,
+      highlightPrice,
+      density,
+      layerMode,
+      minimalEvidence,
+      compressed,
+      gauges
+    };
+    overlayDrawRef.current?.();
+  }, [activeHarmonic, analysis, compressed, density, effectiveLayers, gauges, highlightPrice, layerMode, minimalEvidence, plan, positionOverlay]);
 
   useEffect(() => {
     if (intentZoneDraft?.lower === null && intentZoneDraft?.upper === null) {
@@ -129,18 +170,12 @@ export function PositionCandlestickChart({
   useEffect(() => {
     if (layerMode === "minimal") {
       setGuideOpen(false);
-      return;
     }
-    setGuideOpen(window.localStorage.getItem(GUIDE_STORAGE_KEY) === "true");
   }, [layerMode]);
 
   function toggleGuide() {
     if (layerMode === "minimal") return;
-    setGuideOpen((current) => {
-      const next = !current;
-      window.localStorage.setItem(GUIDE_STORAGE_KEY, String(next));
-      return next;
-    });
+    setGuideOpen((current) => !current);
   }
 
   useEffect(() => {
@@ -242,11 +277,11 @@ export function PositionCandlestickChart({
     const volumeData: HistogramData[] = visibleCandles.map((candle) => ({
       time: candle.time as Time,
       value: candle.volume,
-      color: effectiveLayers.flow ? volumeColorForCandle(analysis, candle, palette) : simpleVolumeColor(candle, palette)
+      color: seriesLayerState.flow ? volumeColorForCandle(analysis, candle, palette) : simpleVolumeColor(candle, palette)
     }));
     volumeSeries.setData(volumeData);
 
-    if (effectiveLayers.flow) {
+    if (seriesLayerState.flow) {
       const averageVolumeSeries = chart.addSeries(LineSeries, {
         priceScaleId: "volume",
         color: palette.color("neutral", 0.64),
@@ -311,7 +346,7 @@ export function PositionCandlestickChart({
       }
     }
 
-    if (effectiveLayers.ta.includes("indicators")) {
+    if (seriesLayerState.indicators) {
       const bands: Array<{ key: "upper" | "middle" | "lower"; style: LineStyle }> = [
         { key: "upper", style: LineStyle.Dashed },
         { key: "middle", style: LineStyle.Solid },
@@ -334,18 +369,17 @@ export function PositionCandlestickChart({
 
     const labeled = mergeLineLabels(priceLines, container.clientHeight, visibleCandles);
     labeled.forEach((line) => {
-      const highlighted = highlightPrice !== null && Math.abs(line.price - highlightPrice) <= Math.abs(highlightPrice) * 1e-9 + 1e-12;
       candleSeries.createPriceLine({
         price: line.price,
-        color: chartLineColor(line.kind, palette, highlighted ? 1 : line.opacity),
-        lineWidth: (highlighted ? Math.min(4, line.lineWidth * 2) : line.lineWidth) as 1 | 2 | 3 | 4,
+        color: chartLineColor(line.kind, palette, line.opacity),
+        lineWidth: line.lineWidth,
         lineStyle: line.kind === "mark" ? LineStyle.Solid : LineStyle.Dashed,
-        axisLabelVisible: highlighted,
+        axisLabelVisible: false,
         title: line.title
       });
     });
 
-    const spikeMarkers = effectiveLayers.flow
+    const spikeMarkers = seriesLayerState.flow
       ? visibleCandles
           .filter((candle) => candle.volume >= averageVolume * 1.8)
           .slice(-3)
@@ -403,21 +437,27 @@ export function PositionCandlestickChart({
     container.addEventListener("pointerdown", markViewportLocked);
     container.addEventListener("touchstart", markViewportLocked, { passive: true });
 
-    const drawOverlay = () => renderTaOverlay(
-      overlay,
-      container,
-      candleSeries,
-      chart,
-      analysis,
-      plan,
-      effectiveLayers,
-      activeHarmonic,
-      positionOverlay,
-      highlightPrice,
-      palette,
-      density,
-      layerMode === "minimal" ? minimalEvidence : null
-    );
+    const drawOverlay = () => {
+      const current = overlayInputsRef.current;
+      renderTaOverlay(
+        overlay,
+        container,
+        candleSeries,
+        chart,
+        current.analysis,
+        current.plan,
+        current.layers,
+        current.activeHarmonic,
+        current.positionOverlay,
+        current.highlightPrice,
+        palette,
+        current.density,
+        current.layerMode === "minimal" ? current.minimalEvidence : null,
+        current.compressed,
+        current.gauges
+      );
+    };
+    overlayDrawRef.current = drawOverlay;
     const initialDrawTimer = window.setTimeout(drawOverlay, 0);
     const handleVisibleRangeChange = (range: LogicalRange | null) => {
       const current = viewportRef.current;
@@ -437,9 +477,10 @@ export function PositionCandlestickChart({
       container.removeEventListener("pointerdown", markViewportLocked);
       container.removeEventListener("touchstart", markViewportLocked);
       priceAtYRef.current = null;
+      if (overlayDrawRef.current === drawOverlay) overlayDrawRef.current = null;
       chart.remove();
     };
-  }, [analysis, averageVolume, priceLines, plan, effectiveLayers, highlightPrice, activeHarmonic, positionOverlay, validation, visibleCandles, density, layerMode, minimalEvidence, viewportKey]);
+  }, [analysis, averageVolume, priceLines, seriesLayerState, validation, visibleCandles, layerMode, viewportKey]);
 
   function pointerY(event: PointerEvent<HTMLDivElement>): number {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -517,12 +558,12 @@ export function PositionCandlestickChart({
           <span className="positionChartTrendPill">{trendSummary}</span>
           {layerMode === "pro" ? (
             <button className={`chartGuideButton ${guideOpen ? "active" : ""}`} onClick={toggleGuide} type="button" aria-pressed={guideOpen} title="해설 오버레이 켜기/끄기">
-              해설
+              {guideOpen ? "해설 켜짐" : "해설"}
             </button>
           ) : null}
         </div>
       </div>
-      {layerMode === "minimal" ? (
+      {layerMode === "minimal" && !compressed ? (
         <div className="minimalChartVerdict" data-testid="minimal-chart-verdict">
           <span>현재 판정</span>
           <strong>{trendSummary}</strong>
@@ -802,7 +843,9 @@ function renderTaOverlay(
   highlightPrice: number | null,
   palette: ResolvedChartPalette,
   density: Density,
-  minimalEvidence: MinimalChartEvidence | null = null
+  minimalEvidence: MinimalChartEvidence | null = null,
+  compressed = false,
+  gauges: CompactChartGauges | null = null
 ) {
   if (!svg) return;
   const width = container.clientWidth;
@@ -812,9 +855,14 @@ function renderTaOverlay(
   const shapes: string[] = [];
   const badges: string[] = [];
   const right = overlayRight(width);
-  const context: OverlayContext = { series, chart, analysis, plan, layers, positionOverlay, highlightPrice, palette, width, height, right, density, minimal: Boolean(minimalEvidence) };
+  const context: OverlayContext = { series, chart, analysis, plan, layers, positionOverlay, highlightPrice, palette, width, height, right, density, minimal: Boolean(minimalEvidence) || compressed };
 
-  if (minimalEvidence) {
+  if (compressed) {
+    const compact = compressedOverlayNodes(context, gauges);
+    zones.push(...compact.zones);
+    shapes.push(...compact.shapes);
+    badges.push(...compact.badges);
+  } else if (minimalEvidence) {
     const minimal = minimalEvidenceOverlayNodes(context, minimalEvidence, activeHarmonic);
     zones.push(...minimal.zones);
     shapes.push(...minimal.shapes);
@@ -848,12 +896,9 @@ function renderTaOverlay(
       badges.push(...harmonic.badges);
     }
   }
-  if (layers.plan) {
+  if (!compressed && layers.plan) {
     zones.push(...riskRewardBoxNodes(context));
     badges.push(...priceFlagNodes(context));
-  }
-  if (layers.scenario) {
-    shapes.push(...scenarioPathNodes(context));
   }
   if (positionOverlay) {
     badges.push(...positionOverlayNodes(context, positionOverlay));
@@ -882,6 +927,76 @@ type OverlayGroup = { zones: string[]; shapes: string[]; badges: string[] };
 
 function overlayRight(width: number): number {
   return Math.max(24, width - AXIS_GUTTER);
+}
+
+function compressedOverlayNodes(context: OverlayContext, gauges: CompactChartGauges | null): OverlayGroup {
+  const group: OverlayGroup = { zones: [], shapes: [], badges: [] };
+  const mark = context.analysis.mark_price;
+  const support = [...context.analysis.price_levels.support]
+    .filter((level) => level.price <= mark)
+    .sort((left, right) => right.score - left.score)[0];
+  const resistance = [...context.analysis.price_levels.resistance]
+    .filter((level) => level.price >= mark)
+    .sort((left, right) => right.score - left.score)[0];
+  const poc = context.analysis.volume_profile?.poc_price;
+  if (support) group.shapes.push(...compactPriceLine(context, support.price, "상위 지지", "amber"));
+  if (resistance) group.shapes.push(...compactPriceLine(context, resistance.price, "상위 저항", "red"));
+  if (isFinitePrice(poc)) group.shapes.push(...compactPriceLine(context, poc, "최다 거래 가격", "text"));
+
+  const confirmedSweep = [...(context.analysis.liquidity?.sweeps ?? []), ...(context.analysis.liquidity?.htf_range_sweeps ?? [])]
+    .filter((sweep) => sweep.confirmed)
+    .sort((left, right) => right.timestamp - left.timestamp)[0];
+  if (confirmedSweep) {
+    group.shapes.push(...compactPriceLine(
+      context,
+      confirmedSweep.price || confirmedSweep.pool_price,
+      confirmedSweep.side === "buy_side" ? "고점 청소" : "저점 청소",
+      confirmedSweep.side === "buy_side" ? "red" : "amber"
+    ));
+  } else {
+    const pool = nearestByPrice((context.analysis.liquidity?.pools ?? []).filter((item) => !item.swept), mark);
+    if (pool) group.shapes.push(...compactPriceLine(context, pool.price, "유동성 풀", pool.side === "buy_side" ? "red" : "amber"));
+  }
+
+  for (const [index, overlay] of (gauges?.tier2_overlays ?? []).slice(0, 2).entries()) {
+    if (isFinitePrice(overlay.price)) {
+      group.shapes.push(...compactPriceLine(
+        context,
+        overlay.price,
+        overlay.engine_label || overlay.claim,
+        overlay.direction === "short" ? "red" : "amber"
+      ));
+    } else {
+      group.badges.push(minimalFloatingLabel(
+        context,
+        `${overlay.engine_label || overlay.engine} · ${overlay.claim}`,
+        18,
+        30 + index * 30,
+        overlay.direction === "short" ? "red" : "amber"
+      ));
+    }
+  }
+  return group;
+}
+
+function compactPriceLine(
+  context: OverlayContext,
+  price: number,
+  label: string,
+  tone: "amber" | "red" | "text"
+): string[] {
+  const y = context.series.priceToCoordinate(price);
+  if (y === null || y < 18 || y > context.height - 36) return [];
+  const color = tone === "red"
+    ? context.palette.color("red", 0.78)
+    : tone === "amber"
+      ? context.palette.color("amber", 0.78)
+      : context.palette.color("text", 0.56);
+  const text = truncateSvgLabel(label, 18);
+  return [
+    `<line data-compact-overlay="true" x1="18" x2="${Math.max(36, context.right - 18)}" y1="${y}" y2="${y}" stroke="${color}" stroke-width="1.25" stroke-dasharray="6 7" />`,
+    `<text x="${Math.max(28, context.right - 24)}" y="${clamp(y - 7, 18, context.height - 22)}" text-anchor="end" fill="${color}" stroke="${context.palette.color("panel", 0.92)}" stroke-width="4" paint-order="stroke" font-size="12" font-weight="760" font-family="Pretendard, Inter, system-ui, sans-serif">${escapeSvgText(text)}</text>`
+  ];
 }
 
 function minimalEvidenceOverlayNodes(
@@ -1429,37 +1544,6 @@ function liquidationClusterNodes(context: OverlayContext): string[] {
     nodes.push(labelBadge(x + 6, Math.max(16, y - 20), `청산 밀집대 추정 ${formatPrice(price)}`, context.palette.color("panel", 0.78), context.palette.color("purple", 0.78), context.palette.color("text"), 138));
   }
   return nodes;
-}
-
-function scenarioPathNodes(context: OverlayContext): string[] {
-  const mark = context.analysis.mark_price;
-  const target = firstTakeProfit(context.plan);
-  const invalidation = planInvalidation(context.plan, context.analysis);
-  if (!target || !invalidation || !isFinitePrice(mark) || !isFinitePrice(target.price) || !isFinitePrice(invalidation.price)) return [];
-  const watchPrice = firstWatchPrice(context.plan?.watch_triggers, mark);
-  const x = Math.max(18, context.right - 248);
-  const y = 24;
-  const width = Math.min(226, Math.max(172, context.right - x - 8));
-  const rows = [
-    { label: "익절 후보", value: target.price, tone: "takeProfit" as const, pct: directionDistancePct(target.price, mark, context.analysis.direction) },
-    { label: "무효화", value: invalidation.price, tone: "invalidation" as const, pct: directionDistancePct(invalidation.price, mark, context.analysis.direction) },
-    ...(watchPrice ? [{ label: "감시 가격", value: watchPrice, tone: "watch" as const, pct: directionDistancePct(watchPrice, mark, context.analysis.direction) }] : [])
-  ];
-  const height = 38 + rows.length * 18;
-  return [
-    `<g><rect x="${x}" y="${y}" width="${width}" height="${height}" rx="6" fill="${context.palette.color("panel", 0.74)}" stroke="${context.palette.color("neutral", 0.54)}" stroke-width="1" />`,
-    `<text x="${x + 10}" y="${y + 17}" fill="${context.palette.color("text", 0.9)}" font-size="10.5" font-weight="750" font-family="SF Mono, Monaco, Consolas, monospace">조건 경로 · 예측 아님</text>`,
-    `<text x="${x + 10}" y="${y + 33}" fill="${context.palette.color("muted", 0.86)}" font-size="9.5" font-family="SF Mono, Monaco, Consolas, monospace">현재 ${escapeSvgText(formatPrice(mark))} 기준</text>`,
-    ...rows.map((row, index) => {
-      const rowY = y + 52 + index * 18;
-      const text = `${row.label} ${formatPrice(row.value)} ${formatSignedPercent(row.pct)}`;
-      return [
-        `<circle cx="${x + 12}" cy="${rowY - 3}" r="3" fill="${context.palette.flag(row.tone, 0.88)}" />`,
-        `<text x="${x + 22}" y="${rowY}" fill="${context.palette.color("text", 0.9)}" font-size="9.5" font-family="SF Mono, Monaco, Consolas, monospace">${escapeSvgText(truncateSvgLabel(text, 24))}</text>`
-      ].join("");
-    }),
-    "</g>"
-  ];
 }
 
 function positionOverlayNodes(context: OverlayContext, position: PositionChartOverlay): string[] {

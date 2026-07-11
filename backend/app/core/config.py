@@ -116,7 +116,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("FCE_DB_BACKUP_KEEP_DAYS", "DB_BACKUP_KEEP_DAYS"),
     )
     db_trade_fill_retention_days: int = Field(
-        7,
+        2,
         validation_alias=AliasChoices("FCE_DB_TRADE_FILL_RETENTION_DAYS", "DB_TRADE_FILL_RETENTION_DAYS"),
     )
     db_alert_retention_days: int = Field(
