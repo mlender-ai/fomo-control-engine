@@ -126,6 +126,33 @@ def backtest_line(context: dict[str, Any] | None) -> str | None:
     )
 
 
+def validated_event_stats_for_symbol(
+    repo: Any,
+    settings: Settings,
+    *,
+    symbol: str,
+    timeframe: str,
+    limit: int = 120,
+) -> list[dict[str, Any]]:
+    """Return persisted validated statistics for recent chart event pills.
+
+    Unlike ``historical_context_for_analysis`` this does not replay candles and
+    is not restricted to signatures active on the latest bar.  It is therefore
+    safe for frequent chart reads and lets confirmed historical events retain
+    their validation badge.
+    """
+    payloads: list[dict[str, Any]] = []
+    for stat in repo.list_backtest_stats(symbol=symbol, limit=limit):
+        if str(stat.timeframe) != str(timeframe) or stat.engine in CANDIDATE_ENGINES:
+            continue
+        payload = stat.model_dump(mode="json")
+        inner = payload.get("payload") if isinstance(payload.get("payload"), dict) else {}
+        payload.update({key: value for key, value in inner.items() if key not in payload or payload[key] is None})
+        payloads.append(payload)
+    _annotate_states(repo, settings, payloads)
+    return [item for item in payloads if item.get("lifecycle_state") == "validated"]
+
+
 def _annotate_states(repo: Any, settings: Settings, stats: list[dict[str, Any]]) -> None:
     """WO-37: 각 통계에 시그니처 라이프사이클 상태 + 표기 노트를 부착한다."""
     for stat in stats:

@@ -28,11 +28,17 @@ test("live position cockpit smoke path", async ({ page }) => {
   await expect(page.getByTestId("compact-chart-workspace")).toBeVisible();
   await expect(page.getByTestId("stance-ribbon")).toBeVisible();
   await expect(page.getByTestId("stance-hud")).toBeVisible();
+  await expect(page.getByTestId("stance-hud")).toContainText("4h");
+  await expect(page.getByTestId("stance-hud")).toContainText("상방 근거");
+  await expect(page.getByTestId("position-market-context")).toBeVisible();
   await expect(page.getByTestId("direction-gauge")).toHaveCount(0);
   await expect(page.getByTestId("take-profit-gauge")).toBeVisible();
   await expect(page.getByTestId("position-chart")).toBeVisible();
   await expect(page.getByTestId("chart-canvas-frame")).toBeVisible();
   await expect(page.locator("[data-testid^='chart-layer-']")).toHaveCount(0);
+
+  await page.getByTestId("position-card").filter({ hasText: "ETHUSDT" }).click();
+  await expect(page.locator("[data-event-pill]").first()).toBeVisible({ timeout: 30_000 });
 
   await page.getByTestId("pro-mode-button").click();
   await expect(page.getByTestId("verdict-bar")).toBeVisible();
@@ -60,6 +66,7 @@ test("scout, analysis, simulator and calibration smoke paths", async ({ page }) 
   await expect(page.getByTestId("scout-analysis-view")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("compact-chart-workspace")).toBeVisible();
   await expect(page.getByTestId("stance-ribbon")).toBeVisible();
+  await expect(page.getByTestId("position-market-context")).toHaveCount(0);
   await expect(page.getByTestId("direction-gauge")).toHaveCount(0);
   await expect(page.getByTestId("take-profit-gauge")).toHaveClass(/inactive/);
 

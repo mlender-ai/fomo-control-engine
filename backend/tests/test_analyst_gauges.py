@@ -128,6 +128,31 @@ def test_tp_gauge_independent_from_direction() -> None:
     assert gauges["take_profit"]["level"] == "높음"  # 롱 우세인데 익절 압력 높음 = 정상
 
 
+def test_market_layer_is_identical_for_scout_long_and_short_position() -> None:
+    """시장 1층은 포지션 유무·방향과 무관하고 2층만 달라진다."""
+    analysis = _analysis(resistance=[{"price": 104.0, "score": 80}], support=[{"price": 96.0, "score": 75}])
+    confluence = _confluence(stance="long_leaning", long_ema=30.0, short_ema=10.0)
+    scout = build_gauges(analysis=analysis, confluence=confluence, position=None, now=NOW)
+    long = build_gauges(analysis=analysis, confluence=confluence, position={"direction": "long"}, now=NOW)
+    short = build_gauges(analysis=analysis, confluence=confluence, position={"direction": "short"}, now=NOW)
+
+    assert scout["market_view"] == long["market_view"] == short["market_view"]
+    assert scout["direction"] == long["direction"] == short["direction"]
+    assert long["position_context"]["alignment"] == "aligned"
+    assert short["position_context"]["alignment"] == "opposed"
+    assert "시장은 상방 우세" in short["position_context"]["headline"]
+    assert short["position_context"]["detail"] == "역행 포지션"
+
+
+def test_market_view_uses_neutral_direction_language() -> None:
+    confluence = _confluence(stance="long_leaning", long_ema=30.0, short_ema=10.0)
+    confluence["long_evidence"][0]["claim"] = "롱 유지 근거 강화"
+    gauges = build_gauges(analysis=_analysis(), confluence=confluence, position=None, now=NOW)
+    assert gauges["market_view"]["stance_label"] == "상방 우세"
+    assert gauges["market_view"]["why"] == "상방 유지 근거 강화"
+    assert "롱" not in str(gauges["market_view"])
+
+
 # ── 티어2 자동 선별 ──────────────────────────────────────────────────────────
 
 
@@ -200,6 +225,38 @@ def test_event_pills_require_validated_confirmed_signature() -> None:
     assert select_validated_event_pills(analysis, historical, {"provisional": False}) == pills
     historical["stats"][0]["lifecycle_state"] = "candidate"
     assert select_validated_event_pills(analysis, historical, {"provisional": False}) == []
+
+
+def test_event_pills_use_persisted_event_stats_when_active_stats_are_empty() -> None:
+    analysis = _analysis(
+        sweeps=[
+            {
+                "id": "persisted-sweep",
+                "confirmed": True,
+                "side": "sell_side",
+                "type": "sweep",
+                "timestamp": int(NOW.timestamp()) - 3600,
+                "return_at": NOW.isoformat(),
+                "price": 98.0,
+                "confidence": 82,
+            }
+        ]
+    )
+    analysis["candles"] = [{"time": int(NOW.timestamp())}]
+    historical = {
+        "stats": [],
+        "event_stats": [
+            {
+                "signature": {"engine": "liquidity", "event_type": "sweep_low", "direction": "long", "strength_class": "Strong"},
+                "lifecycle_state": "validated",
+                "sample_size": 35,
+                "win_1r_pct": 60.0,
+            }
+        ],
+    }
+    pills = select_validated_event_pills(analysis, historical, {"provisional": False})
+    assert len(pills) == 1
+    assert pills[0]["time"] == int(NOW.timestamp())
 
 
 def test_candidate_engines_never_qualify_for_event_pills() -> None:

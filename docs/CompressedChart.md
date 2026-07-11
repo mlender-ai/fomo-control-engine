@@ -6,7 +6,8 @@ WO-FCE-55. 필터를 눌러 TA를 하나씩 확인하는 방식을 폐기하고,
 - **갱신 기준: 시간봉 확정.** 4h 캔들 마감 시 확정 갱신. 마감 전은 "잠정"으로 흐리게(`bar_state.provisional`). 1분봉 실시간은 향후 확장(이 WO 범위 밖).
 - **레이어는 사용자가 고르지 않는다.** 엔진이 지금 방향을 결정한 상위 것만 자동 선별(`tier2_overlays`).
 - **read-only 불변.** 게이지는 판단 표시일 뿐 주문과 무관. 방향 지시 문형 금지.
-- **스탠스와 익절 압력은 다른 축이다.** 스탠스는 캔들 위 리본, 익절 압력은 우측 단일 게이지로 표시한다.
+- **분석은 시장 중립, 포지션은 오버레이다.** 스탠스·리본·HUD·근거·다음 가격은 포지션 유무와 무관한 1층이다. 진입·PnL·익절 압력·시장 대비 정합 여부만 2층으로 덧붙인다.
+- **스탠스와 익절 압력은 다른 축이다.** 스탠스는 캔들 위 리본, 익절 압력은 포지션이 있을 때만 우측에 표시한다.
 
 ## 레이어 3티어 (성적이 자격을 정한다)
 - **티어1 · 항상 표시** (관측 사실, 적중률 무관): 캔들 + 거래량 + 볼륨(POC) + 유동성(미스윕 풀·확정 스윕) + 레벨(상위 지지/저항).
@@ -19,9 +20,19 @@ WO-FCE-55. 필터를 눌러 TA를 하나씩 확인하는 방식을 폐기하고,
 ```json
 {
   "direction": {
-    "active": true, "needle": 0.5, "stance": "long_leaning", "stance_label": "롱 우위",
+    "active": true, "needle": 0.5, "confidence": 0.5,
+    "stance": "long_leaning", "stance_label": "상방 우세",
     "transitioning": false, "target": null, "flip_progress": 0.0, "candles_in_state": 3,
     "reason": "유동성: 저점 Strong 스윕 확인"
+  },
+  "market_view": {
+    "stance": "long_leaning", "stance_label": "상방 우세",
+    "why": "저점 청소 후 반등 구조", "counter": "상단 저항 근접",
+    "next_price": {"label": "상단 저항", "price": 110287.84, "detail": "도달 시 시장 구조 재평가"}
+  },
+  "position_context": {
+    "active": true, "alignment": "opposed",
+    "headline": "숏 보유 중 · 시장은 상방 우세", "detail": "역행 포지션"
   },
   "take_profit": {
     "active": true, "level": "높음", "pressure": 0.82,
@@ -42,11 +53,14 @@ long_leaning=초록 · short_leaning=빨강 · conflicted/insufficient=회색
 transitioning=황색 · provisional tail=점선/흐림
 ```
 - 색은 확정 캔들에서만 바뀐다. 잠정 캔들은 마지막 구간만 점선으로 덧붙인다.
+- 리본은 2.9px 곡선과 confidence 6~14% 후광으로 표시한다. 충돌 상태는 직전 또는 우세 근거 방향의 옅은 색을 유지하고, 전환 관찰 중은 황색 점선이다.
 - `last_flip_at`에 도트와 미세 세로선을 표시하며 hover에는 저장된 flip 사유 1줄만 노출한다.
 - HUD는 현재 스탠스, 유지 캔들 수, 상·하방 증거 개수를 표시하고 클릭 시 TA 1줄 판정을 펼친다.
 
 ## 검증 이벤트 알약
 알약은 `validated` 시그니처, 확정 캔들 이벤트, 시그니처별 confidence 하한을 모두 통과해야 한다. 최대 6개이며 hover에 신뢰도와 실측 win@1R/N을 표시한다. N<30은 "표본 축적 중"으로 표시한다. 후보 시그니처는 이 경로에서 조회하지 않는다.
+
+알약이 비었던 원인은 두 가지였다. 포지션 상세은 `historical_backtest`를 전달하지 않았고, 스카우트는 현재 활성 시그니처 통계만 전달해 과거 확정 이벤트와 통계가 연결되지 않았다. 이제 저장된 validated 통계를 `event_stats`로 별도 조회해 두 경로가 공유한다. 응답의 `event_pill_audit`는 확정 이벤트 수, validated 통계 수, 최종 렌더 수를 노출해 자격 미달과 배선 오류를 구분한다.
 
 ## 익절 압력 게이지 (수익 반납 리스크)
 방향과 **독립**. 포지션 보유 시에만 활성(`position.direction` 필요) — 진입 전엔 `active:false`(Part B 흐림). 결정론 3입력, profit 방향은 롱=상단/숏=하단으로 대칭.
@@ -68,6 +82,5 @@ reason   = 가중 기여 최대 성분의 plain 문구 1줄
 `last_candle_at + TF분` 전이면 `provisional: true` + `minutes_to_close`. Part B는 잠정 시 게이지·오버레이를 흐리게 + "잠정 · 마감까지 Nh" 표기, 마감 시 확정 갱신.
 
 ## 한계·후속
-- 포지션 경로는 `historical_backtest`가 페이로드에 없어(스카우트 전용 강화) `tier2_overlays`가 항상 [] — validated 증명 불가 시 미표시가 원칙이므로 안전 방향 강등. 포지션에도 백테스트 컨텍스트가 붙으면 자동 활성.
 - 장벽 근접 3%·거래량 1.2/0.8 상수는 4h 크립토 초기값 — 백테스트 튜닝 시 WO-39 파라미터 편입 후보.
 - 익절 입력 확장(펀딩 극단·미실현 R 배수 등)은 후속.

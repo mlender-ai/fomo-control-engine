@@ -80,10 +80,10 @@ def _scenario(
     if poc is not None and mark_price is not None:
         if direction == "long":
             condition = f"최다 거래 가격(POC) {_format_price(poc)} 상향 회복" if mark_price < poc else f"최다 거래 가격(POC) {_format_price(poc)} 지지 유지"
-            meaning = "롱 시나리오 강화"
+            meaning = "상방 구조 강화"
         else:
             condition = f"최다 거래 가격(POC) {_format_price(poc)} 하향 이탈" if mark_price > poc else f"최다 거래 가격(POC) {_format_price(poc)} 저항 유지"
-            meaning = "숏 시나리오 강화"
+            meaning = "하방 구조 강화"
         watch_triggers.append({"condition": condition, "meaning": meaning})
     if volume_xray.get("spike_detected"):
         watch_triggers.append(

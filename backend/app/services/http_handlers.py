@@ -9,6 +9,7 @@ from fastapi import HTTPException
 from app.agents.orchestrator import create_research_run
 from app.analyst.briefing import build_analyst_briefing, hysteresis_params_from_settings, load_directional_prior, persist_directional_state
 from app.analyst.gauges import build_gauges
+from app.backtest.service import validated_event_stats_for_symbol
 from app.core.config import get_settings
 from app.db.models import (
     CalibrationSuggestion,
@@ -55,7 +56,7 @@ from app.memory.engine import (
 from app.monitoring.engine import build_monitoring_log, calculate_pnl
 from app.performance.metrics import PerformanceConfig, build_performance_report
 from app.positions.action_plan import build_action_plan
-from app.positions.chart_analysis import PositionContext, build_chart_analysis
+from app.positions.chart_analysis import PositionContext, apply_position_context, build_chart_analysis
 from app.positions.engine import (
     build_events,
     build_position_state,
@@ -939,14 +940,11 @@ def get_position_chart_analysis(position_id: UUID, timeframe: str = "4h", compac
     if position is None:
         raise HTTPException(status_code=404, detail="Position not found")
     try:
-        snapshot = market_provider.get_snapshot(position.symbol, timeframe)
-        analysis = build_chart_analysis(
-            snapshot,
-            PositionContext.from_position(position),
-            None if compact else _trade_flow_for_snapshot(position.symbol, timeframe, snapshot.candles),
-            derivatives=_derivative_context(position.symbol),
-        )
-        return _compact_chart_analysis(analysis) if compact else {**analysis, "detail_level": "full"}
+        market_analysis, position_analysis = _chart_analysis_bundle_for_position(position, timeframe, include_trade_flow=not compact)
+        analysis = market_analysis if compact else position_analysis
+        if compact:
+            return {**_compact_chart_analysis(analysis), "position_id": str(position.id)}
+        return {**analysis, "detail_level": "full"}
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except MarketDataError as exc:
@@ -1290,11 +1288,12 @@ def _live_position_detail(position: Position) -> dict:
     payload = _live_position_payload(position, store_snapshot=False)
     snapshot = payload["latest_snapshot"]
     try:
-        chart_analysis = _chart_analysis_for_position(position)
+        market_analysis, chart_analysis = _chart_analysis_bundle_for_position(position, "4h", include_trade_flow=True)
     except HTTPException:
+        market_analysis = {}
         chart_analysis = {}
     current_action_plan = build_action_plan(position, snapshot, chart_analysis)
-    analyst_briefing = _build_position_analyst_briefing(position, snapshot, chart_analysis, current_action_plan)
+    analyst_briefing = _build_position_analyst_briefing(position, snapshot, market_analysis, current_action_plan)
     _store_judgment_entries(
         position,
         snapshot,
@@ -1317,13 +1316,22 @@ def _live_position_detail(position: Position) -> dict:
     insights = repository.list_position_insights(position.id, limit=20)
     # WO-55A: 압축 차트 2게이지 — 포지션 보유이므로 익절 게이지 활성.
     briefing_confluence: dict = analyst_briefing["confluence"] if isinstance(analyst_briefing.get("confluence"), dict) else {}
+    event_history = {
+        "stats": [],
+        "event_stats": validated_event_stats_for_symbol(
+            repository,
+            settings,
+            symbol=position.symbol,
+            timeframe=str(market_analysis.get("timeframe") or "4h"),
+        ),
+    }
     gauges = build_gauges(
-        analysis=chart_analysis,
+        analysis=market_analysis,
         confluence=briefing_confluence,
-        historical_backtest=chart_analysis.get("historical_backtest") if isinstance(chart_analysis.get("historical_backtest"), dict) else None,
+        historical_backtest=event_history,
         position={"direction": position.direction.value, "entry_price": position.entry_price},
         now=utc_now(),
-        timeframe=str(chart_analysis.get("timeframe") or "4h"),
+        timeframe=str(market_analysis.get("timeframe") or "4h"),
     )
     return {
         **payload,
@@ -1490,14 +1498,24 @@ def _attach_review_v2(trade: Trade) -> Trade:
 
 
 def _chart_analysis_for_position(position: Position) -> dict:
+    return _chart_analysis_bundle_for_position(position, "4h", include_trade_flow=True)[1]
+
+
+def _chart_analysis_bundle_for_position(
+    position: Position,
+    timeframe: str,
+    *,
+    include_trade_flow: bool,
+) -> tuple[dict[str, Any], dict[str, Any]]:
     try:
-        snapshot = market_provider.get_snapshot(position.symbol, "4h")
-        return build_chart_analysis(
+        snapshot = market_provider.get_snapshot(position.symbol, timeframe)
+        market_analysis = build_chart_analysis(
             snapshot,
-            PositionContext.from_position(position),
-            _trade_flow_for_snapshot(position.symbol, "4h", snapshot.candles),
+            None,
+            _trade_flow_for_snapshot(position.symbol, timeframe, snapshot.candles) if include_trade_flow else None,
             derivatives=_derivative_context(position.symbol),
         )
+        return market_analysis, apply_position_context(market_analysis, PositionContext.from_position(position))
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except MarketDataError as exc:

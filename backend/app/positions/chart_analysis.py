@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from statistics import mean
@@ -155,6 +156,56 @@ def build_chart_analysis(
             mark_price=mark_price,
         )
     return payload
+
+
+def apply_position_context(analysis: dict[str, Any], context: PositionContext) -> dict[str, Any]:
+    """Decorate a neutral market analysis for the pro position surface.
+
+    The expensive market engines run once without a position. Entry, liquidation
+    and invalidation are then added as a second layer so the market stance and
+    one-line evidence remain byte-identical for scout, long and short views.
+    """
+    payload = deepcopy(analysis)
+    levels = payload.get("price_levels") if isinstance(payload.get("price_levels"), dict) else {}
+    support = [_structure_level_from_payload(item) for item in levels.get("support", []) if isinstance(item, dict)]
+    resistance = [_structure_level_from_payload(item) for item in levels.get("resistance", []) if isinstance(item, dict)]
+    payload.update(
+        {
+            "position_id": context.position_id,
+            "direction": context.direction,
+            "entry_price": context.entry_price,
+            "liquidation_price": context.liquidation_price,
+        }
+    )
+    levels.update(
+        {
+            "entry": context.entry_price,
+            "liquidation": context.liquidation_price,
+            "invalidation": _invalidation_levels(context, support, resistance),
+        }
+    )
+    payload["price_levels"] = levels
+    payload.pop("scenarios", None)
+    return payload
+
+
+def _structure_level_from_payload(item: dict[str, Any]) -> StructureLevel:
+    raw_touch_at = item.get("last_touch_at")
+    if isinstance(raw_touch_at, datetime):
+        last_touch_at = raw_touch_at
+    else:
+        try:
+            last_touch_at = datetime.fromisoformat(str(raw_touch_at).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            last_touch_at = datetime.now(timezone.utc)
+    return StructureLevel(
+        price=float(item.get("price") or 0.0),
+        score=int(item.get("score") or 0),
+        touches=int(item.get("touches") or 0),
+        last_touch_at=last_touch_at,
+        kind=str(item.get("kind") or "support"),
+        sources=[str(source) for source in item.get("sources", []) if source],
+    )
 
 
 def _derivatives_payload(derivatives: dict | None) -> dict:

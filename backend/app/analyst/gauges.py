@@ -43,11 +43,20 @@ def build_gauges(
 ) -> dict[str, Any]:
     """압축 차트 페이로드: 방향 게이지 + 익절 게이지 + 티어2 자동 선별 + 잠정/확정."""
     bar_state = _bar_state(analysis, timeframe, now)
+    direction = build_direction_gauge(confluence)
+    event_pills = select_validated_event_pills(analysis, historical_backtest, bar_state)
     return {
-        "direction": build_direction_gauge(confluence),
+        "direction": direction,
+        "market_view": build_market_view(analysis, confluence, direction),
+        "position_context": build_position_context(position, direction),
         "take_profit": build_take_profit_gauge(analysis, position),
         "tier2_overlays": select_tier2_overlays(confluence, historical_backtest),
-        "event_pills": select_validated_event_pills(analysis, historical_backtest, bar_state),
+        "event_pills": event_pills,
+        "event_pill_audit": {
+            "confirmed_events": _confirmed_event_count(analysis),
+            "validated_stats": len(_validated_stats(historical_backtest or {})),
+            "rendered": len(event_pills),
+        },
         "bar_state": bar_state,
         "policy": "게이지는 판단 표시입니다. 주문과 무관하며 판단은 사용자 몫입니다.",
     }
@@ -74,7 +83,8 @@ def build_direction_gauge(confluence: dict[str, Any]) -> dict[str, Any]:
         "active": active,
         "needle": needle if active else 0.0,
         "stance": stance,
-        "stance_label": confluence.get("stance_label"),
+        "stance_label": _market_stance_label(stance),
+        "confidence": round(abs(needle), 3),
         "transitioning": transitioning,
         "target": state.get("target"),
         "flip_progress": _num(state.get("flip_threshold_progress"), 0.0),
@@ -85,6 +95,46 @@ def build_direction_gauge(confluence: dict[str, Any]) -> dict[str, Any]:
         "long_evidence_count": len(_list(confluence.get("long_evidence"))),
         "short_evidence_count": len(_list(confluence.get("short_evidence"))),
         "reason": _direction_reason(stance, transitioning, state, confluence),
+    }
+
+
+def build_market_view(
+    analysis: dict[str, Any],
+    confluence: dict[str, Any],
+    direction: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """포지션 보유 여부와 무관한 압축 차트 1층 페이로드."""
+    gauge = direction or build_direction_gauge(confluence)
+    stance = str(gauge.get("stance") or "insufficient")
+    why_key = "long_evidence" if stance == "long_leaning" else "short_evidence" if stance == "short_leaning" else None
+    counter_key = "short_evidence" if stance == "long_leaning" else "long_evidence" if stance == "short_leaning" else None
+    why = _first_claim(confluence, why_key) if why_key else _balanced_claim(confluence)
+    counter = _first_claim(confluence, counter_key) if counter_key else _counter_claim(confluence)
+    return {
+        "stance": stance,
+        "stance_label": _market_stance_label(stance),
+        "why": _neutral_market_phrase(why or str(gauge.get("reason") or "시장 근거 갱신 중")),
+        "counter": _neutral_market_phrase(counter or "반대 근거는 아직 강하게 확인되지 않았습니다."),
+        "next_price": _market_next_price(analysis, stance),
+    }
+
+
+def build_position_context(position: dict[str, Any] | None, direction: dict[str, Any]) -> dict[str, Any]:
+    """시장 판정과 분리된 보유 포지션 정합/역행 2층 페이로드."""
+    position_direction = str((position or {}).get("direction") or "")
+    if position_direction not in {"long", "short"}:
+        return {"active": False, "alignment": None, "headline": None, "detail": None}
+    stance = str(direction.get("stance") or "insufficient")
+    aligned = (position_direction == "long" and stance == "long_leaning") or (position_direction == "short" and stance == "short_leaning")
+    opposed = (position_direction == "long" and stance == "short_leaning") or (position_direction == "short" and stance == "long_leaning")
+    alignment = "aligned" if aligned else "opposed" if opposed else "neutral"
+    position_label = "롱" if position_direction == "long" else "숏"
+    return {
+        "active": True,
+        "direction": position_direction,
+        "alignment": alignment,
+        "headline": f"{position_label} 보유 중 · 시장은 {_market_stance_label(stance)}",
+        "detail": "시장 방향과 정합" if aligned else "역행 포지션" if opposed else "시장 판단 유보",
     }
 
 
@@ -119,7 +169,7 @@ def select_validated_event_pills(
         events.append(
             _pill(
                 event_id=str(sweep.get("id") or f"{event_type}:{sweep.get('timestamp')}"),
-                time_value=sweep.get("timestamp"),
+                time_value=sweep.get("return_at") or sweep.get("timestamp"),
                 price=sweep.get("price") or sweep.get("pool_price"),
                 direction=direction,
                 label="저점 청소" if direction == "long" else "고점 청소",
@@ -185,7 +235,23 @@ def select_validated_event_pills(
 
 
 def _validated_stats(historical: dict[str, Any]) -> list[dict[str, Any]]:
-    return [stat for stat in _list(historical.get("stats")) if str(stat.get("lifecycle_state")) == "validated"]
+    combined = [*_list(historical.get("stats")), *_list(historical.get("event_stats"))]
+    unique: dict[str, dict[str, Any]] = {}
+    for stat in combined:
+        if str(stat.get("lifecycle_state")) != "validated":
+            continue
+        signature = _dict(stat.get("signature"))
+        key = "|".join(
+            str(value)
+            for value in (
+                signature.get("engine") or stat.get("engine"),
+                signature.get("event_type") or stat.get("event_type"),
+                signature.get("strength_class") or stat.get("strength_class"),
+                signature.get("direction") or stat.get("direction"),
+            )
+        )
+        unique[key] = stat
+    return list(unique.values())
 
 
 def _matching_validated_stat(stats: list[dict[str, Any]], engine: str, event_type: str, direction: str, confidence: int) -> dict[str, Any] | None:
@@ -216,7 +282,7 @@ def _matching_validated_stat(stats: list[dict[str, Any]], engine: str, event_typ
 def _pill(*, event_id: str, time_value: Any, price: Any, direction: str, label: str, confidence: int, stat: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": event_id,
-        "time": int(_num(time_value, 0)),
+        "time": _event_timestamp(time_value),
         "price": _num(price, 0),
         "direction": direction,
         "label": label,
@@ -244,13 +310,13 @@ def _direction_reason(stance: str, transitioning: bool, state: dict[str, Any], c
         target_label = {"long_leaning": "상방", "short_leaning": "하방", "conflicted": "균형"}.get(str(state.get("target")), "반대 방향")
         return f"{target_label} 전환 관찰 중 — 아직 기존 방향 유지"
     if stance == "conflicted":
-        return "롱/숏 근거가 팽팽함 — 방향을 고르지 않음"
+        return "상방/하방 근거가 팽팽함 — 방향을 고르지 않음"
     key = "long_evidence" if stance == "long_leaning" else "short_evidence"
     evidence = confluence.get(key) if isinstance(confluence.get(key), list) else []
     top = evidence[0] if evidence and isinstance(evidence[0], dict) else None
     if not top:
         return "우세 근거 갱신 중"
-    return f"{_engine_label(str(top.get('engine') or '-'))}: {top.get('claim', '-')}"
+    return _neutral_market_phrase(f"{_engine_label(str(top.get('engine') or '-'))}: {top.get('claim', '-')}")
 
 
 # ── 익절 압력 게이지 ─────────────────────────────────────────────────────────
@@ -402,13 +468,109 @@ def _validated_engine_directions(historical_backtest: dict[str, Any] | None) -> 
     result: set[tuple[str, str]] = set()
     if not isinstance(historical_backtest, dict):
         return result
-    for stat in _list(historical_backtest.get("stats")):
+    for stat in [*_list(historical_backtest.get("stats")), *_list(historical_backtest.get("event_stats"))]:
         if str(stat.get("lifecycle_state")) == "validated":
             engine = str(stat.get("engine") or "")
             direction = str(stat.get("direction") or "")
             if engine and direction:
                 result.add((engine, direction))
     return result
+
+
+def _market_stance_label(stance: str) -> str:
+    return {
+        "long_leaning": "상방 우세",
+        "short_leaning": "하방 우세",
+        "conflicted": "충돌 — 판단 유보",
+        "insufficient": "근거 부족 — 판단 유보",
+    }.get(stance, "시장 판단 대기")
+
+
+def _first_claim(confluence: dict[str, Any], key: str | None) -> str | None:
+    if not key:
+        return None
+    evidence = _list(confluence.get(key))
+    return str(evidence[0].get("claim")) if evidence and evidence[0].get("claim") else None
+
+
+def _balanced_claim(confluence: dict[str, Any]) -> str | None:
+    candidates = [*_list(confluence.get("long_evidence"))[:1], *_list(confluence.get("short_evidence"))[:1]]
+    if not candidates:
+        return None
+    strongest = max(candidates, key=lambda item: _num(item.get("score"), 0.0))
+    return str(strongest.get("claim")) if strongest.get("claim") else None
+
+
+def _counter_claim(confluence: dict[str, Any]) -> str | None:
+    counter = _list(confluence.get("counter_evidence"))
+    return str(counter[0].get("claim")) if counter and counter[0].get("claim") else None
+
+
+def _neutral_market_phrase(value: str) -> str:
+    replacements = (
+        ("롱 유지", "상방 유지"),
+        ("숏 유지", "하방 유지"),
+        ("롱 시나리오", "상방 구조"),
+        ("숏 시나리오", "하방 구조"),
+        ("롱 근거", "상방 근거"),
+        ("숏 근거", "하방 근거"),
+        ("롱 우위", "상방 우세"),
+        ("숏 우위", "하방 우세"),
+    )
+    result = value
+    for before, after in replacements:
+        result = result.replace(before, after)
+    return result
+
+
+def _market_next_price(analysis: dict[str, Any], stance: str) -> dict[str, Any] | None:
+    mark = _num(analysis.get("mark_price"), 0.0)
+    if mark <= 0:
+        return None
+    levels = _dict(analysis.get("price_levels"))
+    candidates: list[tuple[float, str]] = []
+    for level in _list(levels.get("support")):
+        price = _num(level.get("price"), 0.0)
+        if price > 0:
+            candidates.append((price, "하단 지지"))
+    for level in _list(levels.get("resistance")):
+        price = _num(level.get("price"), 0.0)
+        if price > 0:
+            candidates.append((price, "상단 저항"))
+    for pool in _list(_dict(analysis.get("liquidity")).get("pools")):
+        if pool.get("swept"):
+            continue
+        price = _num(pool.get("price"), 0.0)
+        if price <= 0:
+            continue
+        label = "상단 유동성" if str(pool.get("side")) == "buy_side" else "하단 유동성"
+        candidates.append((price, label))
+    if stance == "long_leaning":
+        directional = [item for item in candidates if item[0] > mark]
+    elif stance == "short_leaning":
+        directional = [item for item in candidates if item[0] < mark]
+    else:
+        directional = candidates
+    pool = directional or candidates
+    if not pool:
+        return None
+    price, label = min(pool, key=lambda item: abs(item[0] - mark))
+    return {"label": label, "price": price, "detail": "도달 시 시장 구조 재평가"}
+
+
+def _event_timestamp(value: Any) -> int:
+    parsed = _parse_dt(value)
+    if parsed is not None:
+        return int(parsed.timestamp())
+    return int(_num(value, 0))
+
+
+def _confirmed_event_count(analysis: dict[str, Any]) -> int:
+    liquidity = _dict(analysis.get("liquidity"))
+    sweeps = [item for item in [*_list(liquidity.get("sweeps")), *_list(liquidity.get("htf_range_sweeps"))] if item.get("confirmed")]
+    markers = [item for item in _list(analysis.get("wyckoff_markers")) if item.get("time")]
+    patterns = [item for item in _list(analysis.get("harmonic_patterns")) if str(item.get("status")) == "completed"]
+    return len(sweeps) + len(markers) + len(patterns)
 
 
 # ── 잠정/확정 (시간봉 확정 기준) ─────────────────────────────────────────────

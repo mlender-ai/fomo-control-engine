@@ -365,7 +365,7 @@ function AnalystBriefingEvidence({ briefing }: { briefing: AnalystBriefing }) {
           {strongest.length ? strongest.map((item, index) => (
             <div key={`evidence-${item.engine}-${index}`}>
               <span>{plainifyTaText(item.claim)}</span>
-              <em>{item.direction === "long" ? "롱 근거" : item.direction === "short" ? "숏 근거" : "중립"} · {item.score}</em>
+              <em>{item.direction === "long" ? "상방 근거" : item.direction === "short" ? "하방 근거" : "중립"} · {item.score}</em>
               <p>{item.engine} · 신뢰도 {confidenceLabel(item.confidence, "detailed")}</p>
             </div>
           )) : <p>유효 근거가 3개 미만이라 브리핑을 보류합니다.</p>}
@@ -375,7 +375,7 @@ function AnalystBriefingEvidence({ briefing }: { briefing: AnalystBriefing }) {
           {counter.length ? counter.map((item, index) => (
             <div key={`counter-${item.engine}-${index}`}>
               <span>{plainifyTaText(item.claim)}</span>
-              <em>{item.direction === "long" ? "롱 근거" : item.direction === "short" ? "숏 근거" : "중립"} · {item.score}</em>
+              <em>{item.direction === "long" ? "상방 근거" : item.direction === "short" ? "하방 근거" : "중립"} · {item.score}</em>
               <p>{item.engine} · 신뢰도 {confidenceLabel(item.confidence, "detailed")}</p>
             </div>
           )) : <p>반대 근거가 없으면 방향 브리핑을 보류합니다.</p>}

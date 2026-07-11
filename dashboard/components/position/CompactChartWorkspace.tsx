@@ -32,6 +32,8 @@ export function CompactChartWorkspace({
   nextPrice: CompactNextPrice | null;
   positionOverlay?: PositionChartOverlay | null;
 }) {
+  const marketTrendSummary = gauges?.market_view?.stance_label || trendSummary;
+  const marketNextPrice = gauges?.market_view?.next_price ?? nextPrice;
   return (
     <section className="compactChartWorkspace" data-testid="compact-chart-workspace">
       <div className="compactChartMain">
@@ -40,7 +42,7 @@ export function CompactChartWorkspace({
           loading={loading}
           error={error}
           onRetry={onRetry}
-          trendSummary={trendSummary}
+          trendSummary={marketTrendSummary}
           plan={plan}
           layers={MINIMAL_FIXED_LAYER_STATE}
           onToggleLayer={() => undefined}
@@ -51,7 +53,7 @@ export function CompactChartWorkspace({
           gauges={gauges}
         />
       </div>
-      <CompactGaugePanel gauges={gauges} nextPrice={nextPrice} loading={loading} />
+      <CompactGaugePanel gauges={gauges} nextPrice={marketNextPrice} loading={loading} />
     </section>
   );
 }
@@ -82,6 +84,14 @@ export function CompactGaugePanel({
         </div>
         {provisional ? <em>{countdown}</em> : null}
       </header>
+
+      {gauges?.position_context?.active ? (
+        <section className={`compactPositionContext ${gauges.position_context.alignment ?? "neutral"}`} data-testid="position-market-context">
+          <span>내 포지션 대비</span>
+          <strong>{gauges.position_context.headline}</strong>
+          <p>{gauges.position_context.detail}</p>
+        </section>
+      ) : null}
 
       <section className={`compactGaugeCard ${gauges?.take_profit.active ? "" : "inactive"}`} data-testid="take-profit-gauge">
         <div className="compactGaugeTitle">

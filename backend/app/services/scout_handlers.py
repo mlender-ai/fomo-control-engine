@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 from app.analyst.briefing import build_analyst_briefing, hysteresis_params_from_settings, load_directional_prior, persist_directional_state
 from app.analyst.gauges import build_gauges
 from app.backtest.regimes import label_regime
-from app.backtest.service import _regime_params, backtest_line, historical_context_for_analysis
+from app.backtest.service import _regime_params, backtest_line, historical_context_for_analysis, validated_event_stats_for_symbol
 from app.backtest.statistics import DISCLAIMER_NET
 from app.services import http_handlers as runtime
 from app.db.models import (
@@ -429,6 +429,12 @@ def _compute_analysis_entry(
             "disclaimer": DISCLAIMER_NET,
             "notes": ["자세히 보기에서 과거 통계를 계산합니다."],
         }
+    )
+    historical["event_stats"] = validated_event_stats_for_symbol(
+        _repo(),
+        runtime.settings,
+        symbol=snapshot.symbol,
+        timeframe=snapshot.timeframe,
     )
     analysis["historical_backtest"] = historical
     if include_history:

@@ -214,7 +214,7 @@ def _warnings(confluence: dict[str, Any]) -> list[str]:
     if confluence.get("stance") == "insufficient":
         warnings.append("반대 근거 또는 유효 증거 수가 부족해 스탠스를 보류했습니다.")
     if confluence.get("stance") == "conflicted":
-        warnings.append("롱/숏 근거가 충돌해 방향을 확정하지 않았습니다.")
+        warnings.append("상방/하방 근거가 충돌해 방향을 확정하지 않았습니다.")
     return warnings
 
 

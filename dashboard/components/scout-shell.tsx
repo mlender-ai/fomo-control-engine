@@ -1421,8 +1421,8 @@ function scoutTilt(row: ScoutScanRow): { position: number; label: string; tone: 
   if (Math.abs(diff) < 10) return { position: 50, label: "충돌", tone: "neutral" };
   const position = Math.max(8, Math.min(92, 50 + diff / 2));
   return diff > 0
-    ? { position, label: "롱 근거 우세", tone: "long" }
-    : { position, label: "숏 근거 우세", tone: "short" };
+    ? { position, label: "상방 근거 우세", tone: "long" }
+    : { position, label: "하방 근거 우세", tone: "short" };
 }
 
 function quickTilt(data: ScoutAnalysisResponse | null): { position: number; label: string; tone: "long" | "short" | "neutral" | "insufficient" } {
@@ -1603,8 +1603,8 @@ function scoutEvidencePrice(claim: string): number | null {
 }
 
 function scoutStanceLabel(stance: string, fallback: string): string {
-  if (stance === "long_leaning") return "롱 근거 우세";
-  if (stance === "short_leaning") return "숏 근거 우세";
+  if (stance === "long_leaning") return "상방 근거 우세";
+  if (stance === "short_leaning") return "하방 근거 우세";
   if (stance === "conflicted") return "근거 충돌";
   if (stance === "insufficient") return "근거 부족";
   return plainifyTaText(fallback);

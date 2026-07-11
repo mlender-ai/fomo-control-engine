@@ -2235,15 +2235,16 @@ h3 {
 }
 
 .stanceHud > button {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
   align-items: center;
-  gap: 6px;
-  min-height: 32px;
+  gap: 8px;
+  min-height: 48px;
   border: 1px solid var(--terminal-line-strong);
   border-radius: 6px;
   background: rgba(var(--chart-panel-rgb), 0.9);
   color: var(--terminal-text);
-  padding: 6px 10px;
+  padding: 7px 11px;
   font: inherit;
   font-size: 11px;
   cursor: pointer;
@@ -2255,8 +2256,8 @@ h3 {
 }
 
 .stanceHudDot {
-  width: 8px;
-  height: 8px;
+  width: 10px;
+  height: 10px;
   flex: 0 0 auto;
   border-radius: 50%;
   background: var(--terminal-muted);
@@ -2265,6 +2266,46 @@ h3 {
 .stanceHudDot.long { background: var(--terminal-positive); }
 .stanceHudDot.short { background: var(--terminal-negative); }
 .stanceHudDot.transition { background: var(--terminal-amber); }
+.stanceHudDot.conflict-long {
+  border: 2px solid var(--terminal-muted);
+  background: color-mix(in srgb, var(--terminal-positive) 55%, var(--terminal-muted));
+}
+.stanceHudDot.conflict-short {
+  border: 2px solid var(--terminal-muted);
+  background: color-mix(in srgb, var(--terminal-negative) 55%, var(--terminal-muted));
+}
+
+.stanceHudClock {
+  color: var(--terminal-muted);
+  font-family: var(--fce-font-number);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.stanceHudCopy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  text-align: left;
+}
+
+.stanceHudCopy strong {
+  overflow: hidden;
+  color: var(--terminal-text);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stanceHudCopy > span,
+.stanceHudCopy em {
+  color: var(--terminal-muted);
+  font-family: var(--fce-font-number);
+  font-size: 9px;
+  font-style: normal;
+}
+
+.stanceHudCopy em { color: var(--terminal-amber); }
 
 .stanceHudStrip {
   display: grid;
@@ -5940,7 +5981,9 @@ button.actionPlanRow:not(:disabled):hover {
 
 .compactGaugePanel {
   display: grid;
-  grid-template-rows: auto auto 1fr;
+  grid-template-rows: auto;
+  grid-auto-rows: auto;
+  align-content: start;
   gap: 10px;
   min-width: 0;
   border: 1px solid var(--terminal-line);
@@ -5999,7 +6042,8 @@ button.actionPlanRow:not(:disabled):hover {
 }
 
 .compactGaugeCard,
-.compactNextPrice {
+.compactNextPrice,
+.compactPositionContext {
   display: grid;
   gap: 11px;
   border: 1px solid var(--terminal-line);
@@ -6007,6 +6051,36 @@ button.actionPlanRow:not(:disabled):hover {
   background: var(--fce-surface-inset);
   padding: 13px;
 }
+
+.compactPositionContext {
+  display: grid;
+  gap: 5px;
+  border-left: 3px solid var(--terminal-muted);
+}
+
+.compactPositionContext.aligned { border-left-color: var(--terminal-positive); }
+.compactPositionContext.opposed { border-left-color: var(--terminal-negative); }
+.compactPositionContext.neutral { border-left-color: var(--terminal-amber); }
+
+.compactPositionContext > span {
+  color: var(--terminal-muted);
+  font-size: 10px;
+  font-weight: 780;
+}
+
+.compactPositionContext > strong {
+  color: var(--terminal-text);
+  font-size: 12px;
+}
+
+.compactPositionContext > p {
+  margin: 0;
+  color: var(--terminal-muted);
+  font-size: 11px;
+}
+
+.compactPositionContext.opposed > p { color: var(--terminal-negative); }
+.compactPositionContext.aligned > p { color: var(--terminal-positive); }
 
 .compactGaugeCard.inactive {
   opacity: 0.48;

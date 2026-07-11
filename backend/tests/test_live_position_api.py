@@ -181,6 +181,9 @@ def test_live_position_chart_analysis_contract(client) -> None:
     assert compact["detail_level"] == "compact"
     assert 100 <= len(compact["candles"]) <= 120
     assert compact["position_id"] == payload["position_id"]
+    assert compact["direction"] is None
+    assert compact["entry_price"] is None
+    assert compact["price_levels"]["entry"] is None
     assert compact["one_liners"] == payload["one_liners"]
     assert all("raw_json" not in metric for metric in compact["derivatives"]["metrics"])
     assert compact["liquidity"].get("rejected_sweeps") == []

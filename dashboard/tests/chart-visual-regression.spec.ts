@@ -31,6 +31,23 @@ test.describe("chart visual regression", () => {
   }
 });
 
+test("minimal neutral market ribbon snapshot", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.localStorage.clear();
+  });
+  await page.goto("/");
+  await expect(page.getByTestId("demo-mode-badge")).toBeVisible({ timeout: 30_000 });
+  await page.getByTestId("position-card").filter({ hasText: "ETHUSDT" }).click();
+  await expect(page.getByTestId("compact-chart-workspace")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("stance-ribbon")).toBeVisible();
+  await expect(page.getByTestId("stance-hud")).toBeVisible();
+  await expect(page.locator("[data-event-pill]").first()).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("position-market-context")).toBeVisible();
+  await expect(page.getByTestId("compact-chart-workspace")).toHaveScreenshot("chart-minimal-neutral.png", {
+    animations: "disabled"
+  });
+});
+
 async function toggleLayer(page: Page, id: string) {
   const button = page.getByTestId(`chart-layer-${id}`);
   await expect(button).toBeVisible();

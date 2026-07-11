@@ -506,10 +506,10 @@ def _watch_triggers(
     if poc is not None and mark_price is not None:
         if position.direction.value == "long":
             condition = f"최다 거래 가격(POC) {_format_price(poc)} 상향 회복" if mark_price < poc else f"최다 거래 가격(POC) {_format_price(poc)} 지지 유지"
-            meaning = "롱 유지 시나리오 강화"
+            meaning = "상방 지지 유지"
         else:
             condition = f"최다 거래 가격(POC) {_format_price(poc)} 하향 이탈" if mark_price > poc else f"최다 거래 가격(POC) {_format_price(poc)} 저항 유지"
-            meaning = "숏 유지 시나리오 강화"
+            meaning = "하방 저항 유지"
         triggers.append({"condition": condition, "meaning": meaning})
     volume_state = volume_xray.get("volume_state")
     if volume_xray.get("spike_detected"):

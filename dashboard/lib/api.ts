@@ -388,6 +388,7 @@ export type CompactChartGauges = {
     needle: number;
     stance: string;
     stance_label: string;
+    confidence?: number;
     transitioning: boolean;
     target?: string | null;
     flip_progress?: number | null;
@@ -398,6 +399,24 @@ export type CompactChartGauges = {
     long_evidence_count?: number;
     short_evidence_count?: number;
     reason: string;
+  };
+  market_view?: {
+    stance: string;
+    stance_label: string;
+    why: string;
+    counter: string;
+    next_price?: {
+      label: string;
+      price: number | null;
+      detail: string;
+    } | null;
+  };
+  position_context?: {
+    active: boolean;
+    direction?: "long" | "short" | string | null;
+    alignment: "aligned" | "opposed" | "neutral" | string | null;
+    headline: string | null;
+    detail: string | null;
   };
   take_profit: {
     active: boolean;
@@ -426,6 +445,11 @@ export type CompactChartGauges = {
     qualification: "validated";
     confirmed: true;
   }>;
+  event_pill_audit?: {
+    confirmed_events: number;
+    validated_stats: number;
+    rendered: number;
+  };
   bar_state: {
     provisional: boolean;
     minutes_to_close?: number | null;

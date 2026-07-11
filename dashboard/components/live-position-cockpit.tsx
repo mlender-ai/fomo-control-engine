@@ -566,7 +566,7 @@ function MinimalPositionWorkspace({
         loading={chartLoading}
         error={chartError}
         onRetry={onRetryChart}
-        trendSummary={`${directionLabel(payload.position.direction)} 포지션 · ${copy.label}`}
+        trendSummary={gauges?.market_view?.stance_label || "시장 판단 대기"}
         plan={plan}
         gauges={gauges}
         nextPrice={nextPrice}

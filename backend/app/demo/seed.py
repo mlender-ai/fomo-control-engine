@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from app.db.models import Direction, Position, PositionStatus, WatchlistItem, utc_now
+from app.backtest.signatures import SetupSignature
+from app.db.models import BacktestStat, Direction, Position, PositionStatus, WatchlistItem, utc_now
 from app.report.engine import generate_report
 
 
@@ -46,6 +47,7 @@ DEMO_POSITIONS = [
 def seed_demo_data(repository, provider) -> dict:
     existing_demo = [position for position in repository.list_positions() if position.source == "demo"]
     if existing_demo:
+        _seed_validated_event_stats(repository)
         return {"seeded": False, "positions": len(existing_demo)}
 
     created = 0
@@ -79,4 +81,40 @@ def seed_demo_data(repository, provider) -> dict:
         repository.add_position(position)
         repository.upsert_watchlist_item(WatchlistItem(symbol=item["symbol"], note="FCE demo fixture", default_timeframe="4h"))
         created += 1
+    _seed_validated_event_stats(repository)
     return {"seeded": True, "positions": created}
+
+
+def _seed_validated_event_stats(repository) -> None:
+    fixtures = [
+        ("sweep_low", "Strong", "long", 61.9, [54.0, 69.0], 42),
+        ("sweep_high", "Weak", "short", 57.1, [51.0, 64.0], 35),
+    ]
+    for event_type, strength, direction, win_rate, interval, sample_size in fixtures:
+        signature = SetupSignature(
+            engine="liquidity",
+            event_type=event_type,
+            strength_class=strength,
+            direction=direction,
+            asset_class="crypto",
+            timeframe="4h",
+        )
+        repository.upsert_backtest_stat(
+            BacktestStat(
+                signature_key=signature.key,
+                symbol="ETHUSDT",
+                timeframe="4h",
+                asset_class="crypto",
+                engine="liquidity",
+                event_type=event_type,
+                strength_class=strength,
+                direction=direction,
+                sample_size=sample_size,
+                win_1r_pct=win_rate,
+                payload={
+                    "signature": signature.model_dump(),
+                    "win_1r_ci": interval,
+                    "demo_fixture": True,
+                },
+            )
+        )
