@@ -86,6 +86,12 @@ export function CalibrationShell() {
 
       {error ? <TerminalWarning tone="error">{error}</TerminalWarning> : null}
 
+      {calibration?.cache_status === "preparing" ? (
+        <TerminalWarning tone="info"><span data-testid="calibration-preparing">집계 준비 중 · 워커 실행 대기</span></TerminalWarning>
+      ) : calibration?.computed_at ? (
+        <p className="subtle" data-testid="calibration-computed-at">최근 집계 {new Date(calibration.computed_at).toLocaleString("ko-KR")}</p>
+      ) : null}
+
       {calibration ? (
         <>
           <ImprovementDigestCard weekly={weekly} />

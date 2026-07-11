@@ -19,6 +19,10 @@ def client() -> TestClient:
 
 
 def test_symbol_search_builds_catalog_from_provider(client: TestClient) -> None:
+    refreshed = client.post("/api/symbols/refresh")
+    assert refreshed.status_code == 200
+    assert refreshed.json()["catalog_status"]["count"] >= 5
+
     response = client.get("/api/symbols", params={"query": "btc"})
     assert response.status_code == 200
     symbols = [item["symbol"] for item in response.json()["symbols"]]
@@ -27,15 +31,49 @@ def test_symbol_search_builds_catalog_from_provider(client: TestClient) -> None:
     empty_query = client.get("/api/symbols")
     assert empty_query.status_code == 200
     assert len(empty_query.json()["symbols"]) >= 5
+    assert empty_query.json()["catalog_status"]["last_error"] is None
 
 
 def test_symbol_search_exposes_stock_puffs_with_asset_class(client: TestClient) -> None:
+    client.post("/api/symbols/refresh")
     response = client.get("/api/symbols", params={"query": "tsla"})
     assert response.status_code == 200
     matches = response.json()["symbols"]
     tsla = next(item for item in matches if item["symbol"] == "TSLAUSDT")
     assert tsla["asset_class"] == "stock"
     assert tsla["funding_rate_interval_hours"] == 8
+
+
+def test_symbol_search_matches_seeded_based_and_sox(client: TestClient) -> None:
+    from app.db.models import CatalogSymbol
+    from app.services import http_handlers
+
+    http_handlers.repository.replace_symbol_catalog(
+        [
+            CatalogSymbol(symbol="BASEDUSDT", base_coin="BASED", quote_coin="USDT", asset_class="crypto"),
+            CatalogSymbol(symbol="SOXLUSDT", base_coin="SOXL", quote_coin="USDT", asset_class="stock"),
+        ]
+    )
+
+    based = client.get("/api/symbols", params={"query": "based"}).json()
+    sox = client.get("/api/symbols", params={"query": "sox"}).json()
+
+    assert [item["symbol"] for item in based["symbols"]] == ["BASEDUSDT"]
+    assert [item["symbol"] for item in sox["symbols"]] == ["SOXLUSDT"]
+    assert based["catalog_status"]["count"] == 2
+
+
+def test_empty_catalog_reports_collection_failure(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.services import scout_handlers
+
+    monkeypatch.setattr(scout_handlers._provider(), "list_contracts", lambda: [])
+    refreshed = client.post("/api/symbols/refresh").json()["catalog_status"]
+    searched = client.get("/api/symbols", params={"query": "btc"}).json()
+
+    assert refreshed["count"] == 0
+    assert "빈 심볼 목록" in refreshed["last_error"]
+    assert searched["symbols"] == []
+    assert searched["catalog_status"]["last_error"] == refreshed["last_error"]
 
 
 def test_watchlist_crud(client: TestClient) -> None:

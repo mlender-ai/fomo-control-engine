@@ -4372,6 +4372,25 @@ button.actionPlanRow:not(:disabled):hover {
   padding: 9px 12px;
 }
 
+.catalogStatusBanner {
+  align-items: center;
+  background: color-mix(in srgb, var(--warning) 8%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--line));
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  padding: 12px 16px;
+}
+
+.catalogStatusBanner div {
+  display: grid;
+  gap: 4px;
+}
+
+.catalogStatusBanner span {
+  color: var(--text-secondary);
+}
+
 .scoutSearchBar svg {
   color: var(--terminal-muted);
 }

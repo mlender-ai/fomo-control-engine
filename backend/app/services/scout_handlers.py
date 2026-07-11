@@ -63,6 +63,7 @@ _ANALYSIS_CACHE: dict[tuple[str, str, bool, bool], dict[str, Any]] = {}
 _ANALYSIS_LOCKS: dict[tuple[str, str, bool, bool], threading.Lock] = {}
 _ANALYSIS_LOCKS_GUARD = threading.Lock()
 _BTC_REGIME_CACHE: dict[str, Any] = {}
+_CATALOG_LAST_ERROR: str | None = None
 BTC_REGIME_TTL_SECONDS = 900  # BTC 레짐은 자주 안 바뀌므로 15분 캐시 (레이트리밋 방어)
 logger = logging.getLogger(__name__)
 
@@ -97,25 +98,35 @@ def _btc_market_regime(timeframe: str) -> dict[str, Any] | None:
 
 
 def reset_scout_cache() -> None:
+    global _CATALOG_LAST_ERROR
     _ANALYSIS_CACHE.clear()
     _BTC_REGIME_CACHE.clear()
+    _CATALOG_LAST_ERROR = None
 
 
-def _ensure_catalog() -> None:
+def refresh_symbol_catalog(*, force: bool = False) -> dict[str, Any]:
+    global _CATALOG_LAST_ERROR
     repo = _repo()
     updated_at = repo.symbol_catalog_updated_at()
-    if updated_at is not None and (utc_now() - updated_at).total_seconds() < CATALOG_REFRESH_SECONDS and not _catalog_has_stale_asset_classes(repo):
-        return
+    if (
+        not force
+        and updated_at is not None
+        and (utc_now() - updated_at).total_seconds() < CATALOG_REFRESH_SECONDS
+        and not _catalog_has_stale_asset_classes(repo)
+    ):
+        return catalog_status()
     lister = getattr(_provider(), "list_contracts", None)
     if lister is None:
-        return
+        _CATALOG_LAST_ERROR = "현재 데이터 공급자가 심볼 목록을 제공하지 않습니다."
+        raise RuntimeError(_CATALOG_LAST_ERROR)
     try:
         contracts = lister()
-    except Exception:
-        # 수집 실패 시 기존 캐시 유지 (다음 요청에서 재시도)
-        return
+    except Exception as exc:
+        _CATALOG_LAST_ERROR = f"{type(exc).__name__}: {exc}"
+        raise RuntimeError(_CATALOG_LAST_ERROR) from exc
     if not contracts:
-        return
+        _CATALOG_LAST_ERROR = "거래소가 빈 심볼 목록을 반환했습니다."
+        raise RuntimeError(_CATALOG_LAST_ERROR)
     catalog: list[CatalogSymbol] = []
     for item in contracts:
         asset_class = item.get("asset_class") or classify_asset_class(
@@ -141,12 +152,35 @@ def _ensure_catalog() -> None:
             )
         )
     repo.replace_symbol_catalog(catalog)
+    _CATALOG_LAST_ERROR = None
+    return catalog_status()
+
+
+def catalog_status() -> dict[str, Any]:
+    repo = _repo()
+    updated_at = repo.symbol_catalog_updated_at()
+    count = len(repo.search_symbols("", limit=10_000))
+    return {
+        "count": count,
+        "updated_at": updated_at.isoformat() if updated_at else None,
+        "last_error": _CATALOG_LAST_ERROR,
+    }
+
+
+def retry_symbol_catalog() -> dict[str, Any]:
+    try:
+        refresh_symbol_catalog(force=True)
+    except RuntimeError:
+        pass
+    return {"catalog_status": catalog_status()}
 
 
 def search_symbols(query: str = "", limit: int = 20) -> dict:
-    _ensure_catalog()
     symbols = _repo().search_symbols(query, min(max(limit, 1), 50))
-    return {"symbols": [_resolve_catalog_asset_class(item).model_dump(mode="json") for item in symbols]}
+    return {
+        "symbols": [_resolve_catalog_asset_class(item).model_dump(mode="json") for item in symbols],
+        "catalog_status": catalog_status(),
+    }
 
 
 def normalize_scout_symbol(symbol: str) -> str:
@@ -154,7 +188,6 @@ def normalize_scout_symbol(symbol: str) -> str:
     raw = symbol.strip().upper().replace("/", "")
     if not raw:
         raise HTTPException(status_code=422, detail="symbol이 비어 있습니다.")
-    _ensure_catalog()
     matches = _repo().search_symbols(raw, 50)
     exact = next((item for item in matches if item.symbol.upper() == raw), None)
     if exact is not None:
@@ -899,7 +932,6 @@ def simulate(request: SimulateRequest) -> dict:
 
 
 def _mmr_for_symbol(symbol: str) -> float | None:
-    _ensure_catalog()
     for item in _repo().search_symbols(symbol, limit=5):
         if item.symbol.upper() == symbol.upper():
             return item.maintenance_margin_rate

@@ -5,6 +5,7 @@ from app.services import scout_handlers as handlers
 router = APIRouter()
 
 router.add_api_route("/api/symbols", handlers.search_symbols, methods=["GET"])
+router.add_api_route("/api/symbols/refresh", handlers.retry_symbol_catalog, methods=["POST"])
 router.add_api_route("/api/watchlist", handlers.list_watchlist, methods=["GET"])
 router.add_api_route("/api/watchlist", handlers.add_watchlist_item, methods=["POST"])
 router.add_api_route("/api/watchlist/{symbol}", handlers.remove_watchlist_item, methods=["DELETE"])

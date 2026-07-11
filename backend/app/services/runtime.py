@@ -32,13 +32,9 @@ from app.demo.seed import seed_demo_data as _seed_demo_data
 from app.marketdata.bitget_derivatives import BitgetDerivProvider
 from app.marketdata.coinglass import CoinglassProvider
 from app.review.engine import (
-    build_calibration_summary,
-    build_weekly_calibration_report,
-    generate_calibration_suggestions,
     score_interim_judgments,
 )
-from app.review.autonomy import process_parameter_autonomy, veto_suggestion
-from app.validation.decay import build_self_audit, run_decay_sweep
+from app.review.autonomy import veto_suggestion
 from app.review.alert_responses import (
     alert_history_line,
     detect_alert_response,
@@ -754,45 +750,19 @@ def recent_reviews(limit: int = 3) -> list[Any]:
 
 
 def calibration_snapshot() -> dict[str, Any]:
-    scores = runtime.repository.list_judgment_scores(limit=2000)
-    for suggestion in generate_calibration_suggestions(scores):
-        if runtime.repository.get_calibration_suggestion(suggestion.id) is None:
-            runtime.repository.add_calibration_suggestion(suggestion)
-    suggestions = process_parameter_autonomy(
-        runtime.settings,
-        runtime.repository,
-        runtime.repository.list_calibration_suggestions(limit=100),
-    )
-    return build_calibration_summary(
-        scores,
-        suggestions,
-        runtime.repository.list_alert_responses(limit=2000),
-    )
+    return runtime.review_calibration()
 
 
 def weekly_calibration_report() -> dict[str, Any]:
-    scores = runtime.repository.list_judgment_scores(limit=2000)
-    for suggestion in generate_calibration_suggestions(scores):
-        if runtime.repository.get_calibration_suggestion(suggestion.id) is None:
-            runtime.repository.add_calibration_suggestion(suggestion)
-    suggestions = process_parameter_autonomy(
-        runtime.settings,
-        runtime.repository,
-        runtime.repository.list_calibration_suggestions(limit=100),
-    )
-    # WO-37: 주간 부패 스윕 (자율 강등/격리 + 복귀 제안) → 셀프 오딧 첨부.
-    sweep = run_decay_sweep(runtime.repository, runtime.settings)
-    self_audit = build_self_audit(runtime.repository, sweep=sweep)
-    payload = build_weekly_calibration_report(
-        scores,
-        suggestions,
-        runtime.repository.list_alert_responses(limit=2000),
-        self_audit=self_audit,
-    )
-    # WO-45: 개선 다이제스트 — WO-49가 렌더·발송하는 고정 스키마.
-    payload["improvement_digest"] = improvement_digest(scores=scores, suggestions=suggestions)
-    payload["performance"] = performance_summary()
-    return payload
+    return runtime.review_weekly_calibration()
+
+
+def refresh_calibration_report_cache() -> dict[str, Any]:
+    return runtime.refresh_calibration_report_cache()
+
+
+def refresh_symbol_catalog() -> dict[str, Any]:
+    return scout_handlers.refresh_symbol_catalog(force=True)
 
 
 def improvement_digest(

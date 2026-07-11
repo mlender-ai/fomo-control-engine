@@ -165,6 +165,8 @@ class Repository(Protocol):
     def replace_symbol_catalog(self, symbols: list[CatalogSymbol]) -> int: ...
     def search_symbols(self, query: str, limit: int = 20) -> list[CatalogSymbol]: ...
     def symbol_catalog_updated_at(self) -> datetime | None: ...
+    def get_calibration_report_cache(self, report_key: str) -> dict | None: ...
+    def upsert_calibration_report_cache(self, report_key: str, payload: dict) -> dict: ...
     def add_entry_scenario(self, scenario: EntryScenario) -> EntryScenario: ...
     def get_entry_scenario(self, scenario_id: UUID) -> EntryScenario | None: ...
     def list_entry_scenarios(self, symbol: str | None = None, limit: int = 50) -> list[EntryScenario]: ...
@@ -207,6 +209,7 @@ class MemoryRepository:
         self.validation_runs: dict[UUID, ValidationRun] = {}
         self.watchlist: dict[str, WatchlistItem] = {}
         self.symbol_catalog: dict[str, CatalogSymbol] = {}
+        self.calibration_report_cache: dict[str, dict] = {}
         self.entry_scenarios: dict[UUID, EntryScenario] = {}
 
     def add_report(self, report: Report) -> Report:
@@ -700,6 +703,15 @@ class MemoryRepository:
         if not self.symbol_catalog:
             return None
         return max(item.updated_at for item in self.symbol_catalog.values())
+
+    def get_calibration_report_cache(self, report_key: str) -> dict | None:
+        cached = self.calibration_report_cache.get(report_key)
+        return dict(cached) if isinstance(cached, dict) else None
+
+    def upsert_calibration_report_cache(self, report_key: str, payload: dict) -> dict:
+        cached = {"payload": dict(payload), "computed_at": utc_now().isoformat()}
+        self.calibration_report_cache[report_key] = cached
+        return dict(cached)
 
     def add_entry_scenario(self, scenario: EntryScenario) -> EntryScenario:
         self.entry_scenarios[scenario.id] = scenario
@@ -1956,6 +1968,39 @@ class SQLiteRepository:
         value = row["updated_at"] if row else None
         return datetime.fromisoformat(value) if value else None
 
+    def get_calibration_report_cache(self, report_key: str) -> dict | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT payload, computed_at FROM calibration_report_cache WHERE report_key = ?",
+                (report_key,),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            payload = json.loads(row["payload"])
+        except (TypeError, json.JSONDecodeError):
+            return None
+        return {"payload": payload, "computed_at": row["computed_at"]} if isinstance(payload, dict) else None
+
+    def upsert_calibration_report_cache(self, report_key: str, payload: dict) -> dict:
+        computed_at = utc_now().isoformat()
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO calibration_report_cache (report_key, payload, computed_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(report_key) DO UPDATE SET
+                    payload = excluded.payload,
+                    computed_at = excluded.computed_at
+                """,
+                (
+                    report_key,
+                    json.dumps(payload, ensure_ascii=False, sort_keys=True, default=_json_cache_default),
+                    computed_at,
+                ),
+            )
+        return {"payload": dict(payload), "computed_at": computed_at}
+
     def add_entry_scenario(self, scenario: EntryScenario) -> EntryScenario:
         with self._connect() as connection:
             connection.execute(
@@ -2046,6 +2091,14 @@ def create_repository(database_url: str) -> Repository:
 
 def _dump_model(model) -> str:
     return json.dumps(model.model_dump(mode="json"), ensure_ascii=False)
+
+
+def _json_cache_default(value) -> str:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, UUID):
+        return str(value)
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
 
 
 def _same_directional_bar(current: dict | None, candidate: dict) -> bool:

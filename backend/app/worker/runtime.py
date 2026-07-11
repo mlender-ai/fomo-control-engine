@@ -26,6 +26,8 @@ def get_worker_status() -> dict[str, Any]:
                 "evaluate_performance_alerts": {"status": "not_started"},
                 "daily_summary": {"status": "not_started"},
                 "weekly_calibration_report": {"status": "not_started"},
+                "refresh_calibration_cache": {"status": "not_started"},
+                "refresh_symbol_catalog": {"status": "not_started"},
                 "interim_scoring": {"status": "not_started"},
                 "alert_response_scoring": {"status": "not_started"},
                 "scout_scan": {"status": "not_started"},

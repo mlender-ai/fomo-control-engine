@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import logging
 from threading import Lock
 from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid5
@@ -86,6 +87,7 @@ from app.shadow.engine import (
 from app.validation.decay import apply_recovery, build_self_audit
 from app.validation.engine import run_validation
 
+logger = logging.getLogger(__name__)
 settings = get_settings()
 repository: Repository = create_repository(settings.database_url)
 market_provider: MarketDataProvider = create_market_data_provider(settings)
@@ -1775,6 +1777,10 @@ def _record_exit(position_id: UUID, request: ExitRequest, allow_missing: bool = 
             },
         )
     )
+    try:
+        refresh_calibration_report_cache()
+    except Exception:
+        logger.exception("calibration cache refresh failed after exit scoring")
     return saved_trade
 
 
@@ -1813,7 +1819,7 @@ def _scorecard_list_summary(scorecard: object) -> dict:
     return {key: value for key, value in scorecard.items() if key != "scores"}
 
 
-def performance_summary() -> dict:
+def _build_performance_summary() -> dict:
     positions = repository.list_positions()
     latest_snapshots = {}
     for position in positions:
@@ -1830,6 +1836,13 @@ def performance_summary() -> dict:
             monthly_mdd_limit_pct=mdd_limit,
         ),
     )
+
+
+def performance_summary() -> dict:
+    cached = repository.get_calibration_report_cache("performance")
+    if cached is not None:
+        return {**cached["payload"], "computed_at": cached["computed_at"], "cache_status": "ready"}
+    return {**_build_performance_summary(), "cache_status": "live_fallback"}
 
 
 def get_trade(trade_id: UUID):
@@ -1853,7 +1866,41 @@ def get_trade_timeline(trade_id: UUID) -> dict:
     }
 
 
-def review_calibration() -> dict:
+def _calibration_preparing_payload() -> dict:
+    return {
+        "status": "preparing",
+        "cache_status": "preparing",
+        "computed_at": None,
+        "generated_at": utc_now().isoformat(),
+        "totals": {"total": 0, "tested": 0, "accuracy_pct": None},
+        "invalidation": {},
+        "take_profit": {},
+        "judgment_types": {},
+        "confidence_curve": [],
+        "level_quality": {},
+        "score_contexts": {},
+        "alert_response_summary": {},
+        "scout_setup_summary": {},
+        "briefing_performance": {},
+        "wyckoff_confidence": [],
+        "suggestion_status_counts": {},
+        "autonomy": {},
+        "weekly_report": {},
+        "engine_params": [],
+        "suggestions": [],
+        "sample_warning": "집계 준비 중 · 워커 실행 대기",
+    }
+
+
+def _cached_calibration_payload(report_key: str) -> dict | None:
+    cached = repository.get_calibration_report_cache(report_key)
+    if cached is None:
+        return None
+    return {**cached["payload"], "computed_at": cached["computed_at"], "cache_status": "ready"}
+
+
+def refresh_calibration_report_cache() -> dict:
+    """Build calibration views in the worker; HTTP GET paths only read this cache."""
     scores = repository.list_judgment_scores(limit=2000)
     for suggestion in generate_calibration_suggestions(scores):
         existing = repository.get_calibration_suggestion(suggestion.id)
@@ -1873,22 +1920,32 @@ def review_calibration() -> dict:
         from app.services import runtime as service_runtime
 
         weekly["improvement_digest"] = service_runtime.improvement_digest(scores=scores, suggestions=suggestions)
-    return summary
+    weekly_payload = build_weekly_calibration_report(
+        scores,
+        suggestions,
+        repository.list_alert_responses(limit=2000),
+        self_audit=build_self_audit(repository),
+    )
+    weekly_payload["improvement_digest"] = review_improvement()["digest"]
+    performance = _build_performance_summary()
+    weekly_payload["performance"] = performance
+    repository.upsert_calibration_report_cache("calibration", summary)
+    repository.upsert_calibration_report_cache("weekly", weekly_payload)
+    repository.upsert_calibration_report_cache("performance", performance)
+    return {"scores": len(scores), "suggestions": len(suggestions), "computed": 3}
+
+
+def review_calibration() -> dict:
+    return _cached_calibration_payload("calibration") or _calibration_preparing_payload()
 
 
 def review_weekly_calibration() -> dict:
-    scores = repository.list_judgment_scores(limit=2000)
-    for suggestion in generate_calibration_suggestions(scores):
-        existing = repository.get_calibration_suggestion(suggestion.id)
-        if existing is None:
-            repository.add_calibration_suggestion(suggestion)
-    suggestions = process_parameter_autonomy(settings, repository, repository.list_calibration_suggestions(limit=100))
-    # WO-37: 읽기 뷰는 부패 스윕(상태 변경)을 실행하지 않고 기존 원장에서 셀프 오딧만 구성한다.
-    self_audit = build_self_audit(repository)
-    payload = build_weekly_calibration_report(scores, suggestions, repository.list_alert_responses(limit=2000), self_audit=self_audit)
-    payload["improvement_digest"] = review_improvement()["digest"]
-    payload["performance"] = performance_summary()
-    return payload
+    return _cached_calibration_payload("weekly") or {
+        "status": "preparing",
+        "cache_status": "preparing",
+        "computed_at": None,
+        "sample_warning": "집계 준비 중 · 워커 실행 대기",
+    }
 
 
 def review_improvement() -> dict:

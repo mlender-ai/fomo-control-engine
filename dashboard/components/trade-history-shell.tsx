@@ -19,10 +19,10 @@ export function TradeHistoryShell() {
     setError("");
     setLoading(true);
     try {
-      const [nextTrades, nextCalibration] = await Promise.all([api.trades(), api.reviewCalibration()]);
+      const nextTrades = await api.trades();
       setTrades(nextTrades);
-      setCalibration(nextCalibration);
       setSelectedTradeId((current) => current || nextTrades[0]?.id || "");
+      void api.reviewCalibration().then(setCalibration).catch(() => undefined);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load trade history");
     } finally {

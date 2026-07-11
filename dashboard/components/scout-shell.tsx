@@ -11,6 +11,7 @@ import {
   type AnalystConfluence,
   type ArmedSetup,
   type CatalogSymbolInfo,
+  type CatalogStatus,
   type EntryIntent,
   type HistoricalBacktest,
   type OneLinerLine,
@@ -87,6 +88,8 @@ export function ScoutShell() {
   const [sortAsc, setSortAsc] = useState(true);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<CatalogSymbolInfo[]>([]);
+  const [catalogStatus, setCatalogStatus] = useState<CatalogStatus | null>(null);
+  const [catalogRefreshing, setCatalogRefreshing] = useState(false);
   const [quickSymbol, setQuickSymbol] = useState("");
   const [quickAnswer, setQuickAnswer] = useState<ScoutAnalysisResponse | null>(null);
   const [quickLoading, setQuickLoading] = useState(false);
@@ -137,6 +140,7 @@ export function ScoutShell() {
     const handle = window.setTimeout(async () => {
       try {
         const response = await api.searchSymbols(query, 12);
+        setCatalogStatus(response.catalog_status);
         const symbols = mergeSearchResultsWithDirectCandidate(response.symbols, query);
         setResults(symbols);
         const first = symbols[0];
@@ -145,7 +149,12 @@ export function ScoutShell() {
           setQuickSymbol("");
           setQuickAnswer(null);
         }
-      } catch {
+      } catch (error) {
+        setCatalogStatus({
+          count: 0,
+          updated_at: null,
+          last_error: error instanceof Error ? error.message : "심볼 카탈로그를 확인하지 못했습니다."
+        });
         const fallback = directSymbolCandidate(query);
         setResults(fallback ? [fallback] : []);
         if (fallback) void loadQuickAnswer(fallback.symbol);
@@ -154,6 +163,27 @@ export function ScoutShell() {
     }, 200);
     return () => window.clearTimeout(handle);
   }, [query]);
+
+  async function retryCatalog() {
+    setCatalogRefreshing(true);
+    try {
+      const response = await api.refreshSymbolCatalog();
+      setCatalogStatus(response.catalog_status);
+      if (query.trim()) {
+        const searched = await api.searchSymbols(query, 12);
+        setCatalogStatus(searched.catalog_status);
+        setResults(mergeSearchResultsWithDirectCandidate(searched.symbols, query));
+      }
+    } catch (error) {
+      setCatalogStatus({
+        count: 0,
+        updated_at: null,
+        last_error: error instanceof Error ? error.message : "심볼 카탈로그 재수집에 실패했습니다."
+      });
+    } finally {
+      setCatalogRefreshing(false);
+    }
+  }
 
   async function loadQuickAnswer(symbol: string, force = false) {
     const normalized = symbol.trim().toUpperCase();
@@ -353,6 +383,19 @@ export function ScoutShell() {
           </div>
         ) : null}
       </div>
+
+      {catalogStatus?.count === 0 ? (
+        <div className="catalogStatusBanner" data-testid="catalog-status-banner" role="status">
+          <div>
+            <strong>심볼 카탈로그 미수집</strong>
+            <span>{catalogStatus.last_error || "백그라운드 워커가 심볼 목록을 준비하고 있습니다."}</span>
+          </div>
+          <button className="button secondary" type="button" onClick={() => void retryCatalog()} disabled={catalogRefreshing}>
+            <RefreshCw size={15} />
+            {catalogRefreshing ? "재수집 중" : "재시도"}
+          </button>
+        </div>
+      ) : null}
 
       <p className="scoutDisclaimer">셋업 근접도는 가장 가까운 트리거(반전 후보 구간·구조 레벨)까지의 거리입니다. 매수 판단 문구가 아니라 &ldquo;지금 반응을 지켜볼 종목&rdquo;의 정렬 기준입니다.</p>
 

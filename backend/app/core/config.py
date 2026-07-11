@@ -288,6 +288,20 @@ class Settings(BaseSettings):
         True,
         validation_alias=AliasChoices("FCE_WORKER_SCOUT_SCAN_ENABLED", "WORKER_SCOUT_SCAN_ENABLED"),
     )
+    worker_calibration_cache_interval_seconds: int = Field(
+        1800,
+        validation_alias=AliasChoices(
+            "FCE_WORKER_CALIBRATION_CACHE_INTERVAL_SECONDS",
+            "WORKER_CALIBRATION_CACHE_INTERVAL_SECONDS",
+        ),
+    )
+    worker_symbol_catalog_interval_seconds: int = Field(
+        86400,
+        validation_alias=AliasChoices(
+            "FCE_WORKER_SYMBOL_CATALOG_INTERVAL_SECONDS",
+            "WORKER_SYMBOL_CATALOG_INTERVAL_SECONDS",
+        ),
+    )
     scout_watchlist_symbol_limit: int = Field(
         30,
         validation_alias=AliasChoices("FCE_SCOUT_WATCHLIST_SYMBOL_LIMIT", "SCOUT_WATCHLIST_SYMBOL_LIMIT"),

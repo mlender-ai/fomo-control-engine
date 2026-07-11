@@ -332,6 +332,16 @@ class WorkerManager:
                 60,
                 self._weekly_calibration_report,
             ),
+            "refresh_calibration_cache": WorkerJob(
+                "refresh_calibration_cache",
+                self.settings.worker_calibration_cache_interval_seconds,
+                lambda: asyncio.to_thread(service.refresh_calibration_report_cache),
+            ),
+            "refresh_symbol_catalog": WorkerJob(
+                "refresh_symbol_catalog",
+                self.settings.worker_symbol_catalog_interval_seconds,
+                lambda: asyncio.to_thread(service.refresh_symbol_catalog),
+            ),
             "interim_scoring": WorkerJob(
                 "interim_scoring",
                 self.settings.worker_interim_scoring_interval_seconds,
@@ -413,6 +423,8 @@ class WorkerManager:
         # Keep position sync immediate, then spread independent collectors.
         startup_offsets = {
             "sync_positions": 0,
+            "refresh_calibration_cache": 4,
+            "refresh_symbol_catalog": 8,
             "daily_summary": 12,
             "weekly_calibration_report": 18,
             "regen_stale_insights": 28,

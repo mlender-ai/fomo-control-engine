@@ -622,6 +622,12 @@ export type CatalogSymbolInfo = {
   updated_at: string;
 };
 
+export type CatalogStatus = {
+  count: number;
+  updated_at: string | null;
+  last_error: string | null;
+};
+
 export type WatchlistEntry = {
   symbol: string;
   added_at: string;
@@ -1267,6 +1273,9 @@ export type EngineParamVersion = {
 };
 
 export type CalibrationSummary = {
+  status?: "preparing" | "ready" | string;
+  cache_status?: "preparing" | "ready" | string;
+  computed_at?: string | null;
   generated_at: string;
   sample_floor?: number;
   totals: Record<string, unknown>;
@@ -1568,7 +1577,11 @@ export const api = {
       body: JSON.stringify(payload)
     }),
   searchSymbols: (query: string, limit = 20) =>
-    request<{ symbols: CatalogSymbolInfo[] }>(`/api/symbols?query=${encodeURIComponent(query)}&limit=${limit}`),
+    request<{ symbols: CatalogSymbolInfo[]; catalog_status: CatalogStatus }>(
+      `/api/symbols?query=${encodeURIComponent(query)}&limit=${limit}`
+    ),
+  refreshSymbolCatalog: () =>
+    request<{ catalog_status: CatalogStatus }>("/api/symbols/refresh", { method: "POST" }),
   watchlist: () => request<{ items: WatchlistEntry[] }>("/api/watchlist"),
   addWatchlistItem: (payload: { symbol: string; note?: string; default_timeframe?: string }) =>
     request<{ item: WatchlistEntry }>("/api/watchlist", {

@@ -32,6 +32,8 @@ Each job uses a shared wrapper:
 | `evaluate_alerts` | sync hook | Alert hook for WO-FCE-17 |
 | `daily_summary` | sync hook | Daily Telegram summary check |
 | `scout_scan` | 900s, on | Watchlist scan, scout snapshot storage, automatic setup arming, setup alert evaluation |
+| `refresh_calibration_cache` | 1800s | Build read-only calibration, weekly, and performance view caches. HTTP GET never generates suggestions or applies autonomy. |
+| `refresh_symbol_catalog` | 86400s | Refresh the Bitget symbol catalog at startup and daily; failures are exposed through heartbeat and `/api/symbols`. |
 | `telegram_bot` | long polling task | Interactive Telegram bot supervisor |
 
 ## SQLite Concurrency

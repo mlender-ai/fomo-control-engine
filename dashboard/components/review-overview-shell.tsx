@@ -14,14 +14,12 @@ export function ReviewOverviewShell() {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.allSettled([api.trades(), api.performance(), api.reviewCalibration()]).then((results) => {
-      if (cancelled) return;
-      if (results[0].status === "fulfilled") setTrades(results[0].value);
-      if (results[1].status === "fulfilled") setPerformance(results[1].value);
-      if (results[2].status === "fulfilled") setCalibration(results[2].value);
-      const rejected = results.find((item) => item.status === "rejected");
-      if (rejected?.status === "rejected") setError(rejected.reason instanceof Error ? rejected.reason.message : "일부 성적 데이터를 불러오지 못했습니다.");
-    });
+    const recordError = (reason: unknown) => {
+      if (!cancelled) setError(reason instanceof Error ? reason.message : "일부 성적 데이터를 불러오지 못했습니다.");
+    };
+    void api.trades().then((value) => { if (!cancelled) setTrades(value); }).catch(recordError);
+    void api.performance().then((value) => { if (!cancelled) setPerformance(value); }).catch(recordError);
+    void api.reviewCalibration().then((value) => { if (!cancelled) setCalibration(value); }).catch(recordError);
     return () => { cancelled = true; };
   }, []);
 
@@ -48,7 +46,7 @@ export function ReviewOverviewShell() {
           href="/calibration"
           icon={SlidersHorizontal}
           title="판단 성적표"
-          value={calibration ? `${tested}건 검증${accuracy === null ? "" : ` · ${accuracy.toFixed(1)}%`}` : "불러오는 중"}
+          value={calibration?.cache_status === "preparing" ? "집계 준비 중" : calibration ? `${tested}건 검증${accuracy === null ? "" : ` · ${accuracy.toFixed(1)}%`}` : "불러오는 중"}
           detail={calibration?.sample_warning || "판단 유형별 적중과 표본 수를 확인합니다."}
         />
         <ReviewEntry
