@@ -392,6 +392,11 @@ export type CompactChartGauges = {
     target?: string | null;
     flip_progress?: number | null;
     candles_in_state?: number | null;
+    since?: string | null;
+    last_flip_at?: string | null;
+    previous_stance?: string | null;
+    long_evidence_count?: number;
+    short_evidence_count?: number;
     reason: string;
   };
   take_profit: {
@@ -408,6 +413,18 @@ export type CompactChartGauges = {
     direction: "long" | "short" | "neutral" | string;
     price?: number | null;
     qualification?: string | null;
+  }>;
+  event_pills?: Array<{
+    id: string;
+    time: number;
+    price: number;
+    direction: "long" | "short";
+    label: string;
+    confidence: number;
+    win_1r_pct?: number | null;
+    sample_size: number;
+    qualification: "validated";
+    confirmed: true;
   }>;
   bar_state: {
     provisional: boolean;

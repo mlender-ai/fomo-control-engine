@@ -12,6 +12,7 @@ from app.analyst.gauges import (
     build_direction_gauge,
     build_gauges,
     build_take_profit_gauge,
+    select_validated_event_pills,
     select_tier2_overlays,
 )
 
@@ -166,6 +167,67 @@ def test_tier2_caps_at_two_overlays() -> None:
     ]
     hb = {"stats": [{"engine": e, "direction": "long", "lifecycle_state": "validated"} for e in ("wyckoff", "harmonic", "derivatives")]}
     assert len(select_tier2_overlays(confluence, hb)) == 2
+
+
+def test_event_pills_require_validated_confirmed_signature() -> None:
+    analysis = _analysis(
+        sweeps=[
+            {
+                "id": "sweep-1",
+                "confirmed": True,
+                "side": "sell_side",
+                "type": "sweep",
+                "timestamp": int(NOW.timestamp()),
+                "price": 98.0,
+                "confidence": 82,
+            }
+        ]
+    )
+    analysis["candles"] = [{"time": int(NOW.timestamp())}]
+    historical = {
+        "stats": [
+            {
+                "signature": {"engine": "liquidity", "event_type": "sweep_low", "direction": "long", "strength_class": "conf>=80"},
+                "lifecycle_state": "validated",
+                "sample_size": 42,
+                "win_1r_pct": 61.9,
+            }
+        ]
+    }
+    pills = select_validated_event_pills(analysis, historical, {"provisional": False})
+    assert len(pills) == 1
+    assert pills[0]["qualification"] == "validated"
+    assert select_validated_event_pills(analysis, historical, {"provisional": False}) == pills
+    historical["stats"][0]["lifecycle_state"] = "candidate"
+    assert select_validated_event_pills(analysis, historical, {"provisional": False}) == []
+
+
+def test_candidate_engines_never_qualify_for_event_pills() -> None:
+    analysis = _analysis()
+    analysis["candles"] = [{"time": int(NOW.timestamp())}]
+    analysis["candidate_events"] = [
+        {
+            "id": "fvg-1",
+            "engine": "fvg",
+            "event_type": "gap_formed",
+            "direction": "long",
+            "time": int(NOW.timestamp()),
+            "price": 101.0,
+            "confidence": 99,
+            "confirmed": True,
+        }
+    ]
+    historical = {
+        "stats": [
+            {
+                "signature": {"engine": "fvg", "event_type": "gap_formed", "direction": "long", "strength_class": "candidate"},
+                "lifecycle_state": "validated",
+                "sample_size": 100,
+                "win_1r_pct": 90.0,
+            }
+        ]
+    }
+    assert select_validated_event_pills(analysis, historical, {"provisional": False}) == []
 
 
 # ── 잠정/확정 ────────────────────────────────────────────────────────────────

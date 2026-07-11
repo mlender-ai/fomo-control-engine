@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from html import escape
 from typing import Any, Callable
 from uuid import NAMESPACE_URL, uuid5
@@ -11,10 +11,12 @@ from app.backtest.signatures import signature_key, signature_label, signatures_f
 from app.backtest.statistics import bootstrap_ci_from_counts, format_stat_line
 from app.core.config import Settings
 from app.db.models import BacktestStat, JudgmentLedgerEntry, UniverseDiscovery, utc_now
+from app.db.models import MarketCandle
 from app.marketdata.assets import base_ticker
 from app.notify.rules import AlertCandidate
 from app.review.params import engine_param_snapshot
 from app.scout.monitor import SCOUT_SENTINEL_POSITION_ID
+from app.structure.candidates.engine import detect_stage2_template
 
 
 AnalysisLoader = Callable[[str, str], dict[str, Any]]
@@ -65,6 +67,7 @@ def run_universe_scan(
         quote_volume = _float(summary.get("quote_volume_24h"))
         current_price = _float(summary.get("mark_price") or analysis.get("mark_price"))
         asset_class = str(summary.get("asset_class") or analysis.get("asset_class") or item.get("asset_class") or "unknown")
+        stage2_passed = _stage2_gate_passed(analysis) if asset_class in {"stock", "index"} else True
         for signature in active_signatures:
             key = str(signature.get("key") or signature_key(signature))
             signature = {**signature, "key": key, "label": signature.get("label") or signature_label(signature)}
@@ -83,6 +86,7 @@ def run_universe_scan(
                 daily_room=daily_room,
                 cooldown_active=cooldown_active,
                 signature_state=sig_state,
+                stage2_passed=stage2_passed,
             )
             status = "rejected"
             alerted_at = None
@@ -198,6 +202,7 @@ def evaluate_discovery_gate(
     daily_room: bool,
     cooldown_active: bool,
     signature_state: str = "candidate",
+    stage2_passed: bool = True,
 ) -> GateResult:
     sample = int(stat.get("sample_size") or 0) if stat else 0
     ci_low = _stat_ci_low(stat)
@@ -231,12 +236,37 @@ def evaluate_discovery_gate(
         ),
         _reason("earnings_window", not (asset_class in {"stock", "index"} and earnings_blocked), earnings_blocked, "not D-1~D+1"),
     ]
+    if asset_class in {"stock", "index"} and getattr(settings, "universe_stage2_gate_enabled", True):
+        reasons.append(_reason("stage2_template", stage2_passed, stage2_passed, "2단계 상승 조건 충족"))
     quality_passed = all(item["passed"] for item in reasons)
     dispatch_reasons = [
         _reason("daily_alert_limit", daily_room, daily_room, f"max {settings.universe_daily_alert_limit}/day"),
         _reason("symbol_cooldown", not cooldown_active, cooldown_active, f"{settings.universe_symbol_cooldown_hours}h"),
     ]
     return GateResult(quality_passed, quality_passed and all(item["passed"] for item in dispatch_reasons), [*reasons, *dispatch_reasons])
+
+
+def _stage2_gate_passed(analysis: dict[str, Any]) -> bool:
+    candles: list[MarketCandle] = []
+    for item in analysis.get("candles", []) if isinstance(analysis.get("candles"), list) else []:
+        if not isinstance(item, dict):
+            continue
+        try:
+            raw_time = item.get("time")
+            timestamp = datetime.fromtimestamp(float(raw_time), tz=timezone.utc)
+            candles.append(
+                MarketCandle(
+                    timestamp=timestamp,
+                    open=float(item["open"]),
+                    high=float(item["high"]),
+                    low=float(item["low"]),
+                    close=float(item["close"]),
+                    volume=float(item.get("volume") or 0),
+                )
+            )
+        except (KeyError, TypeError, ValueError, OSError):
+            continue
+    return bool(detect_stage2_template(candles).get("active"))
 
 
 def _stat_ci(stat: dict[str, Any] | None) -> list[float] | None:

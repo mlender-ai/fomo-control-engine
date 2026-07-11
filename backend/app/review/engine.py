@@ -606,6 +606,8 @@ def _score_one_judgment(trade: Trade, judgment: JudgmentLedgerEntry, price_path:
         outcome, detail, metrics = _score_directional_event(judgment, path)
     elif judgment.type == "liquidity_sweep":
         outcome, detail, metrics = _score_directional_event(judgment, path)
+    elif judgment.type == "candidate_signature":
+        outcome, detail, metrics = _score_directional_event(judgment, path)
     elif judgment.type == "analyst_briefing":
         outcome, detail, metrics = _score_analyst_briefing(judgment, path)
     elif judgment.type == "harmonic_prz":

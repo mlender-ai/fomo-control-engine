@@ -10,6 +10,7 @@ from app.backtest.overlap import overlap_groups_payload
 from app.backtest.regimes import label_regime
 from app.backtest.replay import aggregate_by_signature, replay_candles
 from app.backtest.signatures import signature_key, signatures_from_analysis
+from app.structure.candidates.engine import CANDIDATE_ENGINES
 from app.backtest.statistics import DISCLAIMER_NET, format_stat_line
 from app.core.config import Settings
 from app.db.models import BacktestStat, MarketCandle, utc_now
@@ -87,7 +88,8 @@ def historical_context_for_analysis(
     stats = aggregate_by_signature(cases, statistics_params=_statistics_params(settings))
     overlap_groups = overlap_groups_payload(cases, threshold=float(getattr(settings, "backtest_overlap_threshold", 0.7)))
     saved = [_save_stat(repo, symbol, timeframe, analysis, stat, overlap_groups) for stat in stats]
-    selected = _matching_stats(saved, active_signatures) or saved[:3]
+    public_saved = [stat for stat in saved if _stat_engine(stat) not in CANDIDATE_ENGINES]
+    selected = _matching_stats(public_saved, active_signatures) or public_saved[:3]
     _annotate_states(repo, settings, selected)
     payload = _payload(
         symbol,
@@ -195,6 +197,11 @@ def _cached_overlap_groups(cached: list[dict[str, Any]]) -> list[dict[str, Any]]
 def _matching_stats(stats: list[dict[str, Any]], active_signatures: list[dict[str, Any]]) -> list[dict[str, Any]]:
     active_keys = {str(item.get("key") or signature_key(item)) for item in active_signatures}
     return [stat for stat in stats if stat.get("signature_key") in active_keys]
+
+
+def _stat_engine(stat: dict[str, Any]) -> str:
+    signature = stat.get("signature") if isinstance(stat.get("signature"), dict) else {}
+    return str(signature.get("engine") or stat.get("engine") or "")
 
 
 def _save_stat(

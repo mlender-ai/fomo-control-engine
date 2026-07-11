@@ -51,6 +51,7 @@ from app.scout.monitor import (
     setup_candidates_from_analysis,
 )
 from app.structure.wyckoff.engine import analyze_structure
+from app.structure.candidates.engine import detect_candidate_signatures
 
 
 SCENARIO_MATCH_WINDOW_HOURS = 72
@@ -430,6 +431,8 @@ def _compute_analysis_entry(
         }
     )
     analysis["historical_backtest"] = historical
+    if include_history:
+        _record_candidate_judgments(snapshot.symbol, snapshot.timeframe, snapshot.candles)
     entry = {
         "analysis": analysis,
         "summary": _summary_row(symbol, snapshot, analysis, derivatives),
@@ -439,6 +442,41 @@ def _compute_analysis_entry(
     }
     _ANALYSIS_CACHE[key] = entry
     return entry
+
+
+def _record_candidate_judgments(symbol: str, timeframe: str, candles: list[Any]) -> None:
+    """Persist candidate observations without exposing them to public analysis payloads."""
+    detected = detect_candidate_signatures(candles)
+    for event in detected.get("events", []):
+        if not isinstance(event, dict):
+            continue
+        event_id = str(event.get("id") or "")
+        if not event_id:
+            continue
+        direction = str(event.get("direction") or "neutral")
+        _repo().add_judgment(
+            JudgmentLedgerEntry(
+                judgment_id=f"candidate:{symbol.upper()}:{timeframe}:{event_id}",
+                position_id=SCOUT_SENTINEL_POSITION_ID,
+                source_type="candidate_signature",
+                source_id=event_id,
+                as_of=datetime.fromisoformat(str(event.get("as_of"))),
+                type="candidate_signature",
+                claim={
+                    "symbol": symbol.upper(),
+                    "timeframe": timeframe,
+                    "engine": event.get("engine"),
+                    "event_type": event.get("event_type"),
+                    "direction": direction,
+                    "price": event.get("price"),
+                    "condition": "candidate_confirms_up" if direction == "long" else "candidate_confirms_down" if direction == "short" else "observe",
+                    "expected_move": "up" if direction == "long" else "down" if direction == "short" else None,
+                    "lifecycle_state": "candidate",
+                    "components": event.get("components") or {},
+                },
+                param_version=engine_param_snapshot(_repo()),
+            )
+        )
 
 
 def _market_tickers() -> list[dict[str, Any]]:

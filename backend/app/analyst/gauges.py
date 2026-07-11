@@ -29,6 +29,7 @@ TP_RECENT_SWEEP_BARS = 6.0  # 최근 N캔들 내 profit 방향 확정 스윕 = �
 # 티어2 오버레이 후보 엔진 (티어1 관측 3축 제외 — 성적이 자격을 정한다)
 TIER2_ENGINES = {"wyckoff", "harmonic", "derivatives"}
 TIER2_MAX_OVERLAYS = 2
+EVENT_PILL_MAX = 6
 
 
 def build_gauges(
@@ -41,11 +42,13 @@ def build_gauges(
     timeframe: str = "4h",
 ) -> dict[str, Any]:
     """압축 차트 페이로드: 방향 게이지 + 익절 게이지 + 티어2 자동 선별 + 잠정/확정."""
+    bar_state = _bar_state(analysis, timeframe, now)
     return {
         "direction": build_direction_gauge(confluence),
         "take_profit": build_take_profit_gauge(analysis, position),
         "tier2_overlays": select_tier2_overlays(confluence, historical_backtest),
-        "bar_state": _bar_state(analysis, timeframe, now),
+        "event_pills": select_validated_event_pills(analysis, historical_backtest, bar_state),
+        "bar_state": bar_state,
         "policy": "게이지는 판단 표시입니다. 주문과 무관하며 판단은 사용자 몫입니다.",
     }
 
@@ -76,8 +79,161 @@ def build_direction_gauge(confluence: dict[str, Any]) -> dict[str, Any]:
         "target": state.get("target"),
         "flip_progress": _num(state.get("flip_threshold_progress"), 0.0),
         "candles_in_state": state.get("candles_in_state"),
+        "since": state.get("since"),
+        "last_flip_at": state.get("last_flip_at"),
+        "previous_stance": state.get("previous_stance"),
+        "long_evidence_count": len(_list(confluence.get("long_evidence"))),
+        "short_evidence_count": len(_list(confluence.get("short_evidence"))),
         "reason": _direction_reason(stance, transitioning, state, confluence),
     }
+
+
+def select_validated_event_pills(
+    analysis: dict[str, Any],
+    historical_backtest: dict[str, Any] | None,
+    bar_state: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Return immutable chart pills for confirmed events with validated statistics.
+
+    Candidate engines are intentionally not inspected here.  Qualification is
+    derived from the persisted signature lifecycle, not from the event label.
+    """
+    if not isinstance(historical_backtest, dict):
+        return []
+    validated = _validated_stats(historical_backtest)
+    events: list[dict[str, Any]] = []
+
+    liquidity = _dict(analysis.get("liquidity"))
+    for sweep in _list(liquidity.get("sweeps")) + _list(liquidity.get("htf_range_sweeps")):
+        if not sweep.get("confirmed"):
+            continue
+        direction = "long" if sweep.get("side") == "sell_side" else "short" if sweep.get("side") == "buy_side" else None
+        if direction is None:
+            continue
+        prefix = "htf_sweep" if sweep.get("type") == "htf_range_sweep" else "sweep"
+        event_type = f"{prefix}_{'low' if direction == 'long' else 'high'}"
+        confidence = int(_num(sweep.get("confidence"), 0))
+        stat = _matching_validated_stat(validated, "liquidity", event_type, direction, confidence)
+        if stat is None:
+            continue
+        events.append(
+            _pill(
+                event_id=str(sweep.get("id") or f"{event_type}:{sweep.get('timestamp')}"),
+                time_value=sweep.get("timestamp"),
+                price=sweep.get("price") or sweep.get("pool_price"),
+                direction=direction,
+                label="저점 청소" if direction == "long" else "고점 청소",
+                confidence=confidence,
+                stat=stat,
+            )
+        )
+
+    for marker in _list(analysis.get("wyckoff_markers")):
+        marker_type = str(marker.get("type") or "").lower()
+        label = str(marker.get("label") or marker_type)
+        if marker_type in {"spring", "sos", "lps"} or any(token in label.lower() for token in ("spring", "sos", "lps")):
+            direction, event_type = "long", "spring_confirmed" if "spring" in f"{marker_type} {label}".lower() else "wyckoff_long_event"
+        elif marker_type in {"utad", "sow", "lpsy"} or any(token in label.lower() for token in ("utad", "sow", "lpsy")):
+            direction, event_type = "short", "utad_confirmed" if "utad" in f"{marker_type} {label}".lower() else "wyckoff_short_event"
+        else:
+            continue
+        confidence = int(_num(marker.get("confidence"), 0))
+        stat = _matching_validated_stat(validated, "wyckoff", event_type, direction, confidence)
+        if stat is None:
+            continue
+        events.append(
+            _pill(
+                event_id=str(marker.get("id") or f"{event_type}:{marker.get('time')}"),
+                time_value=marker.get("time"),
+                price=marker.get("price"),
+                direction=direction,
+                label=label,
+                confidence=confidence,
+                stat=stat,
+            )
+        )
+
+    for pattern in _list(analysis.get("harmonic_patterns")):
+        if str(pattern.get("status")) != "completed":
+            continue
+        direction = "long" if pattern.get("direction") == "bullish" else "short" if pattern.get("direction") == "bearish" else None
+        if direction is None:
+            continue
+        confidence = int(_num(pattern.get("confidence"), 0))
+        stat = _matching_validated_stat(validated, "harmonic", "prz_touch", direction, confidence)
+        points = _list(pattern.get("points"))
+        anchor = points[-1] if points else {}
+        prz = _dict(pattern.get("prz"))
+        if stat is None:
+            continue
+        events.append(
+            _pill(
+                event_id=str(pattern.get("id") or f"harmonic:{anchor.get('time')}"),
+                time_value=anchor.get("time"),
+                price=anchor.get("price") or prz.get("mid"),
+                direction=direction,
+                label=f"{pattern.get('label') or pattern.get('name') or '반전 구간'}",
+                confidence=confidence,
+                stat=stat,
+            )
+        )
+
+    confirmed_cutoff = _last_confirmed_timestamp(analysis, bar_state)
+    qualified = [event for event in events if event["time"] <= confirmed_cutoff]
+    qualified.sort(key=lambda item: (item["time"], item["confidence"]), reverse=True)
+    return qualified[:EVENT_PILL_MAX]
+
+
+def _validated_stats(historical: dict[str, Any]) -> list[dict[str, Any]]:
+    return [stat for stat in _list(historical.get("stats")) if str(stat.get("lifecycle_state")) == "validated"]
+
+
+def _matching_validated_stat(stats: list[dict[str, Any]], engine: str, event_type: str, direction: str, confidence: int) -> dict[str, Any] | None:
+    for stat in stats:
+        signature = _dict(stat.get("signature"))
+        if str(signature.get("engine") or stat.get("engine")) != engine:
+            continue
+        if str(signature.get("event_type") or stat.get("event_type")) != event_type:
+            continue
+        if str(signature.get("direction") or stat.get("direction")) != direction:
+            continue
+        strength = str(signature.get("strength_class") or stat.get("strength_class") or "")
+        normalized_strength = strength.lower()
+        threshold = (
+            80
+            if ">=80" in strength
+            else 70
+            if ">=70" in strength or normalized_strength == "strong"
+            else 55
+            if ">=55" in strength or normalized_strength in {"mid", "weak"}
+            else 70
+        )
+        if confidence >= threshold:
+            return stat
+    return None
+
+
+def _pill(*, event_id: str, time_value: Any, price: Any, direction: str, label: str, confidence: int, stat: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": event_id,
+        "time": int(_num(time_value, 0)),
+        "price": _num(price, 0),
+        "direction": direction,
+        "label": label,
+        "confidence": confidence,
+        "win_1r_pct": stat.get("win_1r_pct"),
+        "sample_size": int(stat.get("sample_size") or 0),
+        "qualification": "validated",
+        "confirmed": True,
+    }
+
+
+def _last_confirmed_timestamp(analysis: dict[str, Any], bar_state: dict[str, Any]) -> int:
+    candles = _list(analysis.get("candles"))
+    if not candles:
+        return 0
+    index = -2 if bar_state.get("provisional") is True and len(candles) > 1 else -1
+    return int(_num(candles[index].get("time"), 0))
 
 
 def _direction_reason(stance: str, transitioning: bool, state: dict[str, Any], confluence: dict[str, Any]) -> str:

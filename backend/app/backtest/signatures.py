@@ -80,6 +80,10 @@ def signature_label(signature: dict[str, Any]) -> str:
         "wyckoff": "와이코프",
         "harmonic": "하모닉",
         "levels": "레벨",
+        "fvg": "미충전 갭",
+        "order_block": "매물 존",
+        "vcp": "변동성 수축",
+        "stage2_template": "2단계 상승 조건",
     }.get(engine, engine)
     event_label = {
         "sweep_low": "저점 스윕",
@@ -90,6 +94,10 @@ def signature_label(signature: dict[str, Any]) -> str:
         "utad_confirmed": "UTAD 확인",
         "prz_touch": "PRZ 터치",
         "level_touch": "레벨 반응",
+        "gap_formed": "형성",
+        "retest": "재시험",
+        "contraction": "수축 확인",
+        "stage2_active": "조건 진입",
     }.get(event, event)
     direction_label = "롱" if direction == "long" else "숏" if direction == "short" else "중립"
     return f"{engine_label} {event_label} · {strength} · {direction_label}"
@@ -211,4 +219,3 @@ def _num(value: Any, default: float) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
-

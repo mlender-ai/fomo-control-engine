@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.db.models import AutonomyLog, SignatureState
+from app.structure.candidates.engine import CANDIDATE_ENGINES
 
 SIGNATURE_STATE_LABELS: dict[str, str] = {
     "candidate": "후보 (표본 부족)",
@@ -34,6 +35,10 @@ DOWNGRADE_ORDER = ["candidate", "validated", "degraded", "quarantined"]
 def base_state(stat: dict[str, Any] | None, *, min_sample: int = 30, min_ci_low: float = 50.0) -> SignatureState:
     """로그가 없는 신규 시그니처의 기본 상태 — WO-36 게이트 기준(N·CI 하한)."""
     if not isinstance(stat, dict):
+        return "candidate"
+    signature = stat.get("signature") if isinstance(stat.get("signature"), dict) else {}
+    engine = str(signature.get("engine") or stat.get("engine") or "")
+    if engine in CANDIDATE_ENGINES:
         return "candidate"
     n = int(stat.get("sample_size") or 0)
     ci_low = _ci_low(stat)

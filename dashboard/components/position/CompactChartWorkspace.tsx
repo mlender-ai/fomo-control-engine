@@ -58,16 +58,13 @@ export function CompactChartWorkspace({
 
 export function CompactGaugePanel({
   gauges,
-  nextPrice,
-  loading = false
+  nextPrice
 }: {
   gauges: CompactChartGauges | null;
   nextPrice: CompactNextPrice | null;
   loading?: boolean;
 }) {
   const provisional = Boolean(gauges?.bar_state.provisional);
-  const needle = clamp(((gauges?.direction.needle ?? 0) + 1) * 50, 0, 100);
-  const transitionPct = clamp((gauges?.direction.flip_progress ?? 0) * 100, 0, 100);
   const minutes = gauges?.bar_state.minutes_to_close ?? null;
   const countdown = minutes === null
     ? "마감 시각 확인 중"
@@ -85,24 +82,6 @@ export function CompactGaugePanel({
         </div>
         {provisional ? <em>{countdown}</em> : null}
       </header>
-
-      <section className="compactGaugeCard" data-testid="direction-gauge">
-        <div className="compactGaugeTitle">
-          <span>방향 근거</span>
-          <strong>{loading && !gauges ? "계산 중" : gauges?.direction.stance_label || "판단 대기"}</strong>
-        </div>
-        <div className="directionGaugeTrack" aria-label="숏과 롱 근거의 상대 위치">
-          <span>숏</span>
-          <i><b style={{ left: `${needle}%` }} /></i>
-          <span>롱</span>
-        </div>
-        {gauges?.direction.transitioning ? (
-          <div className="gaugeTransition">
-            전환 관찰 중 <b>문턱 {Math.round(transitionPct)}%</b>
-          </div>
-        ) : null}
-        <p>{gauges?.direction.reason || "확정 캔들 기준 방향 근거를 계산하고 있습니다."}</p>
-      </section>
 
       <section className={`compactGaugeCard ${gauges?.take_profit.active ? "" : "inactive"}`} data-testid="take-profit-gauge">
         <div className="compactGaugeTitle">

@@ -2220,6 +2220,67 @@ h3 {
   pointer-events: none;
 }
 
+.volumeProfileOverlay .validatedEventPill,
+.volumeProfileOverlay [data-stance-flip="true"] {
+  pointer-events: auto;
+  cursor: help;
+}
+
+.stanceHud {
+  position: absolute;
+  z-index: 5;
+  top: 12px;
+  right: calc(var(--chart-axis-gutter, 82px) + 12px);
+  max-width: min(620px, calc(100% - 130px));
+}
+
+.stanceHud > button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  border: 1px solid var(--terminal-line-strong);
+  border-radius: 6px;
+  background: rgba(var(--chart-panel-rgb), 0.9);
+  color: var(--terminal-text);
+  padding: 6px 10px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.stanceHud.provisional > button {
+  opacity: 0.58;
+  border-style: dashed;
+}
+
+.stanceHudDot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--terminal-muted);
+}
+
+.stanceHudDot.long { background: var(--terminal-positive); }
+.stanceHudDot.short { background: var(--terminal-negative); }
+.stanceHudDot.transition { background: var(--terminal-amber); }
+
+.stanceHudStrip {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px 10px;
+  margin-top: 6px;
+  border: 1px solid var(--terminal-line);
+  border-radius: 6px;
+  background: rgba(var(--chart-panel-rgb), 0.94);
+  padding: 9px 10px;
+  color: var(--terminal-muted);
+  font-size: 10px;
+}
+
+.stanceHudStrip b { color: var(--terminal-text); }
+
 .positionChartCanvasFrame:not(.showOverlayGuides) .chartOverlayGuideLabel {
   display: none;
 }
@@ -5856,7 +5917,7 @@ button.actionPlanRow:not(:disabled):hover {
 
 .compactChartWorkspace {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(260px, 310px);
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 250px);
   gap: 12px;
   min-width: 0;
   align-items: stretch;
@@ -5879,7 +5940,7 @@ button.actionPlanRow:not(:disabled):hover {
 
 .compactGaugePanel {
   display: grid;
-  grid-template-rows: auto auto auto 1fr;
+  grid-template-rows: auto auto 1fr;
   gap: 10px;
   min-width: 0;
   border: 1px solid var(--terminal-line);

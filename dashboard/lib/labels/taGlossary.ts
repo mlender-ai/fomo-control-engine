@@ -199,7 +199,9 @@ export type MarketStructureTerm =
   | "BOS"
   | "CHoCH"
   | "Premium"
-  | "Discount";
+  | "Discount"
+  | "FVG"
+  | "OrderBlock";
 
 export const MARKET_STRUCTURE_GLOSSARY: Record<MarketStructureTerm, TaGlossaryEntry> = {
   PRZ: {
@@ -273,6 +275,16 @@ export const MARKET_STRUCTURE_GLOSSARY: Record<MarketStructureTerm, TaGlossaryEn
     term: "discount",
     short: "디스카운트 구간",
     plain: "활성 레인지의 하단 절반. 롱은 반응 근거를, 숏은 익절/리스크를 확인하는 구간입니다"
+  },
+  FVG: {
+    term: "FVG",
+    short: "미충전 갭",
+    plain: "세 캔들 사이에 거래가 건너뛴 가격 구간. 절반 이상 다시 채워지는지 백그라운드에서 검증합니다"
+  },
+  OrderBlock: {
+    term: "Order Block",
+    short: "매물 존",
+    plain: "구조 돌파 직전 반대색 캔들의 몸통 구간. 재시험 반응을 백그라운드에서 검증합니다"
   }
 };
 

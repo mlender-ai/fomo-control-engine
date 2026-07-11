@@ -88,6 +88,7 @@ export function PositionCandlestickChart({
   const viewportRef = useRef<{ key: string; locked: boolean; range: LogicalRange | null }>({ key: "", locked: false, range: null });
   const [harmonicIndex, setHarmonicIndex] = useState(0);
   const [guideOpen, setGuideOpen] = useState(false);
+  const [stanceStripOpen, setStanceStripOpen] = useState(false);
   const [dragStartPrice, setDragStartPrice] = useState<number | null>(null);
   const [dragStartY, setDragStartY] = useState<number | null>(null);
   const [zoneBand, setZoneBand] = useState<{ top: number; bottom: number } | null>(null);
@@ -598,7 +599,24 @@ export function PositionCandlestickChart({
       </div>
       <div className={`positionChartCanvasFrame ${guideOpen ? "showOverlayGuides" : ""}`} data-testid="chart-canvas-frame">
         <div className="positionChartCanvas" data-testid="chart-canvas" ref={containerRef} />
-        <svg className="volumeProfileOverlay" data-testid="chart-overlay" ref={overlayRef} aria-hidden="true" />
+        <svg className="volumeProfileOverlay" data-testid="chart-overlay" ref={overlayRef} />
+        {compressed && gauges ? (
+          <div className={`stanceHud ${gauges.bar_state.provisional ? "provisional" : ""}`} data-testid="stance-hud">
+            <button type="button" onClick={() => setStanceStripOpen((value) => !value)} aria-expanded={stanceStripOpen}>
+              <span className={`stanceHudDot ${stanceTone(gauges.direction.stance, gauges.direction.transitioning)}`} />
+              <strong>{gauges.direction.transitioning ? "전환 관찰 중" : gauges.direction.stance_label || "판단 대기"}</strong>
+              <span>· {gauges.direction.candles_in_state ?? 0}캔들째</span>
+              <span>| 상방 {gauges.direction.long_evidence_count ?? 0} · 하방 {gauges.direction.short_evidence_count ?? 0}</span>
+            </button>
+            {stanceStripOpen ? (
+              <div className="stanceHudStrip" data-testid="stance-hud-strip">
+                {(analysis.one_liners?.lines ?? []).map((line) => (
+                  <span key={line.module}><b>{line.module_label}</b> {line.phrase}</span>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         {zoneBand ? (
           <div
             className="chartIntentZoneBand"
@@ -862,6 +880,10 @@ function renderTaOverlay(
     zones.push(...compact.zones);
     shapes.push(...compact.shapes);
     badges.push(...compact.badges);
+    if (gauges) {
+      shapes.push(...stanceRibbonNodes(context, gauges));
+      badges.push(...validatedEventPillNodes(context, gauges));
+    }
   } else if (minimalEvidence) {
     const minimal = minimalEvidenceOverlayNodes(context, minimalEvidence, activeHarmonic);
     zones.push(...minimal.zones);
@@ -977,6 +999,94 @@ function compressedOverlayNodes(context: OverlayContext, gauges: CompactChartGau
     }
   }
   return group;
+}
+
+function stanceRibbonNodes(context: OverlayContext, gauges: CompactChartGauges): string[] {
+  const source = context.analysis.indicators.bollinger.middle?.length
+    ? context.analysis.indicators.bollinger.middle.map((point) => ({ time: point.time, value: point.value }))
+    : context.analysis.candles.map((candle) => ({ time: candle.time, value: candle.close }));
+  const points = source
+    .slice(-72)
+    .map((point) => ({ x: context.chart.timeScale().timeToCoordinate(point.time as Time), y: context.series.priceToCoordinate(point.value), time: point.time }))
+    .filter((point): point is { x: number; y: number; time: number } => point.x !== null && point.y !== null);
+  if (points.length < 2) return [];
+  const since = parseChartTime(gauges.direction.since);
+  const splitAt = since ? Math.max(0, points.findIndex((point) => point.time >= since)) : 0;
+  const prior = splitAt > 0 ? points.slice(0, splitAt + 1) : [];
+  const active = points.slice(Math.max(0, splitAt));
+  const tone = stanceTone(gauges.direction.stance, gauges.direction.transitioning);
+  const activeColor = tone === "long" ? context.palette.color("green", 0.9)
+    : tone === "short" ? context.palette.color("red", 0.9)
+      : tone === "transition" ? context.palette.color("amber", 0.92)
+        : context.palette.color("neutral", 0.68);
+  const nodes: string[] = [`<g data-testid="stance-ribbon" class="stanceRibbon">`];
+  if (prior.length > 1) nodes.push(`<path d="${svgPath(prior)}" fill="none" stroke="${context.palette.color("neutral", 0.38)}" stroke-width="3" />`);
+  if (active.length > 1) {
+    const settled = gauges.bar_state.provisional ? active.slice(0, -1) : active;
+    if (settled.length > 1) nodes.push(`<path d="${svgPath(settled)}" fill="none" stroke="${activeColor}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />`);
+    if (gauges.bar_state.provisional && active.length > 1) {
+      nodes.push(`<path d="${svgPath(active.slice(-2))}" fill="none" stroke="${activeColor}" stroke-opacity="0.42" stroke-width="3" stroke-dasharray="4 5" />`);
+    }
+  }
+  const flipTime = parseChartTime(gauges.direction.last_flip_at);
+  const flip = flipTime ? nearestTimePoint(points, flipTime) : null;
+  if (flip) {
+    nodes.push(`<line x1="${flip.x}" x2="${flip.x}" y1="18" y2="${Math.max(24, context.height - 30)}" stroke="${activeColor}" stroke-opacity="0.18" stroke-width="1" />`);
+    nodes.push(`<circle data-stance-flip="true" cx="${flip.x}" cy="${flip.y}" r="5" fill="${activeColor}" stroke="${context.palette.color("panel", 0.95)}" stroke-width="2"><title>${escapeSvgText(gauges.direction.reason)}</title></circle>`);
+  }
+  if (gauges.direction.transitioning && active.length) {
+    const point = active.at(-1)!;
+    nodes.push(`<text x="${clamp(point.x - 8, 80, context.right - 12)}" y="${clamp(point.y - 12, 20, context.height - 30)}" text-anchor="end" fill="${activeColor}" font-size="11" font-weight="760">전환 관찰 중 (문턱 ${Math.round((gauges.direction.flip_progress ?? 0) * 100)}%)</text>`);
+  }
+  nodes.push("</g>");
+  return nodes;
+}
+
+function validatedEventPillNodes(context: OverlayContext, gauges: CompactChartGauges): string[] {
+  return (gauges.event_pills ?? [])
+    .filter((pill) => pill.qualification === "validated" && pill.confirmed)
+    .slice(0, 6)
+    .flatMap((pill, index) => {
+      const x = context.chart.timeScale().timeToCoordinate(pill.time as Time);
+      const y = context.series.priceToCoordinate(pill.price);
+      if (x === null || y === null) return [];
+      const label = truncateSvgLabel(pill.label, 12);
+      const width = Math.max(72, label.length * 11 + 26);
+      const left = clamp(x - width / 2, 8, context.right - width - 6);
+      const above = pill.direction === "short";
+      const top = clamp(y + (above ? -34 : 14) + (index % 2) * (above ? -3 : 3), 8, context.height - 28);
+      const color = pill.direction === "long" ? context.palette.color("green", 0.9) : context.palette.color("red", 0.9);
+      const result = pill.sample_size >= 30 && pill.win_1r_pct !== null && pill.win_1r_pct !== undefined
+        ? `실측 ${pill.win_1r_pct}% (N=${pill.sample_size})`
+        : "표본 축적 중";
+      return [
+        `<g class="validatedEventPill" data-event-pill="${escapeSvgText(pill.id)}" tabindex="0">` +
+        `<title>${escapeSvgText(`${pill.label} · 신뢰도 ${pill.confidence} · ${result}`)}</title>` +
+        `<rect x="${left}" y="${top}" width="${width}" height="24" rx="12" fill="${color}" />` +
+        `<text x="${left + 12}" y="${top + 16}" fill="${context.palette.color("panel")}" font-size="11" font-weight="800">${pill.direction === "long" ? "↑" : "↓"} ${escapeSvgText(label)}</text></g>`
+      ];
+    });
+}
+
+function svgPath(points: Array<{ x: number; y: number }>): string {
+  return points.map((point, index) => `${index ? "L" : "M"}${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" ");
+}
+
+function parseChartTime(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? Math.floor(timestamp / 1000) : null;
+}
+
+function nearestTimePoint<T extends { time: number }>(points: T[], time: number): T | null {
+  return points.reduce<T | null>((best, point) => !best || Math.abs(point.time - time) < Math.abs(best.time - time) ? point : best, null);
+}
+
+function stanceTone(stance: string, transitioning = false): "long" | "short" | "neutral" | "transition" {
+  if (transitioning) return "transition";
+  if (stance === "long_leaning") return "long";
+  if (stance === "short_leaning") return "short";
+  return "neutral";
 }
 
 function compactPriceLine(

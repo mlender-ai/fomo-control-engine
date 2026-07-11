@@ -26,7 +26,9 @@ test("live position cockpit smoke path", async ({ page }) => {
   await expect(page.getByTestId("position-strip")).toBeVisible();
   await expect(page.getByTestId("position-card")).toHaveCount(3);
   await expect(page.getByTestId("compact-chart-workspace")).toBeVisible();
-  await expect(page.getByTestId("direction-gauge")).toBeVisible();
+  await expect(page.getByTestId("stance-ribbon")).toBeVisible();
+  await expect(page.getByTestId("stance-hud")).toBeVisible();
+  await expect(page.getByTestId("direction-gauge")).toHaveCount(0);
   await expect(page.getByTestId("take-profit-gauge")).toBeVisible();
   await expect(page.getByTestId("position-chart")).toBeVisible();
   await expect(page.getByTestId("chart-canvas-frame")).toBeVisible();
@@ -57,7 +59,8 @@ test("scout, analysis, simulator and calibration smoke paths", async ({ page }) 
   await page.getByTestId("scout-quick-answer").getByRole("button", { name: "자세히", exact: true }).click();
   await expect(page.getByTestId("scout-analysis-view")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("compact-chart-workspace")).toBeVisible();
-  await expect(page.getByTestId("direction-gauge")).toBeVisible();
+  await expect(page.getByTestId("stance-ribbon")).toBeVisible();
+  await expect(page.getByTestId("direction-gauge")).toHaveCount(0);
   await expect(page.getByTestId("take-profit-gauge")).toHaveClass(/inactive/);
 
   await page.goto("/calibration");

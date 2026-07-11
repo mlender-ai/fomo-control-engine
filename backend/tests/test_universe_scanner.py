@@ -194,6 +194,22 @@ def test_universe_gate_blocks_each_quality_condition() -> None:
     )
 
 
+def test_stock_universe_gate_requires_stage2_when_enabled() -> None:
+    result = evaluate_discovery_gate(
+        _settings(universe_stage2_gate_enabled=True),
+        confidence=80,
+        stat={"sample_size": 40, "win_1r_pct": 75.0, "win_1r_ci": [60.0, 87.5]},
+        quote_volume_24h=2_000_000,
+        asset_class="stock",
+        earnings_blocked=False,
+        daily_room=True,
+        cooldown_active=False,
+        stage2_passed=False,
+    )
+    assert result.quality_passed is False
+    assert "stage2_template" in [reason["code"] for reason in result.reasons if not reason["passed"]]
+
+
 def test_universe_scan_creates_alert_candidate_and_judgment_for_gate_pass() -> None:
     repo = _repo_with_catalog([("BTCUSDT", "crypto")])
     signature = _signature()

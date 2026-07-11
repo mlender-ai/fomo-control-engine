@@ -484,6 +484,10 @@ class Settings(BaseSettings):
         True,
         validation_alias=AliasChoices("FCE_UNIVERSE_SCANNER_ENABLED", "UNIVERSE_SCANNER_ENABLED"),
     )
+    universe_stage2_gate_enabled: bool = Field(
+        True,
+        validation_alias=AliasChoices("FCE_UNIVERSE_STAGE2_GATE_ENABLED", "UNIVERSE_STAGE2_GATE_ENABLED"),
+    )
     worker_universe_scan_interval_seconds: int = Field(
         1800,
         validation_alias=AliasChoices(

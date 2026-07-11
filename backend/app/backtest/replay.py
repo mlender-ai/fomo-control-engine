@@ -11,6 +11,7 @@ from app.marketdata.assets import classify_asset_class
 from app.structure.harmonic.engine import detect_harmonic_patterns
 from app.structure.levels.engine import StructureLevel, detect_structure_levels
 from app.structure.liquidity.engine import analyze_liquidity_structure
+from app.structure.candidates.engine import detect_candidate_signatures
 
 MIN_REPLAY_CANDLES = 60
 DEFAULT_LOOKAHEAD_BARS = 48
@@ -125,7 +126,27 @@ def _events_at_confirmation(
     events.extend(_liquidity_events(symbol, timeframe, asset_class, past, levels, current))
     events.extend(_level_events(timeframe, asset_class, current, levels))
     events.extend(_harmonic_events(timeframe, asset_class, past, levels, current))
+    events.extend(_candidate_events(timeframe, asset_class, past))
     return _dedupe_events(events)
+
+
+def _candidate_events(timeframe: str, asset_class: str, past: list[MarketCandle]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    for event in detect_candidate_signatures(past).get("events", []):
+        if not isinstance(event, dict) or event.get("direction") not in {"long", "short"}:
+            continue
+        signature = SetupSignature(
+            engine=str(event.get("engine")),
+            event_type=str(event.get("event_type")),
+            strength_class="candidate",
+            direction=str(event.get("direction")),
+            asset_class=asset_class,
+            timeframe=timeframe,
+        ).model_dump()
+        signature["key"] = signature_key(signature)
+        signature["label"] = signature_label(signature)
+        result.append({"direction": event["direction"], "signature": signature, "event": event})
+    return result
 
 
 def _liquidity_events(
@@ -267,4 +288,3 @@ def _float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
-
