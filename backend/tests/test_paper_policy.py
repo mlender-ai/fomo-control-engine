@@ -8,7 +8,7 @@ from app.backtest.signatures import signatures_from_analysis
 from app.db.models import Direction, MarketCandle, WatchlistItem
 from app.db.repository import MemoryRepository, SQLiteRepository
 from app.paper.policy import PaperPolicy, apply_exit_decision, evaluate_entry, evaluate_exit, open_trade
-from app.paper.service import paper_scoreboard, run_paper_engine
+from app.paper.service import _gate_diagnostic_event, paper_gate_funnel, paper_scoreboard, run_paper_engine
 
 
 BASE_TIME = datetime(2026, 7, 12, 0, 0, tzinfo=timezone.utc)
@@ -154,6 +154,17 @@ def test_paper_repository_migration_and_reopen(tmp_path) -> None:
     reopened = SQLiteRepository(path)
     assert reopened.get_paper_trade(TRADE_ID).symbol == "BTCUSDT"
     assert reopened.get_paper_engine_state("BTCUSDT", "4h")["last_bar_at"] == BASE_TIME.isoformat()
+    record = {
+        "symbol": "BTCUSDT",
+        "timeframe": "4h",
+        "bar_at": BASE_TIME.isoformat(),
+        "gates": {"confirmed_flip": False},
+        "entered": False,
+        "rejected_at": "confirmed_flip",
+    }
+    assert repo.upsert_paper_gate_funnel(record) is True
+    assert repo.upsert_paper_gate_funnel(record) is False
+    assert SQLiteRepository(path).list_paper_gate_funnel(symbol="BTCUSDT")[0]["bar_at"] == BASE_TIME.isoformat()
 
 
 def test_worker_engine_opens_once_per_confirmed_bar_and_records_ledger() -> None:
@@ -164,9 +175,7 @@ def test_worker_engine_opens_once_per_confirmed_bar_and_records_ledger() -> None
         "timeframe": "4h",
         "asset_class": "crypto",
         "mark_price": 100,
-        "candles": [
-            {"time": int(BASE_TIME.timestamp()), "open": 100, "high": 101, "low": 99, "close": 100, "volume": 1_000}
-        ],
+        "candles": [{"time": int(BASE_TIME.timestamp()), "open": 100, "high": 101, "low": 99, "close": 100, "volume": 1_000}],
         "liquidity": {
             "sweeps": [
                 {
@@ -224,6 +233,10 @@ def test_worker_engine_opens_once_per_confirmed_bar_and_records_ledger() -> None
     def simulate(_symbol, _timeframe, _direction, _entry):
         return simulation
 
+    # WO-63 may already have advanced the legacy engine state before the
+    # dedicated funnel table is deployed. The current confirmed bar must be
+    # evaluated once to bootstrap observability, then remain idempotent.
+    repo.upsert_paper_engine_state("TESTUSDT", "4h", {"last_bar_at": BASE_TIME.isoformat()})
     first = run_paper_engine(repo, settings, analysis_loader=load, simulation_loader=simulate, now=BASE_TIME)
     second = run_paper_engine(repo, settings, analysis_loader=load, simulation_loader=simulate, now=BASE_TIME)
 
@@ -232,6 +245,9 @@ def test_worker_engine_opens_once_per_confirmed_bar_and_records_ledger() -> None
     assert second["opened"] == 0
     assert second["events"] == []
     assert second["skipped_same_bar"] == 1
+    funnel_rows = repo.list_paper_gate_funnel(symbol="TESTUSDT")
+    assert len(funnel_rows) == 1
+    assert funnel_rows[0]["entered"] is True
     trade = repo.list_paper_trades(status="open")[0]
     assert trade.entry_evidence["items"]
     assert repo.list_judgments(trade.id)[0].type == "paper_trade_entry"
@@ -289,6 +305,62 @@ def test_scoreboard_compares_ratios_and_never_enables_live_orders() -> None:
     assert result["equity_curve"]["engine"][-1]["return_pct"] == result["engine"]["net_return_pct"]
     assert result["live_orders_enabled"] is False
     assert "조건 상이" in result["fairness_note"]
+
+
+def test_gate_funnel_is_sequential_and_diagnostic_fires_once() -> None:
+    repo = MemoryRepository()
+    now = BASE_TIME + timedelta(days=8)
+    complete = {
+        "confirmed_flip": True,
+        "evidence": True,
+        "checklist": True,
+        "risk_reward": True,
+        "liquidation_safety": True,
+        "action_levels": True,
+        "signature_gate": True,
+        "regime_gate": True,
+        "event_window": True,
+        "freshness": True,
+    }
+    for offset, (failed, entered) in enumerate((("confirmed_flip", False), ("checklist", False), ("", False))):
+        gates = dict(complete)
+        if failed:
+            start = list(gates).index(failed)
+            for gate in list(gates)[start:]:
+                gates[gate] = False
+        repo.upsert_paper_gate_funnel(
+            {
+                "symbol": f"TEST{offset}USDT",
+                "timeframe": "4h",
+                "bar_at": (now - timedelta(days=6) + timedelta(hours=offset)).isoformat(),
+                "gates": gates,
+                "entered": entered,
+                "rejected_at": failed or None,
+            }
+        )
+    repo.upsert_paper_gate_funnel(
+        {
+            "symbol": "BOOTUSDT",
+            "timeframe": "4h",
+            "bar_at": BASE_TIME.isoformat(),
+            "gates": {gate: False for gate in complete},
+            "entered": False,
+            "rejected_at": "confirmed_flip",
+        }
+    )
+
+    funnel = paper_gate_funnel(repo, now=now)
+    by_id = {stage["id"]: stage["count"] for stage in funnel["stages"]}
+    assert by_id["evaluated"] == 3
+    assert by_id["confirmed_flip"] == 2
+    assert by_id["checklist"] == 1
+    assert by_id["signature_gate"] == 1
+    assert funnel["top_rejection"]["label"] in {"스탠스 전환 미확정", "체크리스트 미달"}
+
+    first = _gate_diagnostic_event(repo, now=now)
+    second = _gate_diagnostic_event(repo, now=now + timedelta(minutes=5))
+    assert first is not None and first["kind"] == "gate_diagnostic"
+    assert second is None
 
 
 def _settings() -> SimpleNamespace:

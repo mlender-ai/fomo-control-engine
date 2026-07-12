@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { Bot, RefreshCw } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { TerminalWarning } from "@/components/terminal";
-import { api, type PaperDashboard, type PaperTrade } from "@/lib/api";
+import { api, type PaperDashboard, type PaperGateFunnel, type PaperTrade } from "@/lib/api";
 
 const tabs = [
   { id: "battle", label: "대결" },
@@ -54,7 +54,7 @@ export function EngineTradingShell() {
       </nav>
 
       {error ? <TerminalWarning tone="error">{error}</TerminalWarning> : null}
-      {!data ? <EngineLoading /> : active === "battle" ? <BattleView data={data} /> : active === "positions" ? <PositionsView trades={data.open_trades} /> : active === "journal" ? <JournalView trades={data.closed_trades} /> : <EngineStatusView data={data} />}
+      {!data ? <EngineLoading /> : active === "battle" ? <BattleView data={data} /> : active === "positions" ? <PositionsView trades={data.open_trades} funnel={data.gate_funnel} /> : active === "journal" ? <JournalView trades={data.closed_trades} /> : <EngineStatusView data={data} />}
     </div>
   );
 }
@@ -82,8 +82,8 @@ function BattleView({ data }: { data: PaperDashboard }) {
   );
 }
 
-function PositionsView({ trades }: { trades: PaperTrade[] }) {
-  if (!trades.length) return <EngineEmpty title="현재 엔진 포지션 없음" body="진입 규정의 모든 게이트를 통과한 확정 캔들이 아직 없습니다." />;
+function PositionsView({ trades, funnel }: { trades: PaperTrade[]; funnel: PaperGateFunnel }) {
+  if (!trades.length) return <EngineEmpty title="현재 엔진 포지션 없음" body={funnelSummary(funnel)} />;
   return <section className="enginePositionGrid" data-testid="engine-positions-tab">{trades.map((trade) => <PaperPositionCard key={trade.id} trade={trade} />)}</section>;
 }
 
@@ -127,11 +127,27 @@ function EngineStatusView({ data }: { data: PaperDashboard }) {
   const counts = calibration.signature_state_counts;
   return (
     <div className="engineView engineStatusGrid" data-testid="engine-status-tab">
+      <GateFunnel funnel={data.gate_funnel} />
       <section className="engineStatusCard engineDigest"><span className="engineSectionLabel">이번 주 개선</span><h2>{String(digest.headline ?? digest.summary ?? "이번 주 유의미한 개선 없음")}</h2><p>{String(digest.honesty_line ?? report.sample_warning ?? "표본과 조치 이력을 같은 주 단위로 비교합니다.")}</p></section>
       {data.performance_action.poor ? <section className="engineCausalRow"><div><span>페이퍼 부진</span><strong>{data.performance_action.summary}</strong></div><i>→</i><div><span>같은 기간 엔진 조치</span><strong>{actionSummary(data.performance_action.actions)}</strong></div></section> : null}
       <section className="engineStatusCard"><header><h2>파라미터 자율 피드</h2><span>예정 {calibration.suggestion_status_counts.scheduled ?? 0} · 실험 {calibration.suggestion_status_counts.experiment ?? 0}</span></header>{suggestions.length ? suggestions.map((item) => <div className="engineFeedRow" key={item.id}><span>{item.title}</span><b>{statusLabel(item.status)}</b></div>) : <p className="engineEmptyLine">진행 중인 변경이 없습니다.</p>}</section>
       <section className="engineStatusCard"><header><h2>시그니처 상태</h2><span>변동만 추적</span></header><div className="signatureCounts"><div><strong>{counts.validated ?? 0}</strong><span>검증됨</span></div><div><strong>{counts.degraded ?? 0}</strong><span>저하</span></div><div><strong>{counts.quarantined ?? 0}</strong><span>격리</span></div><div><strong>{counts.candidate ?? 0}</strong><span>표본 축적</span></div></div></section>
     </div>
+  );
+}
+
+function GateFunnel({ funnel }: { funnel: PaperGateFunnel }) {
+  const visible = funnel.stages.filter((stage) => ["evaluated", "confirmed_flip", "checklist", "signature_gate", "entered"].includes(stage.id));
+  return (
+    <section className="engineStatusCard engineGateFunnel" data-testid="paper-gate-funnel">
+      <header><h2>최근 {funnel.period_days}일 진입 게이트</h2><span>확정 캔들 기준</span></header>
+      <div className="engineFunnelStages">
+        {visible.map((stage, index) => (
+          <div key={stage.id}><span>{stage.label}</span><strong>{stage.count}</strong>{index < visible.length - 1 ? <i>→</i> : null}</div>
+        ))}
+      </div>
+      <p>{funnel.top_rejection ? `최다 탈락: ${funnel.top_rejection.label} · ${funnel.top_rejection.count}회` : "평가가 쌓이면 최다 탈락 관문을 표시합니다."}</p>
+    </section>
   );
 }
 
@@ -146,6 +162,13 @@ function EquityComparison({ engine, user }: { engine: Array<{ ts: string; return
 function ComparisonMetric({ label, engine, user, inverse = false }: { label: string; engine: string; user: string; inverse?: boolean }) { return <article className="engineMetric"><span>{label}</span><div><p><small>엔진</small><strong className={metricTone(engine, inverse)}>{engine}</strong></p><p><small>나</small><strong className={metricTone(user, inverse)}>{user}</strong></p></div></article>; }
 function EngineLoading() { return <div className="engineLoading"><Bot size={24} /><span>엔진 기록을 불러오는 중입니다.</span></div>; }
 function EngineEmpty({ title, body }: { title: string; body: string }) { return <div className="engineEmpty"><Bot size={24} /><strong>{title}</strong><span>{body}</span></div>; }
+
+function funnelSummary(funnel: PaperGateFunnel): string {
+  if (!funnel.evaluations) return "확정 캔들 평가가 시작되면 진입 게이트별 통과 수를 표시합니다.";
+  const flip = funnel.stages.find((stage) => stage.id === "confirmed_flip")?.count ?? 0;
+  const top = funnel.top_rejection;
+  return `이번 주 스탠스 전환 ${flip}회 중 진입 ${funnel.entered}회${top ? ` · 최다 탈락: ${top.label} ${top.count}회` : ""}`;
+}
 
 function evidenceLines(trade: PaperTrade): string[] { const raw = trade.entry_evidence.items; if (!Array.isArray(raw)) return ["진입 규정 게이트 통과"]; return raw.map((item) => { const row = record(item); return String(row.claim ?? row.label ?? row.reason ?? "검증 근거"); }); }
 function record(value: unknown): Record<string, unknown> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }

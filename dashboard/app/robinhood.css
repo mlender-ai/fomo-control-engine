@@ -1937,8 +1937,49 @@ textarea:focus {
 }
 
 .engineStatusCard.engineDigest,
-.engineCausalRow {
+.engineCausalRow,
+.engineGateFunnel {
   grid-column: 1 / -1;
+}
+
+.engineFunnelStages {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin: 18px 0 12px;
+}
+
+.engineFunnelStages > div {
+  position: relative;
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  border: 1px solid var(--rh-border);
+  padding: 12px;
+}
+
+.engineFunnelStages span {
+  overflow: hidden;
+  color: var(--rh-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.engineFunnelStages strong {
+  color: var(--rh-white);
+  font-family: var(--font-mono);
+  font-size: 22px;
+}
+
+.engineFunnelStages i {
+  position: absolute;
+  top: 50%;
+  right: -8px;
+  z-index: 1;
+  color: var(--rh-muted);
+  font-style: normal;
+  transform: translate(50%, -50%);
 }
 
 .engineStatusCard h2 {

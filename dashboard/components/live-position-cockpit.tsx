@@ -43,6 +43,7 @@ import { formatPrice, signedPercent } from "@/lib/format";
 import { plainifyTaText } from "@/lib/labels/taGlossary";
 import { connectionStatusLabel, directionLabel, localizeMarketCodes, trendLabel } from "@/lib/labels/marketStateLabels";
 import { loadFceViewMode, saveFceViewMode, type FceViewMode } from "@/lib/viewMode";
+import { useSecondaryTaRows, visibleTaRows } from "@/lib/taDisplayPreferences";
 
 const LIVE_POSITION_SYNC_INTERVAL_SECONDS = 30;
 
@@ -613,6 +614,7 @@ function TaOneLineStrip({
   onSelectEvidence: (evidence: MinimalEvidenceChoice) => void;
   onShowPro: () => void;
 }) {
+  const showSecondaryTaRows = useSecondaryTaRows();
   if (loading) {
     return (
       <section className="taOneLineStrip loading" data-testid="ta-one-line-strip" aria-live="polite">
@@ -622,9 +624,9 @@ function TaOneLineStrip({
     );
   }
 
-  const lines = normalizedOneLinerLines(oneLiners);
-  const choices = oneLinerEvidenceChoices(oneLiners, payload);
-  const counts = oneLiners?.counts ?? countOneLinerStances(lines);
+  const lines = normalizedOneLinerLines(oneLiners, showSecondaryTaRows);
+  const choices = oneLinerEvidenceChoices(oneLiners, payload, showSecondaryTaRows);
+  const counts = countOneLinerStances(lines);
   const conflict = (counts["상방"] ?? 0) > 0 && (counts["하방"] ?? 0) > 0;
 
   return (
@@ -669,9 +671,12 @@ const ONE_LINER_MODULES: Array<{ module: OneLinerLine["module"]; label: string }
   { module: "indicators", label: "지표" }
 ];
 
-function normalizedOneLinerLines(oneLiners: OneLinerSummary | null): OneLinerLine[] {
+function normalizedOneLinerLines(oneLiners: OneLinerSummary | null, includeSecondary = true): OneLinerLine[] {
   const byModule = new Map((oneLiners?.lines ?? []).map((line) => [line.module, line]));
-  return ONE_LINER_MODULES.map(({ module, label }) => byModule.get(module) ?? fallbackOneLinerLine(module, label));
+  return visibleTaRows(
+    ONE_LINER_MODULES.map(({ module, label }) => byModule.get(module) ?? fallbackOneLinerLine(module, label)),
+    includeSecondary
+  );
 }
 
 function fallbackOneLinerLine(module: OneLinerLine["module"], label: string): OneLinerLine {
@@ -685,8 +690,8 @@ function fallbackOneLinerLine(module: OneLinerLine["module"], label: string): On
   };
 }
 
-function oneLinerEvidenceChoices(oneLiners: OneLinerSummary | null, payload: LivePositionPayload): MinimalEvidenceChoice[] {
-  return normalizedOneLinerLines(oneLiners).map((line) => oneLinerChoiceFromLine(line, payload));
+function oneLinerEvidenceChoices(oneLiners: OneLinerSummary | null, payload: LivePositionPayload, includeSecondary = true): MinimalEvidenceChoice[] {
+  return normalizedOneLinerLines(oneLiners, includeSecondary).map((line) => oneLinerChoiceFromLine(line, payload));
 }
 
 function oneLinerChoiceFromLine(line: OneLinerLine, payload: LivePositionPayload): MinimalEvidenceChoice {

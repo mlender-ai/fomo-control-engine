@@ -15,7 +15,7 @@ test("side navigation stays in the SPA and review cards paint independently", as
   expect(Date.now() - startedAt).toBeLessThan(1_000);
   const reviewGrid = page.locator(".reviewOverviewGrid");
   await expect(reviewGrid.getByText("거래 복기", { exact: true })).toBeVisible();
-  await expect(reviewGrid.getByText("판단 성적표", { exact: true })).toBeVisible();
+  await expect(reviewGrid.getByText("엔진 상태", { exact: true })).toBeVisible();
   await expect(reviewGrid.getByText("계좌 성적표", { exact: true })).toBeVisible();
   await expect.poll(() => page.evaluate(() => (window as typeof window & { __fceSpaSentinel?: string }).__fceSpaSentinel)).toBe("alive");
 });
@@ -43,6 +43,8 @@ test("live position cockpit smoke path", async ({ page }) => {
   await page.getByTestId("pro-mode-button").click();
   await expect(page.getByTestId("verdict-bar")).toBeVisible();
   await expect(page.getByTestId("action-plan")).toBeVisible();
+  await expect(page.getByTestId("chart-layer-flow")).toHaveCount(0);
+  await expect(page.getByTestId("chart-layer-indicators")).toHaveCount(0);
   await page.getByTestId("chart-layer-wyckoff").click();
   await expect(page.getByTestId("chart-overlay")).toBeVisible();
   await page.getByTestId("chart-layer-liquidity").click();
@@ -103,6 +105,7 @@ test("engine trading workspace and absorbed calibration route", async ({ page })
   await expect(page.getByTestId("engine-journal-tab")).toBeVisible();
   await page.getByRole("link", { name: "엔진 상태" }).click();
   await expect(page.getByTestId("engine-status-tab")).toBeVisible();
+  await expect(page.getByTestId("paper-gate-funnel")).toBeVisible();
 
   await page.goto("/calibration");
   await expect(page).toHaveURL(/\/engine\?tab=status/);

@@ -1415,6 +1415,16 @@ export type PaperMetrics = {
   trade_count: number;
 };
 
+export type PaperGateFunnel = {
+  period_days: number;
+  as_of: string;
+  evaluations: number;
+  entered: number;
+  stages: Array<{ id: string; label: string; count: number }>;
+  top_rejection: { id: string; label: string; count: number } | null;
+  rejection_counts: Record<string, number>;
+};
+
 export type PaperDashboard = {
   scoreboard: {
     as_of: string;
@@ -1440,6 +1450,7 @@ export type PaperDashboard = {
     signature_state_counts: Record<string, number>;
   };
   performance_action: { poor: boolean; summary: string; actions: Array<Record<string, unknown>> };
+  gate_funnel: PaperGateFunnel;
   live_orders_enabled: false;
 };
 

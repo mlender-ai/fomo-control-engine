@@ -119,6 +119,13 @@ class Repository(Protocol):
     ) -> list[PaperTrade]: ...
     def get_paper_engine_state(self, symbol: str, timeframe: str) -> dict | None: ...
     def upsert_paper_engine_state(self, symbol: str, timeframe: str, state: dict) -> bool: ...
+    def upsert_paper_gate_funnel(self, record: dict) -> bool: ...
+    def list_paper_gate_funnel(
+        self,
+        since: datetime | None = None,
+        symbol: str | None = None,
+        limit: int = 10000,
+    ) -> list[dict]: ...
     def add_judgment(self, judgment: JudgmentLedgerEntry) -> JudgmentLedgerEntry: ...
     def list_judgments(self, position_id: UUID, limit: int = 200) -> list[JudgmentLedgerEntry]: ...
     def add_judgment_score(self, score: JudgmentScore) -> JudgmentScore: ...
@@ -205,6 +212,7 @@ class MemoryRepository:
         self.trades: dict[UUID, Trade] = {}
         self.paper_trades: dict[UUID, PaperTrade] = {}
         self.paper_engine_states: dict[tuple[str, str], dict] = {}
+        self.paper_gate_funnel: dict[tuple[str, str, str], dict] = {}
         self.judgments: dict[UUID, list[JudgmentLedgerEntry]] = {}
         self.judgment_scores: dict[UUID, JudgmentScore] = {}
         self.calibration_suggestions: dict[UUID, CalibrationSuggestion] = {}
@@ -493,6 +501,30 @@ class MemoryRepository:
             return False
         self.paper_engine_states[key] = dict(state)
         return True
+
+    def upsert_paper_gate_funnel(self, record: dict) -> bool:
+        key = (
+            str(record.get("symbol") or "").upper(),
+            str(record.get("timeframe") or "4h"),
+            str(record.get("bar_at") or ""),
+        )
+        if key in self.paper_gate_funnel:
+            return False
+        self.paper_gate_funnel[key] = dict(record)
+        return True
+
+    def list_paper_gate_funnel(
+        self,
+        since: datetime | None = None,
+        symbol: str | None = None,
+        limit: int = 10000,
+    ) -> list[dict]:
+        rows = list(self.paper_gate_funnel.values())
+        if since is not None:
+            rows = [row for row in rows if (_timestamp_or_min(row.get("bar_at")) >= since)]
+        if symbol is not None:
+            rows = [row for row in rows if str(row.get("symbol") or "").upper() == symbol.upper()]
+        return sorted(rows, key=lambda row: str(row.get("bar_at") or ""), reverse=True)[:limit]
 
     def add_judgment(self, judgment: JudgmentLedgerEntry) -> JudgmentLedgerEntry:
         entries = self.judgments.setdefault(judgment.position_id, [])
@@ -1481,6 +1513,50 @@ class SQLiteRepository:
             )
         return True
 
+    def upsert_paper_gate_funnel(self, record: dict) -> bool:
+        symbol = str(record.get("symbol") or "").upper()
+        timeframe = str(record.get("timeframe") or "4h")
+        bar_at = str(record.get("bar_at") or "")
+        encoded = json.dumps(record, ensure_ascii=False, sort_keys=True, default=_json_cache_default)
+        with self._connect() as connection:
+            current = connection.execute(
+                "SELECT 1 FROM paper_gate_funnel WHERE symbol = ? AND timeframe = ? AND bar_at = ?",
+                (symbol, timeframe, bar_at),
+            ).fetchone()
+            if current:
+                return False
+            connection.execute(
+                """
+                INSERT INTO paper_gate_funnel (symbol, timeframe, bar_at, payload, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (symbol, timeframe, bar_at, encoded, utc_now().isoformat()),
+            )
+        return True
+
+    def list_paper_gate_funnel(
+        self,
+        since: datetime | None = None,
+        symbol: str | None = None,
+        limit: int = 10000,
+    ) -> list[dict]:
+        query = "SELECT payload FROM paper_gate_funnel"
+        clauses: list[str] = []
+        params: list[str | int] = []
+        if since is not None:
+            clauses.append("bar_at >= ?")
+            params.append(_aware_dt(since).isoformat())
+        if symbol is not None:
+            clauses.append("symbol = ?")
+            params.append(symbol.upper())
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY bar_at DESC LIMIT ?"
+        params.append(limit)
+        with self._connect() as connection:
+            rows = connection.execute(query, tuple(params)).fetchall()
+        return [json.loads(row["payload"]) for row in rows]
+
     def add_judgment(self, judgment: JudgmentLedgerEntry) -> JudgmentLedgerEntry:
         with self._connect() as connection:
             connection.execute(
@@ -2240,3 +2316,14 @@ def _same_directional_bar(current: dict | None, candidate: dict) -> bool:
 
 def _aware_dt(value: datetime) -> datetime:
     return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
+def _timestamp_or_min(value: object) -> datetime:
+    if isinstance(value, datetime):
+        return _aware_dt(value)
+    if isinstance(value, str):
+        try:
+            return _aware_dt(datetime.fromisoformat(value.replace("Z", "+00:00")))
+        except ValueError:
+            pass
+    return datetime.min.replace(tzinfo=timezone.utc)

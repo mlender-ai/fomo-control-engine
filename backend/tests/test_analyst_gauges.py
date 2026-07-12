@@ -194,6 +194,27 @@ def test_tier2_caps_at_two_overlays() -> None:
     assert len(select_tier2_overlays(confluence, hb)) == 2
 
 
+def test_tier2_switches_when_top_validated_evidence_changes() -> None:
+    stats = {
+        "stats": [
+            {"engine": "wyckoff", "direction": "long", "lifecycle_state": "validated"},
+            {"engine": "harmonic", "direction": "long", "lifecycle_state": "validated"},
+        ]
+    }
+    first = _confluence(stance="long_leaning", long_ema=30.0, short_ema=10.0)
+    first["long_evidence"] = [
+        {"engine": "wyckoff", "claim": "Spring", "direction": "long", "score": 20.0},
+        {"engine": "harmonic", "claim": "PRZ", "direction": "long", "score": 5.0},
+    ]
+    second = _confluence(stance="long_leaning", long_ema=30.0, short_ema=10.0)
+    second["long_evidence"] = [
+        {"engine": "harmonic", "claim": "PRZ", "direction": "long", "score": 22.0},
+        {"engine": "wyckoff", "claim": "Spring", "direction": "long", "score": 4.0},
+    ]
+    assert select_tier2_overlays(first, stats)[0]["engine"] == "wyckoff"
+    assert select_tier2_overlays(second, stats)[0]["engine"] == "harmonic"
+
+
 def test_event_pills_require_validated_confirmed_signature() -> None:
     analysis = _analysis(
         sweeps=[

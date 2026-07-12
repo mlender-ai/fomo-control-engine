@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { TerminalMetric, TerminalPanel, TerminalTable, TerminalWarning } from "@/components/terminal";
 import { api, type AlertSettings, type BitgetConnectionTest, type SystemStatus } from "@/lib/api";
 import { DEFAULT_DENSITY, loadDensity, saveDensity, type Density } from "@/lib/density";
+import { readSecondaryTaRows, writeSecondaryTaRows } from "@/lib/taDisplayPreferences";
 
 type ShortcutRow = {
   id: string;
@@ -33,9 +34,11 @@ export function SettingsShell() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
   const [density, setDensity] = useState<Density>(DEFAULT_DENSITY);
+  const [secondaryTaRows, setSecondaryTaRows] = useState(false);
 
   useEffect(() => {
     setDensity(loadDensity());
+    setSecondaryTaRows(readSecondaryTaRows());
   }, []);
 
   function updateDensity(next: Density) {
@@ -173,6 +176,18 @@ export function SettingsShell() {
           </button>
           <small>{density === "simple" ? "신뢰도는 강/중/약으로, 이벤트는 최근 2개만 표시합니다." : "신뢰도 숫자와 이벤트를 모두 표시합니다."}</small>
         </div>
+        <label className="alertQuietToggle">
+          <input
+            type="checkbox"
+            checked={secondaryTaRows}
+            onChange={(event) => {
+              const next = event.currentTarget.checked;
+              setSecondaryTaRows(next);
+              writeSecondaryTaRows(next);
+            }}
+          />
+          보조 TA 행 표시 (수급·지표)
+        </label>
       </TerminalPanel>
 
       <TerminalPanel

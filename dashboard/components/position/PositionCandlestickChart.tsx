@@ -41,6 +41,7 @@ import type { Density } from "@/lib/density";
 import { formatPrice } from "@/lib/format";
 import { localizeMarketCodes, phaseHintLabel, sourceLabel, timeframeLabel } from "@/lib/labels/marketStateLabels";
 import { splitWyckoffEvents, taGlossaryEntry, taShortLabel } from "@/lib/labels/taGlossary";
+import { useSecondaryTaRows, visibleTaRows } from "@/lib/taDisplayPreferences";
 import { priceLinesForAnalysis, type ChartPriceLine } from "./PriceLevelOverlay";
 import type { PositionChartOverlay } from "./PositionChart";
 import { VolumePanel } from "./VolumePanel";
@@ -93,6 +94,7 @@ export function PositionCandlestickChart({
   const [dragStartPrice, setDragStartPrice] = useState<number | null>(null);
   const [dragStartY, setDragStartY] = useState<number | null>(null);
   const [zoneBand, setZoneBand] = useState<{ top: number; bottom: number } | null>(null);
+  const showSecondaryTaRows = useSecondaryTaRows();
   const validation = useMemo(() => validateCandles(analysis.candles), [analysis.candles]);
   const visibleCandles = useMemo(
     () => (validation.valid && layerMode === "minimal" ? validation.candles.slice(-72) : validation.candles),
@@ -618,7 +620,7 @@ export function PositionCandlestickChart({
             </button>
             {stanceStripOpen ? (
               <div className="stanceHudStrip" data-testid="stance-hud-strip">
-                {(analysis.one_liners?.lines ?? []).map((line) => (
+                {visibleTaRows(analysis.one_liners?.lines ?? [], showSecondaryTaRows).map((line) => (
                   <span key={line.module}><b>{line.module_label}</b> {line.phrase}</span>
                 ))}
               </div>
@@ -886,7 +888,14 @@ function renderTaOverlay(
   const context: OverlayContext = { series, chart, analysis, plan, layers, positionOverlay, highlightPrice, palette, width, height, right, density, minimal: Boolean(minimalEvidence) || compressed };
 
   if (compressed) {
-    const compact = compressedOverlayNodes(context, gauges);
+    const nextTier2Key = (gauges?.tier2_overlays ?? [])
+      .slice(0, 2)
+      .map((overlay) => `${overlay.engine}:${overlay.direction}:${overlay.price ?? overlay.claim}`)
+      .join("|");
+    const previousTier2Key = svg.dataset.tier2Key ?? "";
+    const animateTier2 = Boolean(previousTier2Key && nextTier2Key && previousTier2Key !== nextTier2Key);
+    svg.dataset.tier2Key = nextTier2Key;
+    const compact = compressedOverlayNodes(context, gauges, animateTier2);
     zones.push(...compact.zones);
     shapes.push(...compact.shapes);
     badges.push(...compact.badges);
@@ -961,7 +970,7 @@ function overlayRight(width: number): number {
   return Math.max(24, width - AXIS_GUTTER);
 }
 
-function compressedOverlayNodes(context: OverlayContext, gauges: CompactChartGauges | null): OverlayGroup {
+function compressedOverlayNodes(context: OverlayContext, gauges: CompactChartGauges | null, animateTier2 = false): OverlayGroup {
   const group: OverlayGroup = { zones: [], shapes: [], badges: [] };
   const mark = context.analysis.mark_price;
   const support = [...context.analysis.price_levels.support]
@@ -990,16 +999,19 @@ function compressedOverlayNodes(context: OverlayContext, gauges: CompactChartGau
     if (pool) group.shapes.push(...compactPriceLine(context, pool.price, "유동성 풀", pool.side === "buy_side" ? "red" : "amber"));
   }
 
-  for (const [index, overlay] of (gauges?.tier2_overlays ?? []).slice(0, 2).entries()) {
+  const tier2Shapes: string[] = [];
+  const tier2Badges: string[] = [];
+  const tier2Rows = (gauges?.tier2_overlays ?? []).slice(0, 2);
+  for (const [index, overlay] of tier2Rows.entries()) {
     if (isFinitePrice(overlay.price)) {
-      group.shapes.push(...compactPriceLine(
+      tier2Shapes.push(...compactPriceLine(
         context,
         overlay.price,
         overlay.engine_label || overlay.claim,
         overlay.direction === "short" ? "red" : "amber"
       ));
     } else {
-      group.badges.push(minimalFloatingLabel(
+      tier2Badges.push(minimalFloatingLabel(
         context,
         `${overlay.engine_label || overlay.engine} · ${overlay.claim}`,
         18,
@@ -1007,6 +1019,12 @@ function compressedOverlayNodes(context: OverlayContext, gauges: CompactChartGau
         overlay.direction === "short" ? "red" : "amber"
       ));
     }
+  }
+  if (tier2Rows.length) {
+    const className = animateTier2 ? "tier2OverlayGroup is-switching" : "tier2OverlayGroup";
+    const key = tier2Rows.map((overlay) => `${overlay.engine}:${overlay.direction}`).join("|");
+    if (tier2Shapes.length) group.shapes.push(`<g class="${className}" data-testid="tier2-overlay" data-tier2-key="${escapeSvgText(key)}">${tier2Shapes.join("")}</g>`);
+    if (tier2Badges.length) group.badges.push(`<g class="${className}" data-testid="tier2-overlay-label" data-tier2-key="${escapeSvgText(key)}">${tier2Badges.join("")}</g>`);
   }
   return group;
 }

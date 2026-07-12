@@ -721,8 +721,19 @@ def format_engine_scoreboard(payload: dict[str, Any]) -> str:
 
 
 def format_paper_event(event: dict[str, Any]) -> str:
-    trade = _dump(event.get("trade"))
     kind = str(event.get("kind") or "")
+    if kind == "gate_diagnostic":
+        funnel = _dump(event.get("funnel"))
+        top = _dump(funnel.get("top_rejection"))
+        return "\n".join(
+            [
+                "<b>🤖 엔진 페이퍼 · 게이트 과조임 의심</b>",
+                f"최근 7일 평가 {int(funnel.get('evaluations') or 0)}회 · 진입 0회",
+                f"최다 탈락: {escape(str(top.get('label') or '판정 근거 부족'))} ({int(top.get('count') or 0)}회)",
+                "완화 제안은 자동 적용하지 않고 섀도 실험을 경유합니다.",
+            ]
+        )
+    trade = _dump(event.get("trade"))
     direction = "롱" if trade.get("direction") == "long" else "숏"
     prefix = {
         "opened": "🤖 엔진 진입",
@@ -733,15 +744,10 @@ def format_paper_event(event: dict[str, Any]) -> str:
     lines = [f"<b>{prefix} · {escape(str(trade.get('symbol') or '-'))} {direction} @ {_price(price)}</b>"]
     if kind == "opened":
         evidence = _dump(trade.get("entry_evidence")).get("items") or []
-        labels = [
-            _compact(str(_dump(item).get("claim") or _dump(item).get("label") or ""), 36)
-            for item in evidence[:2]
-        ]
+        labels = [_compact(str(_dump(item).get("claim") or _dump(item).get("label") or ""), 36) for item in evidence[:2]]
         lines.append(f"근거: {escape(' + '.join(item for item in labels if item) or '검증 게이트 통과')}")
     else:
-        lines.append(
-            f"net {_signed_pct(trade.get('net_return_pct'))} · 사유 {escape(_exit_reason(trade.get('exit_reason')))}"
-        )
+        lines.append(f"net {_signed_pct(trade.get('net_return_pct'))} · 사유 {escape(_exit_reason(trade.get('exit_reason')))}")
     lines.append("실주문이 아닌 엔진 가상 거래 기록입니다.")
     return "\n".join(lines)
 

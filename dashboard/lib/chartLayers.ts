@@ -33,10 +33,10 @@ export const CHART_LAYER_DEFS: Array<{ id: ChartLayerId; label: string; descript
   { id: "liquidity", label: "유동성", description: "동일 고저점·전고전저 풀과 확정 스윕" },
   { id: "volume_profile", label: "볼륨", description: "볼륨 프로파일 · 최다 거래 가격(POC)" },
   { id: "wyckoff", label: "와이코프", description: "국면 박스와 이벤트 마커" },
-  { id: "harmonic", label: "하모닉", description: "패턴 구조와 반전 후보 구간(PRZ)" },
-  { id: "flow", label: "수급", description: "체결 델타 · 누적 수급(CVD)" },
-  { id: "indicators", label: "지표", description: "볼린저 밴드" }
+  { id: "harmonic", label: "하모닉", description: "패턴 구조와 반전 후보 구간(PRZ)" }
 ];
+
+const VISIBLE_LAYER_IDS = new Set(CHART_LAYER_DEFS.map((layer) => layer.id));
 
 export const TA_FOCUS_LAYERS: TaFocusLayer[] = ["levels", "volume_profile", "wyckoff", "liquidity", "harmonic", "indicators"];
 export const MAX_COMPARE_LAYERS = 2;
@@ -100,8 +100,8 @@ export function loadLayerState(): ChartLayerState {
       ta: []
     };
     const storedFocus: ChartLayerId[] = [
-      ...(Array.isArray(parsed.ta) ? parsed.ta.filter((layer): layer is TaFocusLayer => (TA_FOCUS_LAYERS as string[]).includes(layer)) : []),
-      ...(parsed.flow === true ? (["flow"] as ChartLayerId[]) : [])
+      ...(Array.isArray(parsed.ta) ? parsed.ta.filter((layer): layer is TaFocusLayer => (TA_FOCUS_LAYERS as string[]).includes(layer) && VISIBLE_LAYER_IDS.has(layer)) : []),
+      ...(parsed.flow === true && VISIBLE_LAYER_IDS.has("flow") ? (["flow"] as ChartLayerId[]) : [])
     ];
     return focusState(base, storedFocus.slice(0, MAX_COMPARE_LAYERS));
   } catch {

@@ -2226,6 +2226,15 @@ h3 {
   cursor: help;
 }
 
+.volumeProfileOverlay .tier2OverlayGroup.is-switching {
+  animation: tier2-overlay-fade 1s ease both;
+}
+
+@keyframes tier2-overlay-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
 .stanceHud {
   position: absolute;
   z-index: 5;

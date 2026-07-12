@@ -49,9 +49,7 @@ def policy_from_settings(settings: Any, asset_class: str = "crypto") -> PaperPol
 
 
 def paper_universe(repo: Any) -> list[tuple[str, str]]:
-    pairs: set[tuple[str, str]] = {
-        (item.symbol.upper(), item.default_timeframe or "4h") for item in repo.list_watchlist()
-    }
+    pairs: set[tuple[str, str]] = {(item.symbol.upper(), item.default_timeframe or "4h") for item in repo.list_watchlist()}
     pairs.update((position.symbol.upper(), "4h") for position in repo.list_positions(PositionStatus.open))
     pairs.update((trade.symbol.upper(), trade.timeframe) for trade in repo.list_paper_trades(status="open"))
     for discovery in repo.list_universe_discoveries(limit=500):
@@ -88,7 +86,11 @@ def run_paper_engine(
                 continue
             state = repo.get_paper_engine_state(symbol, timeframe) or {}
             bar_key = bar.timestamp.isoformat()
-            if state.get("last_bar_at") == bar_key:
+            funnel_recorded = any(
+                str(row.get("timeframe") or "4h") == timeframe and str(row.get("bar_at") or "") == bar_key
+                for row in repo.list_paper_gate_funnel(symbol=symbol, limit=10)
+            )
+            if state.get("last_bar_at") == bar_key and funnel_recorded:
                 skipped_same_bar += 1
                 continue
             evaluated += 1
@@ -130,11 +132,19 @@ def run_paper_engine(
                 repo.upsert_paper_trade(updated)
                 high_streak = exit_decision.high_pressure_streak
 
-            if open_trade_row is None and len(repo.list_paper_trades(status="open", limit=100)) < int(settings.paper_max_open_positions):
+            if open_trade_row is None:
                 direction = _stance_direction(confluence)
+                simulation: dict[str, Any] = {}
+                qualified: dict[str, Any] | None = None
+                signature_gates = {"signature_gate": False, "regime_gate": False}
+                action_plan: dict[str, Any] = {}
+                invalidation = take_profit = None
+                evidence: list[dict[str, Any]] = []
+                entry_decision = None
                 if direction is not None:
                     simulation = simulation_loader(symbol, timeframe, direction.value, bar.close)
-                    qualified = _qualified_signature(repo, settings, analysis, payload, direction)
+                    signature_gates = _signature_gate_evaluation(repo, settings, analysis, payload, direction)
+                    qualified = _dict(signature_gates.get("qualified")) or None
                     action_plan = _dict(simulation.get("action_plan"))
                     invalidation = _price_from(action_plan.get("invalidation") or action_plan.get("engine_invalidation"))
                     take_profit = _first_take_profit(action_plan)
@@ -147,39 +157,66 @@ def run_paper_engine(
                         checklist_total=int(simulation.get("checklist_total") or 0),
                         rr_ratio=_float(simulation.get("rr_ratio")),
                         survives_to_invalidation=simulation.get("survives_to_invalidation") is True,
-                        validated_signature=qualified is not None,
-                        signature_ci_low_pct=_float((qualified or {}).get("ci_low")),
+                        validated_signature=bool(signature_gates["signature_gate"]),
+                        signature_ci_low_pct=(float(settings.universe_backtest_min_ci_low_pct) if signature_gates["regime_gate"] else None),
                         earnings_clear=_earnings_clear(analysis),
                         data_fresh=_data_fresh(bar, timeframe, now),
                         confirmed_bar=True,
                         policy=policy_from_settings(settings, str(analysis.get("asset_class") or "unknown")),
                     )
-                    if entry_decision.enter and invalidation is not None and take_profit is not None:
-                        paper_trade = open_trade(
-                            trade_id=uuid4(),
-                            symbol=symbol,
-                            timeframe=timeframe,
-                            asset_class=str(analysis.get("asset_class") or "unknown"),
-                            direction=direction,
-                            bar=bar,
-                            invalidation_price=invalidation,
-                            take_profit_price=take_profit,
-                            evidence={"items": evidence, "gates": entry_decision.gates},
-                            checklist={
-                                "items": simulation.get("checklist") or [],
-                                "passed": simulation.get("checklist_passed"),
-                                "total": simulation.get("checklist_total"),
-                                "rr_ratio": simulation.get("rr_ratio"),
-                                "survives_to_invalidation": simulation.get("survives_to_invalidation"),
-                            },
-                            stance_snapshot=_stance_state(confluence),
-                            signature_snapshot=qualified or {},
-                            policy=policy_from_settings(settings, str(analysis.get("asset_class") or "unknown")),
-                        )
-                        repo.upsert_paper_trade(paper_trade)
-                        _record_entry_judgment(repo, paper_trade)
-                        opened += 1
-                        events.append(_paper_event("opened", paper_trade))
+                capacity_available = len(repo.list_paper_trades(status="open", limit=100)) < int(settings.paper_max_open_positions)
+                will_enter = bool(
+                    capacity_available and entry_decision is not None and entry_decision.enter and invalidation is not None and take_profit is not None
+                )
+                gate_record = _gate_funnel_record(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    bar=bar,
+                    now=now,
+                    direction=direction,
+                    evidence_count=len(evidence),
+                    simulation=simulation,
+                    signature_gates=signature_gates,
+                    action_levels=bool(invalidation is not None and take_profit is not None),
+                    earnings_clear=_earnings_clear(analysis),
+                    freshness=_data_fresh(bar, timeframe, now),
+                    entry_decision=entry_decision,
+                    entered=will_enter,
+                )
+                repo.upsert_paper_gate_funnel(gate_record)
+                if (
+                    will_enter
+                    and direction is not None
+                    and entry_decision is not None
+                    and entry_decision.enter
+                    and invalidation is not None
+                    and take_profit is not None
+                ):
+                    paper_trade = open_trade(
+                        trade_id=uuid4(),
+                        symbol=symbol,
+                        timeframe=timeframe,
+                        asset_class=str(analysis.get("asset_class") or "unknown"),
+                        direction=direction,
+                        bar=bar,
+                        invalidation_price=invalidation,
+                        take_profit_price=take_profit,
+                        evidence={"items": evidence, "gates": entry_decision.gates},
+                        checklist={
+                            "items": simulation.get("checklist") or [],
+                            "passed": simulation.get("checklist_passed"),
+                            "total": simulation.get("checklist_total"),
+                            "rr_ratio": simulation.get("rr_ratio"),
+                            "survives_to_invalidation": simulation.get("survives_to_invalidation"),
+                        },
+                        stance_snapshot=_stance_state(confluence),
+                        signature_snapshot=qualified or {},
+                        policy=policy_from_settings(settings, str(analysis.get("asset_class") or "unknown")),
+                    )
+                    repo.upsert_paper_trade(paper_trade)
+                    _record_entry_judgment(repo, paper_trade)
+                    opened += 1
+                    events.append(_paper_event("opened", paper_trade))
 
             repo.upsert_paper_engine_state(
                 symbol,
@@ -193,6 +230,9 @@ def run_paper_engine(
         except Exception as exc:  # each symbol is isolated; worker continues
             errors.append({"symbol": symbol, "error": f"{type(exc).__name__}: {exc}"})
 
+    diagnostic = _gate_diagnostic_event(repo, now=now)
+    if diagnostic is not None:
+        events.append(diagnostic)
     return {
         "enabled": True,
         "evaluated": evaluated,
@@ -224,10 +264,7 @@ def paper_scoreboard(repo: Any, settings: Any, *, now: datetime | None = None) -
         and rolling_engine["net_return_pct"] > rolling_user_metrics["net_return_pct"]
         and rolling_engine["mdd_pct"] <= rolling_user_metrics["mdd_pct"]
     )
-    poor = bool(
-        paper_metrics["trade_count"] > 0
-        and (paper_metrics["win_rate_pct"] < 45.0 or paper_metrics["mdd_pct"] > float(settings.paper_poor_mdd_pct))
-    )
+    poor = bool(paper_metrics["trade_count"] > 0 and (paper_metrics["win_rate_pct"] < 45.0 or paper_metrics["mdd_pct"] > float(settings.paper_poor_mdd_pct)))
     autonomy = repo.list_autonomy_logs(since=started_at, limit=100)
     return {
         "as_of": now.isoformat(),
@@ -287,8 +324,147 @@ def paper_dashboard(repo: Any, settings: Any, *, calibration: dict[str, Any] | N
             "summary": _poor_performance_summary(scoreboard),
             "actions": actions[:8] if poor else [],
         },
+        "gate_funnel": paper_gate_funnel(repo),
         "live_orders_enabled": False,
     }
+
+
+GATE_ORDER = (
+    "confirmed_flip",
+    "evidence",
+    "checklist",
+    "risk_reward",
+    "liquidation_safety",
+    "action_levels",
+    "signature_gate",
+    "regime_gate",
+    "event_window",
+    "freshness",
+)
+
+GATE_STAGE_LABELS = {
+    "confirmed_flip": "스탠스 전환 통과",
+    "evidence": "근거 수 통과",
+    "checklist": "체크리스트 통과",
+    "risk_reward": "R:R 통과",
+    "liquidation_safety": "청산 안전거리 통과",
+    "action_levels": "행동 가격 확보",
+    "signature_gate": "검증 시그니처 통과",
+    "regime_gate": "현재 레짐 성적 통과",
+    "event_window": "실적 이벤트 통과",
+    "freshness": "데이터 신선도 통과",
+}
+
+GATE_REJECTION_LABELS = {
+    "confirmed_flip": "스탠스 전환 미확정",
+    "evidence": "근거 수 부족",
+    "checklist": "체크리스트 미달",
+    "risk_reward": "R:R 미달",
+    "liquidation_safety": "청산 안전거리 미달",
+    "action_levels": "무효화·익절가 부재",
+    "signature_gate": "검증 시그니처 부재",
+    "regime_gate": "현재 레짐 성적 미달",
+    "event_window": "실적 이벤트 구간",
+    "freshness": "데이터 신선도 미달",
+}
+
+
+def paper_gate_funnel(repo: Any, *, days: int = 7, now: datetime | None = None) -> dict[str, Any]:
+    now = now or utc_now()
+    since = now - timedelta(days=days)
+    rows = repo.list_paper_gate_funnel(since=since, limit=50000)
+    stages: list[dict[str, Any]] = [{"id": "evaluated", "label": "평가", "count": len(rows)}]
+    survivors = rows
+    for gate in GATE_ORDER:
+        survivors = [row for row in survivors if bool(_dict(row.get("gates")).get(gate))]
+        stages.append({"id": gate, "label": GATE_STAGE_LABELS[gate], "count": len(survivors)})
+    entered = sum(1 for row in rows if row.get("entered") is True)
+    rejection_counts: dict[str, int] = {}
+    for row in rows:
+        rejected_at = str(row.get("rejected_at") or "")
+        if rejected_at:
+            rejection_counts[rejected_at] = rejection_counts.get(rejected_at, 0) + 1
+    top_gate = max(rejection_counts, key=rejection_counts.get) if rejection_counts else None
+    return {
+        "period_days": days,
+        "as_of": now.isoformat(),
+        "evaluations": len(rows),
+        "entered": entered,
+        "stages": [*stages, {"id": "entered", "label": "진입", "count": entered}],
+        "top_rejection": ({"id": top_gate, "label": GATE_REJECTION_LABELS.get(top_gate, top_gate), "count": rejection_counts[top_gate]} if top_gate else None),
+        "rejection_counts": rejection_counts,
+    }
+
+
+def _gate_funnel_record(
+    *,
+    symbol: str,
+    timeframe: str,
+    bar: MarketCandle,
+    now: datetime,
+    direction: Direction | None,
+    evidence_count: int,
+    simulation: dict[str, Any],
+    signature_gates: dict[str, Any],
+    action_levels: bool,
+    earnings_clear: bool,
+    freshness: bool,
+    entry_decision: Any,
+    entered: bool,
+) -> dict[str, Any]:
+    decision_gates = _dict(getattr(entry_decision, "gates", None))
+    gates = {
+        "confirmed_flip": bool(decision_gates.get("confirmed_flip")),
+        "evidence": bool(decision_gates.get("evidence")),
+        "checklist": bool(decision_gates.get("checklist")),
+        "risk_reward": bool(decision_gates.get("risk_reward")),
+        "liquidation_safety": bool(decision_gates.get("liquidation_safety")),
+        "action_levels": action_levels,
+        "signature_gate": bool(signature_gates.get("signature_gate")),
+        "regime_gate": bool(signature_gates.get("regime_gate")),
+        "event_window": earnings_clear,
+        "freshness": freshness,
+    }
+    rejected_at = next((gate for gate in GATE_ORDER if not gates[gate]), None)
+    return {
+        "symbol": symbol.upper(),
+        "timeframe": timeframe,
+        "bar_at": bar.timestamp.isoformat(),
+        "evaluated_at": now.isoformat(),
+        "direction": direction.value if direction is not None else None,
+        "evidence_count": evidence_count,
+        "checklist_score": {
+            "passed": int(simulation.get("checklist_passed") or 0),
+            "total": int(simulation.get("checklist_total") or 0),
+        },
+        "rr_ratio": _float(simulation.get("rr_ratio")),
+        "gates": gates,
+        "entered": entered,
+        "rejected_at": rejected_at,
+        "rejection_reasons": [gate for gate in GATE_ORDER if not gates[gate]],
+    }
+
+
+def _gate_diagnostic_event(repo: Any, *, now: datetime) -> dict[str, Any] | None:
+    state = repo.get_paper_engine_state("__SYSTEM__", "gate_diagnostic") or {}
+    if state.get("sent_at"):
+        return None
+    all_rows = repo.list_paper_gate_funnel(limit=50000)
+    if not all_rows:
+        return None
+    oldest = min((_timestamp(row.get("bar_at")) for row in all_rows), default=None)
+    if oldest is None or oldest > now - timedelta(days=7):
+        return None
+    funnel = paper_gate_funnel(repo, days=7, now=now)
+    if int(funnel.get("entered") or 0) > 0:
+        return None
+    top = _dict(funnel.get("top_rejection"))
+    repo.upsert_paper_engine_state(
+        "__SYSTEM__",
+        "gate_diagnostic",
+        {"sent_at": now.isoformat(), "top_rejection": top.get("id")},
+    )
+    return {"kind": "gate_diagnostic", "funnel": funnel}
 
 
 def _finalize_closed_trade(repo: Any, trade: PaperTrade, analysis: dict[str, Any]) -> PaperTrade:
@@ -358,7 +534,13 @@ def _confirmed_bar(analysis: dict[str, Any], gauges: dict[str, Any]) -> MarketCa
         return None
 
 
-def _qualified_signature(repo: Any, settings: Any, analysis: dict[str, Any], payload: dict[str, Any], direction: Direction) -> dict[str, Any] | None:
+def _signature_gate_evaluation(
+    repo: Any,
+    settings: Any,
+    analysis: dict[str, Any],
+    payload: dict[str, Any],
+    direction: Direction,
+) -> dict[str, Any]:
     stats = [
         item
         for item in [
@@ -368,6 +550,9 @@ def _qualified_signature(repo: Any, settings: Any, analysis: dict[str, Any], pay
         if isinstance(item, dict)
     ]
     by_key = {str(item.get("signature_key") or _dict(item.get("signature")).get("key") or ""): item for item in stats}
+    signature_gate = False
+    regime_gate = False
+    qualified: dict[str, Any] | None = None
     for signature in signatures_from_analysis(analysis):
         if signature.get("direction") != direction.value:
             continue
@@ -377,11 +562,18 @@ def _qualified_signature(repo: Any, settings: Any, analysis: dict[str, Any], pay
             continue
         if current_state(repo, key, stat=stat, settings=settings) != "validated":
             continue
+        signature_gate = True
         ci_low = _ci_low(stat)
         if ci_low is None or ci_low < float(settings.universe_backtest_min_ci_low_pct):
             continue
-        return {"signature_key": key, "signature": signature, "stat": stat, "ci_low": ci_low}
-    return None
+        regime_gate = True
+        qualified = {"signature_key": key, "signature": signature, "stat": stat, "ci_low": ci_low}
+        break
+    return {"qualified": qualified, "signature_gate": signature_gate, "regime_gate": regime_gate}
+
+
+def _qualified_signature(repo: Any, settings: Any, analysis: dict[str, Any], payload: dict[str, Any], direction: Direction) -> dict[str, Any] | None:
+    return _dict(_signature_gate_evaluation(repo, settings, analysis, payload, direction).get("qualified")) or None
 
 
 def _paper_metrics(trades: Iterable[PaperTrade]) -> dict[str, Any]:
@@ -420,9 +612,7 @@ def _metric_payload(returns: list[float], wins: int, gross_profit: float, gross_
 
 
 def _paper_equity_curve(trades: Iterable[PaperTrade]) -> list[dict[str, Any]]:
-    return _return_curve(
-        ((trade.exit_at or trade.updated_at, float(trade.net_return_pct)) for trade in trades)
-    )
+    return _return_curve(((trade.exit_at or trade.updated_at, float(trade.net_return_pct)) for trade in trades))
 
 
 def _user_equity_curve(trades: Iterable[Any]) -> list[dict[str, Any]]:
@@ -449,10 +639,7 @@ def _poor_performance_summary(scoreboard: dict[str, Any]) -> str:
     if not scoreboard.get("poor_performance"):
         return "부진 기준에 해당하지 않습니다."
     engine = _dict(scoreboard.get("engine"))
-    return (
-        f"승률 {float(engine.get('win_rate_pct') or 0):.1f}% · "
-        f"MDD {float(engine.get('mdd_pct') or 0):.1f}% — 같은 기간 자율 조치를 함께 표시합니다."
-    )
+    return f"승률 {float(engine.get('win_rate_pct') or 0):.1f}% · MDD {float(engine.get('mdd_pct') or 0):.1f}% — 같은 기간 자율 조치를 함께 표시합니다."
 
 
 def _stance_state(confluence: dict[str, Any]) -> dict[str, Any]:
