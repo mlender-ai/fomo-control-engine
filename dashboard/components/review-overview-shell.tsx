@@ -43,9 +43,9 @@ export function ReviewOverviewShell() {
           detail={trades?.length ? "종료 거래별 판단 이력과 메모" : "종료된 거래가 쌓이면 자동 복기됩니다."}
         />
         <ReviewEntry
-          href="/calibration"
+          href="/engine?tab=status"
           icon={SlidersHorizontal}
-          title="판단 성적표"
+          title="엔진 상태"
           value={calibration?.cache_status === "preparing" ? "집계 준비 중" : calibration ? `${tested}건 검증${accuracy === null ? "" : ` · ${accuracy.toFixed(1)}%`}` : "불러오는 중"}
           detail={calibration?.sample_warning || "판단 유형별 적중과 표본 수를 확인합니다."}
         />

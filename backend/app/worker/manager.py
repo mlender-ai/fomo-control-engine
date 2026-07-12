@@ -15,6 +15,7 @@ from app.core.config import Settings
 from app.core.logging import configure_logging
 from app.notify.alerts import AlertEngine
 from app.notify.bot.bot import TelegramBotSupervisor
+from app.notify.bot.formatters import format_paper_event
 from app.notify.state import NotificationState
 from app.notify.telegram import TelegramSender
 from app.services import runtime as service
@@ -176,6 +177,9 @@ class WorkerManager:
     async def _sync_positions(self) -> dict[str, Any]:
         payload = await asyncio.to_thread(service.sync_and_analyze_positions)
         await self._run_hook("detect_closures", lambda: asyncio.to_thread(service.detect_closures))
+        paper_result = await self._run_hook("paper_engine", lambda: asyncio.to_thread(service.run_paper_engine))
+        if isinstance(paper_result, dict):
+            await self._send_paper_events(paper_result)
         # WO-44: 진입/종료/판정 전이 — 라이프사이클이 1차 정보이므로 조건 알림보다 먼저.
         await self._run_hook("evaluate_lifecycle", lambda: self.alerts.evaluate_lifecycle(payload))
         await self._run_hook(
@@ -195,6 +199,19 @@ class WorkerManager:
             "created": payload.get("created"),
             "auto_closed": payload.get("auto_closed"),
         }
+
+    async def _send_paper_events(self, result: dict[str, Any]) -> int:
+        if (
+            not getattr(self.settings, "paper_telegram_alerts_enabled", True)
+            or not self.settings.telegram_alerts_enabled
+            or self.state.is_muted()
+        ):
+            return 0
+        sent = 0
+        for event in result.get("events", []) or []:
+            if isinstance(event, dict):
+                sent += await self.sender.send_to_all(format_paper_event(event))
+        return sent
 
     async def _evaluate_performance_alerts(self) -> int:
         performance = await asyncio.to_thread(service.performance_summary)
@@ -297,6 +314,13 @@ class WorkerManager:
                 self.settings.worker_detect_closures_interval_seconds,
                 lambda: service.detect_closures(),
                 scheduled=False,
+            ),
+            "paper_engine": WorkerJob(
+                "paper_engine",
+                self.settings.worker_sync_positions_interval_seconds,
+                None,
+                scheduled=False,
+                enabled=self.settings.paper_engine_enabled,
             ),
             "evaluate_lifecycle": WorkerJob(
                 "evaluate_lifecycle",

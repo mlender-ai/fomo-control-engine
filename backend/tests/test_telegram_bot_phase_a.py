@@ -13,11 +13,13 @@ from app.notify.bot.formatters import (
     format_action_plan,
     format_flow,
     format_help,
+    format_engine_scoreboard,
     format_insight,
     lifecycle_alert_keyboard,
     format_one_liner_strip,
     format_position_verdict,
     format_positions_summary,
+    format_paper_event,
     format_scout,
     format_scout_prompt,
     format_scout_quick_answer,
@@ -208,7 +210,39 @@ def test_scout_tracking_formatter_and_callbacks() -> None:
     assert "/scout — 티커 입력 안내" in format_help()
     assert "/scout SOL" in format_help()
     assert "/unscout SOL" in format_help()
+    assert "/engine — 엔진 페이퍼 대결 요약" in format_help()
     assert parse_callback("v1:unscout:SOLUSDT").action == "unscout"
+
+
+def test_engine_scoreboard_and_paper_event_formatters() -> None:
+    scoreboard = format_engine_scoreboard(
+        {
+            "scoreboard": {
+                "engine": {"net_return_pct": 4.2, "win_rate_pct": 60, "profit_factor": 1.7, "mdd_pct": 3.1, "trade_count": 10},
+                "user": {"net_return_pct": 2.1, "win_rate_pct": 50, "profit_factor": 1.2, "mdd_pct": 5.4, "trade_count": 8},
+                "rolling_4w": {"engine_leading": True},
+                "fairness_note": "조건 상이 — 방향·타이밍 판단력의 비교",
+            }
+        }
+    )
+    event = format_paper_event(
+        {
+            "kind": "opened",
+            "trade": {
+                "symbol": "SOXLUSDT",
+                "direction": "long",
+                "entry_price": 194.2,
+                "entry_evidence": {"items": [{"claim": "저점 Strong 스윕"}, {"claim": "상방 전환 확정"}]},
+            },
+        }
+    )
+
+    assert "🤖 엔진 트레이딩 대결" in scoreboard
+    assert "엔진 우세" in scoreboard
+    assert "엔진 N=10 | 나 N=8" in scoreboard
+    assert "🤖 엔진 진입 · SOXLUSDT 롱" in event
+    assert "저점 Strong 스윕 + 상방 전환 확정" in event
+    assert "실주문이 아닌 엔진 가상 거래" in event
 
 
 def test_insight_formatter_uses_regenerate_button_without_pre() -> None:

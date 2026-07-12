@@ -1,5 +1,10 @@
 import { defineConfig, devices } from "@playwright/test";
 
+const apiPort = process.env.PLAYWRIGHT_API_PORT ?? "8895";
+const webPort = process.env.PLAYWRIGHT_WEB_PORT ?? "8896";
+const apiBaseUrl = `http://127.0.0.1:${apiPort}`;
+const webBaseUrl = process.env.PLAYWRIGHT_BASE_URL ?? `http://127.0.0.1:${webPort}`;
+
 export default defineConfig({
   testDir: "./tests",
   snapshotPathTemplate: "{testDir}/__screenshots__/{testFilePath}/{arg}{ext}",
@@ -13,7 +18,7 @@ export default defineConfig({
     }
   },
   use: {
-    baseURL: process.env.PLAYWRIGHT_BASE_URL ?? "http://127.0.0.1:8876",
+    baseURL: webBaseUrl,
     ...devices["Desktop Chrome"],
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
@@ -21,14 +26,15 @@ export default defineConfig({
   },
   webServer: [
     {
-      command: "python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8875",
+      command: `python3 -m uvicorn app.main:app --host 127.0.0.1 --port ${apiPort}`,
       cwd: "../backend",
-      url: "http://127.0.0.1:8875/health",
+      url: `${apiBaseUrl}/health`,
       timeout: 120_000,
       reuseExistingServer: !process.env.CI,
       env: {
         FCE_ENV: "e2e",
         FCE_DEMO_MODE: "true",
+        FCE_CORS_ORIGINS: webBaseUrl,
         FCE_DATABASE_URL: process.env.FCE_E2E_DATABASE_URL ?? "sqlite:////tmp/fce-e2e.db",
         FCE_WORKER_ENABLED: "true",
         FCE_WORKER_STARTUP_DELAY_SECONDS: "1",
@@ -44,12 +50,12 @@ export default defineConfig({
       }
     },
     {
-      command: "npm run build && npm run start -- -H 127.0.0.1 -p 8876",
-      url: "http://127.0.0.1:8876",
+      command: `npm run build && npm run start -- -H 127.0.0.1 -p ${webPort}`,
+      url: webBaseUrl,
       timeout: 120_000,
       reuseExistingServer: !process.env.CI,
       env: {
-        NEXT_PUBLIC_API_BASE_URL: "http://127.0.0.1:8875"
+        NEXT_PUBLIC_API_BASE_URL: apiBaseUrl
       }
     }
   ]

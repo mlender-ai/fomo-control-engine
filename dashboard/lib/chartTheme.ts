@@ -132,14 +132,14 @@ const flagTone: Record<ChartFlagKind, ChartTone> = {
 };
 
 const fallbackRgb: Record<ChartTone, string> = {
-  teal: "0, 209, 178",
-  green: "0, 192, 135",
-  red: "255, 91, 90",
-  amber: "240, 184, 64",
-  blue: "98, 207, 232",
-  purple: "168, 118, 255",
-  neutral: "147, 166, 142",
-  text: "238, 242, 247",
-  muted: "140, 171, 135",
+  teal: "0, 200, 5",
+  green: "0, 200, 5",
+  red: "255, 77, 87",
+  amber: "155, 155, 155",
+  blue: "168, 168, 168",
+  purple: "127, 127, 127",
+  neutral: "126, 126, 126",
+  text: "245, 245, 245",
+  muted: "139, 139, 139",
   panel: "0, 0, 0"
 };

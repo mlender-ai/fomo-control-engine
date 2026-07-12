@@ -57,6 +57,7 @@ def main_menu_keyboard() -> list[list[dict[str, str]]]:
         [
             {"text": "포지션", "callback_data": encode_callback("list")},
             {"text": "스카우트", "callback_data": encode_callback("scout")},
+            {"text": "엔진", "callback_data": encode_callback("engine")},
             {"text": "상태", "callback_data": encode_callback("status")},
         ]
     ]
@@ -180,6 +181,7 @@ def format_help() -> str:
             "/review — 최근 복기 3건",
             "/calib — 캘리브레이션 스냅샷",
             "/perf — 계좌 성과 요약",
+            "/engine — 엔진 페이퍼 대결 요약",
             "/experiments — 파라미터 자율 예정·섀도 실험",
             "/veto ID — 파라미터 자율 채택 거부",
             "/status — 워커·알림 상태",
@@ -696,6 +698,54 @@ def format_performance(payload: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def format_engine_scoreboard(payload: dict[str, Any]) -> str:
+    scoreboard = payload.get("scoreboard") if isinstance(payload.get("scoreboard"), dict) else payload
+    engine = _dump(scoreboard.get("engine"))
+    user = _dump(scoreboard.get("user"))
+    rolling = _dump(scoreboard.get("rolling_4w"))
+    verdict = "엔진 우세" if rolling.get("engine_leading") else "우세 미확정"
+    return "\n".join(
+        [
+            "<b>🤖 엔진 트레이딩 대결</b>",
+            f"4주 판정: {verdict}",
+            "",
+            f"수익률  엔진 {_signed_pct(engine.get('net_return_pct'))} | 나 {_signed_pct(user.get('net_return_pct'))}",
+            f"승률    엔진 {_nullable_pct(engine.get('win_rate_pct'))} | 나 {_nullable_pct(user.get('win_rate_pct'))}",
+            f"PF      엔진 {_ratio(engine.get('profit_factor'))} | 나 {_ratio(user.get('profit_factor'))}",
+            f"MDD     엔진 {_nullable_pct(engine.get('mdd_pct'))} | 나 {_nullable_pct(user.get('mdd_pct'))}",
+            f"거래수  엔진 N={engine.get('trade_count', 0)} | 나 N={user.get('trade_count', 0)}",
+            "",
+            escape(str(scoreboard.get("fairness_note") or "조건 상이 — 방향·타이밍 판단력의 비교")),
+        ]
+    )
+
+
+def format_paper_event(event: dict[str, Any]) -> str:
+    trade = _dump(event.get("trade"))
+    kind = str(event.get("kind") or "")
+    direction = "롱" if trade.get("direction") == "long" else "숏"
+    prefix = {
+        "opened": "🤖 엔진 진입",
+        "partial": "🤖 엔진 부분 익절",
+        "closed": "🤖 엔진 청산",
+    }.get(kind, "🤖 엔진 거래")
+    price = trade.get("entry_price") if kind == "opened" else trade.get("exit_price") or trade.get("partial_exit_price")
+    lines = [f"<b>{prefix} · {escape(str(trade.get('symbol') or '-'))} {direction} @ {_price(price)}</b>"]
+    if kind == "opened":
+        evidence = _dump(trade.get("entry_evidence")).get("items") or []
+        labels = [
+            _compact(str(_dump(item).get("claim") or _dump(item).get("label") or ""), 36)
+            for item in evidence[:2]
+        ]
+        lines.append(f"근거: {escape(' + '.join(item for item in labels if item) or '검증 게이트 통과')}")
+    else:
+        lines.append(
+            f"net {_signed_pct(trade.get('net_return_pct'))} · 사유 {escape(_exit_reason(trade.get('exit_reason')))}"
+        )
+    lines.append("실주문이 아닌 엔진 가상 거래 기록입니다.")
+    return "\n".join(lines)
+
+
 def format_status(payload: dict[str, Any]) -> str:
     jobs = payload.get("jobs", {})
     lines = ["<b>시스템 상태</b>"]
@@ -925,6 +975,24 @@ def _nullable_pct(value: Any) -> str:
     if value is None:
         return "표본 부족"
     return _signed_pct(value).replace("+", "")
+
+
+def _ratio(value: Any) -> str:
+    try:
+        return f"{float(value):.2f}"
+    except (TypeError, ValueError):
+        return "표본 부족"
+
+
+def _exit_reason(value: Any) -> str:
+    return {
+        "invalidation_breach": "무효화 이탈",
+        "breakeven_stop": "본전 스탑",
+        "opposite_stance_flip": "반대 스탠스 전환",
+        "take_profit_pressure": "익절 압력 지속",
+        "time_stop": "최대 보유시간",
+        "take_profit_1": "1차 익절",
+    }.get(str(value or ""), str(value or "기록 없음"))
 
 
 def _funding(value: Any) -> str:

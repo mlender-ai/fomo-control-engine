@@ -6,10 +6,13 @@ import { PositionChart, type PositionChartOverlay } from "@/components/position/
 import { VolumeProfilePanel } from "@/components/position/VolumeProfilePanel";
 import { VolumeXrayPanel } from "@/components/position/VolumeXrayPanel";
 import {
+  activeFocusLayers,
+  CHART_LAYER_DEFS,
   DEFAULT_LAYER_STATE,
   isTaLayer,
   loadLayerState,
   saveLayerState,
+  setFocusedLayer,
   toggleLayer,
   type ChartLayerId,
   type ChartLayerState,
@@ -34,6 +37,9 @@ import {
 } from "@/lib/labels/marketStateLabels";
 import type {
   AnalystBriefing,
+  JudgmentLedgerEntry,
+  JudgmentScore,
+  LivePositionDetail,
   LivePositionPayload,
   PositionActionPlan,
   PositionChartAnalysis,
@@ -67,19 +73,29 @@ export type AnalysisWorkspace = {
   highlightPrice: number | null;
   setHighlightPrice: (price: number | null) => void;
   openModule: EvidenceModuleId | null;
+  focusedLayer: ChartLayerId | null;
   handleToggleLayer: (id: ChartLayerId, additive: boolean) => void;
   handleModuleToggle: (id: EvidenceModuleId) => void;
   density: Density;
+  focusEvidence: (layer: ChartLayerId, price?: number | null) => void;
 };
 
 export function useAnalysisWorkspace(): AnalysisWorkspace {
   const [layers, setLayers] = useState<ChartLayerState>(DEFAULT_LAYER_STATE);
   const [highlightPrice, setHighlightPrice] = useState<number | null>(null);
   const [openModule, setOpenModule] = useState<EvidenceModuleId | null>(null);
+  const [focusedLayer, setFocusedLayerState] = useState<ChartLayerId | null>(null);
   const [density, setDensity] = useState<Density>(DEFAULT_DENSITY);
 
   useEffect(() => {
-    setLayers(loadLayerState());
+    const stored = loadLayerState();
+    const params = new URLSearchParams(window.location.search);
+    const focus = params.get("focus") as ChartLayerId | null;
+    const known = CHART_LAYER_DEFS.some((item) => item.id === focus);
+    setLayers(known && focus ? setFocusedLayer(stored, focus) : stored);
+    setFocusedLayerState(known ? focus : activeFocusLayers(stored).at(-1) ?? null);
+    const price = Number(params.get("price"));
+    if (Number.isFinite(price) && price > 0) setHighlightPrice(price);
     setDensity(loadDensity());
   }, []);
 
@@ -90,6 +106,7 @@ export function useAnalysisWorkspace(): AnalysisWorkspace {
   function handleToggleLayer(id: ChartLayerId, additive: boolean) {
     const next = toggleLayer(layers, id, additive);
     setLayers(next);
+    setFocusedLayerState(activeFocusLayers(next).includes(id) ? id : activeFocusLayers(next).at(-1) ?? null);
     if (isTaLayer(id)) {
       const moduleId = moduleForLayer(id);
       if (moduleId && next.ta.includes(id)) {
@@ -105,15 +122,30 @@ export function useAnalysisWorkspace(): AnalysisWorkspace {
     if (openModule === id) {
       setOpenModule(null);
       if (layer) setLayers((current) => ({ ...current, ta: current.ta.filter((item) => item !== layer) }));
+      if (layer) setFocusedLayerState((current) => current === layer ? null : current);
       return;
     }
     setOpenModule(id);
     if (layer) {
-      setLayers((current) => toggleLayer(current, layer, true));
+      setLayers((current) => toggleLayer(current, layer, false));
+      setFocusedLayerState(layer);
     }
   }
 
-  return { layers, setLayers, highlightPrice, setHighlightPrice, openModule, handleToggleLayer, handleModuleToggle, density };
+  function focusEvidence(layer: ChartLayerId, price: number | null = null) {
+    setLayers((current) => setFocusedLayer(current, layer));
+    setFocusedLayerState(layer);
+    setHighlightPrice(price);
+    if (isTaLayer(layer)) setOpenModule(moduleForLayer(layer));
+    const url = new URL(window.location.href);
+    url.searchParams.set("mode", "pro");
+    url.searchParams.set("focus", layer);
+    if (price !== null && Number.isFinite(price)) url.searchParams.set("price", String(price));
+    else url.searchParams.delete("price");
+    window.history.replaceState(window.history.state, "", url);
+  }
+
+  return { layers, setLayers, highlightPrice, setHighlightPrice, openModule, focusedLayer, handleToggleLayer, handleModuleToggle, density, focusEvidence };
 }
 
 /** 포지션 상세와 스카우트가 공유하는 분석 화면: 차트(레이어) + 사이드 패널 + 근거 아코디언. */
@@ -168,7 +200,10 @@ export function SymbolAnalysisView({
           density={workspace.density}
           intentZoneSelector={intentZoneSelector}
         />
-        {sidePanel}
+        <aside className="evidenceRoomRail">
+          {sidePanel}
+          <EvidenceRoomPanel payload={payload} chartAnalysis={chartAnalysis} layers={workspace.layers} focusedLayer={workspace.focusedLayer} />
+        </aside>
       </section>
       <EvidenceAccordion
         payload={payload}
@@ -181,6 +216,121 @@ export function SymbolAnalysisView({
       />
     </>
   );
+}
+
+function EvidenceRoomPanel({
+  payload,
+  chartAnalysis,
+  layers,
+  focusedLayer
+}: {
+  payload?: LivePositionPayload;
+  chartAnalysis: PositionChartAnalysis | null;
+  layers: ChartLayerState;
+  focusedLayer: ChartLayerId | null;
+}) {
+  const active = activeFocusLayers(layers);
+  const focused = focusedLayer && active.includes(focusedLayer) ? focusedLayer : active.at(-1) ?? null;
+  if (!focused) {
+    return (
+      <section className="evidenceRoomPanel" data-testid="evidence-room-panel">
+        <div className="evidenceRoomHeading"><span>근거 검증실</span><small>레이어를 선택하세요</small></div>
+        <p className="evidenceRoomEmpty">차트 상단에서 근거 하나를 선택하면 상세 수치와 검증 기록을 함께 표시합니다.</p>
+      </section>
+    );
+  }
+  const definition = CHART_LAYER_DEFS.find((item) => item.id === focused);
+  const stats = chartAnalysis?.historical_backtest?.stats ?? [];
+  const relevantStats = stats
+    .filter((stat) => signatureMatchesLayer(stat.signature, focused))
+    .sort((left, right) => right.sample_size - left.sample_size)
+    .slice(0, 2);
+  const detail = payload as (LivePositionDetail | undefined);
+  const scoreByJudgment = new Map((detail?.judgment_scores ?? []).map((score) => [score.judgment_id, score]));
+  const judgmentHistory = (detail?.judgments ?? [])
+    .filter((judgment) => judgmentMatchesLayer(judgment, focused))
+    .map((judgment) => ({ judgment, score: scoreByJudgment.get(judgment.judgment_id) }))
+    .slice(0, 3);
+  const eventHistory = (payload?.recent_events ?? [])
+    .filter((event) => eventMatchesLayer(event, focused))
+    .slice(0, 3);
+  return (
+    <section className="evidenceRoomPanel" data-testid="evidence-room-panel" data-focus-layer={focused}>
+      <div className="evidenceRoomHeading">
+        <span>근거 검증실</span>
+        <small>{definition?.label ?? focused} 포커스</small>
+      </div>
+      <div className="evidenceRoomSection">
+        <strong>현재 주장</strong>
+        <p>{focusedEvidenceClaim(chartAnalysis, focused)}</p>
+      </div>
+      <div className="evidenceRoomSection">
+        <strong>백테스트 성적</strong>
+        {relevantStats.length ? relevantStats.map((stat) => (
+          <div className="evidenceRoomStat" key={stat.signature_key}>
+            <span>{stat.label || definition?.label}</span>
+            <b>{stat.win_1r_pct === null ? "판정 대기" : `1R ${stat.win_1r_pct.toFixed(1)}%`}</b>
+            <small>N={stat.sample_size}{stat.win_1r_ci ? ` · CI ${stat.win_1r_ci[0].toFixed(1)}~${stat.win_1r_ci[1].toFixed(1)}%` : ""}</small>
+          </div>
+        )) : <p className="evidenceRoomEmpty">이 레이어의 검증 표본을 축적 중입니다.</p>}
+      </div>
+      <div className="evidenceRoomSection">
+        <strong>최근 판단 이력</strong>
+        {judgmentHistory.length ? judgmentHistory.map(({ judgment, score }) => (
+          <div className="evidenceRoomHistory" key={judgment.id}>
+            <span>{judgmentHistoryLabel(judgment, score)}</span>
+            <small>{score ? judgmentOutcomeLabel(score.outcome) : "채점 대기"} · {new Date(judgment.as_of).toLocaleDateString("ko-KR")}</small>
+          </div>
+        )) : eventHistory.length ? eventHistory.map((event) => (
+          <div className="evidenceRoomHistory" key={event.id}>
+            <span>{plainifyTaText(event.title)}</span>
+            <small>이벤트 기록 · {new Date(event.created_at).toLocaleDateString("ko-KR")}</small>
+          </div>
+        )) : <p className="evidenceRoomEmpty">이 심볼의 채점 가능한 판단 이력이 아직 없습니다.</p>}
+      </div>
+    </section>
+  );
+}
+
+function signatureMatchesLayer(signature: Record<string, unknown> | undefined, layer: ChartLayerId): boolean {
+  const source = `${signature?.engine ?? ""} ${signature?.event_type ?? ""}`.toLowerCase();
+  const aliases: Record<ChartLayerId, string[]> = {
+    plan: ["plan"], levels: ["level"], liquidity: ["liquidity", "sweep"], volume_profile: ["volume", "poc"],
+    wyckoff: ["wyckoff", "spring", "utad"], harmonic: ["harmonic", "prz"], flow: ["flow", "funding", "oi"], indicators: ["indicator", "technical"]
+  };
+  return aliases[layer].some((alias) => source.includes(alias));
+}
+
+function eventMatchesLayer(event: PositionEvent, layer: ChartLayerId): boolean {
+  return signatureMatchesLayer({ engine: event.event_type, event_type: `${event.title} ${event.description}` }, layer);
+}
+
+function judgmentMatchesLayer(judgment: JudgmentLedgerEntry, layer: ChartLayerId): boolean {
+  const claim = JSON.stringify(judgment.claim ?? {});
+  return signatureMatchesLayer({ engine: judgment.source_type, event_type: `${judgment.type} ${claim}` }, layer);
+}
+
+function judgmentHistoryLabel(judgment: JudgmentLedgerEntry, score?: JudgmentScore): string {
+  const claim = judgment.claim ?? {};
+  const label = String(claim.label ?? claim.event_type ?? claim.condition ?? judgment.type).replaceAll("_", " ");
+  const detail = score?.detail ? ` · ${score.detail}` : "";
+  return plainifyTaText(`${label}${detail}`);
+}
+
+function judgmentOutcomeLabel(outcome: JudgmentScore["outcome"]): string {
+  return ({ correct: "적중", wrong: "오판", whipsaw: "휩쏘", untested: "미검증" } as const)[outcome];
+}
+
+function focusedEvidenceClaim(analysis: PositionChartAnalysis | null, layer: ChartLayerId): string {
+  if (!analysis) return "차트 데이터가 준비되면 현재 주장을 표시합니다.";
+  if (layer === "levels") return `지지 ${analysis.price_levels.support.length}개 · 저항 ${analysis.price_levels.resistance.length}개를 구조 점수로 비교합니다.`;
+  if (layer === "liquidity") return `미스윕 풀 ${analysis.liquidity?.pools.filter((pool) => !pool.swept).length ?? 0}개 · 확정 스윕 ${analysis.liquidity?.sweeps.filter((sweep) => sweep.confirmed).length ?? 0}개입니다.`;
+  if (layer === "volume_profile") return `최다 거래 가격은 ${formatPrice(analysis.volume_profile.poc_price)}입니다.`;
+  if (layer === "wyckoff") return `현재 국면은 ${phaseHintLabel(String(analysis.wyckoff_phase?.phase ?? analysis.wyckoff?.["phase"] ?? "undetermined"))}입니다.`;
+  if (layer === "harmonic") return analysis.harmonic_patterns.length ? `하모닉 패턴 ${analysis.harmonic_patterns.length}개를 검증 중입니다.` : "확정 하모닉 패턴이 없습니다.";
+  if (layer === "flow") return `거래량 상태는 ${volumeStateLabel(analysis.volume_xray.volume_state)}입니다.`;
+  if (layer === "indicators") return "기술 지표의 방향 정합을 검증합니다.";
+  return "액션 플랜의 가격과 조건을 검증합니다.";
 }
 
 export function chartOverlayFromPayload(payload: LivePositionPayload | undefined): PositionChartOverlay | null {

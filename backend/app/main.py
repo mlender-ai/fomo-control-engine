@@ -13,6 +13,7 @@ from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.derivatives.routes import router as derivatives_router
 from app.notify.routes import router as notify_router
+from app.paper.routes import router as paper_router
 from app.services import runtime as service
 from app.worker.manager import WorkerManager
 from app.worker.routes import router as worker_router
@@ -52,6 +53,7 @@ app.include_router(scout_router)
 app.include_router(derivatives_router)
 app.include_router(notify_router)
 app.include_router(worker_router)
+app.include_router(paper_router)
 
 
 @app.middleware("http")

@@ -380,6 +380,8 @@ export type LivePositionDetail = LivePositionPayload & {
   insights: PositionInsight[];
   events: PositionEvent[];
   monitoring_logs: Array<Record<string, unknown>>;
+  judgments: JudgmentLedgerEntry[];
+  judgment_scores: JudgmentScore[];
 };
 
 export type CompactChartGauges = {
@@ -1379,6 +1381,68 @@ export type PerformanceSummary = {
   scoreboard_cross_view: Record<string, unknown>;
 };
 
+export type PaperTrade = {
+  id: string;
+  symbol: string;
+  timeframe: string;
+  asset_class: string;
+  direction: "long" | "short";
+  status: "open" | "closed";
+  entry_at: string;
+  entry_price: number;
+  margin_usdt: number;
+  leverage: number;
+  remaining_quantity: number;
+  invalidation_price: number;
+  take_profit_price: number;
+  entry_evidence: Record<string, unknown>;
+  checklist: Record<string, unknown>;
+  stance_snapshot: Record<string, unknown>;
+  exit_at: string | null;
+  exit_price: number | null;
+  exit_reason: string | null;
+  net_pnl_usdt: number;
+  net_return_pct: number;
+  holding_bars: number;
+  loss_tags: string[];
+};
+
+export type PaperMetrics = {
+  net_return_pct: number;
+  win_rate_pct: number;
+  profit_factor: number | null;
+  mdd_pct: number;
+  trade_count: number;
+};
+
+export type PaperDashboard = {
+  scoreboard: {
+    as_of: string;
+    started_at: string;
+    engine: PaperMetrics;
+    user: PaperMetrics;
+    equity_curve: {
+      engine: Array<{ ts: string; return_pct: number }>;
+      user: Array<{ ts: string; return_pct: number }>;
+    };
+    rolling_4w: { engine: PaperMetrics; user: PaperMetrics; engine_leading: boolean; verdict: string };
+    poor_performance: boolean;
+    fairness_note: string;
+  };
+  open_trades: PaperTrade[];
+  closed_trades: PaperTrade[];
+  calibration: {
+    computed_at?: string | null;
+    weekly_report: Record<string, unknown>;
+    suggestions: CalibrationSuggestion[];
+    suggestion_status_counts: Record<string, number>;
+    engine_params: EngineParamVersion[];
+    signature_state_counts: Record<string, number>;
+  };
+  performance_action: { poor: boolean; summary: string; actions: Array<Record<string, unknown>> };
+  live_orders_enabled: false;
+};
+
 export type MarketSummary = {
   reports: Report[];
   positions: Position[];
@@ -1452,6 +1516,7 @@ export type AlertSettings = {
     quiet_hours_timezone: string;
     daily_summary_time: string;
     pulse_interval_hours: number;
+    paper_alerts_enabled: boolean;
     chat_ids_configured: number;
   };
   rules: AlertRuleSetting[];
@@ -1464,6 +1529,7 @@ export type AlertSettingsUpdate = {
   quiet_hours_end?: string;
   daily_summary_time?: string;
   pulse_interval_hours?: number;
+  paper_alerts_enabled?: boolean;
 };
 
 export type AlertTestResult = {
@@ -1700,6 +1766,7 @@ export const api = {
       body: JSON.stringify(payload)
     }),
   performance: () => request<PerformanceSummary>("/api/performance"),
+  paperDashboard: () => request<PaperDashboard>("/api/paper/dashboard"),
   saveScenario: (payload: { symbol: string; direction: "long" | "short"; entry_price: number; leverage: number; margin_usdt?: number | null; margin_mode?: string; timeframe?: string; note?: string }) =>
     request<{ scenario: EntryScenario }>("/api/scout/scenarios", {
       method: "POST",

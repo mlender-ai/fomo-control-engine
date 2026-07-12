@@ -1343,6 +1343,8 @@ def _live_position_detail(position: Position) -> dict:
         "insights": [_insight_payload(insight, _insight_status(insight, snapshot)) for insight in insights],
         "events": repository.list_position_events(position.id, limit=50),
         "monitoring_logs": repository.list_monitoring_logs(position.id, limit=30),
+        "judgments": repository.list_judgments(position.id, limit=20),
+        "judgment_scores": repository.list_judgment_scores(position_id=position.id, limit=20),
     }
 
 

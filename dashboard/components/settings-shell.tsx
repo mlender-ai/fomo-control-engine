@@ -107,6 +107,7 @@ export function SettingsShell() {
     quiet_hours_end?: string;
     daily_summary_time?: string;
     pulse_interval_hours?: number;
+    paper_alerts_enabled?: boolean;
   }) {
     setBusy("quiet");
     setError("");
@@ -191,6 +192,7 @@ export function SettingsShell() {
           <StatusItem label="Quiet Hours" value={alertSettings?.telegram.quiet_hours_enabled ? `${alertSettings.telegram.quiet_hours_start}-${alertSettings.telegram.quiet_hours_end}` : "off"} tone="muted" />
           <StatusItem label="Morning Summary" value={alertSettings?.telegram.daily_summary_time ?? "-"} tone="muted" />
           <StatusItem label="Pulse" value={alertSettings ? `${alertSettings.telegram.pulse_interval_hours}h` : "-"} tone="muted" />
+          <StatusItem label="엔진 거래" value={alertSettings?.telegram.paper_alerts_enabled ? "on" : "off"} tone="muted" />
         </div>
         {alertSettings ? (
           <div className="alertSettingsGrid">
@@ -202,6 +204,15 @@ export function SettingsShell() {
                 disabled={busy === "quiet"}
               />
               야간 무음 사용
+            </label>
+            <label className="alertQuietToggle">
+              <input
+                type="checkbox"
+                checked={alertSettings.telegram.paper_alerts_enabled}
+                onChange={(event) => updateQuietHours({ paper_alerts_enabled: event.currentTarget.checked })}
+                disabled={busy === "quiet"}
+              />
+              엔진 페이퍼 진입·청산 알림
             </label>
             <input
               aria-label="무음 시작"

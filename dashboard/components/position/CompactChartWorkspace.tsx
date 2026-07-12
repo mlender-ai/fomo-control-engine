@@ -20,7 +20,8 @@ export function CompactChartWorkspace({
   plan,
   gauges,
   nextPrice,
-  positionOverlay = null
+  positionOverlay = null,
+  onOpenEvidence
 }: {
   analysis: PositionChartAnalysis | null;
   loading: boolean;
@@ -31,6 +32,7 @@ export function CompactChartWorkspace({
   gauges: CompactChartGauges | null;
   nextPrice: CompactNextPrice | null;
   positionOverlay?: PositionChartOverlay | null;
+  onOpenEvidence?: () => void;
 }) {
   const marketTrendSummary = gauges?.market_view?.stance_label || trendSummary;
   const marketNextPrice = gauges?.market_view?.next_price ?? nextPrice;
@@ -53,18 +55,20 @@ export function CompactChartWorkspace({
           gauges={gauges}
         />
       </div>
-      <CompactGaugePanel gauges={gauges} nextPrice={marketNextPrice} loading={loading} />
+      <CompactGaugePanel gauges={gauges} nextPrice={marketNextPrice} loading={loading} onOpenEvidence={onOpenEvidence} />
     </section>
   );
 }
 
 export function CompactGaugePanel({
   gauges,
-  nextPrice
+  nextPrice,
+  onOpenEvidence
 }: {
   gauges: CompactChartGauges | null;
   nextPrice: CompactNextPrice | null;
   loading?: boolean;
+  onOpenEvidence?: () => void;
 }) {
   const provisional = Boolean(gauges?.bar_state.provisional);
   const minutes = gauges?.bar_state.minutes_to_close ?? null;
@@ -110,6 +114,7 @@ export function CompactGaugePanel({
         <strong>{nextPrice?.price === null || nextPrice?.price === undefined ? "확인할 가격 없음" : formatPrice(nextPrice.price)}</strong>
         <p>{nextPrice ? `${nextPrice.label} · ${nextPrice.detail}` : "유효한 최근접 트리거가 없습니다."}</p>
       </section>
+      {onOpenEvidence ? <button className="button secondary evidenceRoomLink" onClick={onOpenEvidence} type="button">프로에서 검증</button> : null}
     </aside>
   );
 }

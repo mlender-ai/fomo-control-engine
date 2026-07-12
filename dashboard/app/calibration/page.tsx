@@ -1,6 +1,5 @@
-import { CalibrationShell } from "@/components/calibration-shell";
-import { ReviewSectionNav } from "@/components/review-section-nav";
+import { redirect } from "next/navigation";
 
 export default function CalibrationPage() {
-  return <><ReviewSectionNav /><CalibrationShell /></>;
+  redirect("/engine?tab=status");
 }

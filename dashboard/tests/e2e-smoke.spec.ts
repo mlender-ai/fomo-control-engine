@@ -45,13 +45,34 @@ test("live position cockpit smoke path", async ({ page }) => {
   await expect(page.getByTestId("action-plan")).toBeVisible();
   await page.getByTestId("chart-layer-wyckoff").click();
   await expect(page.getByTestId("chart-overlay")).toBeVisible();
-  await page.getByTestId("chart-layer-wyckoff").click();
   await page.getByTestId("chart-layer-liquidity").click();
+  await expect(page.getByTestId("chart-layer-wyckoff")).toHaveAttribute("aria-pressed", "false");
   await expect(page.getByTestId("liquidity-layer")).toBeVisible();
+  await page.getByTestId("chart-layer-wyckoff").click({ modifiers: ["Shift"] });
+  await expect(page.getByTestId("chart-compare-badge")).toBeVisible();
+  await page.getByTestId("chart-layer-harmonic").click({ modifiers: ["Shift"] });
+  await expect(page.getByTestId("chart-layer-harmonic")).toHaveAttribute("aria-pressed", "false");
+  await page.getByRole("button", { name: "해설" }).click();
+  await expect(page.getByTestId("chart-guide-layer")).toBeVisible();
+  await page.getByRole("button", { name: "해설 켜짐" }).click();
+  await expect(page.getByTestId("chart-guide-layer")).toHaveCount(0);
+  await expect(page.getByTestId("evidence-room-panel")).toHaveAttribute("data-focus-layer", "wyckoff");
   await expect(page.getByTestId("chart-layer-plan")).toHaveAttribute("aria-pressed", "true");
 });
 
-test("scout, analysis, simulator and calibration smoke paths", async ({ page }) => {
+test("minimal evidence deep-links into a reproducible evidence room", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByTestId("compact-chart-workspace")).toBeVisible({ timeout: 30_000 });
+  await page.getByRole("button", { name: "프로에서 검증" }).click();
+  await expect(page).toHaveURL(/mode=pro/);
+  await expect(page).toHaveURL(/focus=levels/);
+  await expect(page.getByTestId("evidence-room-panel")).toHaveAttribute("data-focus-layer", "levels");
+  await page.reload();
+  await expect(page.getByTestId("pro-mode-button")).toHaveClass(/active/);
+  await expect(page.getByTestId("chart-layer-levels")).toHaveAttribute("aria-pressed", "true");
+});
+
+test("scout and analysis smoke paths", async ({ page }) => {
   await page.goto("/scout");
   await expect(page.getByTestId("demo-mode-badge")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("scout-page")).toBeVisible();
@@ -70,10 +91,19 @@ test("scout, analysis, simulator and calibration smoke paths", async ({ page }) 
   await expect(page.getByTestId("direction-gauge")).toHaveCount(0);
   await expect(page.getByTestId("take-profit-gauge")).toHaveClass(/inactive/);
 
+});
+
+test("engine trading workspace and absorbed calibration route", async ({ page }) => {
+  await page.goto("/engine");
+  await expect(page.getByTestId("engine-trading-page")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("engine-battle-tab")).toBeVisible();
+  await page.getByRole("link", { name: "엔진 포지션" }).click();
+  await expect(page).toHaveURL(/tab=positions/);
+  await page.getByRole("link", { name: "거래 일지" }).click();
+  await expect(page.getByTestId("engine-journal-tab")).toBeVisible();
+  await page.getByRole("link", { name: "엔진 상태" }).click();
+  await expect(page.getByTestId("engine-status-tab")).toBeVisible();
+
   await page.goto("/calibration");
-  await expect(page.getByTestId("calibration-page")).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByTestId("calibration-module-scorecard")).toBeVisible();
-  await expect(page.getByTestId("calibration-module-confidence")).toBeVisible();
-  await expect(page.getByTestId("calibration-module-levels")).toBeVisible();
-  await expect(page.getByTestId("calibration-module-weekly")).toBeVisible();
+  await expect(page).toHaveURL(/\/engine\?tab=status/);
 });

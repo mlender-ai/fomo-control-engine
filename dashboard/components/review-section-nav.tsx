@@ -2,12 +2,12 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BookOpenCheck, FileClock, LineChart, SlidersHorizontal } from "lucide-react";
+import { BookOpenCheck, Bot, FileClock, LineChart } from "lucide-react";
 
 const items = [
   { href: "/review", label: "요약", icon: BookOpenCheck },
+  { href: "/engine", label: "엔진 트레이딩", icon: Bot },
   { href: "/trades", label: "거래 복기", icon: FileClock },
-  { href: "/calibration", label: "판단 성적표", icon: SlidersHorizontal },
   { href: "/performance", label: "계좌 성적표", icon: LineChart }
 ];
 

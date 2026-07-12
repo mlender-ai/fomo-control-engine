@@ -743,6 +743,49 @@ class Settings(BaseSettings):
         0.0,
         validation_alias=AliasChoices("FCE_PERFORMANCE_MONTHLY_MDD_LIMIT_PCT", "PERFORMANCE_MONTHLY_MDD_LIMIT_PCT"),
     )
+    paper_engine_enabled: bool = Field(
+        True,
+        validation_alias=AliasChoices("FCE_PAPER_ENGINE_ENABLED", "PAPER_ENGINE_ENABLED"),
+    )
+    paper_margin_usdt: float = Field(
+        100.0,
+        validation_alias=AliasChoices("FCE_PAPER_MARGIN_USDT", "PAPER_MARGIN_USDT"),
+    )
+    paper_leverage: float = Field(
+        3.0,
+        validation_alias=AliasChoices("FCE_PAPER_LEVERAGE", "PAPER_LEVERAGE"),
+    )
+    paper_max_open_positions: int = Field(
+        5,
+        validation_alias=AliasChoices("FCE_PAPER_MAX_OPEN_POSITIONS", "PAPER_MAX_OPEN_POSITIONS"),
+    )
+    paper_min_evidence: int = Field(
+        4,
+        validation_alias=AliasChoices("FCE_PAPER_MIN_EVIDENCE", "PAPER_MIN_EVIDENCE"),
+    )
+    paper_min_checklist_passed: int = Field(
+        5,
+        validation_alias=AliasChoices("FCE_PAPER_MIN_CHECKLIST_PASSED", "PAPER_MIN_CHECKLIST_PASSED"),
+    )
+    paper_min_rr: float = Field(
+        1.5,
+        validation_alias=AliasChoices("FCE_PAPER_MIN_RR", "PAPER_MIN_RR"),
+    )
+    paper_max_holding_bars: int = Field(
+        30,
+        validation_alias=AliasChoices("FCE_PAPER_MAX_HOLDING_BARS", "PAPER_MAX_HOLDING_BARS"),
+    )
+    paper_poor_mdd_pct: float = Field(
+        10.0,
+        validation_alias=AliasChoices("FCE_PAPER_POOR_MDD_PCT", "PAPER_POOR_MDD_PCT"),
+    )
+    paper_telegram_alerts_enabled: bool = Field(
+        True,
+        validation_alias=AliasChoices(
+            "FCE_PAPER_TELEGRAM_ALERTS_ENABLED",
+            "PAPER_TELEGRAM_ALERTS_ENABLED",
+        ),
+    )
 
     model_config = SettingsConfigDict(
         env_file=".env",

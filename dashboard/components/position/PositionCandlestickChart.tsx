@@ -27,6 +27,7 @@ import type {
   WyckoffMarker
 } from "@/lib/api";
 import {
+  activeFocusLayers,
   CHART_LAYER_DEFS,
   MINIMAL_FIXED_LAYER_STATE,
   layerActive,
@@ -239,14 +240,13 @@ export function PositionCandlestickChart({
       }
     });
 
-    const minimalCandles = layerMode === "minimal";
     const candleSeries = chart.addSeries(CandlestickSeries, {
-      upColor: minimalCandles ? palette.color("amber", 0.98) : palette.color("green"),
-      downColor: minimalCandles ? palette.color("red", 0.98) : palette.color("red"),
-      wickUpColor: minimalCandles ? palette.color("amber", 0.96) : palette.color("green", 0.92),
-      wickDownColor: minimalCandles ? palette.color("red", 0.96) : palette.color("red", 0.92),
-      borderUpColor: minimalCandles ? palette.color("amber", 1) : palette.color("green", 0.9),
-      borderDownColor: minimalCandles ? palette.color("red", 1) : palette.color("red", 0.9),
+      upColor: palette.color("green"),
+      downColor: palette.color("red"),
+      wickUpColor: palette.color("green", 0.94),
+      wickDownColor: palette.color("red", 0.94),
+      borderUpColor: palette.color("green", 0.96),
+      borderDownColor: palette.color("red", 0.96),
       borderVisible: true,
       priceLineVisible: false,
       lastValueVisible: false
@@ -660,6 +660,7 @@ function ChartLayerControls({
   layers: ChartLayerState;
   onToggleLayer: (id: ChartLayerId, additive: boolean) => void;
 }) {
+  const comparisonCount = activeFocusLayers(layers).length;
   return (
     <div className="taLayerToggle" role="group" aria-label="차트 레이어 선택">
       {CHART_LAYER_DEFS.map((layer) => (
@@ -668,14 +669,15 @@ function ChartLayerControls({
           className={layerActive(layers, layer.id) ? "active" : ""}
           data-testid={`chart-layer-${layer.id}`}
           key={layer.id}
-          onClick={() => onToggleLayer(layer.id, true)}
+          onClick={(event) => onToggleLayer(layer.id, event.shiftKey)}
           title={layer.description}
           type="button"
         >
           {layer.label}
         </button>
       ))}
-      <small>여러 레이어 동시 선택 가능 · 해설은 별도 토글</small>
+      {comparisonCount === 2 ? <em className="chartCompareBadge" data-testid="chart-compare-badge">비교 중</em> : null}
+      <small>레이어 하나씩 검증 · shift-클릭 비교(최대 2)</small>
     </div>
   );
 }
@@ -710,7 +712,7 @@ function assetClassLabel(assetClass?: string | null): string {
 function ChartGuideLayer({ layer }: { layer: GuideLayer }) {
   const terms = guideTermsForLayer(layer);
   return (
-    <div className={`chartGuideLayer guide-${layer}`} aria-label="차트 읽기 가이드">
+    <div className={`chartGuideLayer guide-${layer}`} aria-label="차트 읽기 가이드" data-testid="chart-guide-layer">
       {terms.map((term, index) => {
         const entry = taGlossaryEntry(term);
         if (!entry) return null;
@@ -1356,6 +1358,9 @@ function riskRewardBoxNodes(context: OverlayContext): string[] {
 function priceFlagNodes(context: OverlayContext): string[] {
   const flags = stackFlags(actionPriceFlags(context), context.height, context.series);
   return flags.map((flag) => {
+    if (flag.label.startsWith("더보기 ")) {
+      return `<g data-testid="price-flag-overflow"><circle cx="${context.right + 10}" cy="${flag.y}" r="4" fill="${context.palette.color("muted", 0.84)}"><title>${escapeSvgText(flag.label)}</title></circle></g>`;
+    }
     const highlighted = context.highlightPrice !== null && Math.abs(flag.price - context.highlightPrice) <= Math.abs(flag.price) * 1e-9 + 1e-12;
     const displayLabel = truncateSvgLabel(flag.label, highlighted ? 18 : 15);
     const width = Math.max(62, Math.min(124, displayLabel.length * 7 + 16 + (highlighted ? 10 : 0)));
@@ -1385,7 +1390,7 @@ function liquidityOverlayNodes(context: OverlayContext): OverlayGroup {
     ...visibleLiquidityPools(liquidity.pools, context.density).flatMap((pool) => liquidityPoolZoneNode(context, pool))
   ];
   const sweeps = visibleLiquiditySweeps([...(liquidity.sweeps ?? []), ...(liquidity.htf_range_sweeps ?? [])], context.density);
-  const badges = sweeps.flatMap((sweep, index) => liquiditySweepBadgeNode(context, sweep, index));
+  const badges = groupLiquiditySweepBadges(context, sweeps).flatMap(({ sweep, count }, index) => liquiditySweepBadgeNode(context, sweep, index, count));
   const shapes = [
     ...sweeps.flatMap((sweep) => liquiditySweepLeaderNode(context, sweep)),
     ...structureShiftNodes(context)
@@ -1470,13 +1475,29 @@ function liquiditySweepLeaderNode(context: OverlayContext, sweep: LiquiditySweep
   ];
 }
 
-function liquiditySweepBadgeNode(context: OverlayContext, sweep: LiquiditySweep, index: number): string[] {
+function groupLiquiditySweepBadges(context: OverlayContext, sweeps: LiquiditySweep[]): Array<{ sweep: LiquiditySweep; count: number }> {
+  const groups: Array<{ sweep: LiquiditySweep; count: number; x: number; y: number }> = [];
+  for (const sweep of sweeps) {
+    const x = context.chart.timeScale().timeToCoordinate(sweep.timestamp as Time);
+    const y = context.series.priceToCoordinate(sweep.pool_price ?? sweep.price);
+    if (x === null || y === null) continue;
+    const previous = groups.at(-1);
+    if (previous && previous.sweep.side === sweep.side && Math.abs(previous.x - x) <= 42 && Math.abs(previous.y - y) <= 10) {
+      previous.count += 1;
+      continue;
+    }
+    groups.push({ sweep, count: 1, x, y });
+  }
+  return groups.map(({ sweep, count }) => ({ sweep, count }));
+}
+
+function liquiditySweepBadgeNode(context: OverlayContext, sweep: LiquiditySweep, index: number, count = 1): string[] {
   const x = context.chart.timeScale().timeToCoordinate(sweep.timestamp as Time);
   const y = context.series.priceToCoordinate(sweep.pool_price ?? sweep.price);
   if (x === null || y === null) return [];
   const buySide = sweep.side === "buy_side";
   const tone = buySide ? "invalidation" : "takeProfit";
-  const label = liquiditySweepLabel(sweep);
+  const label = `${liquiditySweepLabel(sweep)}${count > 1 ? ` ×${count}` : ""}`;
   const offsetX = buySide ? -94 : 8;
   const labelX = clamp(x + offsetX + (index % 2) * 12, 4, context.right - 112);
   const labelY = clamp(y + (buySide ? -30 : 12) + (index % 2) * 14, 16, context.height - 28);
@@ -1548,17 +1569,19 @@ function wyckoffOverlayNodes(context: OverlayContext): OverlayGroup {
     `<line x1="${x}" x2="${x + width}" y1="${bottom}" y2="${bottom}" stroke="${rangeStroke}" stroke-width="2.5" />`
   ];
   const phaseLabels = ["A", "B", "C", "D", "E"];
+  const phaseRowY = clamp(y + 16, 18, Math.max(18, context.height - 32));
   const shapes = phaseLabels.flatMap((label, index) => {
     const phaseX = x + (width / phaseLabels.length) * index;
     const labelX = phaseX + width / phaseLabels.length / 2 - 8;
     return [
       index > 0 ? `<line x1="${phaseX}" x2="${phaseX}" y1="${y}" y2="${y + height}" stroke="${context.palette.color("blue", 0.32)}" stroke-width="1" stroke-dasharray="4 4" />` : "",
-      `<text x="${labelX}" y="${Math.max(12, y - 6)}" fill="${context.palette.color("blue", 0.82)}" font-size="10" font-family="SF Mono, Monaco, Consolas, monospace">Phase ${label}</text>`
+      `<text data-overlay-role="phase-label" x="${labelX}" y="${phaseRowY}" fill="${context.palette.color("blue", 0.82)}" font-size="10" font-family="SF Mono, Monaco, Consolas, monospace">Phase ${label}</text>`
     ];
   });
   const events = splitWyckoffEvents(context.analysis.wyckoff_markers, context.analysis.wyckoff_markers_low_confidence).events;
   shapes.push(...events.flatMap((marker) => wyckoffEventMarker(context, marker)));
-  const badges = events.flatMap((marker, index) => wyckoffEventBadge(context, marker, { top, bottom, x, width }, index));
+  const groupedEvents = groupWyckoffBadges(context, events);
+  const badges = groupedEvents.flatMap(({ marker, count }, index) => wyckoffEventBadge(context, marker, { top, bottom, x, width }, index, count));
   // 국면 배지: 레인지 좌상단에 시안 톤으로 또렷하게 (기본 노출 — 가이드 토글과 무관하게 항상 보여야 하는 핵심 정보)
   badges.unshift(labelBadge(x + 6, Math.max(20, y + 6), phaseHintLabel(context.analysis.wyckoff_phase?.phase), context.palette.color("blue", 0.22), rangeStroke, context.palette.color("text"), 128));
   return { zones, shapes, badges };
@@ -1580,7 +1603,8 @@ function wyckoffEventBadge(
   context: OverlayContext,
   marker: WyckoffMarker,
   range: { top: number; bottom: number; x: number; width: number },
-  index: number
+  index: number,
+  count = 1
 ): string[] {
   const markerX = context.chart.timeScale().timeToCoordinate(marker.time as Time);
   const markerY = context.series.priceToCoordinate(marker.price);
@@ -1588,12 +1612,29 @@ function wyckoffEventBadge(
   const upper = marker.side === "distribution" || marker.type.includes("utad") || marker.type.includes("sow");
   const labelY = upper ? range.top - 28 - (index % 2) * 16 : range.bottom + 18 + (index % 2) * 16;
   const labelX = clamp(markerX - 34 + (index % 3) * 18, range.x, range.x + range.width - 92);
-  const badgeText = `${upper ? "⤓" : "⤒"} ${eventShortLabel(marker)} · ${Math.round(marker.confidence)}`;
+  const badgeText = `${upper ? "⤓" : "⤒"} ${eventShortLabel(marker)}${count > 1 ? ` ×${count}` : ""} · ${Math.round(marker.confidence)}`;
   const tone = upper ? "invalidation" : "takeProfit";
   // 배지는 항상 보여야 하는 핵심 콘텐츠(가이드 토글과 무관) — 배경을 톤 컬러로 살짝 채워 검은 차트 배경과 확실히 대비되게 한다.
   return [
     `<g><polyline points="${markerX},${markerY} ${markerX},${upper ? range.top : range.bottom} ${labelX + 10},${labelY}" fill="none" stroke="${context.palette.flag(tone, 0.7)}" stroke-width="1.2" />${labelBadge(labelX, labelY - 11, badgeText, context.palette.flag(tone, 0.24), context.palette.flag(tone, 0.92), context.palette.color("text"), 96)}</g>`
   ];
+}
+
+function groupWyckoffBadges(context: OverlayContext, events: WyckoffMarker[]): Array<{ marker: WyckoffMarker; count: number }> {
+  const groups: Array<{ marker: WyckoffMarker; count: number; x: number; y: number; label: string }> = [];
+  for (const marker of events) {
+    const x = context.chart.timeScale().timeToCoordinate(marker.time as Time);
+    const y = context.series.priceToCoordinate(marker.price);
+    if (x === null || y === null) continue;
+    const label = eventShortLabel(marker);
+    const previous = groups.at(-1);
+    if (previous && previous.label === label && Math.abs(previous.x - x) <= 42 && Math.abs(previous.y - y) <= 10) {
+      previous.count += 1;
+      continue;
+    }
+    groups.push({ marker, count: 1, x, y, label });
+  }
+  return groups.map(({ marker, count }) => ({ marker, count }));
 }
 
 function harmonicPatternNodes(context: OverlayContext, pattern: PositionChartAnalysis["harmonic_patterns"][number]): OverlayGroup {
@@ -1784,19 +1825,36 @@ function stackFlags(flags: PriceFlag[], height: number, series?: OverlayContext[
     .map((flag) => ({ ...flag, y: series?.priceToCoordinate(flag.price) ?? null }))
     .filter((flag): flag is PriceFlag & { y: number } => flag.y !== null)
     .sort((left, right) => left.y - right.y || left.priority - right.priority);
+  const merged: Array<PriceFlag & { y: number }> = [];
+  for (const flag of positioned) {
+    const collision = merged.find((item) => Math.abs(item.y - flag.y) <= 12);
+    if (!collision) {
+      merged.push({ ...flag });
+      continue;
+    }
+    const names = [collision.label.split(" ")[0], flag.label.split(" ")[0]].filter((name, index, items) => items.indexOf(name) === index);
+    collision.label = names.join("·");
+    collision.priority = Math.min(collision.priority, flag.priority);
+    collision.y = (collision.y + flag.y) / 2;
+  }
+  const visible = merged.slice(0, 6);
+  if (merged.length > 6) {
+    const hidden = merged.slice(6);
+    visible.push({ label: `더보기 ${hidden.length}개`, price: hidden[0].price, kind: "watch", priority: 99, y: hidden[0].y });
+  }
   const gap = 26;
-  for (let index = 1; index < positioned.length; index += 1) {
-    if (positioned[index].y - positioned[index - 1].y < gap) {
-      positioned[index].y = positioned[index - 1].y + gap;
+  for (let index = 1; index < visible.length; index += 1) {
+    if (visible[index].y - visible[index - 1].y < gap) {
+      visible[index].y = visible[index - 1].y + gap;
     }
   }
-  for (let index = positioned.length - 1; index >= 0; index -= 1) {
-    positioned[index].y = clamp(positioned[index].y, 14, height - 16);
-    if (index < positioned.length - 1 && positioned[index + 1].y - positioned[index].y < gap) {
-      positioned[index].y = Math.max(14, positioned[index + 1].y - gap);
+  for (let index = visible.length - 1; index >= 0; index -= 1) {
+    visible[index].y = clamp(visible[index].y, 14, height - 16);
+    if (index < visible.length - 1 && visible[index + 1].y - visible[index].y < gap) {
+      visible[index].y = Math.max(14, visible[index + 1].y - gap);
     }
   }
-  return positioned.sort((left, right) => left.priority - right.priority);
+  return visible.sort((left, right) => left.priority - right.priority);
 }
 
 function planInvalidation(plan: PositionActionPlan | null, analysis: PositionChartAnalysis): NumericPlanItem | null {

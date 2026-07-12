@@ -101,12 +101,19 @@ export function ScoutShell() {
   const autoScanKeyRef = useRef("");
 
   useEffect(() => {
-    setViewMode(loadFceViewMode());
+    setViewMode(new URLSearchParams(window.location.search).get("mode") === "pro" ? "pro" : loadFceViewMode());
   }, []);
 
   function updateViewMode(mode: FceViewMode) {
     setViewMode(mode);
     saveFceViewMode(mode);
+    const url = new URL(window.location.href);
+    url.searchParams.set("mode", mode);
+    if (mode === "minimal") {
+      url.searchParams.delete("focus");
+      url.searchParams.delete("price");
+    }
+    window.history.replaceState(window.history.state, "", url);
   }
 
   async function loadWatchlist() {
@@ -1056,6 +1063,10 @@ function ScoutMinimalAnalysisView({
         plan={null}
         gauges={data?.gauges ?? null}
         nextPrice={analysis ? scoutNextPrice(analysis, verdict.trigger) : null}
+        onOpenEvidence={() => {
+          workspace.focusEvidence("levels", analysis?.mark_price ?? null);
+          onShowPro();
+        }}
       />
       <div className="compactScoutActions">
         <button className="button secondary" onClick={onRetry} type="button">재분석</button>

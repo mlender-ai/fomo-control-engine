@@ -3,6 +3,7 @@ import Script from "next/script";
 import { TerminalShell } from "@/components/terminal";
 import { Providers } from "./providers";
 import "./globals.css";
+import "./robinhood.css";
 
 export const metadata: Metadata = {
   title: "FOMO Control Engine",

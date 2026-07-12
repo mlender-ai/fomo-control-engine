@@ -61,6 +61,8 @@ def test_position_insight_api_generates_structured_saved_insight(client) -> None
 
     latest_response = client.get(f"/api/live/positions/{position['id']}")
     assert latest_response.status_code == 200
+    assert "judgments" in latest_response.json()
+    assert "judgment_scores" in latest_response.json()
     latest_payload = latest_response.json()
     assert latest_payload["latest_insight"]["id"] == insight["id"]
     assert latest_payload["action_plan"]["as_of"]

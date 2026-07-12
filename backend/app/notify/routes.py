@@ -25,6 +25,7 @@ class AlertSettingsUpdate(BaseModel):
     quiet_hours_end: str | None = None
     daily_summary_time: str | None = None
     pulse_interval_hours: float | None = None
+    paper_alerts_enabled: bool | None = None
 
 
 class AlertTestRequest(BaseModel):
@@ -59,6 +60,8 @@ def update_alert_settings(update: AlertSettingsUpdate) -> dict[str, Any]:
         settings.telegram_daily_summary_time = update.daily_summary_time
     if update.pulse_interval_hours is not None:
         settings.alert_pulse_interval_hours = max(0.25, float(update.pulse_interval_hours))
+    if update.paper_alerts_enabled is not None:
+        settings.paper_telegram_alerts_enabled = update.paper_alerts_enabled
     return _settings_payload(settings)
 
 
@@ -93,6 +96,7 @@ def _settings_payload(settings) -> dict[str, Any]:
             "quiet_hours_timezone": settings.telegram_quiet_hours_timezone,
             "daily_summary_time": settings.telegram_daily_summary_time,
             "pulse_interval_hours": settings.alert_pulse_interval_hours,
+            "paper_alerts_enabled": settings.paper_telegram_alerts_enabled,
             "chat_ids_configured": len(settings.telegram_allowed_chat_id_list),
         },
         "rules": rule_catalog(settings),

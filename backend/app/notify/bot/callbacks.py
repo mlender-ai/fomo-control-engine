@@ -18,6 +18,7 @@ ALLOWED_CALLBACK_ACTIONS = {
     "unscout",
     "status",
     "sim",
+    "engine",
 }
 
 

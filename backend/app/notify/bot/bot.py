@@ -15,6 +15,7 @@ from app.notify.bot.formatters import (
     format_flow,
     format_help,
     format_entry_intents,
+    format_engine_scoreboard,
     format_insight,
     format_one_liner_strip,
     format_performance,
@@ -149,6 +150,9 @@ class TelegramBotSupervisor:
         async def perf(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await guarded(update, self._perf, context)
 
+        async def engine(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+            await guarded(update, self._engine, context)
+
         async def veto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await guarded(update, self._veto, context)
 
@@ -186,6 +190,7 @@ class TelegramBotSupervisor:
         app.add_handler(CommandHandler("review", review))
         app.add_handler(CommandHandler("calib", calib))
         app.add_handler(CommandHandler("perf", perf))
+        app.add_handler(CommandHandler("engine", engine))
         app.add_handler(CommandHandler("veto", veto))
         app.add_handler(CommandHandler("experiments", experiments))
         app.add_handler(CommandHandler("status", status))
@@ -332,6 +337,10 @@ class TelegramBotSupervisor:
         payload = await self._run(service.performance_summary)
         await self._reply(update.effective_message, format_performance(payload))
 
+    async def _engine(self, update: Any, context: Any) -> None:
+        payload = await self._run(service.paper_dashboard)
+        await self._reply(update.effective_message, format_engine_scoreboard(payload))
+
     async def _veto(self, update: Any, context: Any) -> None:
         suggestion_id = _first_arg(context.args)
         if not suggestion_id:
@@ -412,6 +421,13 @@ class TelegramBotSupervisor:
             await self._edit(
                 query,
                 format_status(get_worker_status()),
+                reply_markup=_markup(main_menu_keyboard(), context),
+            )
+        elif parsed.action == "engine":
+            payload = await self._run(service.paper_dashboard)
+            await self._edit(
+                query,
+                format_engine_scoreboard(payload),
                 reply_markup=_markup(main_menu_keyboard(), context),
             )
         elif parsed.action == "review":

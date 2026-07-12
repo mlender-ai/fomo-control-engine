@@ -87,6 +87,24 @@ PARAM_REGISTRY: dict[str, ParamDefinition] = {
         hard_min=1.0,
         hard_max=5.0,
     ),
+    "paper_min_evidence": ParamDefinition(
+        name="paper_min_evidence",
+        tighten_when="increase",
+        hard_min=3.0,
+        hard_max=8.0,
+    ),
+    "paper_min_checklist_passed": ParamDefinition(
+        name="paper_min_checklist_passed",
+        tighten_when="increase",
+        hard_min=4.0,
+        hard_max=6.0,
+    ),
+    "paper_min_rr": ParamDefinition(
+        name="paper_min_rr",
+        tighten_when="increase",
+        hard_min=1.0,
+        hard_max=4.0,
+    ),
 }
 
 

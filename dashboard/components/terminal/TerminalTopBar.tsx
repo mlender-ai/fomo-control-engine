@@ -1,10 +1,7 @@
 "use client";
 
-import { Button } from "@astryxdesign/core/Button";
-import { Kbd } from "@astryxdesign/core/Kbd";
 import { StatusDot } from "@astryxdesign/core/StatusDot";
-import { TopNav } from "@astryxdesign/core/TopNav";
-import { Command, RotateCw } from "lucide-react";
+import { Activity, Command, RotateCw } from "lucide-react";
 import type { SystemStatus } from "@/lib/api";
 import { connectionStatusLabel, sourceLabel } from "@/lib/labels/marketStateLabels";
 import type { WorkerStatus } from "./TerminalShell";
@@ -31,51 +28,39 @@ export function TerminalTopBar({
   const worker = workerSummary(workerStatus);
 
   return (
-    <TopNav
-      label="FOMO Control 터미널"
-      className="terminalTopBar"
-      heading={
-        <div className="terminalBrand">
-          <span className="terminalBrandMark">FC</span>
-          <span>
-            <strong>FOMO Control Engine</strong>
-            <small>라이브 포지션 관제</small>
+    <header className="terminalTopBar" aria-label="FOMO Control 터미널">
+      <div className="terminalBrand">
+        <span className="terminalBrandMark"><Activity size={17} /></span>
+        <span>
+          <strong>FOMO Control</strong>
+          <small>Position Intelligence</small>
+        </span>
+      </div>
+
+      <button className="terminalCommandButton" type="button" onClick={onCommand}>
+        <Command size={15} />
+        <span>{symbol ? `${symbol} 빠른 명령` : "심볼, 포지션, 기능 검색"}</span>
+        <kbd>⌘ K</kbd>
+      </button>
+
+      <div className="terminalTopActions">
+        <div className="terminalProviderStrip" aria-label="시스템 상태">
+          <span className="providerPrimary" title={`공개 시세 ${connectionStatusLabel(status?.bitget_public_api)} · 포지션 ${connectionStatusLabel(status?.bitget_private_api)}`}>
+            <StatusDot variant={provider === "bitget" && publicOk && privateOk ? "success" : "warning"} label={`데이터 제공자 ${sourceLabel(provider)}`} />
+            {sourceLabel(provider)} Live
           </span>
+          {status?.demo_mode ? <span className="demoModeBadge" data-testid="demo-mode-badge">DEMO</span> : null}
+          <span className="workerState" title={worker.label}>
+            <StatusDot variant={worker.ok ? "success" : "error"} label={worker.label} />
+            {worker.ok ? "자동 관제" : "관제 점검"}
+          </span>
+          <time>{currentTime}</time>
         </div>
-      }
-      centerContent={
-        <button className="terminalCommandButton" type="button" onClick={onCommand}>
-          <Command size={15} />
-          <span>{symbol ? `/${symbol}` : "명령 / 포지션 / 동기화"}</span>
-          <Kbd keys="mod+k" />
+        <button className="topBarIconButton" type="button" onClick={onRefresh} aria-label="새로고침" title="새로고침">
+          <RotateCw size={16} />
         </button>
-      }
-      endContent={
-        <div className="terminalTopActions">
-          <div className="terminalProviderStrip" aria-label="시스템 상태">
-            <span>
-              <StatusDot variant={provider === "bitget" ? "success" : "warning"} label={`데이터 제공자 ${sourceLabel(provider)}`} />
-              {sourceLabel(provider)}
-            </span>
-            {status?.demo_mode ? <span className="demoModeBadge" data-testid="demo-mode-badge">DEMO</span> : null}
-            <span>
-              <StatusDot variant={publicOk ? "success" : "neutral"} label="공개 시세 데이터" />
-              시세 {connectionStatusLabel(status?.bitget_public_api)}
-            </span>
-            <span>
-              <StatusDot variant={privateOk ? "success" : "neutral"} label="포지션 read-only API" />
-              포지션 {connectionStatusLabel(status?.bitget_private_api)}
-            </span>
-            <span>
-              <StatusDot variant={worker.ok ? "success" : "error"} label={worker.label} />
-              {worker.label}
-            </span>
-            <time>{currentTime}</time>
-          </div>
-          <Button label="새로고침" variant="ghost" size="sm" icon={<RotateCw size={16} />} onClick={onRefresh} />
-        </div>
-      }
-    />
+      </div>
+    </header>
   );
 }
 

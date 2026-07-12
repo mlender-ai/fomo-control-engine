@@ -39,6 +39,7 @@ export const CHART_LAYER_DEFS: Array<{ id: ChartLayerId; label: string; descript
 ];
 
 export const TA_FOCUS_LAYERS: TaFocusLayer[] = ["levels", "volume_profile", "wyckoff", "liquidity", "harmonic", "indicators"];
+export const MAX_COMPARE_LAYERS = 2;
 
 export function isTaLayer(id: ChartLayerId): id is TaFocusLayer {
   return (TA_FOCUS_LAYERS as string[]).includes(id);
@@ -50,20 +51,34 @@ export function layerActive(state: ChartLayerState, id: ChartLayerId): boolean {
   return state.ta.includes(id);
 }
 
-/** 모든 차트 레이어는 독립 토글이다. 여러 근거를 같은 차트 위에 겹쳐 볼 수 있다. */
-export function toggleLayer(state: ChartLayerState, id: ChartLayerId, additive = false): ChartLayerState {
-  void additive;
-  if (id === "plan") return { ...state, plan: !state.plan };
-  if (id === "flow") return { ...state, flow: !state.flow };
-  if (state.ta.includes(id)) {
-    return { ...state, ta: state.ta.filter((layer) => layer !== id) };
-  }
-  const exclusivePair: Partial<Record<TaFocusLayer, TaFocusLayer[]>> = {
-    liquidity: ["wyckoff"],
-    wyckoff: ["liquidity"]
+export function activeFocusLayers(state: ChartLayerState): ChartLayerId[] {
+  return [...state.ta, ...(state.flow ? (["flow"] as ChartLayerId[]) : [])];
+}
+
+function focusState(state: ChartLayerState, active: ChartLayerId[]): ChartLayerState {
+  const unique = [...new Set(active.filter((id) => id !== "plan"))].slice(-MAX_COMPARE_LAYERS);
+  return {
+    ...state,
+    flow: unique.includes("flow"),
+    ta: unique.filter(isTaLayer)
   };
-  const blocked = exclusivePair[id] ?? [];
-  return { ...state, ta: [...state.ta.filter((layer) => !blocked.includes(layer)), id] };
+}
+
+export function setFocusedLayer(state: ChartLayerState, id: ChartLayerId): ChartLayerState {
+  if (id === "plan") return { ...state, plan: true };
+  return focusState(state, [id]);
+}
+
+/** 플랜은 독립이고 TA 포커스는 기본 1개, shift 비교는 최대 2개다. */
+export function toggleLayer(state: ChartLayerState, id: ChartLayerId, additive = false): ChartLayerState {
+  if (id === "plan") return { ...state, plan: !state.plan };
+  const active = activeFocusLayers(state);
+  if (!additive) {
+    return focusState(state, active.length === 1 && active[0] === id ? [] : [id]);
+  }
+  if (active.includes(id)) return focusState(state, active.filter((layer) => layer !== id));
+  if (active.length >= MAX_COMPARE_LAYERS) return state;
+  return focusState(state, [...active, id]);
 }
 
 /** 아코디언 동기화용 대표 TA 레이어. */
@@ -79,11 +94,16 @@ export function loadLayerState(): ChartLayerState {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) return DEFAULT_LAYER_STATE;
     const parsed = JSON.parse(raw) as Partial<ChartLayerState>;
-    return {
+    const base: ChartLayerState = {
       plan: typeof parsed.plan === "boolean" ? parsed.plan : DEFAULT_LAYER_STATE.plan,
-      flow: typeof parsed.flow === "boolean" ? parsed.flow : DEFAULT_LAYER_STATE.flow,
-      ta: Array.isArray(parsed.ta) ? parsed.ta.filter((layer): layer is TaFocusLayer => (TA_FOCUS_LAYERS as string[]).includes(layer)) : []
+      flow: false,
+      ta: []
     };
+    const storedFocus: ChartLayerId[] = [
+      ...(Array.isArray(parsed.ta) ? parsed.ta.filter((layer): layer is TaFocusLayer => (TA_FOCUS_LAYERS as string[]).includes(layer)) : []),
+      ...(parsed.flow === true ? (["flow"] as ChartLayerId[]) : [])
+    ];
+    return focusState(base, storedFocus.slice(0, MAX_COMPARE_LAYERS));
   } catch {
     return DEFAULT_LAYER_STATE;
   }

@@ -31,6 +31,9 @@ from app.demo.derivatives import FakeDerivativesProvider
 from app.demo.seed import seed_demo_data as _seed_demo_data
 from app.marketdata.bitget_derivatives import BitgetDerivProvider
 from app.marketdata.coinglass import CoinglassProvider
+from app.paper.service import paper_dashboard as _paper_dashboard
+from app.paper.service import paper_scoreboard as _paper_scoreboard
+from app.paper.service import run_paper_engine as _run_paper_engine
 from app.review.engine import (
     score_interim_judgments,
 )
@@ -803,6 +806,47 @@ def calibration_experiments() -> dict[str, Any]:
 
 def performance_summary() -> dict[str, Any]:
     return runtime.performance_summary()
+
+
+def run_paper_engine() -> dict[str, Any]:
+    def load(symbol: str, timeframe: str) -> dict[str, Any]:
+        return scout_handlers.scout_analysis(symbol, timeframe=timeframe, force=False, detail=True)
+
+    def simulate(symbol: str, timeframe: str, direction: str, entry_price: float) -> dict[str, Any]:
+        return scout_handlers._simulate(
+            SimulateRequest(
+                symbol=symbol,
+                direction=direction,
+                entry_price=entry_price,
+                leverage=runtime.settings.paper_leverage,
+                margin_usdt=runtime.settings.paper_margin_usdt,
+                timeframe=timeframe,
+            )
+        )
+
+    return _run_paper_engine(
+        runtime.repository,
+        runtime.settings,
+        analysis_loader=load,
+        simulation_loader=simulate,
+    )
+
+
+def paper_trades(status: str | None = None, symbol: str | None = None, limit: int = 200) -> dict[str, Any]:
+    rows = runtime.repository.list_paper_trades(status=status, symbol=symbol, limit=limit)
+    return {"count": len(rows), "trades": [item.model_dump(mode="json") for item in rows]}
+
+
+def paper_scoreboard() -> dict[str, Any]:
+    return _paper_scoreboard(runtime.repository, runtime.settings)
+
+
+def paper_dashboard() -> dict[str, Any]:
+    return _paper_dashboard(
+        runtime.repository,
+        runtime.settings,
+        calibration=calibration_snapshot(),
+    )
 
 
 def _attach_scout_previews(payload: dict[str, Any]) -> dict[str, Any]:

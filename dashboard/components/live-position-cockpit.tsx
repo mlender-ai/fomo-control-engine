@@ -75,12 +75,19 @@ export function LivePositionCockpit() {
   const workspace = useAnalysisWorkspace();
 
   useEffect(() => {
-    setViewMode(loadFceViewMode());
+    setViewMode(new URLSearchParams(window.location.search).get("mode") === "pro" ? "pro" : loadFceViewMode());
   }, []);
 
   function updateViewMode(mode: FceViewMode) {
     setViewMode(mode);
     saveFceViewMode(mode);
+    const url = new URL(window.location.href);
+    url.searchParams.set("mode", mode);
+    if (mode === "minimal") {
+      url.searchParams.delete("focus");
+      url.searchParams.delete("price");
+    }
+    window.history.replaceState(window.history.state, "", url);
   }
 
   async function load(sync = false): Promise<boolean> {
@@ -571,6 +578,10 @@ function MinimalPositionWorkspace({
         gauges={gauges}
         nextPrice={nextPrice}
         positionOverlay={chartOverlayFromPayload(payload)}
+        onOpenEvidence={() => {
+          workspace.focusEvidence("levels", nextPrice?.price ?? null);
+          onShowPro();
+        }}
       />
     </section>
   );

@@ -409,6 +409,45 @@ class Trade(BaseModel):
     created_at: datetime = Field(default_factory=utc_now)
 
 
+class PaperTrade(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    symbol: str
+    timeframe: str = "4h"
+    asset_class: Literal["crypto", "stock", "index", "unknown"] | str = "unknown"
+    direction: Direction
+    status: Literal["open", "closed"] = "open"
+    entry_bar_at: datetime
+    entry_at: datetime = Field(default_factory=utc_now)
+    entry_price: float
+    margin_usdt: float = 100.0
+    leverage: float = 3.0
+    quantity: float
+    remaining_quantity: float
+    invalidation_price: float
+    take_profit_price: float
+    stop_price: float
+    entry_evidence: dict = Field(default_factory=dict)
+    checklist: dict = Field(default_factory=dict)
+    stance_snapshot: dict = Field(default_factory=dict)
+    signature_snapshot: dict = Field(default_factory=dict)
+    partial_exit_at: datetime | None = None
+    partial_exit_price: float | None = None
+    partial_exit_quantity: float = 0.0
+    exit_bar_at: datetime | None = None
+    exit_at: datetime | None = None
+    exit_price: float | None = None
+    exit_reason: str | None = None
+    gross_pnl_usdt: float = 0.0
+    costs_usdt: float = 0.0
+    net_pnl_usdt: float = 0.0
+    net_return_pct: float = 0.0
+    holding_bars: int = 0
+    loss_tags: list[str] = Field(default_factory=list)
+    judgment_id: str | None = None
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
 class TradeMemoUpdate(BaseModel):
     memo: str = ""
 
