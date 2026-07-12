@@ -56,6 +56,7 @@ RULE_LABELS: dict[str, str] = {
     "stance_flipped": "종합 스탠스 반전",
     "evidence_insufficient": "판단 근거 부족",
     "periodic_pulse": "정기 상태 펄스",
+    "full_alignment": "만장일치 정렬 발굴",
 }
 
 RULE_SEVERITY: dict[str, AlertSeverity] = {
@@ -87,6 +88,7 @@ RULE_SEVERITY: dict[str, AlertSeverity] = {
     "stance_flipped": "warn",
     "evidence_insufficient": "info",
     "periodic_pulse": "info",
+    "full_alignment": "info",
 }
 
 

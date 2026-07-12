@@ -722,6 +722,42 @@ export type ScoutScanRow = {
   mark_price?: number | null;
   setup_candidates?: Array<Record<string, unknown>>;
   backtest_summary?: string | null;
+  tracked?: boolean;
+  confluence?: AnalystConfluence | null;
+  full_alignment?: FullAlignment | null;
+};
+
+export type FullAlignment = {
+  unanimous: boolean;
+  direction: "long" | "short" | null;
+  agreeing: number;
+  dissenting: number;
+  score: number;
+  agreeing_modules: Array<{ engine: string; claim?: string; direction: string; score: number }>;
+  dissenting_modules: Array<{ engine: string; claim?: string; direction: string; score: number }>;
+  htf_aligned: boolean;
+  transitioning: boolean;
+  candles_in_state?: number | null;
+  sample_size: number;
+  win_1r_pct?: number | null;
+  win_1r_ci?: [number, number] | null;
+  sample_label: string;
+  predictive_warning: boolean;
+};
+
+export type TrackedScoutItem = {
+  symbol: string;
+  timeframe: string;
+  stance?: string | null;
+  stance_label?: string | null;
+  one_line: string;
+  trigger_distance_pct?: number | null;
+  intent_zone?: { lower: number; upper: number } | null;
+  armed_condition?: string | null;
+  expires_in_days?: number | null;
+  intent_ids: string[];
+  setup_ids: string[];
+  full_alignment?: FullAlignment | null;
 };
 
 export type BacktestCase = {
@@ -825,6 +861,9 @@ export type ScoutScanResponse = {
   rows: ScoutScanRow[];
   armed_setups?: ArmedSetup[];
   entry_intents?: EntryIntent[];
+  tracked?: TrackedScoutItem[];
+  alignment_discoveries?: ScoutScanRow[];
+  best_alignment?: ScoutScanRow | null;
   scanned_at: string;
   cache_ttl_seconds: number;
   count: number;
@@ -1734,7 +1773,12 @@ export const api = {
       ).toString()}` : ""}`
     ),
   universeScan: (payload: { timeframe?: string | null; force?: boolean } = {}) =>
-    request<{ discoveries: UniverseDiscovery[]; rate_budget?: Record<string, unknown> }>("/api/scout/universe/scan", {
+    request<{
+      discoveries: UniverseDiscovery[];
+      alignment_discoveries?: ScoutScanRow[];
+      best_alignment?: ScoutScanRow | null;
+      rate_budget?: Record<string, unknown>;
+    }>("/api/scout/universe/scan", {
       method: "POST",
       body: JSON.stringify(payload)
     }),

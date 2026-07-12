@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { MapPin, Radar, RefreshCw, Search, Star, Trash2 } from "lucide-react";
 import { CompactChartWorkspace, type CompactNextPrice } from "@/components/position/CompactChartWorkspace";
+import { MinimalAssetCard } from "@/components/position/MinimalAssetCard";
 import { TerminalWarning } from "@/components/terminal";
 import { SymbolAnalysisView, useAnalysisWorkspace } from "@/components/symbol-analysis-view";
 import { EntrySimulator } from "@/components/entry-simulator";
@@ -13,11 +14,13 @@ import {
   type CatalogSymbolInfo,
   type CatalogStatus,
   type EntryIntent,
+  type FullAlignment,
   type HistoricalBacktest,
   type OneLinerLine,
   type OneLinerSummary,
   type ScoutAnalysisResponse,
   type ScoutScanRow,
+  type TrackedScoutItem,
   type UniverseDiscovery,
   type WatchlistEntry
 } from "@/lib/api";
@@ -79,6 +82,9 @@ export function ScoutShell() {
   const [scanRows, setScanRows] = useState<ScoutScanRow[]>([]);
   const [armedSetups, setArmedSetups] = useState<ArmedSetup[]>([]);
   const [entryIntents, setEntryIntents] = useState<EntryIntent[]>([]);
+  const [trackedItems, setTrackedItems] = useState<TrackedScoutItem[]>([]);
+  const [alignmentDiscoveries, setAlignmentDiscoveries] = useState<ScoutScanRow[]>([]);
+  const [bestAlignment, setBestAlignment] = useState<ScoutScanRow | null>(null);
   const [discoveries, setDiscoveries] = useState<UniverseDiscovery[]>([]);
   const [scannedAt, setScannedAt] = useState<string>("");
   const [scanning, setScanning] = useState(false);
@@ -122,7 +128,7 @@ export function ScoutShell() {
       setWatchlist(response.items);
       setError("");
       const [intentsResult, discoveryResult] = await Promise.allSettled([
-        SCOUT_ENTRY_TOOLS_VISIBLE ? api.entryIntents(undefined, "active") : Promise.resolve({ intents: [] as EntryIntent[] }),
+        api.entryIntents(undefined, "active"),
         api.universeDiscoveries({ limit: 20 })
       ]);
       if (intentsResult.status === "fulfilled") setEntryIntents(intentsResult.value.intents);
@@ -221,8 +227,12 @@ export function ScoutShell() {
       const response = await api.scoutScan({ force });
       setScanRows(response.rows);
       setArmedSetups(response.armed_setups ?? []);
-      if (SCOUT_ENTRY_TOOLS_VISIBLE) {
-        setEntryIntents((current) => response.entry_intents ?? current);
+      setEntryIntents((current) => response.entry_intents ?? current);
+      setTrackedItems(response.tracked ?? []);
+      setAlignmentDiscoveries((items) => mergeAlignmentRows(response.alignment_discoveries ?? [], items));
+      const scanBestAlignment = response.best_alignment;
+      if (scanBestAlignment) {
+        setBestAlignment((current) => betterAlignment(current, scanBestAlignment));
       }
       setScannedAt(response.scanned_at);
       setError("");
@@ -320,12 +330,30 @@ export function ScoutShell() {
     }
   }
 
+  async function stopTracking(item: TrackedScoutItem) {
+    try {
+      await Promise.all([
+        ...item.setup_ids.map((id) => api.disarmScoutSetup(id)),
+        ...item.intent_ids.map((id) => api.cancelEntryIntent(id))
+      ]);
+      setTrackedItems((items) => items.filter((candidate) => candidate.symbol !== item.symbol));
+      setArmedSetups((items) => items.map((setup) => item.setup_ids.includes(setup.id) ? { ...setup, status: "disarmed" } : setup));
+      setEntryIntents((items) => items.map((intent) => item.intent_ids.includes(intent.id) ? { ...intent, status: "cancelled" } : intent));
+      setNotice(`${item.symbol} 추적을 해제했습니다.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "추적 해제에 실패했습니다.");
+    }
+  }
+
   async function runUniverseScan() {
     setScanning(true);
     setError("");
     try {
       const response = await api.universeScan({ force: true });
       setDiscoveries((items) => mergeUniverseDiscoveries(response.discoveries, items).slice(0, 50));
+      setAlignmentDiscoveries((items) => mergeAlignmentRows(items, response.alignment_discoveries ?? []));
+      const universeBest = response.best_alignment;
+      if (universeBest) setBestAlignment((current) => betterAlignment(current, universeBest));
       const passed = response.discoveries.filter((item) => item.gate_passed).length;
       setNotice(`유니버스 스캔 완료 · 게이트 통과 ${passed}건 / 전체 기록 ${response.discoveries.length}건`);
     } catch (err) {
@@ -406,6 +434,22 @@ export function ScoutShell() {
 
       <p className="scoutDisclaimer">셋업 근접도는 가장 가까운 트리거(반전 후보 구간·구조 레벨)까지의 거리입니다. 매수 판단 문구가 아니라 &ldquo;지금 반응을 지켜볼 종목&rdquo;의 정렬 기준입니다.</p>
 
+      <TrackingSection
+        items={trackedItems}
+        onEdit={(symbol) => {
+          updateViewMode("pro");
+          setActiveSymbol(symbol);
+        }}
+        onOpen={(symbol) => setActiveSymbol(symbol)}
+        onStop={(item) => void stopTracking(item)}
+      />
+
+      <AlignmentDiscoverySection
+        items={alignmentDiscoveries}
+        best={bestAlignment}
+        onOpen={(symbol) => setActiveSymbol(symbol)}
+      />
+
       <ScoutQuickAnswerCard
         symbol={quickSymbol}
         data={quickAnswer}
@@ -439,7 +483,7 @@ export function ScoutShell() {
                 <ScoutMinimalTable
                   rows={sortedRows}
                   armedSetups={armedSetups}
-                  entryIntents={SCOUT_ENTRY_TOOLS_VISIBLE ? entryIntents : []}
+                  entryIntents={entryIntents}
                   onOpen={(symbol) => setActiveSymbol(symbol)}
                   onRemove={(symbol) => void removeSymbol(symbol)}
                 />
@@ -470,7 +514,7 @@ export function ScoutShell() {
                       key={row.symbol}
                       row={row}
                       armedSetups={armedSetups.filter((setup) => setup.symbol === row.symbol && setup.status === "armed")}
-                      entryIntents={SCOUT_ENTRY_TOOLS_VISIBLE ? entryIntents.filter((intent) => intent.symbol === row.symbol && intent.status === "active") : []}
+                      entryIntents={entryIntents.filter((intent) => intent.symbol === row.symbol && intent.status === "active")}
                       scanReference={scannedAt}
                       onOpen={() => setActiveSymbol(row.symbol)}
                       onRemove={() => void removeSymbol(row.symbol)}
@@ -510,6 +554,140 @@ export function ScoutShell() {
       )}
     </div>
   );
+}
+
+function TrackingSection({
+  items,
+  onOpen,
+  onEdit,
+  onStop
+}: {
+  items: TrackedScoutItem[];
+  onOpen: (symbol: string) => void;
+  onEdit: (symbol: string) => void;
+  onStop: (item: TrackedScoutItem) => void;
+}) {
+  if (!items.length) return null;
+  return (
+    <section className="scoutTrackingSection" data-testid="scout-tracking-section">
+      <div className="scoutSectionHeading">
+        <div><span>진입 전 관제</span><h2>추적 중</h2></div>
+        <small>{items.length}/10 심볼</small>
+      </div>
+      <div className="scoutTrackingGrid">
+        {items.map((item) => (
+          <div className="scoutTrackingItem" key={item.symbol}>
+            <MinimalAssetCard
+              meta={`${item.stance_label ?? "판정 준비 중"} · ${item.timeframe}`}
+              onClick={() => onOpen(item.symbol)}
+              summary={item.one_line}
+              symbol={item.symbol}
+              tone={stanceTone(item.stance)}
+            >
+              <div className="trackingMetaRow">
+                <span>{item.trigger_distance_pct == null ? "트리거 계산 중" : `트리거까지 ${Math.abs(item.trigger_distance_pct).toFixed(2)}%`}</span>
+                <span>{trackingSourceLabel(item)}</span>
+                {item.expires_in_days != null ? <span>D-{item.expires_in_days}</span> : null}
+              </div>
+            </MinimalAssetCard>
+            <div className="trackingCardActions">
+              {item.intent_ids.length ? <button type="button" onClick={() => onEdit(item.symbol)}>의도 편집</button> : null}
+              <button type="button" onClick={() => onStop(item)}>추적 해제</button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function AlignmentDiscoverySection({
+  items,
+  best,
+  onOpen
+}: {
+  items: ScoutScanRow[];
+  best: ScoutScanRow | null;
+  onOpen: (symbol: string) => void;
+}) {
+  return (
+    <section className="alignmentDiscoverySection" data-testid="alignment-discovery-section">
+      <div className="scoutSectionHeading">
+        <div><span>확정 캔들 기준</span><h2>정렬 발굴</h2></div>
+        <small>통보용 관측 · 추천 아님</small>
+      </div>
+      {items.length ? (
+        <div className="alignmentCardGrid">
+          {items.map((row) => {
+            const alignment = row.full_alignment as FullAlignment;
+            return (
+              <button className="alignmentCard" key={row.symbol} onClick={() => onOpen(row.symbol)} type="button">
+                <div><strong>{row.symbol}</strong><span>{alignment.direction === "long" ? "상방" : "하방"} 만장일치</span></div>
+                <AlignmentTilt direction={alignment.direction} />
+                <b>{alignment.agreeing}/{alignment.agreeing + alignment.dissenting} · HTF 정렬</b>
+                <div className="alignmentModules">
+                  {alignment.agreeing_modules.map((module) => <span key={module.engine}>{alignmentEngineLabel(module.engine)}</span>)}
+                </div>
+                <small>{alignment.candles_in_state ?? 1}캔들째 · {alignment.sample_label}</small>
+                {alignment.predictive_warning ? <em>만장일치의 예측력 미검증</em> : null}
+              </button>
+            );
+          })}
+        </div>
+      ) : (
+        <div className="alignmentEmpty">
+          <strong>현재 만장일치 없음</strong>
+          <span>{best?.full_alignment ? `최고 정렬 ${best.symbol} ${best.full_alignment.agreeing}/${best.full_alignment.agreeing + best.full_alignment.dissenting}` : "검증된 모듈 표본 축적 중"}</span>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function AlignmentTilt({ direction }: { direction: "long" | "short" | null }) {
+  return (
+    <div className="alignmentTilt" aria-label={direction === "long" ? "상방 정렬" : direction === "short" ? "하방 정렬" : "중립 정렬"}>
+      <span>하방</span>
+      <i><b style={{ left: direction === "long" ? "82%" : direction === "short" ? "18%" : "50%" }} /></i>
+      <span>상방</span>
+    </div>
+  );
+}
+
+function mergeAlignmentRows(current: ScoutScanRow[], incoming: ScoutScanRow[]): ScoutScanRow[] {
+  const bySymbol = new Map<string, ScoutScanRow>();
+  for (const row of [...current, ...incoming]) {
+    if (!row.full_alignment?.unanimous) continue;
+    const previous = bySymbol.get(row.symbol);
+    if (!previous || Number(row.full_alignment.score || 0) >= Number(previous.full_alignment?.score || 0)) bySymbol.set(row.symbol, row);
+  }
+  return [...bySymbol.values()].sort((a, b) => Number(b.full_alignment?.score || 0) - Number(a.full_alignment?.score || 0));
+}
+
+function betterAlignment(current: ScoutScanRow | null, incoming: ScoutScanRow): ScoutScanRow {
+  if (!current?.full_alignment) return incoming;
+  const currentKey = [current.full_alignment.agreeing, -current.full_alignment.dissenting, current.full_alignment.score];
+  const incomingKey = [incoming.full_alignment?.agreeing ?? 0, -(incoming.full_alignment?.dissenting ?? 0), incoming.full_alignment?.score ?? 0];
+  for (let index = 0; index < currentKey.length; index += 1) {
+    if (incomingKey[index] > currentKey[index]) return incoming;
+    if (incomingKey[index] < currentKey[index]) return current;
+  }
+  return current;
+}
+
+function stanceTone(stance?: string | null): "positive" | "negative" | "neutral" | "watch" {
+  if (stance === "long_leaning") return "positive";
+  if (stance === "short_leaning") return "negative";
+  return stance === "conflicted" ? "watch" : "neutral";
+}
+
+function trackingSourceLabel(item: TrackedScoutItem): string {
+  if (item.intent_zone) return `존 ${formatPrice(item.intent_zone.lower)}–${formatPrice(item.intent_zone.upper)}`;
+  return item.armed_condition ?? "무장 조건";
+}
+
+function alignmentEngineLabel(engine: string): string {
+  return ({ liquidity: "유동성", wyckoff: "와이코프", harmonic: "하모닉", level: "레벨", derivatives: "수급", volume: "볼륨", mtf: "상위 흐름", structure: "구조" } as Record<string, string>)[engine] ?? engine;
 }
 
 function mergeSearchResultsWithDirectCandidate(items: CatalogSymbolInfo[], query: string): CatalogSymbolInfo[] {
@@ -898,7 +1076,7 @@ function ScoutSymbolView({
     try {
       const [analysisResponse, intentResponse] = await Promise.all([
         api.scoutAnalysis(symbol, timeframe, force, true),
-        SCOUT_ENTRY_TOOLS_VISIBLE ? api.entryIntents(symbol, "active") : Promise.resolve({ intents: [] as EntryIntent[] })
+        api.entryIntents(symbol, "active")
       ]);
       if (loadRequestRef.current !== requestKey) return;
       setData(analysisResponse);
@@ -997,7 +1175,7 @@ function ScoutSymbolView({
           plan={null}
           analystBriefing={data?.analyst_briefing ?? null}
           workspace={workspace}
-          intentZoneSelector={SCOUT_ENTRY_TOOLS_VISIBLE ? {
+          intentZoneSelector={SCOUT_ENTRY_TOOLS_VISIBLE || intents.length ? {
             enabled: zonePickEnabled,
             draft: zoneDraft,
             onDraftChange: (lower, upper) => setZoneDraft({ lower, upper }),
@@ -1006,8 +1184,8 @@ function ScoutSymbolView({
               setZonePickEnabled(false);
             }
           } : undefined}
-          gridClassName={SCOUT_ENTRY_TOOLS_VISIBLE ? "positionDetailMain" : "scoutDetailMain"}
-          sidePanel={SCOUT_ENTRY_TOOLS_VISIBLE ? (
+          gridClassName={SCOUT_ENTRY_TOOLS_VISIBLE || intents.length ? "positionDetailMain" : "scoutDetailMain"}
+          sidePanel={SCOUT_ENTRY_TOOLS_VISIBLE || intents.length ? (
             <div className="scoutSidePanel">
               <EntryIntentPanel
                 intents={intents}
@@ -1018,8 +1196,8 @@ function ScoutSymbolView({
                 onCancel={(intentId) => void cancelIntent(intentId)}
                 onCreate={(payload) => void createIntent(payload)}
               />
-              <EntrySimulator symbol={symbol} markPrice={analysis?.mark_price ?? null} timeframe={timeframe} />
-              <ScenarioPanel scenarios={scenarios} asOf={data?.as_of} />
+              {SCOUT_ENTRY_TOOLS_VISIBLE ? <EntrySimulator symbol={symbol} markPrice={analysis?.mark_price ?? null} timeframe={timeframe} /> : null}
+              {SCOUT_ENTRY_TOOLS_VISIBLE ? <ScenarioPanel scenarios={scenarios} asOf={data?.as_of} /> : null}
             </div>
           ) : null}
           historyExtras={<HistoricalBacktestPanel context={data?.historical_backtest ?? analysis?.historical_backtest ?? null} />}

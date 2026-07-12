@@ -247,3 +247,27 @@ def test_entry_intent_api_enforces_per_symbol_cap(client: TestClient) -> None:
 
     assert rejected.status_code == 409
     assert "심볼당 활성 의도" in rejected.json()["detail"]
+
+
+def test_scan_tracking_view_is_union_of_active_intents_and_armed_setups(client: TestClient) -> None:
+    setup_response = client.post(
+        "/api/scout/BTCUSDT/setups",
+        json={"trigger_price": 60_000, "label": "구조 지지", "condition": "지지 반응 확인"},
+    )
+    intent_response = client.post(
+        "/api/scout/ETHUSDT/intents",
+        json={"direction": "long", "zone_lower": 1_700, "zone_upper": 1_800},
+    )
+    assert setup_response.status_code == 200
+    assert intent_response.status_code == 200
+
+    payload = client.post("/api/scout/scan", json={}).json()
+    tracked = {item["symbol"]: item for item in payload["tracked"]}
+
+    assert set(tracked) == {"BTCUSDT", "ETHUSDT"}
+    assert tracked["BTCUSDT"]["setup_ids"] == [setup_response.json()["setup"]["id"]]
+    assert tracked["ETHUSDT"]["intent_ids"] == [intent_response.json()["intent"]["id"]]
+    assert {row["symbol"] for row in payload["rows"]} == {"BTCUSDT", "ETHUSDT"}
+
+    client.post(f"/api/scout/setups/{setup_response.json()['setup']['id']}/disarm")
+    client.post(f"/api/scout/intents/{intent_response.json()['intent']['id']}/cancel")

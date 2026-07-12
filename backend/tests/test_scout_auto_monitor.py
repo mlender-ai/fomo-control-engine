@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 from app.core.config import Settings
-from app.db.models import EntryIntent, ScoutSnapshot, utc_now
+from app.db.models import AlertRecord, EntryIntent, ScoutSnapshot, utc_now
 from app.db.repository import MemoryRepository
 from app.scout.monitor import (
     SCOUT_SENTINEL_POSITION_ID,
@@ -288,3 +288,46 @@ def test_scout_rate_budget_documents_30_symbol_limit() -> None:
     assert budget["max_symbols_per_tick"] == 30
     assert budget["round_robin_required"] is True
     assert "candles 1 + ticker 1 + derivatives 1" in budget["formula"]
+
+
+def test_full_alignment_shares_universe_daily_limit_and_symbol_cooldown() -> None:
+    repo = MemoryRepository()
+    settings = _settings(
+        alert_enabled_rules="full_alignment,universe_discovery",
+        universe_daily_alert_limit=3,
+        universe_symbol_cooldown_hours=48,
+        scout_auto_arm_enabled=False,
+    )
+    row = {
+        "symbol": "SOXLUSDT",
+        "timeframe": "4h",
+        "as_of": utc_now().isoformat(),
+        "mark_price": 100,
+        "tracked": True,
+        "setup_candidates": [],
+        "full_alignment": {
+            "unanimous": True,
+            "bar_at": utc_now().isoformat(),
+            "direction": "long",
+            "agreeing": 5,
+            "dissenting": 0,
+            "score": 72,
+            "sample_label": "표본 축적 중",
+        },
+    }
+
+    first = process_scout_scan(repo, settings, {"rows": [row], "scanned_at": utc_now().isoformat(), "count": 1})
+    assert [item.rule_id for item in first["_alert_candidate_objects"]] == ["full_alignment"]
+
+    repo.add_alert(
+        AlertRecord(
+            rule_id="universe_discovery",
+            symbol="SOXLUSDT",
+            severity="info",
+            fired_at=utc_now() - timedelta(hours=2),
+        )
+    )
+    row["full_alignment"] = {**row["full_alignment"], "bar_at": (utc_now() + timedelta(hours=4)).isoformat()}
+    blocked = process_scout_scan(repo, settings, {"rows": [row], "scanned_at": utc_now().isoformat(), "count": 1})
+
+    assert blocked["_alert_candidate_objects"] == []

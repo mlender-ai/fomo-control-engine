@@ -51,7 +51,17 @@ def signatures_from_analysis(analysis: dict[str, Any]) -> list[dict[str, Any]]:
     signatures.extend(_wyckoff_signatures(analysis, asset_class, timeframe))
     signatures.extend(_harmonic_signatures(analysis, asset_class, timeframe))
     signatures.extend(_level_signatures(analysis, asset_class, timeframe))
+    signatures.extend(_full_alignment_signatures(analysis, asset_class, timeframe))
     return _dedupe(signatures)
+
+
+def _full_alignment_signatures(analysis: dict[str, Any], asset_class: str, timeframe: str) -> list[dict[str, Any]]:
+    alignment = analysis.get("full_alignment") if isinstance(analysis.get("full_alignment"), dict) else {}
+    if not alignment.get("unanimous"):
+        return []
+    direction = str(alignment.get("direction") or "neutral")
+    agreeing = int(_num(alignment.get("agreeing"), 0))
+    return [_signature("full_alignment", "unanimous", f"{agreeing}_modules", direction, asset_class, timeframe)]
 
 
 def signature_from_setup_candidate(candidate: dict[str, Any], *, asset_class: str = "unknown", timeframe: str = "4h") -> dict[str, Any] | None:
@@ -84,6 +94,7 @@ def signature_label(signature: dict[str, Any]) -> str:
         "order_block": "매물 존",
         "vcp": "변동성 수축",
         "stage2_template": "2단계 상승 조건",
+        "full_alignment": "만장일치 정렬",
     }.get(engine, engine)
     event_label = {
         "sweep_low": "저점 스윕",
@@ -98,6 +109,7 @@ def signature_label(signature: dict[str, Any]) -> str:
         "retest": "재시험",
         "contraction": "수축 확인",
         "stage2_active": "조건 진입",
+        "unanimous": "확인",
     }.get(event, event)
     direction_label = "롱" if direction == "long" else "숏" if direction == "short" else "중립"
     return f"{engine_label} {event_label} · {strength} · {direction_label}"

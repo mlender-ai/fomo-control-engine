@@ -7,7 +7,7 @@ from app.db.models import MarketCandle
 from app.structure.liquidity.common import fractal_swings, relative_volume
 from app.structure.liquidity.structure import detect_structure_shift
 
-CANDIDATE_ENGINES = frozenset({"fvg", "order_block", "vcp", "stage2_template"})
+CANDIDATE_ENGINES = frozenset({"fvg", "order_block", "vcp", "stage2_template", "full_alignment"})
 
 
 def detect_candidate_signatures(candles: list[MarketCandle]) -> dict[str, Any]:

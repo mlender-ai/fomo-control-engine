@@ -68,6 +68,12 @@ def process_scout_scan(repo: Any, settings: Settings, payload: dict[str, Any]) -
         intent_result = evaluate_entry_intents(repo, settings, row, snapshot)
         entry_intents.extend(intent_result["intents"])
         candidates.extend(intent_result["candidates"])
+        stance_candidate = _tracked_stance_candidate(row, settings)
+        if stance_candidate is not None:
+            candidates.append(stance_candidate)
+        alignment_candidate = _full_alignment_candidate(repo, row, settings)
+        if alignment_candidate is not None:
+            candidates.append(alignment_candidate)
     scores = score_scout_setups(repo, settings)
     intent_scores = score_entry_intents(repo, settings)
     return {
@@ -95,6 +101,8 @@ def arm_auto_setups(repo: Any, settings: Settings, row: dict[str, Any], snapshot
     saved: list[ArmedSetup] = []
     for candidate in candidates:
         if len([setup for setup in repo.list_armed_setups(symbol=symbol, status="armed", limit=50)]) >= settings.scout_max_armed_setups_per_symbol:
+            break
+        if symbol not in active_tracking_symbols(repo) and len(active_tracking_symbols(repo)) >= settings.scout_tracking_symbol_limit:
             break
         setup_id = _setup_id(symbol, timeframe, candidate)
         existing = by_id.get(setup_id) or repo.get_armed_setup(setup_id)
@@ -175,6 +183,93 @@ def disarm_setup(repo: Any, setup_id: UUID) -> ArmedSetup | None:
     updated = setup.model_copy(update={"status": "disarmed", "updated_at": utc_now()})
     repo.upsert_armed_setup(updated)
     return updated
+
+
+def active_tracking_symbols(repo: Any) -> set[str]:
+    symbols = {item.symbol.upper() for item in repo.list_entry_intents(status="active", limit=1000)}
+    symbols.update(item.symbol.upper() for item in repo.list_armed_setups(status="armed", limit=1000))
+    return symbols
+
+
+def _tracked_stance_candidate(row: dict[str, Any], settings: Settings) -> AlertCandidate | None:
+    if not row.get("tracked") or "stance_flipped" not in settings.alert_enabled_rule_set:
+        return None
+    confluence = row.get("confluence") if isinstance(row.get("confluence"), dict) else {}
+    state = confluence.get("stance_state") if isinstance(confluence.get("stance_state"), dict) else {}
+    if not state.get("flipped"):
+        return None
+    previous = str(state.get("previous_stance") or "")
+    current = str(state.get("stance") or confluence.get("stance") or "")
+    if previous == current or current not in {"long_leaning", "short_leaning"}:
+        return None
+    symbol = str(row.get("symbol") or "-").upper()
+    label = {"long_leaning": "상방", "short_leaning": "하방", "conflicted": "충돌", "insufficient": "판단 유보"}
+    top_key = "long_evidence" if current == "long_leaning" else "short_evidence"
+    top = confluence.get(top_key) if isinstance(confluence.get(top_key), list) else []
+    reason = str(top[0].get("claim") or "확정 캔들 근거 갱신") if top and isinstance(top[0], dict) else "확정 캔들 근거 갱신"
+    return AlertCandidate(
+        rule_id="stance_flipped",
+        severity="warn",
+        position_id=None,
+        symbol=symbol,
+        identity=f"tracked:{symbol}:{state.get('last_bar_at')}:{current}",
+        title="추적 스탠스 반전",
+        message=(
+            f"🟡 추적 변화 · <b>{escape(symbol)}</b> {label.get(previous, previous)} → {label.get(current, current)}\n"
+            f"사유: {escape(reason)}\n추적 중인 진입 전 심볼의 확정 캔들 판정 변화입니다."
+        ),
+        payload={"kind": "tracked_scout", "from": previous, "to": current, "bar_at": state.get("last_bar_at")},
+    )
+
+
+def _full_alignment_candidate(repo: Any, row: dict[str, Any], settings: Settings) -> AlertCandidate | None:
+    if "full_alignment" not in settings.alert_enabled_rule_set:
+        return None
+    alignment = row.get("full_alignment") if isinstance(row.get("full_alignment"), dict) else {}
+    if not alignment.get("unanimous") or not alignment.get("bar_at"):
+        return None
+    now = utc_now()
+    today = now.date()
+    fired_today = 0
+    symbol = str(row.get("symbol") or "-").upper()
+    cooldown_cutoff = now - timedelta(hours=max(1, int(settings.universe_symbol_cooldown_hours)))
+    for alert in repo.list_alerts(limit=500):
+        if alert.rule_id in {"full_alignment", "universe_discovery"} and alert.fired_at.date() == today:
+            fired_today += 1
+        if (
+            alert.rule_id in {"full_alignment", "universe_discovery"}
+            and alert.symbol.upper() == symbol
+            and alert.fired_at >= cooldown_cutoff
+        ):
+            return None
+    if fired_today >= max(0, int(settings.universe_daily_alert_limit)):
+        return None
+    direction = str(alignment.get("direction") or "")
+    direction_label = "상방" if direction == "long" else "하방"
+    agreeing = int(alignment.get("agreeing") or 0)
+    total = agreeing + int(alignment.get("dissenting") or 0)
+    sample = str(alignment.get("sample_label") or "표본 축적 중")
+    return AlertCandidate(
+        rule_id="full_alignment",
+        severity="info",
+        position_id=None,
+        symbol=symbol,
+        identity=f"full_alignment:{symbol}:{alignment.get('bar_at')}:{direction}",
+        title="만장일치 정렬 발굴",
+        message=(
+            f"🎯 정렬 · <b>{escape(symbol)}</b> {direction_label} 만장일치 ({agreeing}/{total} · HTF 정렬)\n"
+            f"{escape(sample)}\n→ 정렬 상태 발견 통보입니다. 진입 판단은 사용자 몫입니다."
+        ),
+        payload={
+            "kind": "universe_discovery",
+            "direction": direction,
+            "agreeing": agreeing,
+            "dissenting": int(alignment.get("dissenting") or 0),
+            "score": alignment.get("score"),
+            "bar_at": alignment.get("bar_at"),
+            "sample_size": alignment.get("sample_size"),
+        },
+    )
 
 
 def evaluate_setup_alerts(repo: Any, settings: Settings, setups: list[ArmedSetup], row: dict[str, Any]) -> list[AlertCandidate]:

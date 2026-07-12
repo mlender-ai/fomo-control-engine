@@ -19,6 +19,7 @@ from fastapi import HTTPException
 from pydantic import BaseModel, Field
 
 from app.analyst.briefing import build_analyst_briefing, hysteresis_params_from_settings, load_directional_prior, persist_directional_state
+from app.analyst.alignment import build_full_alignment
 from app.analyst.gauges import build_gauges
 from app.backtest.regimes import label_regime
 from app.backtest.service import _regime_params, backtest_line, historical_context_for_analysis, validated_event_stats_for_symbol
@@ -253,6 +254,9 @@ def scout_analysis(symbol: str, timeframe: str = "4h", force: bool = False, deta
     briefing = _briefing_for_entry(symbol, timeframe, entry, action_plan=None, context="pre_entry")
     # WO-55A: 압축 차트 2게이지 — 스카우트는 포지션 없음 → 익절 게이지 비활성.
     briefing_confluence: dict = briefing["confluence"] if isinstance(briefing.get("confluence"), dict) else {}
+    alignment = build_full_alignment(briefing_confluence, entry["historical_backtest"])
+    entry["analysis"]["full_alignment"] = alignment
+    _record_full_alignment_judgment(symbol, timeframe, entry, alignment)
     gauges = build_gauges(
         analysis=entry["analysis"],
         confluence=briefing_confluence,
@@ -271,6 +275,7 @@ def scout_analysis(symbol: str, timeframe: str = "4h", force: bool = False, deta
         "historical_backtest": entry["historical_backtest"],
         "analyst_briefing": briefing,
         "gauges": gauges,
+        "full_alignment": alignment,
     }
 
 
@@ -306,34 +311,120 @@ class ScanRequest(BaseModel):
 def scan_watchlist(request: ScanRequest | None = None) -> dict:
     request = request or ScanRequest()
     items = _repo().list_watchlist()
+    tracked = _tracking_sources()
+    item_by_symbol = {item.symbol.upper(): item for item in items}
+    targets: dict[str, str] = {
+        item.symbol.upper(): request.timeframe or item.default_timeframe or "4h" for item in items
+    }
+    for symbol, source in tracked.items():
+        targets.setdefault(symbol, request.timeframe or str(source.get("timeframe") or "4h"))
     rows: list[dict[str, Any]] = []
-    for item in items:  # 순차 실행 — 레이트리밋 방어 (클라이언트 백오프는 provider 내장)
-        timeframe = request.timeframe or item.default_timeframe or "4h"
+    for symbol, timeframe in targets.items():  # 순차 실행 — 레이트리밋 방어
+        item = item_by_symbol.get(symbol)
         try:
-            entry = _analysis_entry(item.symbol, timeframe, force=request.force, include_trade_flow=False)
+            entry = _analysis_entry(symbol, timeframe, force=request.force, include_trade_flow=False)
+            briefing = _briefing_for_entry(symbol, timeframe, entry, action_plan=None, context="pre_entry")
+            confluence = briefing.get("confluence") if isinstance(briefing.get("confluence"), dict) else {}
+            alignment = build_full_alignment(confluence, entry.get("historical_backtest"))
+            entry["analysis"]["full_alignment"] = alignment
+            _record_full_alignment_judgment(symbol, timeframe, entry, alignment)
         except Exception as exc:
-            rows.append({"symbol": item.symbol, "timeframe": timeframe, "asset_class": item.asset_class, "error": str(exc)})
+            rows.append({"symbol": symbol, "timeframe": timeframe, "asset_class": item.asset_class if item else "unknown", "error": str(exc)})
             continue
         rows.append(
             {
                 **entry["summary"],
                 "timeframe": timeframe,
                 "as_of": entry["as_of"],
-                "note": item.note,
-                "asset_class": entry["summary"].get("asset_class") or item.asset_class,
+                "note": item.note if item else "",
+                "asset_class": entry["summary"].get("asset_class") or (item.asset_class if item else "unknown"),
+                "confluence": confluence,
+                "full_alignment": alignment,
+                "tracked": symbol in tracked,
             }
         )
     rows.sort(key=lambda row: row.get("setup_proximity_pct") if row.get("setup_proximity_pct") is not None else float("inf"))
     intents = _repo().list_entry_intents(limit=300)
+    tracked_rows = _tracking_view(rows, tracked)
+    alignments = sorted(
+        [row for row in rows if isinstance(row.get("full_alignment"), dict) and row["full_alignment"].get("unanimous")],
+        key=lambda row: float(row["full_alignment"].get("score") or 0),
+        reverse=True,
+    )
+    best_alignment = _best_alignment_row(rows)
     return {
         "rows": rows,
         "armed_setups": [setup.model_dump(mode="json") for setup in _repo().list_armed_setups(limit=300)],
         "entry_intents": [intent.model_dump(mode="json") for intent in intents],
+        "tracked": tracked_rows,
+        "alignment_discoveries": alignments,
+        "best_alignment": best_alignment,
         "scanned_at": utc_now().isoformat(),
         "cache_ttl_seconds": SCAN_CACHE_TTL_SECONDS,
         "count": len(rows),
-        "rate_budget": scout_rate_budget(runtime.settings, len(items)),
+        "rate_budget": scout_rate_budget(runtime.settings, len(targets)),
     }
+
+
+def _tracking_sources() -> dict[str, dict[str, Any]]:
+    sources: dict[str, dict[str, Any]] = {}
+    for intent in _repo().list_entry_intents(status="active", limit=1000):
+        bucket = sources.setdefault(intent.symbol.upper(), {"symbol": intent.symbol.upper(), "intents": [], "setups": [], "timeframe": intent.timeframe})
+        bucket["intents"].append(intent)
+    for setup in _repo().list_armed_setups(status="armed", limit=1000):
+        bucket = sources.setdefault(setup.symbol.upper(), {"symbol": setup.symbol.upper(), "intents": [], "setups": [], "timeframe": setup.timeframe})
+        bucket["setups"].append(setup)
+    return sources
+
+
+def _ensure_tracking_capacity(symbol: str) -> None:
+    sources = _tracking_sources()
+    normalized = symbol.upper()
+    if normalized not in sources and len(sources) >= runtime.settings.scout_tracking_symbol_limit:
+        raise HTTPException(status_code=409, detail=f"동시 추적은 {runtime.settings.scout_tracking_symbol_limit}심볼까지입니다. 기존 추적을 해제해주세요.")
+
+
+def _tracking_view(rows: list[dict[str, Any]], sources: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    row_by_symbol = {str(row.get("symbol") or "").upper(): row for row in rows}
+    result: list[dict[str, Any]] = []
+    now = utc_now()
+    for symbol, source in sources.items():
+        row = row_by_symbol.get(symbol, {})
+        intents = source.get("intents") or []
+        setups = source.get("setups") or []
+        distances = [
+            abs(float(value))
+            for value in [row.get("entry_intent_distance_pct"), *(setup.distance_pct for setup in setups)]
+            if value is not None
+        ]
+        expiry = min((intent.expires_at for intent in intents), default=None)
+        result.append(
+            {
+                "symbol": symbol,
+                "timeframe": source.get("timeframe") or "4h",
+                "stance": ((row.get("confluence") or {}).get("stance") if isinstance(row.get("confluence"), dict) else None),
+                "stance_label": ((row.get("confluence") or {}).get("stance_label") if isinstance(row.get("confluence"), dict) else None),
+                "one_line": _tracking_one_line(intents, setups),
+                "trigger_distance_pct": min(distances) if distances else None,
+                "intent_zone": {"lower": intents[0].zone_lower, "upper": intents[0].zone_upper} if intents else None,
+                "armed_condition": setups[0].trigger_condition if setups else None,
+                "expires_in_days": max(0, (expiry.date() - now.date()).days) if expiry else None,
+                "intent_ids": [str(intent.id) for intent in intents],
+                "setup_ids": [str(setup.id) for setup in setups],
+                "full_alignment": row.get("full_alignment"),
+            }
+        )
+    return sorted(result, key=lambda item: item["trigger_distance_pct"] if item["trigger_distance_pct"] is not None else float("inf"))
+
+
+def _tracking_one_line(intents: list[Any], setups: list[Any]) -> str:
+    if intents and setups:
+        return f"의도 존 + {setups[0].trigger_label} 감시"
+    if intents:
+        return "등록한 진입 존 감시"
+    if setups:
+        return f"{setups[0].trigger_label} 조건 감시"
+    return "추적 조건 확인 중"
 
 
 def list_universe_discoveries(symbol: str | None = None, status: str | None = None, limit: int = 50) -> dict:
@@ -345,9 +436,26 @@ def scan_universe(request: ScanRequest | None = None) -> dict:
     from app.scout.universe import run_universe_scan
 
     request = request or ScanRequest()
+    alignment_rows: list[dict[str, Any]] = []
 
     def load(symbol: str, timeframe: str) -> dict[str, Any]:
-        return _analysis_entry(symbol, timeframe, force=request.force, include_trade_flow=False)
+        entry = _analysis_entry(symbol, timeframe, force=request.force, include_trade_flow=False)
+        briefing = _briefing_for_entry(symbol, timeframe, entry, action_plan=None, context="pre_entry")
+        confluence = briefing.get("confluence") if isinstance(briefing.get("confluence"), dict) else {}
+        alignment = build_full_alignment(confluence, entry.get("historical_backtest"))
+        entry["analysis"]["full_alignment"] = alignment
+        _record_full_alignment_judgment(symbol, timeframe, entry, alignment)
+        alignment_rows.append(
+            {
+                **entry["summary"],
+                "symbol": symbol,
+                "timeframe": timeframe,
+                "as_of": entry["as_of"],
+                "confluence": confluence,
+                "full_alignment": alignment,
+            }
+        )
+        return entry
 
     payload = run_universe_scan(
         _repo(),
@@ -356,8 +464,34 @@ def scan_universe(request: ScanRequest | None = None) -> dict:
         timeframe=request.timeframe or "4h",
         ticker_rows=_market_tickers(),
     )
+    unanimous = sorted(
+        [row for row in alignment_rows if row["full_alignment"].get("unanimous")],
+        key=lambda row: float(row["full_alignment"].get("score") or 0),
+        reverse=True,
+    )
+    payload["alignment_discoveries"] = unanimous
+    payload["best_alignment"] = _best_alignment_row(alignment_rows)
     payload.pop("_alert_candidate_objects", None)
     return payload
+
+
+def _best_alignment_row(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    return max(
+        (
+            row
+            for row in rows
+            if isinstance(row.get("full_alignment"), dict)
+            and int(row["full_alignment"].get("agreeing") or 0)
+            + int(row["full_alignment"].get("dissenting") or 0)
+            > 0
+        ),
+        key=lambda row: (
+            int(row["full_alignment"].get("agreeing") or 0),
+            -int(row["full_alignment"].get("dissenting") or 0),
+            float(row["full_alignment"].get("score") or 0),
+        ),
+        default=None,
+    )
 
 
 def _analysis_entry(
@@ -698,6 +832,7 @@ def list_scout_setups(symbol: str | None = None, status: str | None = None, limi
 def create_manual_setup(symbol: str, request: ManualSetupRequest) -> dict:
     if request.trigger_price <= 0:
         raise HTTPException(status_code=422, detail="trigger_price는 0보다 커야 합니다.")
+    _ensure_tracking_capacity(symbol)
     setup = arm_manual_setup(
         _repo(),
         symbol=symbol,
@@ -737,6 +872,7 @@ def list_entry_intents(symbol: str | None = None, status: str | None = None, lim
 
 def create_entry_intent(symbol: str, request: EntryIntentRequest) -> dict:
     normalized = symbol.strip().upper()
+    _ensure_tracking_capacity(normalized)
     if request.direction not in {"long", "short"}:
         raise HTTPException(status_code=422, detail="direction은 long 또는 short여야 합니다.")
     lower, upper = _intent_zone(request)
@@ -963,6 +1099,36 @@ def _briefing_for_entry(
     )
     persist_directional_state(_repo(), symbol, timeframe, briefing)
     return briefing
+
+
+def _record_full_alignment_judgment(symbol: str, timeframe: str, entry: dict[str, Any], alignment: dict[str, Any]) -> None:
+    if not alignment.get("unanimous") or not alignment.get("bar_at"):
+        return
+    direction = str(alignment.get("direction") or "neutral")
+    mark = entry.get("analysis", {}).get("mark_price")
+    _repo().add_judgment(
+        JudgmentLedgerEntry(
+            judgment_id=f"candidate:full_alignment:{symbol.upper()}:{timeframe}:{alignment['bar_at']}:{direction}",
+            position_id=SCOUT_SENTINEL_POSITION_ID,
+            source_type="candidate_signature",
+            source_id=f"full_alignment:{symbol.upper()}:{timeframe}:{alignment['bar_at']}",
+            as_of=datetime.fromisoformat(str(alignment["bar_at"])),
+            type="candidate_signature",
+            claim={
+                "symbol": symbol.upper(),
+                "timeframe": timeframe,
+                "engine": "full_alignment",
+                "event_type": "unanimous",
+                "direction": direction,
+                "price": mark,
+                "condition": "candidate_confirms_up" if direction == "long" else "candidate_confirms_down",
+                "expected_move": "up" if direction == "long" else "down",
+                "agreeing_modules": alignment.get("agreeing_modules") or [],
+                "lifecycle_state": "candidate",
+            },
+            param_version=engine_param_snapshot(_repo()),
+        )
+    )
 
 
 def _briefing_direction_conflict(briefing: dict[str, Any], direction: str) -> bool:

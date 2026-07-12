@@ -150,4 +150,5 @@ def _known_rule_order() -> list[str]:
         "stance_flipped",
         "evidence_insufficient",
         "periodic_pulse",
+        "full_alignment",
     ]

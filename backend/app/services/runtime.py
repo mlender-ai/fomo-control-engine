@@ -10,6 +10,7 @@ from app.services import http_handlers as runtime
 from app.services import scout_handlers
 from app.services.scout_handlers import ScanRequest, SimulateRequest
 from app.analyst.briefing import briefing_summary
+from app.analyst.alignment import build_full_alignment
 from app.db.maintenance import (
     enforce_retention,
     run_database_backup,
@@ -689,11 +690,29 @@ def stop_scout_tracking(symbol: str) -> dict[str, Any]:
 def clear_scout_tracking_for_open_positions() -> dict[str, Any]:
     open_symbols = {position.symbol.upper() for position in runtime.repository.list_positions(PositionStatus.open)}
     removed: list[str] = []
+    cancelled_intents: list[str] = []
+    disarmed_setups: list[str] = []
     for item in list(runtime.repository.list_watchlist()):
         symbol = item.symbol.upper()
         if symbol in open_symbols and runtime.repository.remove_watchlist_item(symbol):
             removed.append(symbol)
-    return {"removed": removed, "count": len(removed)}
+    now = utc_now()
+    for intent in runtime.repository.list_entry_intents(status="active", limit=1000):
+        if intent.symbol.upper() not in open_symbols:
+            continue
+        runtime.repository.upsert_entry_intent(intent.model_copy(update={"status": "cancelled", "updated_at": now}))
+        cancelled_intents.append(str(intent.id))
+    for setup in runtime.repository.list_armed_setups(status="armed", limit=1000):
+        if setup.symbol.upper() not in open_symbols:
+            continue
+        runtime.repository.upsert_armed_setup(setup.model_copy(update={"status": "disarmed", "updated_at": now}))
+        disarmed_setups.append(str(setup.id))
+    return {
+        "removed": removed,
+        "count": len(removed) + len(cancelled_intents) + len(disarmed_setups),
+        "cancelled_intents": cancelled_intents,
+        "disarmed_setups": disarmed_setups,
+    }
 
 
 def entry_intents(symbol: str | None = None, status: str | None = None) -> dict[str, Any]:
@@ -721,7 +740,13 @@ def refresh_scout_scan_cache() -> dict[str, Any]:
 
 def refresh_universe_scan_cache() -> dict[str, Any]:
     def load(symbol: str, timeframe: str) -> dict[str, Any]:
-        return scout_handlers._analysis_entry(symbol, timeframe, force=True, include_trade_flow=False)
+        entry = scout_handlers._analysis_entry(symbol, timeframe, force=True, include_trade_flow=False)
+        briefing = scout_handlers._briefing_for_entry(symbol, timeframe, entry, action_plan=None, context="pre_entry")
+        confluence = briefing.get("confluence") if isinstance(briefing.get("confluence"), dict) else {}
+        alignment = build_full_alignment(confluence, entry.get("historical_backtest"))
+        entry["analysis"]["full_alignment"] = alignment
+        scout_handlers._record_full_alignment_judgment(symbol, timeframe, entry, alignment)
+        return entry
 
     return run_universe_scan(runtime.repository, runtime.settings, analysis_loader=load, ticker_rows=_market_tickers())
 

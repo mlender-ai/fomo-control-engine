@@ -1042,6 +1042,207 @@ h3 {
   letter-spacing: 0;
 }
 
+.sharedAssetCard {
+  min-width: 0;
+}
+
+.sharedAssetCard.tone-positive {
+  border-color: rgba(var(--chart-green-rgb), 0.34);
+  background: rgba(var(--chart-green-rgb), 0.055);
+}
+
+.sharedAssetCard.tone-negative {
+  border-color: rgba(var(--chart-red-rgb), 0.38);
+  background: rgba(var(--chart-red-rgb), 0.065);
+}
+
+.sharedAssetCard.tone-watch,
+.sharedAssetCard.tone-neutral {
+  border-color: var(--terminal-line);
+  background: rgba(var(--chart-neutral-rgb), 0.055);
+}
+
+.sharedAssetCard small {
+  overflow: hidden;
+  color: var(--terminal-muted);
+  font-size: 11px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scoutTrackingSection,
+.alignmentDiscoverySection {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--terminal-line);
+  border-radius: var(--fce-radius-lg);
+  background: var(--terminal-panel);
+  padding: 16px;
+}
+
+.scoutSectionHeading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.scoutSectionHeading div {
+  display: grid;
+  gap: 3px;
+}
+
+.scoutSectionHeading span,
+.scoutSectionHeading small {
+  color: var(--terminal-muted);
+  font-size: 11px;
+}
+
+.scoutSectionHeading h2 {
+  margin: 0;
+  font-size: 17px;
+}
+
+.scoutTrackingGrid,
+.alignmentCardGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.alignmentTilt {
+  display: grid;
+  grid-template-columns: auto minmax(72px, 1fr) auto;
+  align-items: center;
+  gap: 7px;
+  color: var(--terminal-muted);
+  font-size: 10px;
+}
+
+.alignmentTilt i {
+  position: relative;
+  display: block;
+  height: 3px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(var(--chart-red-rgb), 0.55), rgba(var(--chart-neutral-rgb), 0.3) 50%, rgba(var(--chart-green-rgb), 0.55));
+}
+
+.alignmentTilt b {
+  position: absolute;
+  top: 50%;
+  width: 9px;
+  height: 9px;
+  border: 2px solid var(--terminal-panel);
+  border-radius: 50%;
+  background: var(--terminal-text);
+  transform: translate(-50%, -50%);
+}
+
+.scoutTrackingItem {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+}
+
+.scoutTrackingItem .sharedAssetCard {
+  width: 100%;
+  min-height: 104px;
+  align-content: start;
+}
+
+.trackingMetaRow {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 5px 9px;
+  padding-top: 7px;
+  border-top: 1px solid var(--terminal-line);
+}
+
+.trackingMetaRow span {
+  overflow: hidden;
+  max-width: 100%;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.trackingCardActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.trackingCardActions button {
+  border: 0;
+  background: transparent;
+  color: var(--terminal-muted);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.trackingCardActions button:hover {
+  color: var(--terminal-text);
+}
+
+.alignmentCard {
+  display: grid;
+  gap: 9px;
+  border: 1px solid var(--terminal-line);
+  border-radius: 7px;
+  background: var(--terminal-inset);
+  color: var(--terminal-text);
+  padding: 13px;
+  text-align: left;
+}
+
+.alignmentCard > div:first-child {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.alignmentCard b {
+  font-size: 12px;
+}
+
+.alignmentCard small,
+.alignmentCard > div:first-child span,
+.alignmentEmpty span {
+  color: var(--terminal-muted);
+  font-size: 11px;
+}
+
+.alignmentCard em {
+  color: var(--terminal-negative);
+  font-size: 11px;
+  font-style: normal;
+}
+
+.alignmentModules {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.alignmentModules span {
+  border: 1px solid var(--terminal-line);
+  border-radius: 999px;
+  padding: 3px 7px;
+  color: var(--terminal-muted);
+  font-size: 10px;
+}
+
+.alignmentEmpty {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border: 1px dashed var(--terminal-line);
+  border-radius: 7px;
+  padding: 14px;
+}
+
 .stripSeverityBar {
   position: absolute;
   inset: 0 auto 0 0;

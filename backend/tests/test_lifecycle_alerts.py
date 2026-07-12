@@ -130,6 +130,25 @@ def test_closed_candidate_has_pnl_and_two_line_review() -> None:
     assert candidate.payload["pnl_percent"] == 4.25
 
 
+def test_periodic_pulse_includes_integrated_tracking_block() -> None:
+    candidate = pulse_candidate(
+        [],
+        tracked=[
+            {
+                "symbol": "SOXLUSDT",
+                "stance_label": "상방 우세",
+                "trigger_distance_pct": 1.2,
+            }
+        ],
+    )
+
+    assert candidate is not None
+    assert "추적 중" in candidate.message
+    assert "SOXLUSDT" in candidate.message
+    assert "트리거까지 1.2%" in candidate.message
+    assert candidate.payload["tracked"] == 1
+
+
 def test_verdict_transition_fires_with_reason_and_next_price() -> None:
     tracker = {"verdict_state": "holding", "overall_stance": "상방"}
     candidates, updated = transition_candidates(_context(verdict="danger"), tracker, _settings(), now=NOW)

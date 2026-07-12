@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { CompactChartWorkspace, type CompactNextPrice } from "@/components/position/CompactChartWorkspace";
+import { MinimalAssetCard } from "@/components/position/MinimalAssetCard";
 import { TerminalPanel, TerminalWarning } from "@/components/terminal";
 import {
   chartOverlayFromPayload,
@@ -411,21 +412,15 @@ function PositionStrip({
         const selected = item.position.id === selectedId;
         if (compact) {
           return (
-            <button
-              className={`positionStripCard minimal severity-${item.state.severity_rank} ${selected ? "selected" : ""}`}
-              data-testid="position-card"
+            <MinimalAssetCard
               key={item.position.id}
+              meta={`${directionLabel(item.position.direction)} · ${item.position.leverage}x`}
               onClick={() => onSelect(item.position.id)}
+              selected={selected}
+              symbol={item.position.symbol}
               title={`${item.position.symbol} · ${directionLabel(item.position.direction)} ${item.position.leverage}x · ${item.state.status_label}`}
-              type="button"
-            >
-              <span className="stripSeverityBar" aria-hidden="true" />
-              <strong>
-                {item.position.symbol}
-                {liquidationMissing(item) ? <AlertTriangle className="liqMissingIcon" size={11} aria-label="청산가 미수신" /> : null}
-              </strong>
-              <span>{directionLabel(item.position.direction)} · {item.position.leverage}x</span>
-            </button>
+              tone={item.state.severity_rank >= 3 ? "negative" : item.state.severity_rank >= 1 ? "watch" : "positive"}
+            />
           );
         }
         return (

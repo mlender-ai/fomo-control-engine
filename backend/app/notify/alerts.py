@@ -122,7 +122,13 @@ class AlertEngine:
         contexts = []
         for payload in sync_payload.get("positions", []) or []:
             contexts.append(await self._alert_context(payload))
-        candidate = pulse_candidate(contexts, pending_redelivery=self.state.pending_redelivery)
+        tracked: list[dict[str, Any]] = []
+        try:
+            scout_payload = await asyncio.to_thread(service.scout_scan, 100)
+            tracked = [item for item in scout_payload.get("tracked", []) if isinstance(item, dict)]
+        except Exception:
+            logger.exception("notify.periodic_pulse.tracked_load_failed")
+        candidate = pulse_candidate(contexts, tracked=tracked, pending_redelivery=self.state.pending_redelivery)
         if candidate is None:
             return 0
         if quiet_hours_active(self.settings, now):

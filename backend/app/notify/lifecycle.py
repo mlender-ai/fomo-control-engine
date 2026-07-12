@@ -195,6 +195,7 @@ def transition_candidates(
 def pulse_candidate(
     contexts: list[dict[str, Any]],
     *,
+    tracked: list[dict[str, Any]] | None = None,
     pending_redelivery: list[dict[str, Any]] | None = None,
 ) -> AlertCandidate | None:
     """periodic_pulse — 보유 포지션 1줄 상태 묶음 1통. "전부 정상"도 발송 (침묵 ≠ 정상 증명)."""
@@ -218,6 +219,14 @@ def pulse_candidate(
         )
     if contexts and all_normal:
         lines.append("전부 정상 · 변화 없음")
+    tracked_items = [item for item in (tracked or []) if isinstance(item, dict)]
+    if tracked_items:
+        lines.append("\n<b>추적 중</b>")
+        for item in tracked_items[:10]:
+            stance = str(item.get("stance_label") or "판정 준비 중")
+            distance = item.get("trigger_distance_pct")
+            distance_text = f" · 트리거까지 {abs(float(distance)):.1f}%" if distance is not None else ""
+            lines.append(f"• <b>{escape(str(item.get('symbol') or '-'))}</b> 추적 · {escape(stance)}{distance_text}")
     redelivery = [item for item in (pending_redelivery or []) if isinstance(item, dict)]
     if redelivery:
         lines.append(f"⚠ 미도달 알림 {len(redelivery)}건 병합:")
@@ -232,7 +241,7 @@ def pulse_candidate(
         identity="pulse",
         title=RULE_LABELS["periodic_pulse"],
         message="\n".join(lines),
-        payload={"kind": "lifecycle_pulse", "positions": len(contexts), "merged_redelivery": len(redelivery)},
+        payload={"kind": "lifecycle_pulse", "positions": len(contexts), "tracked": len(tracked_items), "merged_redelivery": len(redelivery)},
     )
 
 

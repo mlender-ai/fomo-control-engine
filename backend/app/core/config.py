@@ -306,6 +306,10 @@ class Settings(BaseSettings):
         30,
         validation_alias=AliasChoices("FCE_SCOUT_WATCHLIST_SYMBOL_LIMIT", "SCOUT_WATCHLIST_SYMBOL_LIMIT"),
     )
+    scout_tracking_symbol_limit: int = Field(
+        10,
+        validation_alias=AliasChoices("FCE_SCOUT_TRACKING_SYMBOL_LIMIT", "SCOUT_TRACKING_SYMBOL_LIMIT"),
+    )
     scout_auto_arm_enabled: bool = Field(
         True,
         validation_alias=AliasChoices("FCE_SCOUT_AUTO_ARM_ENABLED", "SCOUT_AUTO_ARM_ENABLED"),
@@ -652,7 +656,7 @@ class Settings(BaseSettings):
     )
     alert_rules_enabled: str = Field(
         "trigger_near,invalidation_breach,take_profit_hit,status_worsened,health_drop,liq_proximity,liq_unknown_high_lev,wyckoff_event,data_stall,funding_extreme,oi_divergence,liq_cluster_near,setup_near,setup_triggered,setup_invalidated,intent_approaching,intent_zone_entered,intent_zone_entered_partial,intent_invalidated,universe_discovery,mdd_limit_warn,mdd_limit_critical,"
-        "position_opened,position_closed,verdict_changed,stance_flipped,evidence_insufficient,periodic_pulse",
+        "position_opened,position_closed,verdict_changed,stance_flipped,evidence_insufficient,periodic_pulse,full_alignment",
         validation_alias=AliasChoices("FCE_ALERT_RULES_ENABLED", "ALERT_RULES_ENABLED"),
     )
     # WO-44 포지션 라이프사이클 알림.
