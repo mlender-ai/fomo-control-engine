@@ -138,6 +138,7 @@ function EngineStatusView({ data }: { data: PaperDashboard }) {
 
 function GateFunnel({ funnel }: { funnel: PaperGateFunnel }) {
   const visible = funnel.stages.filter((stage) => ["evaluated", "confirmed_flip", "checklist", "signature_gate", "entered"].includes(stage.id));
+  const pills = funnel.pill_diagnostics;
   return (
     <section className="engineStatusCard engineGateFunnel" data-testid="paper-gate-funnel">
       <header><h2>최근 {funnel.period_days}일 진입 게이트</h2><span>확정 캔들 기준</span></header>
@@ -147,6 +148,9 @@ function GateFunnel({ funnel }: { funnel: PaperGateFunnel }) {
         ))}
       </div>
       <p>{funnel.top_rejection ? `최다 탈락: ${funnel.top_rejection.label} · ${funnel.top_rejection.count}회` : "평가가 쌓이면 최다 탈락 관문을 표시합니다."}</p>
+      <p data-testid="event-pill-diagnostics">
+        최근 {funnel.period_days}일 알약 렌더 {pills?.rendered ?? 0}개 · {pillBottleneckLabel(pills?.bottleneck)}
+      </p>
     </section>
   );
 }
@@ -174,6 +178,7 @@ function evidenceLines(trade: PaperTrade): string[] { const raw = trade.entry_ev
 function record(value: unknown): Record<string, unknown> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
 function actionSummary(actions: Array<Record<string, unknown>>): string { return actions.length ? actions.slice(0, 3).map((item) => String(item.reason ?? item.transition ?? item.signature_key ?? "자율 조치")).join(" · ") : "기록된 자율 조치 없음"; }
 function statusLabel(value: string): string { return ({ scheduled: "예정", experiment: "실험 중", adopted: "적용됨", rolled_back: "롤백됨", vetoed: "거부됨", dwell_blocked: "대기 기간" } as Record<string,string>)[value] ?? value; }
+function pillBottleneckLabel(value: string | null | undefined): string { return ({ window_events: "최근 이벤트 없음", validated: "검증 통계 단계에서 최다 탈락", confirmed: "확정 캔들 단계에서 최다 탈락", event_mapping: "이벤트-캔들 매핑 단계에서 최다 탈락" } as Record<string,string>)[value ?? ""] ?? "진단 표본 대기"; }
 function stanceLabel(value: Record<string, unknown>): string { return ({ long: "상방", long_leaning: "상방", short: "하방", short_leaning: "하방", conflicted: "충돌" } as Record<string,string>)[String(value.stance ?? "")] ?? "판단 유보"; }
 function direction(value: string): string { return value === "long" ? "롱" : "숏"; }
 function exitReason(value: string | null): string { return ({ invalidation_breach: "무효화 이탈", breakeven_stop: "본전 스탑", opposite_stance_flip: "반대 스탠스 전환", take_profit_pressure: "익절 압력 지속", time_stop: "최대 보유시간" } as Record<string,string>)[value ?? ""] ?? "기록 없음"; }

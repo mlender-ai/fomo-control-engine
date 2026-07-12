@@ -264,6 +264,7 @@ def scout_analysis(symbol: str, timeframe: str = "4h", force: bool = False, deta
         position=None,
         now=utc_now(),
         timeframe=timeframe,
+        hysteresis_params=hysteresis_params_from_settings(runtime.settings),
     )
     return {
         "symbol": symbol,

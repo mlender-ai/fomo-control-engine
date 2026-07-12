@@ -336,6 +336,12 @@ def test_gate_funnel_is_sequential_and_diagnostic_fires_once() -> None:
                 "gates": gates,
                 "entered": entered,
                 "rejected_at": failed or None,
+                "pill_diagnostics": (
+                    {"window_events": 2, "validated": 0, "confirmed": 2, "rendered": 0, "bottleneck": "validated"}
+                    if offset == 0
+                    else {}
+                ),
+                "event_pill_ids": [],
             }
         )
     repo.upsert_paper_gate_funnel(
@@ -356,6 +362,8 @@ def test_gate_funnel_is_sequential_and_diagnostic_fires_once() -> None:
     assert by_id["checklist"] == 1
     assert by_id["signature_gate"] == 1
     assert funnel["top_rejection"]["label"] in {"스탠스 전환 미확정", "체크리스트 미달"}
+    assert funnel["pill_diagnostics"]["bottleneck"] == "validated"
+    assert funnel["pill_diagnostics"]["rendered"] == 0
 
     first = _gate_diagnostic_event(repo, now=now)
     second = _gate_diagnostic_event(repo, now=now + timedelta(minutes=5))

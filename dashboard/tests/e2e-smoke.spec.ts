@@ -24,12 +24,16 @@ test("live position cockpit smoke path", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByTestId("demo-mode-badge")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("position-strip")).toBeVisible();
-  await expect(page.getByTestId("position-card")).toHaveCount(3);
+  await expect(page.getByTestId("minimal-asset-card")).toHaveCount(3);
   await expect(page.getByTestId("compact-chart-workspace")).toBeVisible();
   await expect(page.getByTestId("stance-ribbon")).toBeVisible();
   await expect(page.getByTestId("stance-hud")).toBeVisible();
   await expect(page.getByTestId("stance-hud")).toContainText("4h");
-  await expect(page.getByTestId("stance-hud")).toContainText("상방 근거");
+  await expect(page.getByTestId("stance-hud")).toContainText("상방");
+  await expect(page.getByTestId("stance-hud")).toContainText("하방");
+  await expect(page.getByTestId("chart-canvas-frame").getByTestId("stance-hud")).toHaveCount(0);
+  expect(await page.locator("[data-stance-flip='true']").count()).toBeGreaterThan(0);
+  expect(await page.locator("[data-compact-level-label]").count()).toBeLessThanOrEqual(3);
   await expect(page.getByTestId("position-market-context")).toBeVisible();
   await expect(page.getByTestId("direction-gauge")).toHaveCount(0);
   await expect(page.getByTestId("take-profit-gauge")).toBeVisible();
@@ -37,7 +41,7 @@ test("live position cockpit smoke path", async ({ page }) => {
   await expect(page.getByTestId("chart-canvas-frame")).toBeVisible();
   await expect(page.locator("[data-testid^='chart-layer-']")).toHaveCount(0);
 
-  await page.getByTestId("position-card").filter({ hasText: "ETHUSDT" }).click();
+  await page.getByTestId("minimal-asset-card").filter({ hasText: "ETHUSDT" }).click();
   await expect(page.locator("[data-event-pill]").first()).toBeVisible({ timeout: 30_000 });
 
   await page.getByTestId("pro-mode-button").click();
@@ -106,6 +110,7 @@ test("engine trading workspace and absorbed calibration route", async ({ page })
   await page.getByRole("link", { name: "엔진 상태" }).click();
   await expect(page.getByTestId("engine-status-tab")).toBeVisible();
   await expect(page.getByTestId("paper-gate-funnel")).toBeVisible();
+  await expect(page.getByTestId("event-pill-diagnostics")).toBeVisible();
 
   await page.goto("/calibration");
   await expect(page).toHaveURL(/\/engine\?tab=status/);

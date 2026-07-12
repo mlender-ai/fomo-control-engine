@@ -2310,7 +2310,7 @@ h3 {
 
 .positionChartHeaderActions {
   display: inline-flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 6px;
   flex: 0 0 auto;
 }
@@ -2437,11 +2437,10 @@ h3 {
 }
 
 .stanceHud {
-  position: absolute;
-  z-index: 5;
-  top: 12px;
-  right: calc(var(--chart-axis-gutter, 82px) + 12px);
-  max-width: min(620px, calc(100% - 130px));
+  position: relative;
+  z-index: 6;
+  width: min(520px, 48vw);
+  max-width: 100%;
 }
 
 .stanceHud > button {
@@ -2449,10 +2448,10 @@ h3 {
   grid-template-columns: auto auto minmax(0, 1fr);
   align-items: center;
   gap: 8px;
-  min-height: 48px;
+  min-height: 40px;
   border: 1px solid var(--terminal-line-strong);
   border-radius: 6px;
-  background: rgba(var(--chart-panel-rgb), 0.9);
+  background: var(--fce-surface-inset);
   color: var(--terminal-text);
   padding: 7px 11px;
   font: inherit;
@@ -2518,6 +2517,11 @@ h3 {
 .stanceHudCopy em { color: var(--terminal-amber); }
 
 .stanceHudStrip {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 8;
+  width: min(520px, 72vw);
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 5px 10px;
@@ -2528,6 +2532,22 @@ h3 {
   padding: 9px 10px;
   color: var(--terminal-muted);
   font-size: 10px;
+}
+
+.volumeProfileOverlay .compactLevelPill {
+  pointer-events: none;
+}
+
+@media (max-width: 900px) {
+  .positionChartHeader {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .positionChartHeaderActions,
+  .stanceHud {
+    width: 100%;
+  }
 }
 
 .stanceHudStrip b { color: var(--terminal-text); }

@@ -558,7 +558,15 @@ export function PositionCandlestickChart({
           </p>
         </div>
         <div className="positionChartHeaderActions">
-          <span className="positionChartTrendPill">{trendSummary}</span>
+          {compressed && gauges ? (
+            <StanceHeaderHud
+              analysis={analysis}
+              gauges={gauges}
+              open={stanceStripOpen}
+              onToggle={() => setStanceStripOpen((value) => !value)}
+              showSecondaryTaRows={showSecondaryTaRows}
+            />
+          ) : <span className="positionChartTrendPill">{trendSummary}</span>}
           {layerMode === "pro" ? (
             <button className={`chartGuideButton ${guideOpen ? "active" : ""}`} onClick={toggleGuide} type="button" aria-pressed={guideOpen} title="해설 오버레이 켜기/끄기">
               {guideOpen ? "해설 켜짐" : "해설"}
@@ -602,31 +610,6 @@ export function PositionCandlestickChart({
       <div className={`positionChartCanvasFrame ${guideOpen ? "showOverlayGuides" : ""}`} data-testid="chart-canvas-frame">
         <div className="positionChartCanvas" data-testid="chart-canvas" ref={containerRef} />
         <svg className="volumeProfileOverlay" data-testid="chart-overlay" ref={overlayRef} />
-        {compressed && gauges ? (
-          <div className={`stanceHud ${gauges.bar_state.provisional ? "provisional" : ""}`} data-testid="stance-hud">
-            <button type="button" onClick={() => setStanceStripOpen((value) => !value)} aria-expanded={stanceStripOpen}>
-              <span className="stanceHudClock">⏱ {analysis.timeframe}</span>
-              <span className={`stanceHudDot ${stanceTone(gauges.direction.stance, gauges.direction.transitioning, gauges.direction.previous_stance, gauges.direction.long_evidence_count, gauges.direction.short_evidence_count)}`} />
-              <span className="stanceHudCopy">
-                <strong>
-                  {gauges.direction.transitioning
-                    ? `전환 관찰 중 (문턱 ${Math.round((gauges.direction.flip_progress ?? 0) * 100)}%)`
-                    : `${gauges.market_view?.stance_label || gauges.direction.stance_label || "판단 대기"}${gauges.direction.stance === "conflicted" ? "" : " 진행 중"}`}
-                  {gauges.direction.stance !== "conflicted" ? ` (${gauges.direction.candles_in_state ?? 0}캔들째)` : ""}
-                </strong>
-                <span>▲ 상방 근거 {gauges.direction.long_evidence_count ?? 0}　▼ 하방 근거 {gauges.direction.short_evidence_count ?? 0}</span>
-                {gauges.bar_state.provisional ? <em>잠정 · {formatHudCountdown(gauges.bar_state.minutes_to_close)}</em> : null}
-              </span>
-            </button>
-            {stanceStripOpen ? (
-              <div className="stanceHudStrip" data-testid="stance-hud-strip">
-                {visibleTaRows(analysis.one_liners?.lines ?? [], showSecondaryTaRows).map((line) => (
-                  <span key={line.module}><b>{line.module_label}</b> {line.phrase}</span>
-                ))}
-              </div>
-            ) : null}
-          </div>
-        ) : null}
         {zoneBand ? (
           <div
             className="chartIntentZoneBand"
@@ -973,6 +956,7 @@ function overlayRight(width: number): number {
 function compressedOverlayNodes(context: OverlayContext, gauges: CompactChartGauges | null, animateTier2 = false): OverlayGroup {
   const group: OverlayGroup = { zones: [], shapes: [], badges: [] };
   const mark = context.analysis.mark_price;
+  const levelRows: Array<{ price: number; label: string; tone: "amber" | "red" | "text"; priority: number }> = [];
   const support = [...context.analysis.price_levels.support]
     .filter((level) => level.price <= mark)
     .sort((left, right) => right.score - left.score)[0];
@@ -980,36 +964,35 @@ function compressedOverlayNodes(context: OverlayContext, gauges: CompactChartGau
     .filter((level) => level.price >= mark)
     .sort((left, right) => right.score - left.score)[0];
   const poc = context.analysis.volume_profile?.poc_price;
-  if (support) group.shapes.push(...compactPriceLine(context, support.price, "상위 지지", "amber"));
-  if (resistance) group.shapes.push(...compactPriceLine(context, resistance.price, "상위 저항", "red"));
-  if (isFinitePrice(poc)) group.shapes.push(...compactPriceLine(context, poc, "최다 거래 가격", "text"));
+  if (support) levelRows.push({ price: support.price, label: "상위 지지", tone: "amber", priority: 40 });
+  if (resistance) levelRows.push({ price: resistance.price, label: "상위 저항", tone: "red", priority: 40 });
+  if (isFinitePrice(poc)) levelRows.push({ price: poc, label: "최다 거래 가격", tone: "text", priority: 30 });
 
   const confirmedSweep = [...(context.analysis.liquidity?.sweeps ?? []), ...(context.analysis.liquidity?.htf_range_sweeps ?? [])]
     .filter((sweep) => sweep.confirmed)
     .sort((left, right) => right.timestamp - left.timestamp)[0];
   if (confirmedSweep) {
-    group.shapes.push(...compactPriceLine(
-      context,
-      confirmedSweep.price || confirmedSweep.pool_price,
-      confirmedSweep.side === "buy_side" ? "고점 청소" : "저점 청소",
-      confirmedSweep.side === "buy_side" ? "red" : "amber"
-    ));
+    levelRows.push({
+      price: confirmedSweep.price || confirmedSweep.pool_price,
+      label: confirmedSweep.side === "buy_side" ? "고점 청소" : "저점 청소",
+      tone: confirmedSweep.side === "buy_side" ? "red" : "amber",
+      priority: 60
+    });
   } else {
     const pool = nearestByPrice((context.analysis.liquidity?.pools ?? []).filter((item) => !item.swept), mark);
-    if (pool) group.shapes.push(...compactPriceLine(context, pool.price, "유동성 풀", pool.side === "buy_side" ? "red" : "amber"));
+    if (pool) levelRows.push({ price: pool.price, label: "유동성 풀", tone: pool.side === "buy_side" ? "red" : "amber", priority: 50 });
   }
 
-  const tier2Shapes: string[] = [];
   const tier2Badges: string[] = [];
   const tier2Rows = (gauges?.tier2_overlays ?? []).slice(0, 2);
   for (const [index, overlay] of tier2Rows.entries()) {
     if (isFinitePrice(overlay.price)) {
-      tier2Shapes.push(...compactPriceLine(
-        context,
-        overlay.price,
-        overlay.engine_label || overlay.claim,
-        overlay.direction === "short" ? "red" : "amber"
-      ));
+      levelRows.push({
+        price: overlay.price,
+        label: overlay.engine_label || overlay.claim,
+        tone: overlay.direction === "short" ? "red" : "amber",
+        priority: 20 - index
+      });
     } else {
       tier2Badges.push(minimalFloatingLabel(
         context,
@@ -1023,9 +1006,13 @@ function compressedOverlayNodes(context: OverlayContext, gauges: CompactChartGau
   if (tier2Rows.length) {
     const className = animateTier2 ? "tier2OverlayGroup is-switching" : "tier2OverlayGroup";
     const key = tier2Rows.map((overlay) => `${overlay.engine}:${overlay.direction}`).join("|");
-    if (tier2Shapes.length) group.shapes.push(`<g class="${className}" data-testid="tier2-overlay" data-tier2-key="${escapeSvgText(key)}">${tier2Shapes.join("")}</g>`);
     if (tier2Badges.length) group.badges.push(`<g class="${className}" data-testid="tier2-overlay-label" data-tier2-key="${escapeSvgText(key)}">${tier2Badges.join("")}</g>`);
   }
+  const selectedLevels = levelRows
+    .filter((row, index, rows) => rows.findIndex((candidate) => Math.abs(candidate.price - row.price) <= Math.max(Math.abs(row.price) * 0.0002, 1e-9)) === index)
+    .sort((left, right) => right.priority - left.priority)
+    .slice(0, 3);
+  group.shapes.push(...stackCompactLevels(context, selectedLevels).flatMap(({ row, pillY }) => compactPriceLine(context, row.price, row.label, row.tone, pillY)));
   return group;
 }
 
@@ -1038,49 +1025,68 @@ function stanceRibbonNodes(context: OverlayContext, gauges: CompactChartGauges):
     .map((point) => ({ x: context.chart.timeScale().timeToCoordinate(point.time as Time), y: context.series.priceToCoordinate(point.value), time: point.time }))
     .filter((point): point is { x: number; y: number; time: number } => point.x !== null && point.y !== null);
   if (points.length < 2) return [];
-  const since = parseChartTime(gauges.direction.since);
-  const splitAt = since ? Math.max(0, points.findIndex((point) => point.time >= since)) : 0;
-  const prior = splitAt > 0 ? points.slice(0, splitAt + 1) : [];
-  const active = points.slice(Math.max(0, splitAt));
-  const tone = stanceTone(
-    gauges.direction.stance,
-    gauges.direction.transitioning,
-    gauges.direction.previous_stance,
-    gauges.direction.long_evidence_count,
-    gauges.direction.short_evidence_count
-  );
-  const activeColor = tone === "long" ? context.palette.color("green", 0.9)
-    : tone === "short" ? context.palette.color("red", 0.9)
-      : tone === "transition" ? context.palette.color("amber", 0.92)
-        : tone === "conflict-long" ? context.palette.color("green", 0.52)
-          : tone === "conflict-short" ? context.palette.color("red", 0.52)
-            : context.palette.color("neutral", 0.68);
-  const glowOpacity = 0.06 + Math.min(1, Math.max(0, gauges.direction.confidence ?? 0)) * 0.08;
-  const dash = gauges.direction.transitioning ? ` stroke-dasharray="8 6"` : "";
+  const pointByTime = new Map(points.map((point) => [point.time, point]));
+  const history = (gauges.stance_history ?? [])
+    .map((state) => {
+      const point = pointByTime.get(state.time);
+      return point ? { ...state, ...point } : null;
+    })
+    .filter((state): state is NonNullable<typeof state> => state !== null);
+  if (!history.length) return [];
+  const segments = stanceSegments(history);
   const nodes: string[] = [`<g data-testid="stance-ribbon" class="stanceRibbon">`];
-  if (prior.length > 1) nodes.push(`<path d="${svgSmoothPath(prior)}" fill="none" stroke="${context.palette.color("neutral", 0.34)}" stroke-width="2.6" />`);
-  if (active.length > 1) {
-    const settled = gauges.bar_state.provisional ? active.slice(0, -1) : active;
-    if (settled.length > 1) {
-      nodes.push(`<path d="${svgRibbonGlowPath(settled, Math.max(24, context.height - 24))}" fill="${activeColor}" fill-opacity="${glowOpacity.toFixed(3)}" stroke="none" />`);
-      nodes.push(`<path d="${svgSmoothPath(settled)}" fill="none" stroke="${activeColor}" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round"${dash} />`);
-    }
-    if (gauges.bar_state.provisional && active.length > 1) {
-      nodes.push(`<path d="${svgSmoothPath(active.slice(-2))}" fill="none" stroke="${activeColor}" stroke-opacity="0.42" stroke-width="2.9" stroke-dasharray="4 5" />`);
-    }
+  for (const segment of segments) {
+    if (segment.points.length < 2) continue;
+    const color = stanceHistoryColor(context, segment.state);
+    const glowOpacity = 0.06 + Math.min(1, Math.max(0, segment.state.confidence ?? 0)) * 0.06;
+    nodes.push(`<path d="${svgRibbonGlowPath(segment.points, Math.max(24, context.height - 24))}" fill="${color}" fill-opacity="${glowOpacity.toFixed(3)}" stroke="none" />`);
+    nodes.push(`<path d="${svgSmoothPath(segment.points)}" fill="none" stroke="${color}" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round"${segment.state.transitioning ? ` stroke-dasharray="8 6"` : ""} />`);
   }
-  const flipTime = parseChartTime(gauges.direction.last_flip_at);
-  const flip = flipTime ? nearestTimePoint(points, flipTime) : null;
-  if (flip) {
-    nodes.push(`<line x1="${flip.x}" x2="${flip.x}" y1="18" y2="${Math.max(24, context.height - 30)}" stroke="${activeColor}" stroke-opacity="0.18" stroke-width="1" />`);
-    nodes.push(`<circle data-stance-flip="true" cx="${flip.x}" cy="${flip.y}" r="7" fill="${activeColor}" stroke="${context.palette.color("panel", 0.98)}" stroke-width="2.5"><title>${escapeSvgText(gauges.direction.reason)}</title></circle>`);
+  for (let index = 1; index < history.length; index += 1) {
+    const current = history[index];
+    const previous = history[index - 1];
+    if (!current.flipped && current.stance === previous.stance) continue;
+    const color = stanceHistoryColor(context, current);
+    const caret = current.stance === "long_leaning" ? "▲" : current.stance === "short_leaning" ? "▼" : "◆";
+    nodes.push(`<line x1="${current.x}" x2="${current.x}" y1="18" y2="${Math.max(24, context.height - 30)}" stroke="${color}" stroke-opacity="0.2" stroke-width="1" />`);
+    nodes.push(`<circle data-stance-flip="true" cx="${current.x}" cy="${current.y}" r="6" fill="${color}" stroke="${context.palette.color("panel", 0.98)}" stroke-width="2"><title>${escapeSvgText(current.reason)}</title></circle>`);
+    nodes.push(`<text x="${current.x}" y="${clamp(current.y - 11, 14, context.height - 24)}" text-anchor="middle" fill="${color}" font-size="10" font-weight="850">${caret}</text>`);
   }
-  if (gauges.direction.transitioning && active.length) {
-    const point = active.at(-1)!;
-    nodes.push(`<text x="${clamp(point.x - 8, 80, context.right - 12)}" y="${clamp(point.y - 12, 20, context.height - 30)}" text-anchor="end" fill="${activeColor}" font-size="11" font-weight="760">전환 관찰 중 (문턱 ${Math.round((gauges.direction.flip_progress ?? 0) * 100)}%)</text>`);
+  if (gauges.bar_state.provisional && history.length) {
+    const confirmed = history.at(-1)!;
+    const provisional = points.find((point) => point.time > confirmed.time) ?? points.at(-1)!;
+    if (provisional.time > confirmed.time) {
+      const color = stanceHistoryColor(context, confirmed);
+      nodes.push(`<path d="${svgPath([confirmed, provisional])}" fill="none" stroke="${color}" stroke-opacity="0.42" stroke-width="2.9" stroke-dasharray="4 5" />`);
+    }
   }
   nodes.push("</g>");
   return nodes;
+}
+
+type StanceHistoryNode = NonNullable<CompactChartGauges["stance_history"]>[number] & { x: number; y: number };
+
+function stanceSegments(history: StanceHistoryNode[]): Array<{ state: StanceHistoryNode; points: StanceHistoryNode[] }> {
+  const segments: Array<{ state: StanceHistoryNode; points: StanceHistoryNode[] }> = [];
+  for (const point of history) {
+    const key = `${point.stance}:${point.transitioning}`;
+    const current = segments.at(-1);
+    const currentKey = current ? `${current.state.stance}:${current.state.transitioning}` : "";
+    if (!current || currentKey !== key) {
+      const overlap = current?.points.at(-1);
+      segments.push({ state: point, points: overlap ? [overlap, point] : [point] });
+    } else {
+      current.points.push(point);
+    }
+  }
+  return segments;
+}
+
+function stanceHistoryColor(context: OverlayContext, state: Pick<StanceHistoryNode, "stance" | "transitioning">): string {
+  if (state.transitioning) return context.palette.color("amber", 0.94);
+  if (state.stance === "long_leaning") return context.palette.color("green", 0.92);
+  if (state.stance === "short_leaning") return context.palette.color("red", 0.92);
+  return context.palette.color("neutral", 0.62);
 }
 
 function validatedEventPillNodes(context: OverlayContext, gauges: CompactChartGauges): string[] {
@@ -1167,11 +1173,51 @@ function formatHudCountdown(minutes: number | null | undefined): string {
   return `마감 ${Math.max(1, Math.round(minutes))}m`;
 }
 
+function StanceHeaderHud({
+  analysis,
+  gauges,
+  open,
+  onToggle,
+  showSecondaryTaRows
+}: {
+  analysis: PositionChartAnalysis;
+  gauges: CompactChartGauges;
+  open: boolean;
+  onToggle: () => void;
+  showSecondaryTaRows: boolean;
+}) {
+  const direction = gauges.direction;
+  const headline = direction.transitioning
+    ? `전환 관찰 중 (문턱 ${Math.round((direction.flip_progress ?? 0) * 100)}%)`
+    : `${gauges.market_view?.stance_label || direction.stance_label || "판단 대기"}${direction.stance === "conflicted" ? "" : " 진행 중"}`;
+  return (
+    <div className={`stanceHud ${gauges.bar_state.provisional ? "provisional" : ""}`} data-testid="stance-hud">
+      <button type="button" onClick={onToggle} aria-expanded={open}>
+        <span className="stanceHudClock">{analysis.timeframe}</span>
+        <span className={`stanceHudDot ${stanceTone(direction.stance, direction.transitioning, direction.previous_stance, direction.long_evidence_count, direction.short_evidence_count)}`} />
+        <span className="stanceHudCopy">
+          <strong>{headline}{direction.stance !== "conflicted" ? ` · ${direction.candles_in_state ?? 0}캔들째` : ""}</strong>
+          <span>상방 {direction.long_evidence_count ?? 0} · 하방 {direction.short_evidence_count ?? 0}</span>
+          {gauges.bar_state.provisional ? <em>잠정 · {formatHudCountdown(gauges.bar_state.minutes_to_close)}</em> : null}
+        </span>
+      </button>
+      {open ? (
+        <div className="stanceHudStrip" data-testid="stance-hud-strip">
+          {visibleTaRows(analysis.one_liners?.lines ?? [], showSecondaryTaRows).map((line) => (
+            <span key={line.module}><b>{line.module_label}</b> {line.phrase}</span>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function compactPriceLine(
   context: OverlayContext,
   price: number,
   label: string,
-  tone: "amber" | "red" | "text"
+  tone: "amber" | "red" | "text",
+  pillY?: number
 ): string[] {
   const y = context.series.priceToCoordinate(price);
   if (y === null || y < 18 || y > context.height - 36) return [];
@@ -1181,10 +1227,44 @@ function compactPriceLine(
       ? context.palette.color("amber", 0.78)
       : context.palette.color("text", 0.56);
   const text = truncateSvgLabel(label, 18);
+  const width = Math.max(56, text.length * 10 + 16);
+  const pillX = Math.max(8, context.right - width - 4);
+  const resolvedPillY = pillY ?? clamp(y - 11, 6, context.height - 28);
+  const leaderEndX = pillX - 4;
   return [
     `<line data-compact-overlay="true" x1="18" x2="${Math.max(36, context.right - 18)}" y1="${y}" y2="${y}" stroke="${color}" stroke-width="1.25" stroke-dasharray="6 7" />`,
-    `<text x="${Math.max(28, context.right - 24)}" y="${clamp(y - 7, 18, context.height - 22)}" text-anchor="end" fill="${color}" stroke="${context.palette.color("panel", 0.92)}" stroke-width="4" paint-order="stroke" font-size="12" font-weight="760" font-family="Pretendard, Inter, system-ui, sans-serif">${escapeSvgText(text)}</text>`
+    Math.abs(resolvedPillY + 11 - y) > 2
+      ? `<path d="M ${Math.max(36, context.right - 18)} ${y} L ${leaderEndX} ${resolvedPillY + 11}" fill="none" stroke="${color}" stroke-opacity="0.72" stroke-width="1" />`
+      : "",
+    `<g class="compactLevelPill" data-compact-level-label="${escapeSvgText(text)}">` +
+    `<rect x="${pillX}" y="${resolvedPillY}" width="${width}" height="22" rx="4" fill="${context.palette.color("panel", 0.94)}" stroke="${color}" stroke-width="1" />` +
+    `<text x="${pillX + width - 8}" y="${resolvedPillY + 15}" text-anchor="end" fill="${color}" font-size="11" font-weight="760" font-family="Pretendard, Inter, system-ui, sans-serif">${escapeSvgText(text)}</text></g>`
   ];
+}
+
+function stackCompactLevels(
+  context: OverlayContext,
+  rows: Array<{ price: number; label: string; tone: "amber" | "red" | "text"; priority: number }>
+): Array<{ row: (typeof rows)[number]; pillY: number }> {
+  const visible = rows
+    .map((row) => ({ row, y: context.series.priceToCoordinate(row.price) }))
+    .filter((item): item is { row: (typeof rows)[number]; y: number } => item.y !== null && item.y >= 18 && item.y <= context.height - 36)
+    .sort((left, right) => left.y - right.y);
+  const gap = 26;
+  const top = 6;
+  const bottom = context.height - 28;
+  const result: Array<{ row: (typeof rows)[number]; pillY: number }> = [];
+  let cursor = top - gap;
+  for (const item of visible) {
+    const pillY = Math.max(clamp(item.y - 11, top, bottom), cursor + gap);
+    result.push({ row: item.row, pillY });
+    cursor = pillY;
+  }
+  const overflow = result.length ? result.at(-1)!.pillY - bottom : 0;
+  if (overflow > 0) {
+    for (const item of result) item.pillY -= overflow;
+  }
+  return result;
 }
 
 function minimalEvidenceOverlayNodes(

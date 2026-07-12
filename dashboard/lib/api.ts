@@ -448,10 +448,29 @@ export type CompactChartGauges = {
     confirmed: true;
   }>;
   event_pill_audit?: {
-    confirmed_events: number;
-    validated_stats: number;
+    window_events?: number;
+    validated?: number;
+    confirmed?: number;
     rendered: number;
+    bottleneck?: string | null;
   };
+  pill_diagnostics?: {
+    window_events: number;
+    validated: number;
+    confirmed: number;
+    rendered: number;
+    bottleneck?: string | null;
+  };
+  stance_history?: Array<{
+    time: number;
+    stance: string;
+    transitioning: boolean;
+    flipped: boolean;
+    long_evidence_count: number;
+    short_evidence_count: number;
+    confidence: number;
+    reason: string;
+  }>;
   bar_state: {
     provisional: boolean;
     minutes_to_close?: number | null;
@@ -1462,6 +1481,11 @@ export type PaperGateFunnel = {
   stages: Array<{ id: string; label: string; count: number }>;
   top_rejection: { id: string; label: string; count: number } | null;
   rejection_counts: Record<string, number>;
+  pill_diagnostics?: {
+    rendered: number;
+    bottleneck: string | null;
+    bottleneck_count: number;
+  };
 };
 
 export type PaperDashboard = {

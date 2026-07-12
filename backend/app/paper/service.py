@@ -182,6 +182,8 @@ def run_paper_engine(
                     freshness=_data_fresh(bar, timeframe, now),
                     entry_decision=entry_decision,
                     entered=will_enter,
+                    pill_diagnostics=_dict(gauges.get("pill_diagnostics") or gauges.get("event_pill_audit")),
+                    event_pill_ids=[str(item.get("id")) for item in _list(gauges.get("event_pills")) if item.get("id")],
                 )
                 repo.upsert_paper_gate_funnel(gate_record)
                 if (
@@ -385,6 +387,18 @@ def paper_gate_funnel(repo: Any, *, days: int = 7, now: datetime | None = None) 
         if rejected_at:
             rejection_counts[rejected_at] = rejection_counts.get(rejected_at, 0) + 1
     top_gate = max(rejection_counts, key=rejection_counts.get) if rejection_counts else None
+    rendered_ids = {
+        str(event_id)
+        for row in rows
+        for event_id in row.get("event_pill_ids", [])
+        if event_id
+    }
+    pill_bottlenecks: dict[str, int] = {}
+    for row in rows:
+        bottleneck = str(_dict(row.get("pill_diagnostics")).get("bottleneck") or "")
+        if bottleneck:
+            pill_bottlenecks[bottleneck] = pill_bottlenecks.get(bottleneck, 0) + 1
+    pill_bottleneck = max(pill_bottlenecks, key=pill_bottlenecks.get) if pill_bottlenecks else None
     return {
         "period_days": days,
         "as_of": now.isoformat(),
@@ -393,6 +407,11 @@ def paper_gate_funnel(repo: Any, *, days: int = 7, now: datetime | None = None) 
         "stages": [*stages, {"id": "entered", "label": "진입", "count": entered}],
         "top_rejection": ({"id": top_gate, "label": GATE_REJECTION_LABELS.get(top_gate, top_gate), "count": rejection_counts[top_gate]} if top_gate else None),
         "rejection_counts": rejection_counts,
+        "pill_diagnostics": {
+            "rendered": len(rendered_ids),
+            "bottleneck": pill_bottleneck,
+            "bottleneck_count": pill_bottlenecks.get(pill_bottleneck, 0) if pill_bottleneck else 0,
+        },
     }
 
 
@@ -411,6 +430,8 @@ def _gate_funnel_record(
     freshness: bool,
     entry_decision: Any,
     entered: bool,
+    pill_diagnostics: dict[str, Any] | None = None,
+    event_pill_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     decision_gates = _dict(getattr(entry_decision, "gates", None))
     gates = {
@@ -442,6 +463,8 @@ def _gate_funnel_record(
         "entered": entered,
         "rejected_at": rejected_at,
         "rejection_reasons": [gate for gate in GATE_ORDER if not gates[gate]],
+        "pill_diagnostics": pill_diagnostics or {},
+        "event_pill_ids": event_pill_ids or [],
     }
 
 

@@ -1332,6 +1332,7 @@ def _live_position_detail(position: Position) -> dict:
         position={"direction": position.direction.value, "entry_price": position.entry_price},
         now=utc_now(),
         timeframe=str(market_analysis.get("timeframe") or "4h"),
+        hysteresis_params=hysteresis_params_from_settings(settings),
     )
     return {
         **payload,

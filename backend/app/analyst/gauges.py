@@ -16,6 +16,7 @@ from typing import Any
 
 from app.analyst.briefing import _engine_label
 from app.analyst.confluence import TIMEFRAME_MINUTES, _parse_dt
+from app.analyst.stance_history import replay_stance_history
 
 # ── 익절 압력 상수 (docs/CompressedChart.md §익절 공식과 동기화) ──────────────
 TP_WEIGHTS = {"liquidity_exhaustion": 0.40, "barrier_proximity": 0.35, "volume_slowdown": 0.25}
@@ -40,11 +41,13 @@ def build_gauges(
     position: dict[str, Any] | None = None,
     now: datetime | None = None,
     timeframe: str = "4h",
+    hysteresis_params: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """압축 차트 페이로드: 방향 게이지 + 익절 게이지 + 티어2 자동 선별 + 잠정/확정."""
     bar_state = _bar_state(analysis, timeframe, now)
     direction = build_direction_gauge(confluence)
     event_pills = select_validated_event_pills(analysis, historical_backtest, bar_state)
+    pill_diagnostics = event_pill_diagnostics(analysis, historical_backtest, bar_state, event_pills)
     return {
         "direction": direction,
         "market_view": build_market_view(analysis, confluence, direction),
@@ -52,14 +55,47 @@ def build_gauges(
         "take_profit": build_take_profit_gauge(analysis, position),
         "tier2_overlays": select_tier2_overlays(confluence, historical_backtest),
         "event_pills": event_pills,
-        "event_pill_audit": {
-            "confirmed_events": _confirmed_event_count(analysis),
-            "validated_stats": len(_validated_stats(historical_backtest or {})),
-            "rendered": len(event_pills),
-        },
+        "pill_diagnostics": pill_diagnostics,
+        "event_pill_audit": pill_diagnostics,
+        "stance_history": replay_stance_history(
+            analysis=analysis,
+            current_confluence=confluence,
+            bar_state=bar_state,
+            timeframe=timeframe,
+            hysteresis_params=hysteresis_params,
+        ),
         "bar_state": bar_state,
         "policy": "게이지는 판단 표시입니다. 주문과 무관하며 판단은 사용자 몫입니다.",
     }
+
+
+def event_pill_diagnostics(
+    analysis: dict[str, Any],
+    historical_backtest: dict[str, Any] | None,
+    bar_state: dict[str, Any],
+    rendered: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    window_events = _window_event_count(analysis)
+    validated = len(_validated_stats(historical_backtest or {}))
+    confirmed = _confirmed_event_count(analysis, bar_state)
+    rendered_count = len(rendered if rendered is not None else select_validated_event_pills(analysis, historical_backtest, bar_state))
+    stages = {
+        "window_events": window_events,
+        "validated": validated,
+        "confirmed": confirmed,
+        "rendered": rendered_count,
+    }
+    if window_events == 0:
+        bottleneck = "window_events"
+    elif validated == 0:
+        bottleneck = "validated"
+    elif confirmed == 0:
+        bottleneck = "confirmed"
+    elif rendered_count == 0:
+        bottleneck = "event_mapping"
+    else:
+        bottleneck = None
+    return {**stages, "bottleneck": bottleneck}
 
 
 # ── 방향 게이지 ──────────────────────────────────────────────────────────────
@@ -229,7 +265,8 @@ def select_validated_event_pills(
         )
 
     confirmed_cutoff = _last_confirmed_timestamp(analysis, bar_state)
-    qualified = [event for event in events if event["time"] <= confirmed_cutoff]
+    window_start = _window_start_timestamp(analysis)
+    qualified = [event for event in events if window_start <= event["time"] <= confirmed_cutoff]
     qualified.sort(key=lambda item: (item["time"], item["confidence"]), reverse=True)
     return qualified[:EVENT_PILL_MAX]
 
@@ -565,12 +602,36 @@ def _event_timestamp(value: Any) -> int:
     return int(_num(value, 0))
 
 
-def _confirmed_event_count(analysis: dict[str, Any]) -> int:
+def _window_event_count(analysis: dict[str, Any]) -> int:
+    window_start = _window_start_timestamp(analysis)
+    return sum(1 for timestamp in _event_times(analysis) if timestamp >= window_start)
+
+
+def _confirmed_event_count(analysis: dict[str, Any], bar_state: dict[str, Any]) -> int:
+    cutoff = _last_confirmed_timestamp(analysis, bar_state)
+    window_start = _window_start_timestamp(analysis)
+    return sum(1 for timestamp in _event_times(analysis) if window_start <= timestamp <= cutoff)
+
+
+def _window_start_timestamp(analysis: dict[str, Any]) -> int:
+    candles = _list(analysis.get("candles"))
+    if not candles:
+        return 0
+    index = -72 if len(candles) >= 72 else 0
+    return int(_num(candles[index].get("time"), 0))
+
+
+def _event_times(analysis: dict[str, Any]) -> list[int]:
     liquidity = _dict(analysis.get("liquidity"))
     sweeps = [item for item in [*_list(liquidity.get("sweeps")), *_list(liquidity.get("htf_range_sweeps"))] if item.get("confirmed")]
     markers = [item for item in _list(analysis.get("wyckoff_markers")) if item.get("time")]
     patterns = [item for item in _list(analysis.get("harmonic_patterns")) if str(item.get("status")) == "completed"]
-    return len(sweeps) + len(markers) + len(patterns)
+    times = [_event_timestamp(item.get("return_at") or item.get("timestamp")) for item in sweeps]
+    times.extend(_event_timestamp(item.get("time")) for item in markers)
+    for pattern in patterns:
+        points = _list(pattern.get("points"))
+        times.append(_event_timestamp(points[-1].get("time")) if points else 0)
+    return [value for value in times if value > 0]
 
 
 # ── 잠정/확정 (시간봉 확정 기준) ─────────────────────────────────────────────

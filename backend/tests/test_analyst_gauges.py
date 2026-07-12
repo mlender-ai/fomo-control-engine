@@ -12,6 +12,7 @@ from app.analyst.gauges import (
     build_direction_gauge,
     build_gauges,
     build_take_profit_gauge,
+    event_pill_diagnostics,
     select_validated_event_pills,
     select_tier2_overlays,
 )
@@ -306,6 +307,39 @@ def test_candidate_engines_never_qualify_for_event_pills() -> None:
         ]
     }
     assert select_validated_event_pills(analysis, historical, {"provisional": False}) == []
+
+
+def test_event_pill_diagnostics_follow_visible_confirmed_window() -> None:
+    oldest = int((NOW - timedelta(hours=4 * 80)).timestamp())
+    candles = [{"time": oldest + index * 4 * 3600} for index in range(81)]
+    analysis = _analysis(
+        sweeps=[
+            {"confirmed": True, "side": "sell_side", "timestamp": candles[0]["time"], "price": 90, "confidence": 82},
+            {"confirmed": True, "side": "sell_side", "timestamp": candles[-1]["time"], "price": 98, "confidence": 82},
+        ]
+    )
+    analysis["candles"] = candles
+    historical = {
+        "stats": [
+            {
+                "signature": {"engine": "liquidity", "event_type": "sweep_low", "direction": "long", "strength_class": "conf>=80"},
+                "lifecycle_state": "validated",
+                "sample_size": 42,
+                "win_1r_pct": 61.9,
+            }
+        ]
+    }
+    pills = select_validated_event_pills(analysis, historical, {"provisional": False})
+    diagnostics = event_pill_diagnostics(analysis, historical, {"provisional": False}, pills)
+    assert len(pills) == 1
+    assert pills[0]["time"] == candles[-1]["time"]
+    assert diagnostics == {
+        "window_events": 1,
+        "validated": 1,
+        "confirmed": 1,
+        "rendered": 1,
+        "bottleneck": None,
+    }
 
 
 # ── 잠정/확정 ────────────────────────────────────────────────────────────────

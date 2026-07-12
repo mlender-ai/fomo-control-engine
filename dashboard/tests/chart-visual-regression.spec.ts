@@ -37,7 +37,7 @@ test("minimal neutral market ribbon snapshot", async ({ page }) => {
   });
   await page.goto("/");
   await expect(page.getByTestId("demo-mode-badge")).toBeVisible({ timeout: 30_000 });
-  await page.getByTestId("position-card").filter({ hasText: "ETHUSDT" }).click();
+  await page.getByTestId("minimal-asset-card").filter({ hasText: "ETHUSDT" }).click();
   await expect(page.getByTestId("compact-chart-workspace")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("stance-ribbon")).toBeVisible();
   await expect(page.getByTestId("stance-hud")).toBeVisible();
