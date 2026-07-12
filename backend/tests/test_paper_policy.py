@@ -5,10 +5,18 @@ from uuid import UUID
 import pytest
 
 from app.backtest.signatures import signatures_from_analysis
-from app.db.models import Direction, MarketCandle, WatchlistItem
+from app.db.models import Direction, EntryIntent, MarketCandle, WatchlistItem
 from app.db.repository import MemoryRepository, SQLiteRepository
 from app.paper.policy import PaperPolicy, apply_exit_decision, evaluate_entry, evaluate_exit, open_trade
-from app.paper.service import _gate_diagnostic_event, paper_gate_funnel, paper_scoreboard, run_paper_engine
+from app.paper.service import (
+    _gate_diagnostic_event,
+    paper_benchmark,
+    paper_gate_funnel,
+    paper_scoreboard,
+    paper_universe,
+    start_paper_benchmark,
+    run_paper_engine,
+)
 
 
 BASE_TIME = datetime(2026, 7, 12, 0, 0, tzinfo=timezone.utc)
@@ -307,6 +315,30 @@ def test_scoreboard_compares_ratios_and_never_enables_live_orders() -> None:
     assert "조건 상이" in result["fairness_note"]
 
 
+def test_benchmark_anchor_and_manual_tracking_join_paper_universe() -> None:
+    repo = MemoryRepository()
+    now = BASE_TIME + timedelta(days=3)
+    repo.upsert_entry_intent(
+        EntryIntent(
+            symbol="SOXLUSDT",
+            kind="watch",
+            direction=None,
+            zone_lower=None,
+            zone_upper=None,
+            conditions=[],
+            expires_at=now + timedelta(days=14),
+        )
+    )
+
+    started = start_paper_benchmark(repo, now=now)
+
+    assert started["created"] is True
+    assert started["target_count"] == 1
+    assert paper_benchmark(repo)["started_at"] == now.isoformat()
+    assert ("SOXLUSDT", "4h") in paper_universe(repo)
+    assert paper_scoreboard(repo, _settings(), now=now)["benchmark"]["started"] is True
+
+
 def test_gate_funnel_is_sequential_and_diagnostic_fires_once() -> None:
     repo = MemoryRepository()
     now = BASE_TIME + timedelta(days=8)
@@ -336,11 +368,7 @@ def test_gate_funnel_is_sequential_and_diagnostic_fires_once() -> None:
                 "gates": gates,
                 "entered": entered,
                 "rejected_at": failed or None,
-                "pill_diagnostics": (
-                    {"window_events": 2, "validated": 0, "confirmed": 2, "rendered": 0, "bottleneck": "validated"}
-                    if offset == 0
-                    else {}
-                ),
+                "pill_diagnostics": ({"window_events": 2, "validated": 0, "confirmed": 2, "rendered": 0, "bottleneck": "validated"} if offset == 0 else {}),
                 "event_pill_ids": [],
             }
         )

@@ -44,19 +44,14 @@ def build_full_alignment(
     htf_aligned = bool(direction and htf_bias == direction and str(htf.get("alignment") or "") != "conflicting")
     stance_state = confluence.get("stance_state") if isinstance(confluence.get("stance_state"), dict) else {}
     transitioning = bool(stance_state.get("transitioning"))
-    unanimous = bool(
-        direction
-        and len(agreeing) >= MIN_AGREEING_MODULES
-        and not dissenting
-        and htf_aligned
-        and not transitioning
-    )
+    unanimous = bool(direction and len(agreeing) >= MIN_AGREEING_MODULES and not dissenting and htf_aligned and not transitioning)
     stat = _alignment_stat(historical_backtest, direction)
     sample_size = int(_number((stat or {}).get("sample_size")))
     ci = (stat or {}).get("win_1r_ci")
     ci_lower = _number(ci[0]) if isinstance(ci, (list, tuple)) and ci else None
     return {
         "unanimous": unanimous,
+        "eligible_count": len(module_votes),
         "direction": direction,
         "agreeing": len(agreeing),
         "dissenting": len(dissenting),
@@ -96,9 +91,10 @@ def _alignment_stat(historical: dict[str, Any] | None, direction: str | None) ->
         return None
     for stat in [*_list(historical.get("stats")), *_list(historical.get("event_stats"))]:
         signature = stat.get("signature") if isinstance(stat.get("signature"), dict) else {}
-        if str(signature.get("engine") or stat.get("engine") or "") == "full_alignment" and str(
-            signature.get("direction") or stat.get("direction") or ""
-        ) == direction:
+        if (
+            str(signature.get("engine") or stat.get("engine") or "") == "full_alignment"
+            and str(signature.get("direction") or stat.get("direction") or "") == direction
+        ):
             return stat
     return None
 

@@ -267,7 +267,21 @@ def test_scan_tracking_view_is_union_of_active_intents_and_armed_setups(client: 
     assert set(tracked) == {"BTCUSDT", "ETHUSDT"}
     assert tracked["BTCUSDT"]["setup_ids"] == [setup_response.json()["setup"]["id"]]
     assert tracked["ETHUSDT"]["intent_ids"] == [intent_response.json()["intent"]["id"]]
+    assert tracked["BTCUSDT"]["tracking_source"] == "manual"
+    assert tracked["ETHUSDT"]["tracking_source"] == "manual"
     assert {row["symbol"] for row in payload["rows"]} == {"BTCUSDT", "ETHUSDT"}
-
     client.post(f"/api/scout/setups/{setup_response.json()['setup']['id']}/disarm")
     client.post(f"/api/scout/intents/{intent_response.json()['intent']['id']}/cancel")
+
+
+def test_watch_intent_is_idempotent_and_has_no_zone(client: TestClient) -> None:
+    first = client.post("/api/scout/SOXLUSDT/intents", json={"kind": "watch", "timeframe": "4h"})
+    second = client.post("/api/scout/SOXLUSDT/intents", json={"kind": "watch", "timeframe": "4h"})
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json()["intent"]["id"] == second.json()["intent"]["id"]
+    assert first.json()["intent"]["kind"] == "watch"
+    assert first.json()["intent"]["direction"] is None
+    assert first.json()["intent"]["zone_lower"] is None
+    assert second.json()["created"] is False

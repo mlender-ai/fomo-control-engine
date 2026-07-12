@@ -26,6 +26,7 @@ class AlertSettingsUpdate(BaseModel):
     daily_summary_time: str | None = None
     pulse_interval_hours: float | None = None
     paper_alerts_enabled: bool | None = None
+    scout_auto_arm_enabled: bool | None = None
 
 
 class AlertTestRequest(BaseModel):
@@ -62,6 +63,8 @@ def update_alert_settings(update: AlertSettingsUpdate) -> dict[str, Any]:
         settings.alert_pulse_interval_hours = max(0.25, float(update.pulse_interval_hours))
     if update.paper_alerts_enabled is not None:
         settings.paper_telegram_alerts_enabled = update.paper_alerts_enabled
+    if update.scout_auto_arm_enabled is not None:
+        settings.scout_auto_arm_enabled = update.scout_auto_arm_enabled
     return _settings_payload(settings)
 
 
@@ -98,6 +101,11 @@ def _settings_payload(settings) -> dict[str, Any]:
             "pulse_interval_hours": settings.alert_pulse_interval_hours,
             "paper_alerts_enabled": settings.paper_telegram_alerts_enabled,
             "chat_ids_configured": len(settings.telegram_allowed_chat_id_list),
+        },
+        "scout": {
+            "auto_arm_enabled": settings.scout_auto_arm_enabled,
+            "auto_arm_symbol_limit": settings.scout_auto_arm_symbol_limit,
+            "manual_tracking_symbol_limit": settings.scout_tracking_symbol_limit,
         },
         "rules": rule_catalog(settings),
     }

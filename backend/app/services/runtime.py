@@ -33,7 +33,10 @@ from app.demo.seed import seed_demo_data as _seed_demo_data
 from app.marketdata.bitget_derivatives import BitgetDerivProvider
 from app.marketdata.coinglass import CoinglassProvider
 from app.paper.service import paper_dashboard as _paper_dashboard
+from app.paper.service import paper_gate_funnel as _paper_gate_funnel
+from app.paper.service import paper_universe as _paper_universe
 from app.paper.service import paper_scoreboard as _paper_scoreboard
+from app.paper.service import start_paper_benchmark as _start_paper_benchmark
 from app.paper.service import run_paper_engine as _run_paper_engine
 from app.review.engine import (
     score_interim_judgments,
@@ -613,11 +616,7 @@ def scout_tracking_status() -> dict[str, Any]:
     """Return persistent scout tracking symbols without running a market scan."""
     cleanup = clear_scout_tracking_for_open_positions()
     open_symbols = {position.symbol.upper() for position in runtime.repository.list_positions(PositionStatus.open)}
-    items = [
-        item.model_dump(mode="json")
-        for item in runtime.repository.list_watchlist()
-        if item.symbol.upper() not in open_symbols
-    ]
+    items = [item.model_dump(mode="json") for item in runtime.repository.list_watchlist() if item.symbol.upper() not in open_symbols]
     return {
         "items": items,
         "count": len(items),
@@ -634,11 +633,7 @@ def start_scout_tracking(symbol: str, timeframe: str = "4h") -> dict[str, Any]:
     """Register a symbol for persistent scout tracking until the user stops it or a live position appears."""
     normalized = scout_handlers.normalize_scout_symbol(symbol)
     open_position = next(
-        (
-            position
-            for position in runtime.repository.list_positions(PositionStatus.open)
-            if position.symbol.upper() == normalized
-        ),
+        (position for position in runtime.repository.list_positions(PositionStatus.open) if position.symbol.upper() == normalized),
         None,
     )
     if open_position is not None:
@@ -821,11 +816,7 @@ def calibration_experiments() -> dict[str, Any]:
     payload = calibration_snapshot()
     return {
         "autonomy": payload.get("autonomy", {}),
-        "suggestions": [
-            item
-            for item in payload.get("suggestions", [])
-            if item.get("status") in {"scheduled", "experiment"}
-        ],
+        "suggestions": [item for item in payload.get("suggestions", []) if item.get("status") in {"scheduled", "experiment"}],
     }
 
 
@@ -872,6 +863,20 @@ def paper_dashboard() -> dict[str, Any]:
         runtime.settings,
         calibration=calibration_snapshot(),
     )
+
+
+def start_paper_benchmark(reset: bool = False) -> dict[str, Any]:
+    return _start_paper_benchmark(runtime.repository, reset=reset)
+
+
+def paper_pulse_summary() -> dict[str, Any]:
+    funnel = _paper_gate_funnel(runtime.repository, days=1)
+    return {
+        "evaluations": int(funnel.get("evaluations") or 0),
+        "entries": int(funnel.get("entered") or 0),
+        "open": len(runtime.repository.list_paper_trades(status="open", limit=100)),
+        "targets": len(_paper_universe(runtime.repository)),
+    }
 
 
 def _attach_scout_previews(payload: dict[str, Any]) -> dict[str, Any]:

@@ -238,6 +238,30 @@ def test_entry_intent_partial_then_triggered_alert_chain() -> None:
     assert any(judgment.type == "entry_intent" for judgment in judgments)
 
 
+def test_watch_intent_is_refreshed_without_zone_alerts() -> None:
+    repo = MemoryRepository()
+    settings = _settings(scout_auto_arm_enabled=False)
+    now = utc_now()
+    intent = repo.upsert_entry_intent(
+        EntryIntent(
+            symbol="SOXLUSDT",
+            kind="watch",
+            direction=None,
+            zone_lower=None,
+            zone_upper=None,
+            conditions=[],
+            expires_at=now + timedelta(days=14),
+        )
+    )
+
+    result = process_scout_scan(repo, settings, _intent_scan_payload("SOXLUSDT", 190))
+
+    assert not [item for item in result["alert_candidates"] if item["rule_id"].startswith("intent_")]
+    refreshed = repo.get_entry_intent(intent.id)
+    assert refreshed is not None
+    assert refreshed.last_seen_at >= intent.last_seen_at
+
+
 def test_entry_intent_scoring_after_triggered_path() -> None:
     repo = MemoryRepository()
     settings = _settings(scout_auto_arm_enabled=False, entry_intent_score_after_hours=1)

@@ -23,6 +23,7 @@ export function EngineTradingShell() {
   const [data, setData] = useState<PaperDashboard | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [starting, setStarting] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -37,6 +38,20 @@ export function EngineTradingShell() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+
+  async function startBenchmark(reset = false) {
+    if (reset && !window.confirm("기존 거래 기록은 보존하고 4주 비교 창만 오늘부터 다시 시작합니다.")) return;
+    setStarting(true);
+    setError("");
+    try {
+      await api.startPaperBenchmark(reset);
+      await load();
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "4주 대결을 시작하지 못했습니다.");
+    } finally {
+      setStarting(false);
+    }
+  }
 
   return (
     <div className="page engineTradingPage" data-testid="engine-trading-page">
@@ -54,15 +69,25 @@ export function EngineTradingShell() {
       </nav>
 
       {error ? <TerminalWarning tone="error">{error}</TerminalWarning> : null}
-      {!data ? <EngineLoading /> : active === "battle" ? <BattleView data={data} /> : active === "positions" ? <PositionsView trades={data.open_trades} funnel={data.gate_funnel} /> : active === "journal" ? <JournalView trades={data.closed_trades} /> : <EngineStatusView data={data} />}
+      {!data ? <EngineLoading /> : active === "battle" ? <BattleView data={data} starting={starting} onStart={startBenchmark} /> : active === "positions" ? <PositionsView trades={data.open_trades} funnel={data.gate_funnel} /> : active === "journal" ? <JournalView trades={data.closed_trades} /> : <EngineStatusView data={data} />}
     </div>
   );
 }
 
-function BattleView({ data }: { data: PaperDashboard }) {
+function BattleView({ data, starting, onStart }: { data: PaperDashboard; starting: boolean; onStart: (reset?: boolean) => void }) {
   const board = data.scoreboard;
+  const benchmark = board.benchmark;
   return (
     <div className="engineView" data-testid="engine-battle-tab">
+      <section className={`engineActivationStrip ${data.activation.running ? "running" : "blocked"}`} data-testid="paper-activation-strip">
+        <div><strong>{data.activation.running ? "가동 중" : "가동 확인 필요"}</strong><span>{benchmark.started ? `${shortDate(benchmark.started_at)}~${shortDate(benchmark.ends_at)}` : "대결 시작 전"}</span></div>
+        <div className="engineActivationItems">
+          {data.activation.items.map((item) => <span className={item.ok ? "ok" : "error"} key={item.id} title={item.reason ?? "정상"}><i />{item.label} {item.value}</span>)}
+        </div>
+        {benchmark.started
+          ? <button className="button secondary" disabled={starting} onClick={() => onStart(true)} type="button">창 다시 시작</button>
+          : <button className="button" disabled={starting} onClick={() => onStart(false)} type="button">{starting ? "시작 중" : "대결 시작"}</button>}
+      </section>
       <section className="engineBattleHero">
         <div>
           <span className="engineSectionLabel">4주 롤링 판정</span>
@@ -187,3 +212,4 @@ function ratio(value: number | null): string { return value === null ? "유보" 
 function price(value: number | null): string { if (value === null || !Number.isFinite(value)) return "-"; return value >= 100 ? value.toLocaleString(undefined, { maximumFractionDigits: 2 }) : value.toFixed(value >= 1 ? 4 : 6); }
 function money(value: number): string { return `${value > 0 ? "+" : ""}${Number(value).toFixed(2)}`; }
 function metricTone(value: string, inverse: boolean): string { const number = Number(value.replace(/[+%,]/g, "")); if (!Number.isFinite(number) || number === 0) return "neutral"; const positive = inverse ? number < 0 : number > 0; return positive ? "positive" : "negative"; }
+function shortDate(value: string | null): string { return value ? new Date(value).toLocaleDateString("ko-KR", { month: "numeric", day: "numeric" }) : "-"; }

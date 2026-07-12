@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { MapPin, Radar, RefreshCw, Search, Star, Trash2 } from "lucide-react";
+import { Eye, MapPin, Radar, RefreshCw, Search, Star, Trash2 } from "lucide-react";
 import { CompactChartWorkspace, type CompactNextPrice } from "@/components/position/CompactChartWorkspace";
 import { MinimalAssetCard } from "@/components/position/MinimalAssetCard";
 import { TerminalWarning } from "@/components/terminal";
@@ -272,6 +272,28 @@ export function ScoutShell() {
     }
   }
 
+  async function trackSymbol(symbol: string) {
+    try {
+      const response = await api.createEntryIntent(symbol, { kind: "watch", timeframe: "4h" });
+      setEntryIntents((items) => [response.intent, ...items.filter((item) => item.id !== response.intent.id)]);
+      setNotice(`${symbol} 수동 추적을 시작했습니다.`);
+      await runScan(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "추적을 시작하지 못했습니다.");
+    }
+  }
+
+  async function promoteTracking(item: TrackedScoutItem) {
+    try {
+      await api.createEntryIntent(item.symbol, { kind: "watch", timeframe: item.timeframe });
+      await Promise.all(item.setup_ids.map((id) => api.disarmScoutSetup(id)));
+      setNotice(`${item.symbol}을 내 추적으로 전환했습니다.`);
+      await runScan(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "내 추적으로 전환하지 못했습니다.");
+    }
+  }
+
   async function removeSymbol(symbol: string) {
     try {
       await api.removeWatchlistItem(symbol);
@@ -336,7 +358,7 @@ export function ScoutShell() {
         ...item.setup_ids.map((id) => api.disarmScoutSetup(id)),
         ...item.intent_ids.map((id) => api.cancelEntryIntent(id))
       ]);
-      setTrackedItems((items) => items.filter((candidate) => candidate.symbol !== item.symbol));
+      setTrackedItems((items) => items.filter((candidate) => !(candidate.symbol === item.symbol && candidate.tracking_source === item.tracking_source)));
       setArmedSetups((items) => items.map((setup) => item.setup_ids.includes(setup.id) ? { ...setup, status: "disarmed" } : setup));
       setEntryIntents((items) => items.map((intent) => item.intent_ids.includes(intent.id) ? { ...intent, status: "cancelled" } : intent));
       setNotice(`${item.symbol} 추적을 해제했습니다.`);
@@ -413,6 +435,9 @@ export function ScoutShell() {
                 <button className="scoutSearchAdd" onClick={() => void addSymbol(item.symbol)} type="button" aria-label={`${item.symbol} 관심종목 추가`}>
                   <Star size={13} />
                 </button>
+                <button className="scoutSearchAdd" onClick={() => void trackSymbol(item.symbol)} type="button" aria-label={`${item.symbol} 추적 시작`}>
+                  <Eye size={13} />
+                </button>
               </div>
             ))}
           </div>
@@ -441,6 +466,7 @@ export function ScoutShell() {
           setActiveSymbol(symbol);
         }}
         onOpen={(symbol) => setActiveSymbol(symbol)}
+        onPromote={(item) => void promoteTracking(item)}
         onStop={(item) => void stopTracking(item)}
       />
 
@@ -457,6 +483,7 @@ export function ScoutShell() {
         error={quickError}
         onRefresh={(symbol) => void loadQuickAnswer(symbol, true)}
         onOpen={(symbol) => setActiveSymbol(symbol)}
+        onTrack={(symbol) => void trackSymbol(symbol)}
       />
 
       <div className="assetClassTabs" role="group" aria-label="자산 클래스 필터">
@@ -560,43 +587,53 @@ function TrackingSection({
   items,
   onOpen,
   onEdit,
-  onStop
+  onStop,
+  onPromote
 }: {
   items: TrackedScoutItem[];
   onOpen: (symbol: string) => void;
   onEdit: (symbol: string) => void;
   onStop: (item: TrackedScoutItem) => void;
+  onPromote: (item: TrackedScoutItem) => void;
 }) {
   if (!items.length) return null;
+  const manual = items.filter((item) => item.tracking_source === "manual");
+  const engine = items.filter((item) => item.tracking_source === "engine");
+  const cards = (rows: TrackedScoutItem[]) => (
+    <div className="scoutTrackingGrid">
+      {rows.map((item) => (
+        <div className="scoutTrackingItem" data-symbol={item.symbol} data-tracking-source={item.tracking_source} key={`${item.tracking_source}:${item.symbol}`}>
+          <MinimalAssetCard
+            meta={`${item.stance_label ?? "판정 준비 중"} · ${item.timeframe}`}
+            onClick={() => onOpen(item.symbol)}
+            summary={item.one_line}
+            symbol={item.symbol}
+            tone={stanceTone(item.stance)}
+          >
+            <div className="trackingMetaRow">
+              <span className={`trackingSourceBadge ${item.tracking_source}`}>{item.tracking_source === "manual" ? "내가 선택" : "엔진 감지"}</span>
+              <span>{item.trigger_distance_pct == null ? "트리거 계산 중" : `트리거까지 ${Math.abs(item.trigger_distance_pct).toFixed(2)}%`}</span>
+              <span>{trackingSourceLabel(item)}</span>
+              {item.expires_in_days != null ? <span>D-{item.expires_in_days}</span> : null}
+            </div>
+          </MinimalAssetCard>
+          <div className="trackingCardActions">
+            {item.tracking_source === "engine" ? <button type="button" onClick={() => onPromote(item)}>내 추적으로</button> : null}
+            {item.intent_ids.length && item.intent_zone ? <button type="button" onClick={() => onEdit(item.symbol)}>의도 편집</button> : null}
+            <button type="button" onClick={() => onStop(item)}>추적 해제</button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
   return (
     <section className="scoutTrackingSection" data-testid="scout-tracking-section">
       <div className="scoutSectionHeading">
-        <div><span>진입 전 관제</span><h2>추적 중</h2></div>
-        <small>{items.length}/10 심볼</small>
+        <div><span>진입 전 관제</span><h2>내가 추적</h2></div>
+        <small>{manual.length}/10 심볼</small>
       </div>
-      <div className="scoutTrackingGrid">
-        {items.map((item) => (
-          <div className="scoutTrackingItem" key={item.symbol}>
-            <MinimalAssetCard
-              meta={`${item.stance_label ?? "판정 준비 중"} · ${item.timeframe}`}
-              onClick={() => onOpen(item.symbol)}
-              summary={item.one_line}
-              symbol={item.symbol}
-              tone={stanceTone(item.stance)}
-            >
-              <div className="trackingMetaRow">
-                <span>{item.trigger_distance_pct == null ? "트리거 계산 중" : `트리거까지 ${Math.abs(item.trigger_distance_pct).toFixed(2)}%`}</span>
-                <span>{trackingSourceLabel(item)}</span>
-                {item.expires_in_days != null ? <span>D-{item.expires_in_days}</span> : null}
-              </div>
-            </MinimalAssetCard>
-            <div className="trackingCardActions">
-              {item.intent_ids.length ? <button type="button" onClick={() => onEdit(item.symbol)}>의도 편집</button> : null}
-              <button type="button" onClick={() => onStop(item)}>추적 해제</button>
-            </div>
-          </div>
-        ))}
-      </div>
+      {manual.length ? cards(manual) : <p className="scoutEmpty">검색 결과의 추적 버튼으로 직접 고른 심볼을 등록하세요.</p>}
+      {engine.length ? <details className="engineTrackedGroup"><summary>엔진 감지 <span>{engine.length}</span></summary>{cards(engine)}</details> : null}
     </section>
   );
 }
@@ -637,7 +674,9 @@ function AlignmentDiscoverySection({
       ) : (
         <div className="alignmentEmpty">
           <strong>현재 만장일치 없음</strong>
-          <span>{best?.full_alignment ? `최고 정렬 ${best.symbol} ${best.full_alignment.agreeing}/${best.full_alignment.agreeing + best.full_alignment.dissenting}` : "검증된 모듈 표본 축적 중"}</span>
+          <span>{best?.full_alignment && best.full_alignment.eligible_count >= 4
+            ? `최고 정렬 ${best.symbol} ${best.full_alignment.agreeing}/${best.full_alignment.eligible_count}`
+            : `정렬 판정 대상 모듈 부족 (validated ${best?.full_alignment?.eligible_count ?? 0}개)`}</span>
         </div>
       )}
     </section>
@@ -683,7 +722,8 @@ function stanceTone(stance?: string | null): "positive" | "negative" | "neutral"
 
 function trackingSourceLabel(item: TrackedScoutItem): string {
   if (item.intent_zone) return `존 ${formatPrice(item.intent_zone.lower)}–${formatPrice(item.intent_zone.upper)}`;
-  return item.armed_condition ?? "무장 조건";
+  if (item.armed_condition) return item.armed_condition;
+  return item.tracking_source === "manual" ? "수동 선택" : "자동 감지 조건";
 }
 
 function alignmentEngineLabel(engine: string): string {
@@ -720,7 +760,8 @@ function ScoutQuickAnswerCard({
   loading,
   error,
   onRefresh,
-  onOpen
+  onOpen,
+  onTrack
 }: {
   symbol: string;
   data: ScoutAnalysisResponse | null;
@@ -728,6 +769,7 @@ function ScoutQuickAnswerCard({
   error: string;
   onRefresh: (symbol: string) => void;
   onOpen: (symbol: string) => void;
+  onTrack: (symbol: string) => void;
 }) {
   if (!symbol && !loading && !error) return null;
   const tilt = quickTilt(data);
@@ -739,6 +781,10 @@ function ScoutQuickAnswerCard({
           <span>기준 {formatQuickAsOf(data?.as_of)} · {data?.timeframe ?? "4h"}</span>
         </div>
         <div className="scoutQuickActions">
+          <button className="button secondary" type="button" onClick={() => symbol && onTrack(symbol)} disabled={!symbol || loading}>
+            <Eye size={14} />
+            추적
+          </button>
           <button className="button secondary" type="button" onClick={() => symbol && onRefresh(symbol)} disabled={!symbol || loading}>
             <RefreshCw size={14} />
             갱신
@@ -938,8 +984,8 @@ function ScanRow({
           <div className="scoutArmedStack">
             {entryIntents.slice(0, 1).map((intent) => (
               <div className="scoutArmedCell intent" key={intent.id}>
-                <span title={`${directionLabel(intent.direction)} ${formatPrice(intent.zone_lower)}-${formatPrice(intent.zone_upper)}`}>
-                  📍 {directionLabel(intent.direction)} 존 · {formatPct(row.entry_intent_distance_pct ?? intentDistanceFromMark(intent, row.mark_price))}
+                <span title={intent.kind === "watch" ? "사용자 수동 추적" : `${directionLabel(intent.direction ?? "long")} ${formatPrice(intent.zone_lower)}-${formatPrice(intent.zone_upper)}`}>
+                  {intent.kind === "watch" ? "수동 추적" : `📍 ${directionLabel(intent.direction ?? "long")} 존 · ${formatPct(row.entry_intent_distance_pct ?? intentDistanceFromMark(intent, row.mark_price))}`}
                 </span>
                 <button
                   type="button"
@@ -1123,6 +1169,17 @@ function ScoutSymbolView({
     setNotice("진입 의도를 해제했습니다.");
   }
 
+  async function trackSymbol() {
+    setError("");
+    try {
+      const response = await api.createEntryIntent(symbol, { kind: "watch", timeframe });
+      setIntents((items) => [response.intent, ...items.filter((item) => item.id !== response.intent.id)]);
+      setNotice(`${symbol} 수동 추적을 시작했습니다.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "추적을 시작하지 못했습니다.");
+    }
+  }
+
   return (
     <div className="page positionDetailPage scoutDetailPage" data-testid="scout-analysis-view">
       <header className="cockpitToolbar positionDetailToolbar">
@@ -1131,6 +1188,10 @@ function ScoutSymbolView({
           <h1>{symbol} 차트 관제</h1>
         </div>
         <div className="cockpitToolbarActions">
+          <button className="button secondary" onClick={() => void trackSymbol()} disabled={intents.some((intent) => intent.kind === "watch" && intent.status === "active")} type="button">
+            <Eye size={14} />
+            {intents.some((intent) => intent.kind === "watch" && intent.status === "active") ? "추적 중" : "추적"}
+          </button>
           <label className="timeframeSelect">
             <span>봉 주기</span>
             <select value={timeframe} onChange={(event) => setTimeframe(event.target.value)}>
@@ -1394,8 +1455,8 @@ function EntryIntentPanel({
           {intents.map((intent) => (
             <div className="entryIntentItem" key={intent.id}>
               <div>
-                <strong>{directionLabel(intent.direction)} · {formatPrice(intent.zone_lower)}-{formatPrice(intent.zone_upper)}</strong>
-                <span>{intent.conditions.map(conditionLabel).join(" · ")} · {toleranceLabel(intent.tolerance)}</span>
+                <strong>{intent.kind === "watch" ? "수동 추적" : `${directionLabel(intent.direction ?? "long")} · ${formatPrice(intent.zone_lower)}-${formatPrice(intent.zone_upper)}`}</strong>
+                <span>{intent.kind === "watch" ? "스탠스·레벨·셋업 변화 감시" : `${intent.conditions.map(conditionLabel).join(" · ")} · ${toleranceLabel(intent.tolerance)}`}</span>
               </div>
               <button type="button" onClick={() => onCancel(intent.id)}>해제</button>
             </div>
@@ -1827,7 +1888,7 @@ function conditionLabel(condition: string): string {
 }
 
 function intentDistanceFromMark(intent: EntryIntent, markPrice: number | null | undefined): number | null {
-  if (typeof markPrice !== "number" || markPrice <= 0) return null;
+  if (typeof markPrice !== "number" || markPrice <= 0 || intent.zone_lower == null || intent.zone_upper == null) return null;
   if (intent.zone_lower <= markPrice && markPrice <= intent.zone_upper) return 0;
   const target = markPrice < intent.zone_lower ? intent.zone_lower : intent.zone_upper;
   return Math.abs(((target - markPrice) / markPrice) * 100);

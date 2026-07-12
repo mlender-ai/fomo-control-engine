@@ -99,6 +99,21 @@ test("scout and analysis smoke paths", async ({ page }) => {
 
 });
 
+test("manual scout tracking is one click and stays separate from engine detections", async ({ page }) => {
+  await page.goto("/scout");
+  await expect(page.getByTestId("demo-mode-badge")).toBeVisible({ timeout: 30_000 });
+  await page.getByTestId("scout-search-input").fill("SOXL");
+  await page.getByRole("button", { name: "SOXLUSDT 추적 시작", exact: true }).click();
+
+  const manualCard = page.locator('[data-tracking-source="manual"][data-symbol="SOXLUSDT"]');
+  await expect(manualCard).toBeVisible({ timeout: 10_000 });
+  await expect(manualCard).toContainText("내가 선택");
+  await expect(manualCard).toContainText("수동 선택");
+
+  await manualCard.getByRole("button", { name: "추적 해제", exact: true }).click();
+  await expect(manualCard).toHaveCount(0);
+});
+
 test("engine trading workspace and absorbed calibration route", async ({ page }) => {
   await page.goto("/engine");
   await expect(page.getByTestId("engine-trading-page")).toBeVisible({ timeout: 30_000 });

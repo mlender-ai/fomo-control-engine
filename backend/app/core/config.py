@@ -314,6 +314,10 @@ class Settings(BaseSettings):
         True,
         validation_alias=AliasChoices("FCE_SCOUT_AUTO_ARM_ENABLED", "SCOUT_AUTO_ARM_ENABLED"),
     )
+    scout_auto_arm_symbol_limit: int = Field(
+        5,
+        validation_alias=AliasChoices("FCE_SCOUT_AUTO_ARM_SYMBOL_LIMIT", "SCOUT_AUTO_ARM_SYMBOL_LIMIT"),
+    )
     scout_max_armed_setups_per_symbol: int = Field(
         3,
         validation_alias=AliasChoices("FCE_SCOUT_MAX_ARMED_SETUPS_PER_SYMBOL", "SCOUT_MAX_ARMED_SETUPS_PER_SYMBOL"),

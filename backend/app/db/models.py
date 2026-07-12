@@ -294,9 +294,10 @@ class EntryIntent(BaseModel):
     id: UUID = Field(default_factory=uuid4)
     symbol: str
     timeframe: str = "4h"
-    direction: Literal["long", "short"]
-    zone_lower: float
-    zone_upper: float
+    kind: Literal["watch", "zone"] = "zone"
+    direction: Literal["long", "short"] | None = None
+    zone_lower: float | None = None
+    zone_upper: float | None = None
     conditions: list[
         Literal[
             "price_in_zone",

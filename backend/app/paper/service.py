@@ -52,6 +52,7 @@ def paper_universe(repo: Any) -> list[tuple[str, str]]:
     pairs: set[tuple[str, str]] = {(item.symbol.upper(), item.default_timeframe or "4h") for item in repo.list_watchlist()}
     pairs.update((position.symbol.upper(), "4h") for position in repo.list_positions(PositionStatus.open))
     pairs.update((trade.symbol.upper(), trade.timeframe) for trade in repo.list_paper_trades(status="open"))
+    pairs.update((intent.symbol.upper(), intent.timeframe or "4h") for intent in repo.list_entry_intents(status="active", limit=1000))
     for discovery in repo.list_universe_discoveries(limit=500):
         if discovery.gate_passed:
             pairs.add((discovery.symbol.upper(), discovery.timeframe or "4h"))
@@ -248,12 +249,47 @@ def run_paper_engine(
     }
 
 
+BENCHMARK_SYMBOL = "__SYSTEM__"
+BENCHMARK_TIMEFRAME = "benchmark"
+
+
+def paper_benchmark(repo: Any) -> dict[str, Any]:
+    state = repo.get_paper_engine_state(BENCHMARK_SYMBOL, BENCHMARK_TIMEFRAME) or {}
+    started_at = _parse_datetime(state.get("started_at"))
+    ends_at = _parse_datetime(state.get("ends_at"))
+    return {
+        "started": started_at is not None,
+        "started_at": started_at.isoformat() if started_at else None,
+        "ends_at": ends_at.isoformat() if ends_at else None,
+        "reset_count": int(state.get("reset_count") or 0),
+    }
+
+
+def start_paper_benchmark(repo: Any, *, reset: bool = False, now: datetime | None = None) -> dict[str, Any]:
+    now = now or utc_now()
+    current = paper_benchmark(repo)
+    if current["started"] and not reset:
+        return {**current, "created": False}
+    reset_count = int(current.get("reset_count") or 0) + (1 if current["started"] else 0)
+    state = {
+        "started_at": now.isoformat(),
+        "ends_at": (now + timedelta(days=28)).isoformat(),
+        "reset_count": reset_count,
+        "updated_at": now.isoformat(),
+    }
+    repo.upsert_paper_engine_state(BENCHMARK_SYMBOL, BENCHMARK_TIMEFRAME, state)
+    return {**paper_benchmark(repo), "created": True, "target_count": len(paper_universe(repo))}
+
+
 def paper_scoreboard(repo: Any, settings: Any, *, now: datetime | None = None) -> dict[str, Any]:
     now = now or utc_now()
-    paper_closed = repo.list_paper_trades(status="closed", limit=5000)
-    started_at = min((item.entry_at for item in repo.list_paper_trades(limit=5000)), default=now)
-    rolling_start = now - timedelta(days=28)
-    user_trades = [trade for trade in repo.list_trades() if trade.created_at >= started_at]
+    benchmark = paper_benchmark(repo)
+    started_at = _parse_datetime(benchmark.get("started_at"))
+    all_paper = repo.list_paper_trades(limit=5000)
+    effective_start = started_at or min((item.entry_at for item in all_paper), default=now)
+    paper_closed = [item for item in all_paper if item.status == "closed" and item.entry_at >= effective_start]
+    rolling_start = max(now - timedelta(days=28), effective_start)
+    user_trades = [trade for trade in repo.list_trades() if trade.created_at >= effective_start]
     rolling_paper = [trade for trade in paper_closed if (trade.exit_at or trade.updated_at) >= rolling_start]
     rolling_user = [trade for trade in user_trades if trade.created_at >= rolling_start]
     paper_metrics = _paper_metrics(paper_closed)
@@ -267,10 +303,11 @@ def paper_scoreboard(repo: Any, settings: Any, *, now: datetime | None = None) -
         and rolling_engine["mdd_pct"] <= rolling_user_metrics["mdd_pct"]
     )
     poor = bool(paper_metrics["trade_count"] > 0 and (paper_metrics["win_rate_pct"] < 45.0 or paper_metrics["mdd_pct"] > float(settings.paper_poor_mdd_pct)))
-    autonomy = repo.list_autonomy_logs(since=started_at, limit=100)
+    autonomy = repo.list_autonomy_logs(since=effective_start, limit=100)
     return {
         "as_of": now.isoformat(),
-        "started_at": started_at.isoformat(),
+        "started_at": started_at.isoformat() if started_at else None,
+        "benchmark": benchmark,
         "engine": paper_metrics,
         "user": user_metrics,
         "equity_curve": {
@@ -305,6 +342,8 @@ def paper_dashboard(repo: Any, settings: Any, *, calibration: dict[str, Any] | N
     weekly_report = calibration.get("weekly_report") or {}
     poor = bool(scoreboard.get("poor_performance"))
     actions = scoreboard.get("autonomy_actions") or []
+    funnel_24h = paper_gate_funnel(repo, days=1)
+    activation = _paper_activation(repo, settings, funnel_24h)
     return {
         "scoreboard": scoreboard,
         "open_trades": [item.model_dump(mode="json") for item in open_trades],
@@ -327,8 +366,60 @@ def paper_dashboard(repo: Any, settings: Any, *, calibration: dict[str, Any] | N
             "actions": actions[:8] if poor else [],
         },
         "gate_funnel": paper_gate_funnel(repo),
+        "activation": activation,
         "live_orders_enabled": False,
     }
+
+
+def _paper_activation(repo: Any, settings: Any, funnel_24h: dict[str, Any]) -> dict[str, Any]:
+    from app.worker.runtime import get_worker_status
+
+    worker = get_worker_status()
+    sync_job = (worker.get("jobs") or {}).get("sync_positions") or {}
+    worker_ok = worker.get("status") == "running" and int(sync_job.get("consecutive_failures") or 0) == 0
+    target_count = len(paper_universe(repo))
+    evaluations = int(funnel_24h.get("evaluations") or 0)
+    items = [
+        {
+            "id": "enabled",
+            "label": "페이퍼 엔진",
+            "ok": bool(settings.paper_engine_enabled),
+            "value": "활성" if settings.paper_engine_enabled else "비활성",
+            "reason": None if settings.paper_engine_enabled else "FCE_PAPER_ENGINE_ENABLED를 확인하세요.",
+        },
+        {
+            "id": "worker",
+            "label": "워커",
+            "ok": worker_ok,
+            "value": "정상" if worker_ok else "확인 필요",
+            "reason": None if worker_ok else "포지션 동기화 워커가 실행 중인지 확인하세요.",
+        },
+        {
+            "id": "targets",
+            "label": "대상 심볼",
+            "ok": target_count > 0,
+            "value": str(target_count),
+            "reason": None if target_count > 0 else "수동 추적 또는 관심종목을 추가하세요.",
+        },
+        {
+            "id": "evaluations",
+            "label": "24h 평가",
+            "ok": evaluations > 0,
+            "value": str(evaluations),
+            "reason": None if evaluations > 0 else "첫 확정 캔들 평가를 기다리는 중입니다.",
+        },
+    ]
+    return {"running": all(item["ok"] for item in items), "items": items, "target_count": target_count, "evaluations_24h": evaluations}
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return None
 
 
 GATE_ORDER = (
@@ -387,12 +478,7 @@ def paper_gate_funnel(repo: Any, *, days: int = 7, now: datetime | None = None) 
         if rejected_at:
             rejection_counts[rejected_at] = rejection_counts.get(rejected_at, 0) + 1
     top_gate = max(rejection_counts, key=rejection_counts.get) if rejection_counts else None
-    rendered_ids = {
-        str(event_id)
-        for row in rows
-        for event_id in row.get("event_pill_ids", [])
-        if event_id
-    }
+    rendered_ids = {str(event_id) for row in rows for event_id in row.get("event_pill_ids", []) if event_id}
     pill_bottlenecks: dict[str, int] = {}
     for row in rows:
         bottleneck = str(_dict(row.get("pill_diagnostics")).get("bottleneck") or "")

@@ -1667,6 +1667,58 @@ textarea:focus {
   background: var(--rh-panel);
 }
 
+.engineActivationStrip {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 20px;
+  padding: 16px 18px;
+  border: 1px solid var(--terminal-line);
+  border-radius: var(--fce-radius-lg);
+  background: var(--terminal-panel);
+}
+
+.engineActivationStrip > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.engineActivationStrip > div:first-child span,
+.engineActivationItems span {
+  color: var(--terminal-muted);
+  font-size: 11px;
+}
+
+.engineActivationItems {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.engineActivationItems span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.engineActivationItems i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--terminal-negative);
+}
+
+.engineActivationItems .ok i {
+  background: var(--terminal-positive);
+}
+
+@media (max-width: 900px) {
+  .engineActivationStrip {
+    grid-template-columns: 1fr;
+  }
+}
+
 .engineBattleHero > div:first-child {
   display: flex;
   align-items: flex-start;

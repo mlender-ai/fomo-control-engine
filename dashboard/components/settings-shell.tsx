@@ -111,6 +111,7 @@ export function SettingsShell() {
     daily_summary_time?: string;
     pulse_interval_hours?: number;
     paper_alerts_enabled?: boolean;
+    scout_auto_arm_enabled?: boolean;
   }) {
     setBusy("quiet");
     setError("");
@@ -228,6 +229,15 @@ export function SettingsShell() {
                 disabled={busy === "quiet"}
               />
               엔진 페이퍼 진입·청산 알림
+            </label>
+            <label className="alertQuietToggle">
+              <input
+                type="checkbox"
+                checked={alertSettings.scout.auto_arm_enabled}
+                onChange={(event) => updateQuietHours({ scout_auto_arm_enabled: event.currentTarget.checked })}
+                disabled={busy === "quiet"}
+              />
+              스카우트 엔진 자동 감지 ({alertSettings.scout.auto_arm_symbol_limit}심볼 상한)
             </label>
             <input
               aria-label="무음 시작"

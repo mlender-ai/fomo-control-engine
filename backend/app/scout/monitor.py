@@ -97,12 +97,13 @@ def arm_auto_setups(repo: Any, settings: Settings, row: dict[str, Any], snapshot
     symbol = str(row.get("symbol") or "").upper()
     timeframe = str(row.get("timeframe") or "4h")
     active = [setup for setup in repo.list_armed_setups(symbol=symbol, status="armed", limit=50) if setup.source == "auto"]
+    auto_symbols = {setup.symbol.upper() for setup in repo.list_armed_setups(status="armed", limit=1000) if setup.source == "auto"}
     by_id = {setup.id: setup for setup in active}
     saved: list[ArmedSetup] = []
     for candidate in candidates:
         if len([setup for setup in repo.list_armed_setups(symbol=symbol, status="armed", limit=50)]) >= settings.scout_max_armed_setups_per_symbol:
             break
-        if symbol not in active_tracking_symbols(repo) and len(active_tracking_symbols(repo)) >= settings.scout_tracking_symbol_limit:
+        if symbol not in auto_symbols and len(auto_symbols) >= settings.scout_auto_arm_symbol_limit:
             break
         setup_id = _setup_id(symbol, timeframe, candidate)
         existing = by_id.get(setup_id) or repo.get_armed_setup(setup_id)
@@ -236,11 +237,7 @@ def _full_alignment_candidate(repo: Any, row: dict[str, Any], settings: Settings
     for alert in repo.list_alerts(limit=500):
         if alert.rule_id in {"full_alignment", "universe_discovery"} and alert.fired_at.date() == today:
             fired_today += 1
-        if (
-            alert.rule_id in {"full_alignment", "universe_discovery"}
-            and alert.symbol.upper() == symbol
-            and alert.fired_at >= cooldown_cutoff
-        ):
+        if alert.rule_id in {"full_alignment", "universe_discovery"} and alert.symbol.upper() == symbol and alert.fired_at >= cooldown_cutoff:
             return None
     if fired_today >= max(0, int(settings.universe_daily_alert_limit)):
         return None
@@ -343,7 +340,18 @@ def evaluate_entry_intents(repo: Any, settings: Settings, row: dict[str, Any], s
             expired = intent.model_copy(update={"status": "expired", "updated_at": now, "last_seen_at": now})
             repo.upsert_entry_intent(expired)
             updated_intents.append(expired)
-            candidates.append(_intent_candidate("intent_invalidated", "info", expired, current, _zone_distance_pct(current, expired), "의도 만료", backtest_summary))
+            distance = _zone_distance_pct(current, expired) if expired.kind == "zone" else 0.0
+            candidates.append(
+                _intent_candidate(
+                    "intent_invalidated", "info", expired, current, distance, "추적 만료" if expired.kind == "watch" else "의도 만료", backtest_summary
+                )
+            )
+            continue
+
+        if intent.kind == "watch":
+            refreshed = intent.model_copy(update={"updated_at": now, "last_seen_at": now})
+            repo.upsert_entry_intent(refreshed)
+            updated_intents.append(refreshed)
             continue
 
         condition_state = _intent_condition_state(intent, row)

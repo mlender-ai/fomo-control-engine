@@ -313,11 +313,10 @@ def scan_watchlist(request: ScanRequest | None = None) -> dict:
     request = request or ScanRequest()
     items = _repo().list_watchlist()
     tracked = _tracking_sources()
+    tracked_symbols = {key[1] for key in tracked}
     item_by_symbol = {item.symbol.upper(): item for item in items}
-    targets: dict[str, str] = {
-        item.symbol.upper(): request.timeframe or item.default_timeframe or "4h" for item in items
-    }
-    for symbol, source in tracked.items():
+    targets: dict[str, str] = {item.symbol.upper(): request.timeframe or item.default_timeframe or "4h" for item in items}
+    for (_, symbol), source in tracked.items():
         targets.setdefault(symbol, request.timeframe or str(source.get("timeframe") or "4h"))
     rows: list[dict[str, Any]] = []
     for symbol, timeframe in targets.items():  # 순차 실행 — 레이트리밋 방어
@@ -341,7 +340,7 @@ def scan_watchlist(request: ScanRequest | None = None) -> dict:
                 "asset_class": entry["summary"].get("asset_class") or (item.asset_class if item else "unknown"),
                 "confluence": confluence,
                 "full_alignment": alignment,
-                "tracked": symbol in tracked,
+                "tracked": symbol in tracked_symbols,
             }
         )
     rows.sort(key=lambda row: row.get("setup_proximity_pct") if row.get("setup_proximity_pct") is not None else float("inf"))
@@ -367,47 +366,58 @@ def scan_watchlist(request: ScanRequest | None = None) -> dict:
     }
 
 
-def _tracking_sources() -> dict[str, dict[str, Any]]:
-    sources: dict[str, dict[str, Any]] = {}
+def _tracking_sources() -> dict[tuple[str, str], dict[str, Any]]:
+    sources: dict[tuple[str, str], dict[str, Any]] = {}
     for intent in _repo().list_entry_intents(status="active", limit=1000):
-        bucket = sources.setdefault(intent.symbol.upper(), {"symbol": intent.symbol.upper(), "intents": [], "setups": [], "timeframe": intent.timeframe})
+        key = ("manual", intent.symbol.upper())
+        bucket = sources.setdefault(
+            key, {"symbol": intent.symbol.upper(), "tracking_source": "manual", "intents": [], "setups": [], "timeframe": intent.timeframe}
+        )
         bucket["intents"].append(intent)
     for setup in _repo().list_armed_setups(status="armed", limit=1000):
-        bucket = sources.setdefault(setup.symbol.upper(), {"symbol": setup.symbol.upper(), "intents": [], "setups": [], "timeframe": setup.timeframe})
+        tracking_source = "engine" if setup.source == "auto" else "manual"
+        key = (tracking_source, setup.symbol.upper())
+        bucket = sources.setdefault(
+            key, {"symbol": setup.symbol.upper(), "tracking_source": tracking_source, "intents": [], "setups": [], "timeframe": setup.timeframe}
+        )
         bucket["setups"].append(setup)
     return sources
 
 
-def _ensure_tracking_capacity(symbol: str) -> None:
+def _ensure_manual_tracking_capacity(symbol: str) -> None:
     sources = _tracking_sources()
     normalized = symbol.upper()
-    if normalized not in sources and len(sources) >= runtime.settings.scout_tracking_symbol_limit:
+    manual_symbols = {key[1] for key in sources if key[0] == "manual"}
+    if normalized not in manual_symbols and len(manual_symbols) >= runtime.settings.scout_tracking_symbol_limit:
         raise HTTPException(status_code=409, detail=f"동시 추적은 {runtime.settings.scout_tracking_symbol_limit}심볼까지입니다. 기존 추적을 해제해주세요.")
 
 
-def _tracking_view(rows: list[dict[str, Any]], sources: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+def _ensure_tracking_capacity(symbol: str) -> None:
+    """Compatibility alias for manual setup callers."""
+    _ensure_manual_tracking_capacity(symbol)
+
+
+def _tracking_view(rows: list[dict[str, Any]], sources: dict[tuple[str, str], dict[str, Any]]) -> list[dict[str, Any]]:
     row_by_symbol = {str(row.get("symbol") or "").upper(): row for row in rows}
     result: list[dict[str, Any]] = []
     now = utc_now()
-    for symbol, source in sources.items():
+    for (_, symbol), source in sources.items():
         row = row_by_symbol.get(symbol, {})
         intents = source.get("intents") or []
         setups = source.get("setups") or []
-        distances = [
-            abs(float(value))
-            for value in [row.get("entry_intent_distance_pct"), *(setup.distance_pct for setup in setups)]
-            if value is not None
-        ]
+        distances = [abs(float(value)) for value in [row.get("entry_intent_distance_pct"), *(setup.distance_pct for setup in setups)] if value is not None]
         expiry = min((intent.expires_at for intent in intents), default=None)
+        zone_intent = next((intent for intent in intents if intent.kind == "zone" and intent.zone_lower is not None and intent.zone_upper is not None), None)
         result.append(
             {
                 "symbol": symbol,
+                "tracking_source": source.get("tracking_source") or "manual",
                 "timeframe": source.get("timeframe") or "4h",
                 "stance": ((row.get("confluence") or {}).get("stance") if isinstance(row.get("confluence"), dict) else None),
                 "stance_label": ((row.get("confluence") or {}).get("stance_label") if isinstance(row.get("confluence"), dict) else None),
                 "one_line": _tracking_one_line(intents, setups),
                 "trigger_distance_pct": min(distances) if distances else None,
-                "intent_zone": {"lower": intents[0].zone_lower, "upper": intents[0].zone_upper} if intents else None,
+                "intent_zone": {"lower": zone_intent.zone_lower, "upper": zone_intent.zone_upper} if zone_intent else None,
                 "armed_condition": setups[0].trigger_condition if setups else None,
                 "expires_in_days": max(0, (expiry.date() - now.date()).days) if expiry else None,
                 "intent_ids": [str(intent.id) for intent in intents],
@@ -415,10 +425,15 @@ def _tracking_view(rows: list[dict[str, Any]], sources: dict[str, dict[str, Any]
                 "full_alignment": row.get("full_alignment"),
             }
         )
-    return sorted(result, key=lambda item: item["trigger_distance_pct"] if item["trigger_distance_pct"] is not None else float("inf"))
+    return sorted(
+        result,
+        key=lambda item: (item["tracking_source"] != "manual", item["trigger_distance_pct"] if item["trigger_distance_pct"] is not None else float("inf")),
+    )
 
 
 def _tracking_one_line(intents: list[Any], setups: list[Any]) -> str:
+    if any(intent.kind == "watch" for intent in intents):
+        return "사용자 수동 추적"
     if intents and setups:
         return f"의도 존 + {setups[0].trigger_label} 감시"
     if intents:
@@ -482,9 +497,7 @@ def _best_alignment_row(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
             row
             for row in rows
             if isinstance(row.get("full_alignment"), dict)
-            and int(row["full_alignment"].get("agreeing") or 0)
-            + int(row["full_alignment"].get("dissenting") or 0)
-            > 0
+            and int(row["full_alignment"].get("agreeing") or 0) + int(row["full_alignment"].get("dissenting") or 0) > 0
         ),
         key=lambda row: (
             int(row["full_alignment"].get("agreeing") or 0),
@@ -759,6 +772,8 @@ def _nearest_intent_distance(symbol: str, mark: float | None) -> float | None:
         return None
     distances: list[float] = []
     for intent in _repo().list_entry_intents(symbol=symbol, status="active", limit=20):
+        if intent.kind == "watch" or intent.zone_lower is None or intent.zone_upper is None:
+            continue
         if intent.zone_lower <= mark <= intent.zone_upper:
             distances.append(0.0)
         elif mark < intent.zone_lower:
@@ -854,7 +869,8 @@ def disarm_scout_setup(setup_id: UUID) -> dict:
 
 
 class EntryIntentRequest(BaseModel):
-    direction: str
+    kind: str = "zone"
+    direction: str | None = None
     zone_lower: float | None = None
     zone_upper: float | None = None
     price: float | None = None
@@ -873,7 +889,10 @@ def list_entry_intents(symbol: str | None = None, status: str | None = None, lim
 
 def create_entry_intent(symbol: str, request: EntryIntentRequest) -> dict:
     normalized = symbol.strip().upper()
-    _ensure_tracking_capacity(normalized)
+    _ensure_manual_tracking_capacity(normalized)
+    kind = "watch" if request.kind == "watch" else "zone"
+    if kind == "watch":
+        return _create_watch_intent(normalized, request)
     if request.direction not in {"long", "short"}:
         raise HTTPException(status_code=422, detail="direction은 long 또는 short여야 합니다.")
     lower, upper = _intent_zone(request)
@@ -927,6 +946,7 @@ def create_entry_intent(symbol: str, request: EntryIntentRequest) -> dict:
         id=intent_id,
         symbol=normalized,
         timeframe=request.timeframe,
+        kind="zone",
         direction=request.direction,  # type: ignore[arg-type]
         zone_lower=lower,
         zone_upper=upper,
@@ -962,6 +982,40 @@ def create_entry_intent(symbol: str, request: EntryIntentRequest) -> dict:
         )
     )
     return {"intent": saved.model_dump(mode="json")}
+
+
+def _create_watch_intent(symbol: str, request: EntryIntentRequest) -> dict:
+    existing = [intent for intent in _repo().list_entry_intents(symbol=symbol, status="active", limit=100) if intent.kind == "watch"]
+    if existing:
+        return {"intent": existing[0].model_dump(mode="json"), "created": False}
+    active_total = [intent for intent in _repo().list_entry_intents(status="active", limit=1000) if intent.kind in {"watch", "zone"}]
+    if len(active_total) >= runtime.settings.entry_intent_max_active:
+        raise HTTPException(status_code=409, detail=f"전체 활성 의도는 {runtime.settings.entry_intent_max_active}개까지입니다.")
+    now = utc_now()
+    expires_at = request.expires_at or (now + timedelta(days=max(1, runtime.settings.entry_intent_default_expiry_days)))
+    if expires_at <= now:
+        raise HTTPException(status_code=422, detail="expires_at은 현재 이후여야 합니다.")
+    intent_id = uuid5(NAMESPACE_URL, f"fce:watch-intent:{symbol}:{request.timeframe}")
+    intent = EntryIntent(
+        id=intent_id,
+        symbol=symbol,
+        timeframe=request.timeframe,
+        kind="watch",
+        direction=None,
+        zone_lower=None,
+        zone_upper=None,
+        conditions=[],
+        tolerance="normal",
+        tolerance_pct=runtime.settings.entry_intent_normal_tolerance_pct,
+        note=request.note or "사용자 수동 추적",
+        judgment_id=f"entry_intent:{intent_id}",
+        expires_at=expires_at,
+        created_at=now,
+        updated_at=now,
+        last_seen_at=now,
+    )
+    saved = _repo().upsert_entry_intent(intent)
+    return {"intent": saved.model_dump(mode="json"), "created": True}
 
 
 def cancel_entry_intent(intent_id: UUID) -> dict:

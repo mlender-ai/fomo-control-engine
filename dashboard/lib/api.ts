@@ -748,6 +748,7 @@ export type ScoutScanRow = {
 
 export type FullAlignment = {
   unanimous: boolean;
+  eligible_count: number;
   direction: "long" | "short" | null;
   agreeing: number;
   dissenting: number;
@@ -766,6 +767,7 @@ export type FullAlignment = {
 
 export type TrackedScoutItem = {
   symbol: string;
+  tracking_source: "manual" | "engine";
   timeframe: string;
   stance?: string | null;
   stance_label?: string | null;
@@ -860,9 +862,10 @@ export type EntryIntent = {
   id: string;
   symbol: string;
   timeframe: string;
-  direction: "long" | "short";
-  zone_lower: number;
-  zone_upper: number;
+  kind: "watch" | "zone";
+  direction: "long" | "short" | null;
+  zone_lower: number | null;
+  zone_upper: number | null;
   conditions: Array<"price_in_zone" | "sweep_confirmed" | "wyckoff_event" | "volume_spike" | "briefing_aligned" | string>;
   tolerance: "tight" | "normal" | "loose";
   tolerance_pct: number;
@@ -1491,7 +1494,8 @@ export type PaperGateFunnel = {
 export type PaperDashboard = {
   scoreboard: {
     as_of: string;
-    started_at: string;
+    started_at: string | null;
+    benchmark: { started: boolean; started_at: string | null; ends_at: string | null; reset_count: number };
     engine: PaperMetrics;
     user: PaperMetrics;
     equity_curve: {
@@ -1514,6 +1518,12 @@ export type PaperDashboard = {
   };
   performance_action: { poor: boolean; summary: string; actions: Array<Record<string, unknown>> };
   gate_funnel: PaperGateFunnel;
+  activation: {
+    running: boolean;
+    target_count: number;
+    evaluations_24h: number;
+    items: Array<{ id: string; label: string; ok: boolean; value: string; reason: string | null }>;
+  };
   live_orders_enabled: false;
 };
 
@@ -1593,6 +1603,11 @@ export type AlertSettings = {
     paper_alerts_enabled: boolean;
     chat_ids_configured: number;
   };
+  scout: {
+    auto_arm_enabled: boolean;
+    auto_arm_symbol_limit: number;
+    manual_tracking_symbol_limit: number;
+  };
   rules: AlertRuleSetting[];
 };
 
@@ -1604,6 +1619,7 @@ export type AlertSettingsUpdate = {
   daily_summary_time?: string;
   pulse_interval_hours?: number;
   paper_alerts_enabled?: boolean;
+  scout_auto_arm_enabled?: boolean;
 };
 
 export type AlertTestResult = {
@@ -1819,7 +1835,8 @@ export const api = {
   createEntryIntent: (
     symbol: string,
     payload: {
-      direction: "long" | "short";
+      kind?: "watch" | "zone";
+      direction?: "long" | "short";
       zone_lower?: number | null;
       zone_upper?: number | null;
       price?: number | null;
@@ -1846,6 +1863,10 @@ export const api = {
     }),
   performance: () => request<PerformanceSummary>("/api/performance"),
   paperDashboard: () => request<PaperDashboard>("/api/paper/dashboard"),
+  startPaperBenchmark: (reset = false) => request<{ started: boolean; started_at: string; ends_at: string; target_count: number; created: boolean }>("/api/paper/benchmark/start", {
+    method: "POST",
+    body: JSON.stringify({ reset })
+  }),
   saveScenario: (payload: { symbol: string; direction: "long" | "short"; entry_price: number; leverage: number; margin_usdt?: number | null; margin_mode?: string; timeframe?: string; note?: string }) =>
     request<{ scenario: EntryScenario }>("/api/scout/scenarios", {
       method: "POST",

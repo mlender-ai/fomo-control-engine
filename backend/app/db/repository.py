@@ -1263,8 +1263,8 @@ class SQLiteRepository:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO entry_intents
-                    (id, symbol, timeframe, direction, status, zone_lower, zone_upper, expires_at, updated_at, created_at, payload)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (id, symbol, timeframe, direction, status, zone_lower, zone_upper, expires_at, updated_at, created_at, payload, kind)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     str(saved.id),
@@ -1278,6 +1278,7 @@ class SQLiteRepository:
                     saved.updated_at.isoformat(),
                     saved.created_at.isoformat(),
                     _dump_model(saved),
+                    saved.kind,
                 ),
             )
         return saved

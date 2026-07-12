@@ -1160,6 +1160,17 @@ h3 {
   border-top: 1px solid var(--terminal-line);
 }
 
+.trackingSourceBadge {
+  border: 1px solid var(--terminal-line);
+  color: var(--terminal-muted);
+  padding: 2px 6px;
+}
+
+.trackingSourceBadge.manual {
+  border-color: color-mix(in srgb, var(--success) 45%, transparent);
+  color: var(--success);
+}
+
 .trackingMetaRow span {
   overflow: hidden;
   max-width: 100%;
@@ -1183,6 +1194,30 @@ h3 {
 
 .trackingCardActions button:hover {
   color: var(--terminal-text);
+}
+
+.engineTrackedGroup {
+  display: grid;
+  gap: 10px;
+  padding-top: 4px;
+  border-top: 1px solid var(--terminal-line);
+}
+
+.engineTrackedGroup summary {
+  width: fit-content;
+  color: var(--terminal-muted);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.engineTrackedGroup summary span {
+  display: inline-grid;
+  min-width: 20px;
+  min-height: 20px;
+  place-items: center;
+  margin-left: 6px;
+  border: 1px solid var(--terminal-line);
+  border-radius: 999px;
 }
 
 .alignmentCard {

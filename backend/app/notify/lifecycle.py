@@ -196,6 +196,7 @@ def pulse_candidate(
     contexts: list[dict[str, Any]],
     *,
     tracked: list[dict[str, Any]] | None = None,
+    paper: dict[str, Any] | None = None,
     pending_redelivery: list[dict[str, Any]] | None = None,
 ) -> AlertCandidate | None:
     """periodic_pulse — 보유 포지션 1줄 상태 묶음 1통. "전부 정상"도 발송 (침묵 ≠ 정상 증명)."""
@@ -227,6 +228,8 @@ def pulse_candidate(
             distance = item.get("trigger_distance_pct")
             distance_text = f" · 트리거까지 {abs(float(distance)):.1f}%" if distance is not None else ""
             lines.append(f"• <b>{escape(str(item.get('symbol') or '-'))}</b> 추적 · {escape(stance)}{distance_text}")
+    if isinstance(paper, dict):
+        lines.append(f"\n🤖 엔진: 평가 {int(paper.get('evaluations') or 0)} · 진입 {int(paper.get('entries') or 0)} · 오픈 {int(paper.get('open') or 0)}")
     redelivery = [item for item in (pending_redelivery or []) if isinstance(item, dict)]
     if redelivery:
         lines.append(f"⚠ 미도달 알림 {len(redelivery)}건 병합:")

@@ -149,6 +149,16 @@ def test_periodic_pulse_includes_integrated_tracking_block() -> None:
     assert candidate.payload["tracked"] == 1
 
 
+def test_periodic_pulse_includes_paper_engine_activity() -> None:
+    candidate = pulse_candidate(
+        [],
+        paper={"evaluations": 18, "entries": 2, "open": 1},
+    )
+
+    assert candidate is not None
+    assert "🤖 엔진: 평가 18 · 진입 2 · 오픈 1" in candidate.message
+
+
 def test_verdict_transition_fires_with_reason_and_next_price() -> None:
     tracker = {"verdict_state": "holding", "overall_stance": "상방"}
     candidates, updated = transition_candidates(_context(verdict="danger"), tracker, _settings(), now=NOW)

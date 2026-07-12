@@ -128,7 +128,12 @@ class AlertEngine:
             tracked = [item for item in scout_payload.get("tracked", []) if isinstance(item, dict)]
         except Exception:
             logger.exception("notify.periodic_pulse.tracked_load_failed")
-        candidate = pulse_candidate(contexts, tracked=tracked, pending_redelivery=self.state.pending_redelivery)
+        paper: dict[str, Any] | None = None
+        try:
+            paper = await asyncio.to_thread(service.paper_pulse_summary)
+        except Exception:
+            logger.exception("notify.periodic_pulse.paper_load_failed")
+        candidate = pulse_candidate(contexts, tracked=tracked, paper=paper, pending_redelivery=self.state.pending_redelivery)
         if candidate is None:
             return 0
         if quiet_hours_active(self.settings, now):
