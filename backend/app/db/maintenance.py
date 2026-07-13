@@ -9,11 +9,22 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 
 from app.core.config import Settings
-from app.db.models import DatabaseMaintenanceEvent, utc_now
+from app.db.models import AlertRecord, DatabaseMaintenanceEvent, utc_now
 from app.db.repository import Repository
 from app.db.sqlite_utils import SQLITE_WRITE_LOCK, connect_sqlite
 
 logger = logging.getLogger(__name__)
+
+PERMANENT_TABLES = (
+    "judgment_ledger",
+    "judgment_scores",
+    "paper_trades",
+    "paper_engine_states",
+    "paper_gate_funnel",
+    "backtest_stats",
+    "trades",
+    "autonomy_log",
+)
 
 
 def sqlite_path(database_url: str) -> Path | None:
@@ -31,7 +42,7 @@ def run_database_backup(settings: Settings, repo: Repository) -> dict:
             message="SQLite backup disabled or database is not sqlite.",
             details={"database_url": settings.database_url},
         )
-        repo.add_database_maintenance_event(event)
+        _record_backup_event(repo, event)
         return event.model_dump(mode="json")
     if not source_path.exists():
         event = DatabaseMaintenanceEvent(
@@ -40,7 +51,7 @@ def run_database_backup(settings: Settings, repo: Repository) -> dict:
             message="SQLite database file does not exist.",
             details={"path": str(source_path)},
         )
-        repo.add_database_maintenance_event(event)
+        _record_backup_event(repo, event)
         return event.model_dump(mode="json")
 
     backup_dir = Path(settings.db_backup_dir).expanduser()
@@ -48,6 +59,9 @@ def run_database_backup(settings: Settings, repo: Repository) -> dict:
     date_key = datetime.now(timezone.utc).strftime("%Y%m%d")
     final_path = backup_dir / f"fce_{date_key}.db.gz"
     temp_db_path = backup_dir / f".fce_{date_key}.tmp.db"
+    temp_gzip_path = backup_dir / f".fce_{date_key}.tmp.db.gz"
+    temp_db_path.unlink(missing_ok=True)
+    temp_gzip_path.unlink(missing_ok=True)
     try:
         with SQLITE_WRITE_LOCK:
             source = connect_sqlite(source_path)
@@ -62,10 +76,13 @@ def run_database_backup(settings: Settings, repo: Repository) -> dict:
         table_counts = sqlite_table_counts(temp_db_path)
         with (
             temp_db_path.open("rb") as raw_file,
-            gzip.open(final_path, "wb") as gz_file,
+            gzip.open(temp_gzip_path, "wb") as gz_file,
         ):
             gz_file.writelines(raw_file)
-        restore_counts = smoke_test_backup(final_path)
+        restore_counts = smoke_test_backup(temp_gzip_path)
+        if restore_counts != table_counts:
+            raise RuntimeError("restored backup table counts do not match backup source")
+        temp_gzip_path.replace(final_path)
         pruned = prune_old_backups(backup_dir, keep_days=settings.db_backup_keep_days)
         event = DatabaseMaintenanceEvent(
             event_type="backup",
@@ -91,7 +108,8 @@ def run_database_backup(settings: Settings, repo: Repository) -> dict:
         )
     finally:
         temp_db_path.unlink(missing_ok=True)
-    repo.add_database_maintenance_event(event)
+        temp_gzip_path.unlink(missing_ok=True)
+    _record_backup_event(repo, event)
     return event.model_dump(mode="json")
 
 
@@ -158,6 +176,7 @@ def prune_old_backups(backup_dir: Path, keep_days: int) -> list[str]:
 
 def _apply_sqlite_retention(connection: sqlite3.Connection, settings: Settings) -> dict[str, object]:
     now = datetime.now(timezone.utc)
+    permanent_before = _table_counts(connection, PERMANENT_TABLES)
     derivative_cutoff = now - timedelta(days=max(1, int(settings.db_retention_days)))
     deriv_metric_cutoff = now - timedelta(days=max(1, int(settings.db_deriv_metrics_raw_days)))
     trade_fill_cutoff = now - timedelta(days=max(1, int(settings.db_trade_fill_retention_days)))
@@ -219,6 +238,11 @@ def _apply_sqlite_retention(connection: sqlite3.Connection, settings: Settings) 
         "DELETE FROM worker_heartbeat WHERE updated_at < ?",
         (heartbeat_cutoff.isoformat(),),
     )
+    permanent_after = _table_counts(connection, PERMANENT_TABLES)
+    if permanent_after != permanent_before:
+        raise RuntimeError("retention attempted to mutate a permanent table")
+    details["permanent_tables_verified"] = True
+    details["permanent_table_counts"] = permanent_after
     return details
 
 
@@ -259,11 +283,20 @@ def _downsample_derivative_metrics(connection: sqlite3.Connection, cutoff: datet
             f"DELETE FROM deriv_metrics WHERE id IN ({placeholders})",
             tuple(delete_ids),
         )
+    _verify_remaining_ids(
+        connection,
+        table="deriv_metrics",
+        id_column="id",
+        where="as_of < ?",
+        params=(cutoff.isoformat(),),
+        expected=keep_ids,
+    )
     return {
         "deriv_metrics_before_downsample": len(rows),
         "deriv_metrics_after_downsample": len(rows) - deleted_total,
         "deriv_metrics_deleted": deleted_total,
         "deriv_metrics_downsample_minutes": bucket_minutes,
+        "deriv_metrics_aggregate_verified": True,
     }
 
 
@@ -312,6 +345,14 @@ def _downsample_closed_position_snapshots(connection: sqlite3.Connection, cutoff
                 f"DELETE FROM position_snapshots WHERE id IN ({placeholders})",
                 tuple(delete_ids),
             )
+        _verify_remaining_ids(
+            connection,
+            table="position_snapshots",
+            id_column="id",
+            where="position_id = ?",
+            params=(str(position["id"]),),
+            expected=keep_ids,
+        )
         after_total += len(rows) - len(delete_ids)
     return {
         "closed_positions_downsampled": len(positions),
@@ -319,7 +360,55 @@ def _downsample_closed_position_snapshots(connection: sqlite3.Connection, cutoff
         "position_snapshots_after_downsample": after_total,
         "position_snapshots_deleted": deleted_total,
         "position_snapshot_downsample_minutes": bucket_minutes,
+        "position_snapshot_aggregate_verified": True,
     }
+
+
+def _record_backup_event(repo: Repository, event: DatabaseMaintenanceEvent) -> None:
+    repo.add_database_maintenance_event(event)
+    if event.status != "error":
+        return
+    try:
+        repo.add_alert(
+            AlertRecord(
+                rule_id="database_backup_failed",
+                severity="warn",
+                payload={
+                    "message": event.message,
+                    "details": event.details,
+                    "maintenance_event_id": str(event.id),
+                },
+                fired_at=event.created_at,
+                created_at=event.created_at,
+            )
+        )
+    except Exception:
+        logger.exception("failed to persist database backup warning alert")
+
+
+def _table_counts(connection: sqlite3.Connection, tables: tuple[str, ...]) -> dict[str, int]:
+    existing = {str(row["name"]) for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'").fetchall()}
+    return {table: int(connection.execute(f'SELECT COUNT(*) FROM "{table}"').fetchone()[0]) for table in tables if table in existing}
+
+
+def _verify_remaining_ids(
+    connection: sqlite3.Connection,
+    *,
+    table: str,
+    id_column: str,
+    where: str,
+    params: tuple[str, ...],
+    expected: set[str],
+) -> None:
+    actual = {
+        str(row[id_column])
+        for row in connection.execute(
+            f'SELECT "{id_column}" FROM "{table}" WHERE {where}',
+            params,
+        ).fetchall()
+    }
+    if actual != expected:
+        raise RuntimeError(f"{table} downsample aggregate verification failed")
 
 
 def _delete_expired_alerts(connection: sqlite3.Connection, cutoff: datetime) -> int:
