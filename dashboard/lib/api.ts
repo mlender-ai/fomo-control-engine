@@ -87,6 +87,7 @@ export type PositionHealthComponents = {
 export type PositionState = {
   position: Position;
   as_of: string;
+  analysis_as_of?: string | null;
   mark_price: number | null;
   pnl_percent: number;
   pnl_amount: number | null;
@@ -130,7 +131,10 @@ export type PositionState = {
       entry_direction_score: number;
       current_direction_score: number;
       thesis_delta: number;
+      as_of?: string;
+      analysis_as_of?: string | null;
     };
+    analysis_as_of?: string | null;
     wyckoff: {
       accumulation_score: number;
       distribution_score: number;
@@ -393,6 +397,8 @@ export type CompactChartGauges = {
     confidence?: number;
     transitioning: boolean;
     target?: string | null;
+    preview_stance?: string | null;
+    preview_stance_label?: string | null;
     flip_progress?: number | null;
     candles_in_state?: number | null;
     since?: string | null;
@@ -464,6 +470,7 @@ export type CompactChartGauges = {
   stance_history?: Array<{
     time: number;
     stance: string;
+    preview_stance?: string | null;
     transitioning: boolean;
     flipped: boolean;
     long_evidence_count: number;
@@ -1542,6 +1549,9 @@ export type PaperDashboard = {
     running: boolean;
     target_count: number;
     evaluations_24h: number;
+    flip_count_7d?: number;
+    entry_count_7d?: number;
+    next_confirmed_bar_minutes?: number | null;
     items: Array<{ id: string; label: string; ok: boolean; value: string; reason: string | null }>;
   };
   live_orders_enabled: false;

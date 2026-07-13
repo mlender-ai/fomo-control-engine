@@ -109,6 +109,8 @@ def build_direction_gauge(confluence: dict[str, Any]) -> dict[str, Any]:
     """
     stance = str(confluence.get("stance") or "insufficient")
     state = _dict(confluence.get("stance_state"))
+    preview = _dict(state.get("preview"))
+    preview_stance = str(preview.get("raw_stance") or "")
     long_ema = _num(state.get("long_score_ema"), _num(confluence.get("long_score"), 0.0))
     short_ema = _num(state.get("short_score_ema"), _num(confluence.get("short_score"), 0.0))
     total = long_ema + short_ema
@@ -123,6 +125,8 @@ def build_direction_gauge(confluence: dict[str, Any]) -> dict[str, Any]:
         "confidence": round(abs(needle), 3),
         "transitioning": transitioning,
         "target": state.get("target"),
+        "preview_stance": preview_stance or None,
+        "preview_stance_label": _market_stance_label(preview_stance) if preview_stance else None,
         "flip_progress": _num(state.get("flip_threshold_progress"), 0.0),
         "candles_in_state": state.get("candles_in_state"),
         "since": state.get("since"),

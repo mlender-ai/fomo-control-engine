@@ -1091,10 +1091,12 @@ def _cached_live_position_payload(position: Position) -> dict:
         }
     )
     position_analysis = snapshot.analysis_json.get("position_analysis", {})
+    analysis_as_of = snapshot.analysis_json.get("analysis_as_of") or position_analysis.get("analysis_as_of") or stored_snapshot.as_of
     score_json = snapshot.score_json if isinstance(snapshot.score_json, dict) else {}
     state = {
         "position": position.model_dump(mode="json"),
         "as_of": snapshot.as_of,
+        "analysis_as_of": analysis_as_of,
         "mark_price": snapshot.mark_price,
         "pnl_percent": snapshot.pnl_percent,
         "pnl_amount": snapshot.pnl_amount,
@@ -1132,9 +1134,11 @@ def _cached_live_position_payload(position: Position) -> dict:
 
 def _compact_position_analysis(analysis: Any) -> dict[str, Any]:
     source = analysis if isinstance(analysis, dict) else {}
+    position_analysis = source.get("position_analysis") if isinstance(source.get("position_analysis"), dict) else {}
     derivatives = source.get("derivatives") if isinstance(source.get("derivatives"), dict) else {}
     return {
-        "position_analysis": source.get("position_analysis", {}),
+        "position_analysis": position_analysis,
+        "analysis_as_of": source.get("analysis_as_of") or position_analysis.get("analysis_as_of"),
         "technical": source.get("technical", {}),
         "derivatives": _slim_derivatives(derivatives, metric_limit=0, event_limit=0),
         "risk": source.get("risk", {}),

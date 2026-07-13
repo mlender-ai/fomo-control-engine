@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
@@ -92,13 +92,13 @@ def seed_demo_data() -> dict[str, Any]:
 
 
 def refresh_market_data() -> dict[str, Any]:
-    """Refresh report and market snapshot cache for currently held symbols."""
-    symbols = sorted({position.symbol.upper() for position in runtime.repository.list_positions(PositionStatus.open)})
+    """Refresh report and market snapshot cache for held and tracked symbols."""
+    pairs = sorted(tracked_market_pairs(), key=_market_pair_stale_sort)
     refreshed: list[dict[str, Any]] = []
     errors: list[dict[str, str]] = []
-    for symbol in symbols:
+    for symbol, timeframe in pairs:
         try:
-            report = runtime._generate_and_store_report(symbol, "4h")
+            report = runtime._generate_and_store_report(symbol, timeframe)
             latest_candle = None
             candles = getattr(report.data_quality, "candles", 0)
             if isinstance(report.raw_json, dict):
@@ -122,28 +122,56 @@ def refresh_market_data() -> dict[str, Any]:
             refreshed.append(
                 {
                     "symbol": symbol,
+                    "timeframe": timeframe,
                     "report_id": str(report.id),
                     "latest_candle": latest_candle,
+                    "as_of": (report.data_quality.last_candle_at or report.created_at).isoformat(),
                 }
             )
         except HTTPException as exc:
-            errors.append({"symbol": symbol, "error": str(exc.detail)})
+            errors.append({"symbol": symbol, "timeframe": timeframe, "error": str(exc.detail)})
         except Exception as exc:
-            errors.append({"symbol": symbol, "error": f"{type(exc).__name__}: {exc}"})
+            errors.append({"symbol": symbol, "timeframe": timeframe, "error": f"{type(exc).__name__}: {exc}"})
+    symbols = sorted({symbol for symbol, _timeframe in pairs})
     return {
         "symbols": symbols,
+        "pairs": [{"symbol": symbol, "timeframe": timeframe} for symbol, timeframe in pairs],
         "refreshed": refreshed,
         "errors": errors,
         "count": len(refreshed),
     }
 
 
+def tracked_market_pairs() -> list[tuple[str, str]]:
+    pairs: set[tuple[str, str]] = {(symbol.upper(), timeframe or "4h") for symbol, timeframe in _paper_universe(runtime.repository)}
+    for setup in runtime.repository.list_armed_setups(status="armed", limit=1000):
+        pairs.add((setup.symbol.upper(), setup.timeframe or "4h"))
+    if not pairs:
+        pairs.update((symbol.upper(), "4h") for symbol in runtime.settings.symbol_list)
+    return sorted(pairs)
+
+
 def tracked_symbols() -> list[str]:
-    symbols = {position.symbol.upper() for position in runtime.repository.list_positions(PositionStatus.open)}
-    symbols.update(item.symbol.upper() for item in runtime.repository.list_watchlist() if item.symbol.upper() not in symbols)
-    if not symbols:
-        symbols.update(runtime.settings.symbol_list)
-    return sorted(symbols)
+    return sorted({symbol for symbol, _timeframe in tracked_market_pairs()})
+
+
+def _market_pair_stale_sort(pair: tuple[str, str]) -> tuple[int, datetime]:
+    symbol, timeframe = pair
+    report = runtime.repository.latest_report(symbol)
+    as_of = _report_analysis_as_of(report)
+    if as_of is None:
+        return (0, datetime.min.replace(tzinfo=timezone.utc))
+    age_seconds = (utc_now() - as_of).total_seconds()
+    stale = age_seconds > timeframe_seconds(timeframe) * 2
+    return (0 if stale else 1, as_of)
+
+
+def _report_analysis_as_of(report: Any | None) -> datetime | None:
+    if report is None:
+        return None
+    value = getattr(getattr(report, "data_quality", None), "last_candle_at", None) or getattr(report, "created_at", None)
+    return value if isinstance(value, datetime) else None
+
 
 
 def refresh_derivative_data() -> dict[str, Any]:

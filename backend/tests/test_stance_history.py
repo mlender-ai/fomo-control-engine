@@ -121,6 +121,29 @@ def test_provisional_candle_never_receives_confirmed_segment(monkeypatch) -> Non
     assert max(seen_last_times) < provisional_time
 
 
+def test_live_endpoint_separates_held_stance_from_raw_preview() -> None:
+    subject.clear_stance_history_cache()
+    analysis = _analysis([100])
+    history = subject.replay_stance_history(
+        analysis=analysis,
+        current_confluence={
+            "stance": "short_leaning",
+            "stance_state": {
+                "stance": "short_leaning",
+                "transitioning": True,
+                "preview": {"raw_stance": "long_leaning"},
+            },
+            "long_evidence": [{"claim": "순간 반등"}],
+            "short_evidence": [{"claim": "유지 하방"}],
+        },
+        bar_state={"provisional": False},
+        timeframe="4h",
+    )
+
+    assert history[-1]["stance"] == "short_leaning"
+    assert history[-1]["preview_stance"] == "long_leaning"
+
+
 def _analysis(closes: list[float]) -> dict[str, Any]:
     candles = []
     for index, close in enumerate(closes):

@@ -993,6 +993,12 @@ h3 {
   box-shadow: inset 0 0 0 1px rgba(240, 184, 64, 0.38);
 }
 
+.positionStripCard.stale {
+  border-color: rgba(140, 150, 160, 0.34);
+  background: rgba(118, 128, 140, 0.055);
+  filter: grayscale(0.55);
+}
+
 .positionStripCard.minimal {
   grid-template-columns: minmax(0, 1fr);
   align-content: center;
@@ -1027,6 +1033,10 @@ h3 {
   border-color: rgba(240, 184, 64, 0.86);
   background: rgba(240, 184, 64, 0.11);
   box-shadow: inset 0 0 0 1px rgba(240, 184, 64, 0.48), 0 8px 22px rgba(0, 0, 0, 0.16);
+}
+
+.positionStripCard.minimal.stale {
+  background: rgba(118, 128, 140, 0.06);
 }
 
 .positionStripCard.minimal strong {
@@ -1488,6 +1498,24 @@ h3 {
   color: var(--terminal-text);
   font-family: var(--fce-font-number);
   font-size: 13px;
+}
+
+.analysisAsOfChip {
+  width: fit-content;
+  border: 1px solid rgba(120, 152, 124, 0.24);
+  border-radius: 4px;
+  background: rgba(120, 152, 124, 0.08);
+  color: var(--terminal-muted);
+  font-family: var(--fce-font-label);
+  font-size: 10px;
+  font-weight: 800;
+  padding: 2px 6px;
+}
+
+.analysisAsOfChip.stale {
+  border-color: rgba(150, 150, 150, 0.3);
+  background: rgba(150, 150, 150, 0.08);
+  color: color-mix(in srgb, var(--terminal-muted) 86%, white);
 }
 
 .missingLiqBadge {
@@ -2534,11 +2562,10 @@ h3 {
 }
 
 .stanceHudCopy strong {
-  overflow: hidden;
   color: var(--terminal-text);
   font-size: 11px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  line-height: 1.3;
+  white-space: normal;
 }
 
 .stanceHudCopy > span,

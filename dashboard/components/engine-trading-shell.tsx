@@ -80,7 +80,11 @@ function BattleView({ data, starting, onStart }: { data: PaperDashboard; startin
   return (
     <div className="engineView" data-testid="engine-battle-tab">
       <section className={`engineActivationStrip ${data.activation.running ? "running" : "blocked"}`} data-testid="paper-activation-strip">
-        <div><strong>{data.activation.running ? "가동 중" : "가동 확인 필요"}</strong><span>{benchmark.started ? `${shortDate(benchmark.started_at)}~${shortDate(benchmark.ends_at)}` : "대결 시작 전"}</span></div>
+        <div>
+          <strong>{data.activation.running ? "가동 중" : "가동 확인 필요"}</strong>
+          <span>{benchmark.started ? `${shortDate(benchmark.started_at)}~${shortDate(benchmark.ends_at)}` : "대결 시작 전"}</span>
+          <small className="engineActivationProof">{activationProof(data.activation)}</small>
+        </div>
         <div className="engineActivationItems">
           {data.activation.items.map((item) => <span className={item.ok ? "ok" : "error"} key={item.id} title={item.reason ?? "정상"}><i />{item.label} {item.value}</span>)}
         </div>
@@ -108,7 +112,7 @@ function BattleView({ data, starting, onStart }: { data: PaperDashboard; startin
 }
 
 function PositionsView({ trades, funnel }: { trades: PaperTrade[]; funnel: PaperGateFunnel }) {
-  if (!trades.length) return <EngineEmpty title="현재 엔진 포지션 없음" body={funnelSummary(funnel)} />;
+  if (!trades.length) return <EngineEmpty title="현재 엔진 포지션 없음" body={funnelSummary(funnel)} actionHref="/engine?tab=status" actionLabel="게이트 퍼널 보기" />;
   return <section className="enginePositionGrid" data-testid="engine-positions-tab">{trades.map((trade) => <PaperPositionCard key={trade.id} trade={trade} />)}</section>;
 }
 
@@ -190,13 +194,23 @@ function EquityComparison({ engine, user }: { engine: Array<{ ts: string; return
 
 function ComparisonMetric({ label, engine, user, inverse = false }: { label: string; engine: string; user: string; inverse?: boolean }) { return <article className="engineMetric"><span>{label}</span><div><p><small>엔진</small><strong className={metricTone(engine, inverse)}>{engine}</strong></p><p><small>나</small><strong className={metricTone(user, inverse)}>{user}</strong></p></div></article>; }
 function EngineLoading() { return <div className="engineLoading"><Bot size={24} /><span>엔진 기록을 불러오는 중입니다.</span></div>; }
-function EngineEmpty({ title, body }: { title: string; body: string }) { return <div className="engineEmpty"><Bot size={24} /><strong>{title}</strong><span>{body}</span></div>; }
+function EngineEmpty({ title, body, actionHref, actionLabel }: { title: string; body: string; actionHref?: string; actionLabel?: string }) { return <div className="engineEmpty"><Bot size={24} /><strong>{title}</strong><span>{body}</span>{actionHref && actionLabel ? <Link className="button secondary" href={actionHref}>{actionLabel}</Link> : null}</div>; }
 
 function funnelSummary(funnel: PaperGateFunnel): string {
-  if (!funnel.evaluations) return "확정 캔들 평가가 시작되면 진입 게이트별 통과 수를 표시합니다.";
+  if (!funnel.evaluations) return "엔진 정상 가동 · 첫 확정 캔들 평가를 기다리는 중입니다. 무거래는 관성 설계상 정상입니다.";
   const flip = funnel.stages.find((stage) => stage.id === "confirmed_flip")?.count ?? 0;
   const top = funnel.top_rejection;
-  return `이번 주 스탠스 전환 ${flip}회 중 진입 ${funnel.entered}회${top ? ` · 최다 탈락: ${top.label} ${top.count}회` : ""}`;
+  return `엔진 정상 가동 · 이번 주 flip ${flip}회 → 진입 ${funnel.entered}회. 무거래는 관성 설계상 정상이며 7일 지속 시 자동 진단합니다${top ? ` · 최다 탈락: ${top.label} ${top.count}회` : ""}`;
+}
+
+function activationProof(activation: PaperDashboard["activation"]): string {
+  return `누적 flip ${activation.flip_count_7d ?? 0} · 진입 ${activation.entry_count_7d ?? 0} · 다음 확정 캔들까지 ${eta(activation.next_confirmed_bar_minutes)}`;
+}
+
+function eta(minutes: number | null | undefined): string {
+  if (typeof minutes !== "number" || !Number.isFinite(minutes)) return "대기";
+  if (minutes >= 60) return `${Math.floor(minutes / 60)}h ${Math.max(0, Math.round(minutes % 60))}m`;
+  return `${Math.max(1, Math.round(minutes))}m`;
 }
 
 function evidenceLines(trade: PaperTrade): string[] { const raw = trade.entry_evidence.items; if (!Array.isArray(raw)) return ["진입 규정 게이트 통과"]; return raw.map((item) => { const row = record(item); return String(row.claim ?? row.label ?? row.reason ?? "검증 근거"); }); }

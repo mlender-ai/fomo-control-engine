@@ -121,9 +121,11 @@ def _replay_point(
 
 def _point(timestamp: datetime, confluence: dict[str, Any]) -> dict[str, Any]:
     state = confluence.get("stance_state") if isinstance(confluence.get("stance_state"), dict) else {}
+    preview = state.get("preview") if isinstance(state.get("preview"), dict) else {}
     return {
         "time": int(timestamp.timestamp()),
         "stance": state.get("stance") or confluence.get("stance") or "insufficient",
+        "preview_stance": preview.get("raw_stance"),
         "transitioning": bool(state.get("transitioning")),
         "flipped": bool(state.get("flipped")),
         "long_evidence_count": len(confluence.get("long_evidence") or []),

@@ -1040,7 +1040,7 @@ function stanceRibbonNodes(context: OverlayContext, gauges: CompactChartGauges):
     const color = stanceHistoryColor(context, segment.state);
     const glowOpacity = 0.06 + Math.min(1, Math.max(0, segment.state.confidence ?? 0)) * 0.06;
     nodes.push(`<path d="${svgRibbonGlowPath(segment.points, Math.max(24, context.height - 24))}" fill="${color}" fill-opacity="${glowOpacity.toFixed(3)}" stroke="none" />`);
-    nodes.push(`<path d="${svgSmoothPath(segment.points)}" fill="none" stroke="${color}" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round"${segment.state.transitioning ? ` stroke-dasharray="8 6"` : ""} />`);
+    nodes.push(`<path d="${svgSmoothPath(segment.points)}" fill="none" stroke="${color}" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round" />`);
   }
   for (let index = 1; index < history.length; index += 1) {
     const current = history[index];
@@ -1052,12 +1052,21 @@ function stanceRibbonNodes(context: OverlayContext, gauges: CompactChartGauges):
     nodes.push(`<circle data-stance-flip="true" cx="${current.x}" cy="${current.y}" r="6" fill="${color}" stroke="${context.palette.color("panel", 0.98)}" stroke-width="2"><title>${escapeSvgText(current.reason)}</title></circle>`);
     nodes.push(`<text x="${current.x}" y="${clamp(current.y - 11, 14, context.height - 24)}" text-anchor="middle" fill="${color}" font-size="10" font-weight="850">${caret}</text>`);
   }
-  if (gauges.bar_state.provisional && history.length) {
+  if (history.length) {
     const confirmed = history.at(-1)!;
-    const provisional = points.find((point) => point.time > confirmed.time) ?? points.at(-1)!;
-    if (provisional.time > confirmed.time) {
-      const color = stanceHistoryColor(context, confirmed);
-      nodes.push(`<path d="${svgPath([confirmed, provisional])}" fill="none" stroke="${color}" stroke-opacity="0.42" stroke-width="2.9" stroke-dasharray="4 5" />`);
+    const previewStance = confirmed.transitioning ? confirmed.preview_stance : null;
+    if (previewStance && previewStance !== confirmed.stance) {
+      const provisional = points.find((point) => point.time > confirmed.time);
+      const previous = history.at(-2);
+      const previewEnd = provisional && provisional.time > confirmed.time
+        ? provisional
+        : {
+            x: Math.min(context.right - 8, confirmed.x + 22),
+            y: clamp(confirmed.y + (previous ? confirmed.y - previous.y : 0) * 0.28, 14, context.height - 24),
+            time: confirmed.time + 1
+          };
+      const color = stanceHistoryColor(context, { stance: previewStance });
+      nodes.push(`<path d="${svgPath([confirmed, previewEnd])}" fill="none" stroke="${color}" stroke-opacity="0.72" stroke-width="2.9" stroke-dasharray="4 5" stroke-linecap="round"><title>${escapeSvgText(`전환 관찰 · 순간 ${stanceKorean(previewStance)} 시도`)}</title></path>`);
     }
   }
   nodes.push("</g>");
@@ -1069,9 +1078,9 @@ type StanceHistoryNode = NonNullable<CompactChartGauges["stance_history"]>[numbe
 function stanceSegments(history: StanceHistoryNode[]): Array<{ state: StanceHistoryNode; points: StanceHistoryNode[] }> {
   const segments: Array<{ state: StanceHistoryNode; points: StanceHistoryNode[] }> = [];
   for (const point of history) {
-    const key = `${point.stance}:${point.transitioning}`;
+    const key = point.stance;
     const current = segments.at(-1);
-    const currentKey = current ? `${current.state.stance}:${current.state.transitioning}` : "";
+    const currentKey = current ? current.state.stance : "";
     if (!current || currentKey !== key) {
       const overlap = current?.points.at(-1);
       segments.push({ state: point, points: overlap ? [overlap, point] : [point] });
@@ -1082,11 +1091,17 @@ function stanceSegments(history: StanceHistoryNode[]): Array<{ state: StanceHist
   return segments;
 }
 
-function stanceHistoryColor(context: OverlayContext, state: Pick<StanceHistoryNode, "stance" | "transitioning">): string {
-  if (state.transitioning) return context.palette.color("amber", 0.94);
+function stanceHistoryColor(context: OverlayContext, state: Pick<StanceHistoryNode, "stance">): string {
   if (state.stance === "long_leaning") return context.palette.color("green", 0.92);
   if (state.stance === "short_leaning") return context.palette.color("red", 0.92);
   return context.palette.color("neutral", 0.62);
+}
+
+function stanceKorean(stance: string | null | undefined): string {
+  if (stance === "long_leaning" || stance === "long") return "상방";
+  if (stance === "short_leaning" || stance === "short") return "하방";
+  if (stance === "conflicted") return "균형";
+  return "판단 보류";
 }
 
 function validatedEventPillNodes(context: OverlayContext, gauges: CompactChartGauges): string[] {
@@ -1152,12 +1167,10 @@ function nearestTimePoint<T extends { time: number }>(points: T[], time: number)
 
 function stanceTone(
   stance: string,
-  transitioning = false,
   previousStance?: string | null,
   longEvidence = 0,
   shortEvidence = 0
 ): "long" | "short" | "neutral" | "transition" | "conflict-long" | "conflict-short" {
-  if (transitioning) return "transition";
   if (stance === "long_leaning") return "long";
   if (stance === "short_leaning") return "short";
   if (stance === "conflicted") {
@@ -1187,16 +1200,20 @@ function StanceHeaderHud({
   showSecondaryTaRows: boolean;
 }) {
   const direction = gauges.direction;
+  const previewStance = direction.preview_stance || direction.target;
+  const previewText = direction.transitioning && previewStance && previewStance !== direction.stance
+    ? ` · 순간 ${stanceKorean(previewStance)} 시도 — 전환 문턱 ${Math.round((direction.flip_progress ?? 0) * 100)}%`
+    : "";
   const headline = direction.transitioning
-    ? `전환 관찰 중 (문턱 ${Math.round((direction.flip_progress ?? 0) * 100)}%)`
+    ? `${gauges.market_view?.stance_label || direction.stance_label || "판단 대기"} 유지`
     : `${gauges.market_view?.stance_label || direction.stance_label || "판단 대기"}${direction.stance === "conflicted" ? "" : " 진행 중"}`;
   return (
     <div className={`stanceHud ${gauges.bar_state.provisional ? "provisional" : ""}`} data-testid="stance-hud">
       <button type="button" onClick={onToggle} aria-expanded={open}>
         <span className="stanceHudClock">{analysis.timeframe}</span>
-        <span className={`stanceHudDot ${stanceTone(direction.stance, direction.transitioning, direction.previous_stance, direction.long_evidence_count, direction.short_evidence_count)}`} />
+        <span className={`stanceHudDot ${stanceTone(direction.stance, direction.previous_stance, direction.long_evidence_count, direction.short_evidence_count)}`} />
         <span className="stanceHudCopy">
-          <strong>{headline}{direction.stance !== "conflicted" ? ` · ${direction.candles_in_state ?? 0}캔들째` : ""}</strong>
+          <strong>{headline}{direction.stance !== "conflicted" ? ` (${direction.candles_in_state ?? 0}캔들째)` : ""}{previewText}</strong>
           <span>상방 {direction.long_evidence_count ?? 0} · 하방 {direction.short_evidence_count ?? 0}</span>
           {gauges.bar_state.provisional ? <em>잠정 · {formatHudCountdown(gauges.bar_state.minutes_to_close)}</em> : null}
         </span>

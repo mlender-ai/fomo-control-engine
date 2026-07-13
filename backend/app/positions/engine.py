@@ -87,6 +87,7 @@ def build_position_state(
     pnl_amount = calculate_pnl_amount(position, mark_price)
     liquidation_distance = calculate_liquidation_distance(position, mark_price)
     as_of = _position_as_of(position, report)
+    analysis_as_of = _analysis_as_of(report)
     entry_score = position.entry_score if position.entry_score is not None else report.entry_score
     current_score = report.entry_score
     score_change = current_score - entry_score
@@ -155,8 +156,10 @@ def build_position_state(
             "current_direction_score": current_direction_score,
             "thesis_delta": thesis_delta,
             "as_of": as_of.isoformat(),
+            "analysis_as_of": analysis_as_of.isoformat(),
             "pnl_source": pnl_source,
         },
+        "analysis_as_of": analysis_as_of.isoformat(),
         "wyckoff": _wyckoff_payload(structure),
         "technical": _technical_payload(indicators, structure, liquidity, position, report),
         "derivatives": liquidity.get("derivatives", {}) if isinstance(liquidity, dict) else {},
@@ -174,6 +177,7 @@ def build_position_state(
     return {
         "position": position.model_dump(mode="json"),
         "as_of": as_of,
+        "analysis_as_of": analysis_as_of,
         "mark_price": mark_price,
         "pnl_percent": pnl_percent,
         "pnl_amount": pnl_amount,
@@ -949,6 +953,12 @@ def _render_critical_levels(levels: list[dict]) -> str:
 def _position_as_of(position: Position, report: Report):
     if position.mark_price is not None and position.synced_at is not None:
         return position.synced_at
+    if report.data_quality.last_candle_at is not None:
+        return report.data_quality.last_candle_at
+    return report.created_at
+
+
+def _analysis_as_of(report: Report):
     if report.data_quality.last_candle_at is not None:
         return report.data_quality.last_candle_at
     return report.created_at

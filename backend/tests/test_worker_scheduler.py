@@ -6,9 +6,10 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.services import http_handlers as routes
+from app.services import runtime as service
 from app.api.deps import configure_runtime
 from app.core.config import Settings
-from app.db.models import Direction, Position
+from app.db.models import Direction, Position, WatchlistItem
 from app.db.repository import MemoryRepository
 from app.exchange.mock import MockMarketDataProvider
 from app.worker.manager import WorkerManager, _next_daily_time
@@ -113,6 +114,29 @@ def test_worker_status_ignores_retired_persisted_jobs(tmp_path) -> None:
     assert "database_retention" in status["jobs"]
     assert "database_backup" in status["jobs"]
     assert "database_maintenance" not in status["jobs"]
+
+
+def test_refresh_market_data_covers_held_and_tracked_symbols(tmp_path) -> None:
+    repo = MemoryRepository()
+    configure_runtime(repo=repo, provider=MockMarketDataProvider())
+    report = routes._generate_and_store_report("BTCUSDT", "4h")
+    repo.add_position(
+        Position(
+            symbol="BTCUSDT",
+            direction=Direction.long,
+            entry_price=report.price,
+            quantity=0.1,
+            leverage=5,
+        )
+    )
+    repo.upsert_watchlist_item(WatchlistItem(symbol="ETHUSDT"))
+
+    payload = service.refresh_market_data()
+
+    assert {"BTCUSDT", "ETHUSDT"}.issubset(set(payload["symbols"]))
+    assert {("BTCUSDT", "4h"), ("ETHUSDT", "4h")}.issubset(
+        {(row["symbol"], row["timeframe"]) for row in payload["pairs"]}
+    )
 
 
 def test_daily_maintenance_schedule_uses_configured_timezone() -> None:

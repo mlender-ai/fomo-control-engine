@@ -329,6 +329,7 @@ export function LivePositionCockpit() {
           <PositionStrip
             chartAnalysisById={stripChartAnalysis}
             positions={positions}
+            referenceTime={data?.timestamp ?? null}
             selectedId={selected?.position.id ?? ""}
             onSelect={(positionId) => {
               setSelectedId(positionId);
@@ -395,12 +396,14 @@ function PositionStrip({
   chartAnalysisById,
   compact,
   positions,
+  referenceTime,
   selectedId,
   onSelect
 }: {
   chartAnalysisById: Record<string, PositionChartAnalysis>;
   compact: boolean;
   positions: LivePositionPayload[];
+  referenceTime: string | null;
   selectedId: string;
   onSelect: (positionId: string) => void;
 }) {
@@ -409,6 +412,7 @@ function PositionStrip({
     <section className={`positionStrip ${compact ? "compact" : ""}`} aria-label="보유 포지션" data-testid="position-strip">
       {sortedPositions.map((item) => {
         const trigger = nearestActionTrigger(item);
+        const freshness = analysisFreshness(item, referenceTime);
         const selected = item.position.id === selectedId;
         if (compact) {
           return (
@@ -417,19 +421,21 @@ function PositionStrip({
               meta={`${directionLabel(item.position.direction)} · ${item.position.leverage}x`}
               onClick={() => onSelect(item.position.id)}
               selected={selected}
+              stale={freshness.stale}
+              summary={freshness.label}
               symbol={item.position.symbol}
-              title={`${item.position.symbol} · ${directionLabel(item.position.direction)} ${item.position.leverage}x · ${item.state.status_label}`}
-              tone={item.state.severity_rank >= 3 ? "negative" : item.state.severity_rank >= 1 ? "watch" : "positive"}
+              title={`${item.position.symbol} · ${directionLabel(item.position.direction)} ${item.position.leverage}x · ${item.state.status_label} · 분석 ${freshness.title}`}
+              tone={freshness.stale ? "neutral" : item.state.severity_rank >= 3 ? "negative" : item.state.severity_rank >= 1 ? "watch" : "positive"}
             />
           );
         }
         return (
           <button
-            className={`positionStripCard severity-${item.state.severity_rank} ${selected ? "selected" : ""}`}
+            className={`positionStripCard severity-${item.state.severity_rank} ${freshness.stale ? "stale" : ""} ${selected ? "selected" : ""}`}
             data-testid="position-card"
             key={item.position.id}
             onClick={() => onSelect(item.position.id)}
-            title={riskRewardSummary(item)}
+            title={`${riskRewardSummary(item)} · 분석 ${freshness.title}`}
             type="button"
           >
             <span className="stripSeverityBar" aria-hidden="true" />
@@ -455,11 +461,32 @@ function PositionStrip({
               {plainifyTaText(headlineForPayload(item))}
               {trigger ? <b>{formatDistance(trigger.distance_pct)}</b> : null}
             </span>
+            <span className={`analysisAsOfChip ${freshness.stale ? "stale" : ""}`}>{freshness.label}</span>
           </button>
         );
       })}
     </section>
   );
+}
+
+function analysisFreshness(payload: LivePositionPayload, referenceTime: string | null): { label: string; title: string; stale: boolean } {
+  const raw =
+    payload.state.analysis_as_of ||
+    payload.state.analysis.analysis_as_of ||
+    payload.state.analysis.position_analysis.analysis_as_of ||
+    payload.state.as_of ||
+    payload.latest_snapshot.as_of;
+  const asOf = raw ? new Date(raw) : null;
+  const reference = referenceTime ? new Date(referenceTime) : new Date();
+  const valid = asOf !== null && Number.isFinite(asOf.getTime());
+  const ageMinutes = valid && Number.isFinite(reference.getTime()) ? (reference.getTime() - asOf.getTime()) / 60000 : null;
+  const stale = ageMinutes !== null && ageMinutes > 4 * 60 * 2;
+  const time = valid ? asOf.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }) : "-";
+  return {
+    label: stale ? `분석 ${time} · 오래됨` : `분석 ${time}`,
+    title: stale ? `${time}, 2캔들 초과 미갱신` : time,
+    stale,
+  };
 }
 
 function HealthGaugeRing({ score, severity }: { score: number; severity: number }) {

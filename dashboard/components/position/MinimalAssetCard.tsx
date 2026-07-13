@@ -5,6 +5,7 @@ export function MinimalAssetCard({
   meta,
   summary,
   selected = false,
+  stale = false,
   tone = "neutral",
   title,
   children,
@@ -14,6 +15,7 @@ export function MinimalAssetCard({
   meta: string;
   summary?: string | null;
   selected?: boolean;
+  stale?: boolean;
   tone?: "positive" | "negative" | "neutral" | "watch";
   title?: string;
   children?: ReactNode;
@@ -21,7 +23,7 @@ export function MinimalAssetCard({
 }) {
   return (
     <button
-      className={`positionStripCard minimal sharedAssetCard tone-${tone} ${selected ? "selected" : ""}`}
+      className={`positionStripCard minimal sharedAssetCard tone-${tone} ${stale ? "stale" : ""} ${selected ? "selected" : ""}`}
       data-testid="minimal-asset-card"
       onClick={onClick}
       title={title}

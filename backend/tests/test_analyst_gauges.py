@@ -11,6 +11,7 @@ from datetime import datetime, timedelta, timezone
 from app.analyst.gauges import (
     build_direction_gauge,
     build_gauges,
+    build_position_context,
     build_take_profit_gauge,
     event_pill_diagnostics,
     select_validated_event_pills,
@@ -41,6 +42,21 @@ def test_direction_gauge_transitioning_shows_observation_not_direction() -> None
     gauge = build_direction_gauge(confluence)
     assert gauge["transitioning"] is True
     assert "전환 관찰 중" in gauge["reason"]
+
+
+def test_direction_single_source_keeps_held_stance_when_raw_preview_differs() -> None:
+    confluence = _confluence(stance="short_leaning", long_ema=18.0, short_ema=22.0)
+    confluence["stance_state"]["transitioning"] = True
+    confluence["stance_state"]["target"] = "long_leaning"
+    confluence["stance_state"]["preview"] = {"raw_stance": "long_leaning"}
+
+    gauge = build_direction_gauge(confluence)
+    position_context = build_position_context({"direction": "short"}, gauge)
+
+    assert gauge["stance"] == "short_leaning"
+    assert gauge["preview_stance"] == "long_leaning"
+    assert position_context["alignment"] == "aligned"
+    assert "전환 관찰" in gauge["reason"]
 
 
 def test_direction_gauge_insufficient_is_inactive_centered() -> None:

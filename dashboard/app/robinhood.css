@@ -1721,9 +1721,15 @@ textarea:focus {
 }
 
 .engineActivationStrip > div:first-child span,
+.engineActivationStrip > div:first-child small,
 .engineActivationItems span {
   color: var(--terminal-muted);
   font-size: 11px;
+}
+
+.engineActivationProof {
+  font-family: var(--fce-font-number);
+  font-style: normal;
 }
 
 .engineActivationItems {

@@ -16,6 +16,7 @@ from app.db.models import (
     PositionStatus,
     utc_now,
 )
+from app.exchange.bitget.trades import timeframe_seconds
 from app.paper.policy import (
     PaperPolicy,
     apply_exit_decision,
@@ -343,7 +344,8 @@ def paper_dashboard(repo: Any, settings: Any, *, calibration: dict[str, Any] | N
     poor = bool(scoreboard.get("poor_performance"))
     actions = scoreboard.get("autonomy_actions") or []
     funnel_24h = paper_gate_funnel(repo, days=1)
-    activation = _paper_activation(repo, settings, funnel_24h)
+    funnel_7d = paper_gate_funnel(repo)
+    activation = _paper_activation(repo, settings, funnel_24h, funnel_7d)
     return {
         "scoreboard": scoreboard,
         "open_trades": [item.model_dump(mode="json") for item in open_trades],
@@ -365,13 +367,13 @@ def paper_dashboard(repo: Any, settings: Any, *, calibration: dict[str, Any] | N
             "summary": _poor_performance_summary(scoreboard),
             "actions": actions[:8] if poor else [],
         },
-        "gate_funnel": paper_gate_funnel(repo),
+        "gate_funnel": funnel_7d,
         "activation": activation,
         "live_orders_enabled": False,
     }
 
 
-def _paper_activation(repo: Any, settings: Any, funnel_24h: dict[str, Any]) -> dict[str, Any]:
+def _paper_activation(repo: Any, settings: Any, funnel_24h: dict[str, Any], funnel_7d: dict[str, Any]) -> dict[str, Any]:
     from app.worker.runtime import get_worker_status
 
     worker = get_worker_status()
@@ -379,6 +381,8 @@ def _paper_activation(repo: Any, settings: Any, funnel_24h: dict[str, Any]) -> d
     worker_ok = worker.get("status") == "running" and int(sync_job.get("consecutive_failures") or 0) == 0
     target_count = len(paper_universe(repo))
     evaluations = int(funnel_24h.get("evaluations") or 0)
+    flip_count = _stage_count(funnel_7d, "confirmed_flip")
+    entry_count = int(funnel_7d.get("entered") or 0)
     items = [
         {
             "id": "enabled",
@@ -409,7 +413,40 @@ def _paper_activation(repo: Any, settings: Any, funnel_24h: dict[str, Any]) -> d
             "reason": None if evaluations > 0 else "첫 확정 캔들 평가를 기다리는 중입니다.",
         },
     ]
-    return {"running": all(item["ok"] for item in items), "items": items, "target_count": target_count, "evaluations_24h": evaluations}
+    return {
+        "running": all(item["ok"] for item in items),
+        "items": items,
+        "target_count": target_count,
+        "evaluations_24h": evaluations,
+        "flip_count_7d": flip_count,
+        "entry_count_7d": entry_count,
+        "next_confirmed_bar_minutes": _next_confirmed_bar_minutes(repo, now=utc_now()),
+    }
+
+
+def _stage_count(funnel: dict[str, Any], stage_id: str) -> int:
+    stages = funnel.get("stages") if isinstance(funnel.get("stages"), list) else []
+    for stage in stages:
+        if isinstance(stage, dict) and stage.get("id") == stage_id:
+            return int(stage.get("count") or 0)
+    return 0
+
+
+def _next_confirmed_bar_minutes(repo: Any, *, now: datetime) -> int | None:
+    deadlines: list[datetime] = []
+    for symbol, timeframe in paper_universe(repo):
+        state = repo.get_paper_engine_state(symbol, timeframe) or {}
+        last_bar = _parse_datetime(state.get("last_bar_at"))
+        if last_bar is None:
+            continue
+        interval = max(60, timeframe_seconds(timeframe))
+        next_bar = last_bar + timedelta(seconds=interval)
+        while next_bar <= now:
+            next_bar += timedelta(seconds=interval)
+        deadlines.append(next_bar)
+    if not deadlines:
+        return None
+    return max(0, int(round((min(deadlines) - now).total_seconds() / 60)))
 
 
 def _parse_datetime(value: Any) -> datetime | None:
