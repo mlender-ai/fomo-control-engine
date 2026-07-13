@@ -162,6 +162,7 @@ export function MoneyFlowCard({ derivatives }: { derivatives: DerivativesContext
         <FlowSpark label="선물" values={flow?.futures_cvd ?? []} />
       </div>
       <p>{flow?.reason || "현물·선물 체결 시계열을 수집하고 있습니다."}</p>
+      {flow?.state === "futures_led" && flow.predictive_warning ? <em>선물 단독 견인의 예측력 미검증</em> : null}
       <footer>
         <span>{flow?.source_label || "출처 확인 중"}</span>
         <time>{flow?.as_of ? new Date(flow.as_of).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }) : "-"}</time>

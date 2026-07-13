@@ -89,6 +89,10 @@ def _validated_engine_directions(historical: dict[str, Any] | None) -> set[tuple
 def _alignment_stat(historical: dict[str, Any] | None, direction: str | None) -> dict[str, Any] | None:
     if not isinstance(historical, dict) or direction is None:
         return None
+    candidate_review = historical.get("candidate_review") if isinstance(historical.get("candidate_review"), dict) else {}
+    for item in _list(candidate_review.get("items")):
+        if str(item.get("engine") or "") == "full_alignment":
+            return item
     for stat in [*_list(historical.get("stats")), *_list(historical.get("event_stats"))]:
         signature = stat.get("signature") if isinstance(stat.get("signature"), dict) else {}
         if (

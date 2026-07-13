@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from app.db.models import MarketCandle
 from app.structure.candidates import engine
-from app.structure.liquidity.common import SwingPoint
+from app.structure.liquidity.common import SwingPoint, fractal_swings
 
 
 def candle(index: int, close: float, *, open_: float | None = None, high: float | None = None, low: float | None = None, volume: float = 100.0) -> MarketCandle:
@@ -58,6 +58,20 @@ def test_vcp_requires_three_contracting_swings_and_low_relative_volume(monkeypat
     monkeypatch.setattr(engine, "relative_volume", lambda items, index: 0.5)
     events = engine.detect_candidate_signatures(candles)["events"]
     assert any(item["engine"] == "vcp" for item in events)
+
+
+def test_candidate_swings_are_visible_only_after_two_closed_candles() -> None:
+    candles = [
+        candle(0, 100, high=101),
+        candle(1, 101, high=102),
+        candle(2, 104, high=110),
+        candle(3, 102, high=103),
+        candle(4, 101, high=102),
+    ]
+
+    assert fractal_swings(candles[:-1], window=2) == []
+    confirmed = fractal_swings(candles, window=2)
+    assert [(point.kind, point.index) for point in confirmed] == [("high", 2)]
 
 
 def test_stage2_template_uses_ma_order_slope_and_high_distance() -> None:

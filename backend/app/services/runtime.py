@@ -57,6 +57,7 @@ from app.review.params import (
 )
 from app.scout.monitor import process_scout_scan
 from app.scout.universe import run_universe_scan
+from app.validation.candidates import score_candidates as _score_candidates
 
 
 @dataclass(frozen=True)
@@ -140,6 +141,25 @@ def refresh_market_data() -> dict[str, Any]:
         "errors": errors,
         "count": len(refreshed),
     }
+
+
+def score_candidates() -> dict[str, Any]:
+    """Run the low-priority candidate replay over every held/tracked pair."""
+
+    def load(symbol: str, timeframe: str) -> list[Any]:
+        return runtime.market_provider.get_snapshot(symbol, timeframe).candles
+
+    result = _score_candidates(
+        runtime.repository,
+        runtime.settings,
+        targets=tracked_market_pairs(),
+        candle_loader=load,
+    )
+    try:
+        result["calibration_cache"] = runtime.refresh_calibration_report_cache()
+    except Exception as exc:
+        result["calibration_cache_error"] = f"{type(exc).__name__}: {exc}"
+    return result
 
 
 def tracked_market_pairs() -> list[tuple[str, str]]:

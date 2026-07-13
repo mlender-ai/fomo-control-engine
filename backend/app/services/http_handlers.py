@@ -86,6 +86,11 @@ from app.shadow.engine import (
     extract_shadow_profile,
 )
 from app.validation.decay import apply_recovery, build_self_audit
+from app.validation.candidates import (
+    approve_candidate_promotion as _approve_candidate_promotion,
+    candidate_review_status,
+    veto_candidate_promotion as _veto_candidate_promotion,
+)
 from app.validation.engine import run_validation
 
 logger = logging.getLogger(__name__)
@@ -1938,6 +1943,8 @@ def refresh_calibration_report_cache() -> dict:
         repository.list_alert_responses(limit=2000),
         self_audit=build_self_audit(repository),
     )
+    candidate_review = candidate_review_status(repository, settings)
+    summary["candidate_review"] = candidate_review
     summary["engine_params"] = [param.model_dump(mode="json") for param in repository.list_engine_params(limit=100)]
     # WO-45: 대시보드 개선 카드가 이 경로의 weekly_report를 소비한다 — 다이제스트 임베드.
     weekly = summary.get("weekly_report")
@@ -1945,6 +1952,7 @@ def refresh_calibration_report_cache() -> dict:
         from app.services import runtime as service_runtime
 
         weekly["improvement_digest"] = service_runtime.improvement_digest(scores=scores, suggestions=suggestions)
+        weekly["candidate_review"] = candidate_review
     weekly_payload = build_weekly_calibration_report(
         scores,
         suggestions,
@@ -1954,6 +1962,7 @@ def refresh_calibration_report_cache() -> dict:
     weekly_payload["improvement_digest"] = review_improvement()["digest"]
     performance = _build_performance_summary()
     weekly_payload["performance"] = performance
+    weekly_payload["candidate_review"] = candidate_review
     repository.upsert_calibration_report_cache("calibration", summary)
     repository.upsert_calibration_report_cache("weekly", weekly_payload)
     repository.upsert_calibration_report_cache("performance", performance)
@@ -1992,6 +2001,22 @@ def review_improvement() -> dict:
 def approve_signature_recovery(signature_key: str) -> dict:
     """WO-37: 복귀 제안 승인 — 제안-승인 경유로만 validated 복귀 (자율 아님)."""
     log = apply_recovery(repository, signature_key, approved_by="manual")
+    return log.model_dump(mode="json")
+
+
+def approve_candidate_promotion(signature_key: str) -> dict:
+    try:
+        log = _approve_candidate_promotion(repository, signature_key, approved_by="manual")
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return log.model_dump(mode="json")
+
+
+def veto_candidate_promotion(signature_key: str) -> dict:
+    try:
+        log = _veto_candidate_promotion(repository, signature_key, vetoed_by="manual")
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return log.model_dump(mode="json")
 
 

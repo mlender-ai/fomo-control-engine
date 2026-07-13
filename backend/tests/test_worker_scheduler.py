@@ -114,6 +114,7 @@ def test_worker_status_ignores_retired_persisted_jobs(tmp_path) -> None:
     assert "database_retention" in status["jobs"]
     assert "database_backup" in status["jobs"]
     assert "database_maintenance" not in status["jobs"]
+    assert manager.jobs["score_candidates"].interval_seconds == 86400
 
 
 def test_refresh_market_data_covers_held_and_tracked_symbols(tmp_path) -> None:

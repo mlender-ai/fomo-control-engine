@@ -361,6 +361,7 @@ def paper_dashboard(repo: Any, settings: Any, *, calibration: dict[str, Any] | N
             "suggestion_status_counts": calibration.get("suggestion_status_counts") or {},
             "engine_params": calibration.get("engine_params") or [],
             "signature_state_counts": state_counts,
+            "candidate_review": calibration.get("candidate_review") or weekly_report.get("candidate_review") or {},
         },
         "performance_action": {
             "poor": poor,

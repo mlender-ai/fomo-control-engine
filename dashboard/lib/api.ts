@@ -1118,6 +1118,9 @@ export type MoneyFlowSignal = {
   as_of: string | null;
   sample_size: number;
   confidence?: number;
+  predictive_warning?: boolean;
+  candidate_sample_size?: number;
+  candidate_win_1r_ci?: [number, number] | null;
   spot_cvd_delta_ratio: number | null;
   futures_cvd_delta_ratio: number | null;
   spot_cvd: Array<{ time: number | string; value: number }>;
@@ -1422,10 +1425,35 @@ export type CalibrationSummary = {
   wyckoff_confidence: Array<Record<string, unknown>>;
   suggestion_status_counts?: Record<string, number>;
   autonomy?: Record<string, unknown>;
+  candidate_review?: CandidateReviewStatus;
   weekly_report?: Record<string, unknown>;
   engine_params?: EngineParamVersion[];
   suggestions: CalibrationSuggestion[];
   sample_warning: string;
+};
+
+export type CandidateReviewItem = {
+  engine: string;
+  event_type: string;
+  label: string;
+  sample_size: number;
+  win_1r_pct: number | null;
+  win_2r_pct: number | null;
+  win_1r_ci: [number, number] | null;
+  remaining_samples: number;
+  source_counts: { backtest?: number; live?: number };
+  status: "candidate" | "promotion_proposed" | "validated" | "degraded" | string;
+  promotion_signature_keys: string[];
+  predictive_warning: boolean;
+  lookahead_audit: "passed" | "blocked" | string;
+};
+
+export type CandidateReviewStatus = {
+  generated_at: string;
+  policy: string;
+  veto_window_hours: number;
+  pending_promotions: number;
+  items: CandidateReviewItem[];
 };
 
 export type PerformanceMetrics = {
@@ -1542,6 +1570,7 @@ export type PaperDashboard = {
     suggestion_status_counts: Record<string, number>;
     engine_params: EngineParamVersion[];
     signature_state_counts: Record<string, number>;
+    candidate_review?: CandidateReviewStatus;
   };
   performance_action: { poor: boolean; summary: string; actions: Array<Record<string, unknown>> };
   gate_funnel: PaperGateFunnel;
@@ -1962,6 +1991,14 @@ export const api = {
     }),
   approveSignatureRecovery: (signatureKey: string) =>
     request<Record<string, unknown>>(`/api/review/signatures/${encodeURIComponent(signatureKey)}/recover`, {
+      method: "POST"
+    }),
+  approveCandidatePromotion: (signatureKey: string) =>
+    request<Record<string, unknown>>(`/api/review/signatures/${encodeURIComponent(signatureKey)}/promotion/approve`, {
+      method: "POST"
+    }),
+  vetoCandidatePromotion: (signatureKey: string) =>
+    request<Record<string, unknown>>(`/api/review/signatures/${encodeURIComponent(signatureKey)}/promotion/veto`, {
       method: "POST"
     }),
   updateTradeMemo: (tradeId: string, memo: string) =>

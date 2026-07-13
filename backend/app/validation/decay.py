@@ -269,7 +269,7 @@ def build_self_audit(repo: Any, *, now: datetime | None = None, sweep: dict[str,
     awaiting = [
         _transition_row(log)
         for log in logs
-        if not log.autonomous and log.transition in {"recover_proposed", "degrade_proposed", "quarantine_proposed"}
+        if not log.autonomous and log.transition in {"recover_proposed", "promotion_proposed", "degrade_proposed", "quarantine_proposed"}
     ]
 
     degraded_now = sorted(key for key, state in states.items() if state == "degraded")

@@ -23,6 +23,7 @@ from app.analyst.alignment import build_full_alignment
 from app.analyst.gauges import build_gauges
 from app.backtest.regimes import label_regime
 from app.backtest.service import _regime_params, backtest_line, historical_context_for_analysis, validated_event_stats_for_symbol
+from app.validation.candidates import candidate_review_status
 from app.backtest.statistics import DISCLAIMER_NET
 from app.services import http_handlers as runtime
 from app.db.models import (
@@ -584,6 +585,7 @@ def _compute_analysis_entry(
         symbol=snapshot.symbol,
         timeframe=snapshot.timeframe,
     )
+    historical["candidate_review"] = candidate_review_status(_repo(), runtime.settings)
     analysis["historical_backtest"] = historical
     if include_history:
         _record_candidate_judgments(snapshot.symbol, snapshot.timeframe, snapshot.candles)

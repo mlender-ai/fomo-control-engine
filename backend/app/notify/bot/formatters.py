@@ -635,6 +635,18 @@ def format_weekly_calibration(payload: dict[str, Any]) -> str:
     audit = payload.get("self_audit") if isinstance(payload.get("self_audit"), dict) else {}
     if audit:
         lines.extend(_format_self_audit(audit))
+    candidate_review = payload.get("candidate_review") if isinstance(payload.get("candidate_review"), dict) else {}
+    candidate_items = [item for item in candidate_review.get("items", []) if isinstance(item, dict)]
+    if candidate_items:
+        lines.extend(["", "<b>Candidate 심사 현황</b>"])
+        for item in candidate_items:
+            ci = item.get("win_1r_ci")
+            ci_text = f" · CI {ci[0]}~{ci[1]}%" if isinstance(ci, list) and len(ci) == 2 else ""
+            lines.append(
+                f"• {escape(str(item.get('label', item.get('engine', '-'))))}: "
+                f"N={item.get('sample_size', 0)} · 1R {_nullable_pct(item.get('win_1r_pct'))}{ci_text} · "
+                f"승격까지 {item.get('remaining_samples', 0)}표본 · {escape(str(item.get('status', 'candidate')))}"
+            )
     lines.append("")
     lines.append(escape(payload.get("sample_warning") or "표본 N < 10 구간은 결론을 보류합니다."))
     return "\n".join(lines)
