@@ -15,7 +15,7 @@ import {
   UploadCloud
 } from "lucide-react";
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { CompactChartWorkspace, type CompactNextPrice } from "@/components/position/CompactChartWorkspace";
+import { CompactChartWorkspace, MoneyFlowCard, type CompactNextPrice } from "@/components/position/CompactChartWorkspace";
 import { MinimalAssetCard } from "@/components/position/MinimalAssetCard";
 import { TerminalPanel, TerminalWarning } from "@/components/terminal";
 import {
@@ -1160,7 +1160,9 @@ function DerivativeEvidenceCards({ payload }: { payload: LivePositionPayload }) 
   const coinglass = derivatives?.coinglass;
   const sourceLabel = coinglass?.source_status === "ok" ? `${latest.provider ?? "bitget"} + Coinglass` : latest.provider ?? "bitget";
   return (
-    <div className="derivativeEvidenceGrid">
+    <>
+      <MoneyFlowCard derivatives={payload.state.analysis.derivatives} />
+      <div className="derivativeEvidenceGrid">
       <div className="derivativeEvidenceCard">
         <span>수급 기준</span>
         <strong>{derivatives?.as_of ? new Date(derivatives.as_of).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }) : "-"}</strong>
@@ -1181,7 +1183,8 @@ function DerivativeEvidenceCards({ payload }: { payload: LivePositionPayload }) 
         <strong>{coinglass?.source_status === "ok" ? `${signals?.liquidation_clusters?.length ?? 0}개 추정` : "Coinglass 연결 필요"}</strong>
         <em>추정 모델 · 확정 아님</em>
       </div>
-    </div>
+      </div>
+    </>
   );
 }
 

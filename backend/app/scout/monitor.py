@@ -71,6 +71,9 @@ def process_scout_scan(repo: Any, settings: Settings, payload: dict[str, Any]) -
         stance_candidate = _tracked_stance_candidate(row, settings)
         if stance_candidate is not None:
             candidates.append(stance_candidate)
+        flow_candidate = _tracked_flow_candidate(repo, row, settings)
+        if flow_candidate is not None:
+            candidates.append(flow_candidate)
         alignment_candidate = _full_alignment_candidate(repo, row, settings)
         if alignment_candidate is not None:
             candidates.append(alignment_candidate)
@@ -220,6 +223,41 @@ def _tracked_stance_candidate(row: dict[str, Any], settings: Settings) -> AlertC
             f"사유: {escape(reason)}\n추적 중인 진입 전 심볼의 확정 캔들 판정 변화입니다."
         ),
         payload={"kind": "tracked_scout", "from": previous, "to": current, "bar_at": state.get("last_bar_at")},
+    )
+
+
+def _tracked_flow_candidate(repo: Any, row: dict[str, Any], settings: Settings) -> AlertCandidate | None:
+    if not row.get("tracked") or "flow_divergence" not in settings.alert_enabled_rule_set:
+        return None
+    analysis = row.get("analysis") if isinstance(row.get("analysis"), dict) else row
+    derivatives = analysis.get("derivatives") if isinstance(analysis.get("derivatives"), dict) else {}
+    signals = derivatives.get("signals") if isinstance(derivatives.get("signals"), dict) else {}
+    flow = signals.get("money_flow") if isinstance(signals.get("money_flow"), dict) else {}
+    if flow.get("state") != "futures_led" or flow.get("provisional"):
+        return None
+    symbol = str(row.get("symbol") or "-").upper()
+    snapshots = repo.list_scout_snapshots(symbol=symbol, limit=2)
+    previous = snapshots[1] if len(snapshots) > 1 else None
+    previous_analysis = previous.analysis if previous and isinstance(previous.analysis, dict) else {}
+    previous_derivatives = previous_analysis.get("derivatives") if isinstance(previous_analysis.get("derivatives"), dict) else {}
+    previous_signals = previous_derivatives.get("signals") if isinstance(previous_derivatives.get("signals"), dict) else {}
+    previous_flow = previous_signals.get("money_flow") if isinstance(previous_signals.get("money_flow"), dict) else {}
+    if previous_flow.get("state") == "futures_led":
+        return None
+    episode = str(flow.get("as_of") or row.get("as_of") or utc_now().isoformat())
+    return AlertCandidate(
+        rule_id="flow_divergence",
+        severity="warn",
+        position_id=None,
+        symbol=symbol,
+        identity=f"tracked:{symbol}:futures_led:{episode}",
+        title="선물 단독 견인 경계",
+        message=(
+            f"🟠 추적 변화 · <b>{escape(symbol)}</b> 선물 단독 견인 경계\n"
+            "가격 상승에 선물 매수와 OI 증가가 동반됐지만 현물 유입은 확인되지 않았습니다.\n"
+            f"출처: {escape(str(flow.get('source_label') or 'Bitget 단일 거래소 프록시'))}"
+        ),
+        payload={"kind": "tracked_scout", "money_flow": flow},
     )
 
 

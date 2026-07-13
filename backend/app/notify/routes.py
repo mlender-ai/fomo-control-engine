@@ -142,6 +142,7 @@ def _known_rule_order() -> list[str]:
         "funding_extreme",
         "oi_divergence",
         "liq_cluster_near",
+        "flow_divergence",
         "setup_near",
         "setup_triggered",
         "setup_invalidated",

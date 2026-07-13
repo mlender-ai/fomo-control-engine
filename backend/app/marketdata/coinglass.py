@@ -118,6 +118,41 @@ class CoinglassProvider:
         feature_status["liquidation_heatmap"] = heatmap["status"]
         raw["liquidation_heatmap"] = heatmap.get("payload")
 
+        spot_cvd = self._probe(
+            "/api/spot/taker-buy-sell-volume/history",
+            {"symbol": coin, "interval": self.settings.coinglass_interval, "limit": 24},
+            "aggregated_spot_cvd",
+        )
+        futures_cvd = self._probe(
+            "/api/futures/taker-buy-sell-volume/history",
+            {"symbol": coin, "interval": self.settings.coinglass_interval, "limit": 24},
+            "aggregated_futures_cvd",
+        )
+        requests_used += sum(result.get("status") != "unsupported" for result in (spot_cvd, futures_cvd))
+        feature_status["aggregated_spot_cvd"] = spot_cvd["status"]
+        feature_status["aggregated_futures_cvd"] = futures_cvd["status"]
+        raw["aggregated_spot_cvd"] = spot_cvd.get("payload")
+        raw["aggregated_futures_cvd"] = futures_cvd.get("payload")
+
+        options = {"status": "unsupported", "payload": None}
+        options_oi = {"status": "unsupported", "payload": None}
+        if coin in {"BTC", "ETH"}:
+            options = self._probe(
+                "/api/option/put-call-ratio/history",
+                {"symbol": coin, "interval": self.settings.coinglass_interval, "limit": 2},
+                "options_put_call",
+            )
+            options_oi = self._probe(
+                "/api/option/open-interest/history",
+                {"symbol": coin, "interval": self.settings.coinglass_interval, "limit": 2},
+                "options_open_interest",
+            )
+            requests_used += sum(result.get("status") != "unsupported" for result in (options, options_oi))
+        feature_status["options_put_call"] = options["status"]
+        feature_status["options_open_interest"] = options_oi["status"]
+        raw["options_put_call"] = options.get("payload")
+        raw["options_open_interest"] = options_oi.get("payload")
+
         for name, result in (
             ("aggregated_oi", oi),
             ("top_trader_ls_ratio", top_ratio),
@@ -128,6 +163,10 @@ class CoinglassProvider:
             if result["status"] != "ok":
                 notes.append(f"Coinglass {name} unavailable: {result.get('message') or result['status']}")
 
+        aggregate_flow = _aggregate_money_flow(spot_cvd, futures_cvd, raw)
+        if aggregate_flow is not None:
+            raw["money_flow_aggregate"] = aggregate_flow
+        raw["options_summary"] = _options_summary(options, options_oi, coin)
         metric = _metric_from_results(normalized, oi, top_ratio, oi_weight, feature_status, notes, raw)
         events = _liquidation_events_from_result(normalized, liq_history, self.settings.coinglass_liquidation_interval)
         clusters = _clusters_from_heatmap(heatmap)
@@ -191,6 +230,13 @@ class CoinglassProvider:
             }
         return {"status": "ok", "message": "ok", "payload": payload, "feature": feature}
 
+    def _probe(self, path: str, params: dict[str, Any], feature: str) -> dict[str, Any]:
+        try:
+            return self._get(path, params, feature)
+        except (KeyError, NotImplementedError) as exc:
+            # Optional Tier 2 probes must not disable the core derivative feed.
+            return {"status": "unsupported", "message": str(exc), "payload": None, "feature": feature}
+
 
 def _metric_from_results(
     symbol: str,
@@ -225,6 +271,89 @@ def _metric_from_results(
         notes=notes,
         raw_json=raw,
     )
+
+
+def _aggregate_money_flow(spot: dict[str, Any], futures: dict[str, Any], raw: dict[str, Any]) -> dict[str, Any] | None:
+    spot_rows = _payload_rows(spot.get("payload")) if spot.get("status") == "ok" else []
+    futures_rows = _payload_rows(futures.get("payload")) if futures.get("status") == "ok" else []
+    spot_ratio = _cvd_ratio(spot_rows)
+    futures_ratio = _cvd_ratio(futures_rows)
+    if spot_ratio is None or futures_ratio is None:
+        return None
+    latest_time = _row_time(spot_rows[-1]) if spot_rows else None
+    return {
+        "as_of": (latest_time or utc_now()).isoformat(),
+        "source": "coinglass_agg",
+        "spot_source": "coinglass_agg",
+        "futures_source": "coinglass_agg",
+        "spot_cvd_delta_ratio": spot_ratio,
+        "futures_cvd_delta_ratio": futures_ratio,
+        "price_change_pct": _latest_numeric(raw.get("aggregated_oi"), ("price_change_percent_24h", "priceChangePercent24h")),
+        "oi_change_pct": _latest_numeric(raw.get("aggregated_oi"), ("open_interest_change_percent_24h", "openInterestChangePercent24h")),
+        "spot_cvd": _cvd_points(spot_rows),
+        "futures_cvd": _cvd_points(futures_rows),
+        "coverage": {"spot_available": True, "futures_available": True, "aggregation": "all_exchanges", "window_buckets": len(spot_rows)},
+        "notes": [],
+    }
+
+
+def _options_summary(result: dict[str, Any], oi_result: dict[str, Any], coin: str) -> dict[str, Any]:
+    if coin not in {"BTC", "ETH"}:
+        return {"available": False, "status": "unsupported_symbol", "reason": "옵션 데이터는 BTC/ETH만 지원합니다."}
+    if result.get("status") != "ok":
+        return {"available": False, "status": result.get("status", "locked"), "reason": "Coinglass 옵션 기능이 잠겨 있거나 플랜에 포함되지 않았습니다."}
+    rows = _payload_rows(result.get("payload"))
+    oi_rows = _payload_rows(oi_result.get("payload"))
+    latest = rows[-1] if rows else {}
+    return {
+        "available": bool(latest),
+        "status": "ok" if latest else "empty",
+        "put_call_ratio": _first_number(latest, ("put_call_ratio", "putCallRatio", "close")),
+        "options_open_interest": _first_number(oi_rows[-1], ("open_interest", "openInterest", "oi")) if oi_rows else None,
+        "source": "coinglass_agg",
+        "as_of": (_row_time(latest) or utc_now()).isoformat() if latest else None,
+    }
+
+
+def _payload_rows(payload: Any) -> list[dict[str, Any]]:
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if isinstance(data, list):
+        return [item for item in data if isinstance(item, dict)]
+    if isinstance(data, dict):
+        for key in ("data_list", "list", "rows"):
+            if isinstance(data.get(key), list):
+                return [item for item in data[key] if isinstance(item, dict)]
+    return []
+
+
+def _cvd_ratio(rows: list[dict[str, Any]]) -> float | None:
+    buy = sum(_first_number(row, ("buy_volume", "buyVolume", "taker_buy_volume", "takerBuyVolume")) or 0 for row in rows)
+    sell = sum(_first_number(row, ("sell_volume", "sellVolume", "taker_sell_volume", "takerSellVolume")) or 0 for row in rows)
+    return round((buy - sell) / (buy + sell), 8) if buy + sell > 0 else None
+
+
+def _cvd_points(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    total = 0.0
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        buy = _first_number(row, ("buy_volume", "buyVolume", "taker_buy_volume", "takerBuyVolume")) or 0
+        sell = _first_number(row, ("sell_volume", "sellVolume", "taker_sell_volume", "takerSellVolume")) or 0
+        total += buy - sell
+        result.append({"time": (_row_time(row) or utc_now()).isoformat(), "value": round(total, 8)})
+    return result
+
+
+def _latest_numeric(payload: Any, keys: tuple[str, ...]) -> float | None:
+    rows = _payload_rows(payload)
+    return _first_number(rows[-1], keys) if rows else None
+
+
+def _first_number(row: dict[str, Any], keys: tuple[str, ...]) -> float | None:
+    for key in keys:
+        value = _optional_float(row.get(key))
+        if value is not None:
+            return value
+    return None
 
 
 def _snapshot_from_metric(metric: DerivativeMetric) -> DerivativeDataSnapshot:

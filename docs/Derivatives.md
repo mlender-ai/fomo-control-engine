@@ -17,6 +17,7 @@ Tier 2 is locked unless `FCE_COINGLASS_API_KEY` is configured:
 - Top trader account ratio: Coinglass `/api/futures/top-long-short-account-ratio/history`
 - OI-weighted funding: Coinglass `/api/futures/funding-rate/oi-weight-history`
 - Liquidation price clusters: Coinglass `/api/futures/liquidation/aggregated-heatmap/model2`
+- Aggregated spot/futures CVD and BTC/ETH options are optional feature probes described in `MoneyFlow.md`.
 
 If a Coinglass endpoint returns an auth, plan, or rate-limit error, only that feature is marked `locked` or `error`; Bitget collection continues.
 
@@ -124,14 +125,14 @@ Default config:
 ```text
 FCE_DERIVATIVE_TRACKING_INTERVAL_SECONDS=300
 FCE_COINGLASS_RATE_LIMIT_PER_MINUTE=30
-FCE_COINGLASS_REQUESTS_PER_SYMBOL=6
+FCE_COINGLASS_REQUESTS_PER_SYMBOL=10
 ```
 
 Budget:
 
 ```text
 requests_per_tick = 30 * (300 / 60) = 150
-max_symbols_per_tick = floor(150 / 6) = 25
+max_symbols_per_tick = floor(150 / 10) = 15
 ```
 
-Therefore 20 symbols fit in one 5-minute tick. If tracked symbols exceed the tick budget, the worker uses round-robin selection.
+Therefore 15 symbols fit in one 5-minute tick at the worst-case feature budget. If tracked symbols exceed the tick budget, the worker uses round-robin selection. Unsupported optional probes are not counted as consumed requests.

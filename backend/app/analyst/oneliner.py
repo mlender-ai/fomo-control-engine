@@ -49,6 +49,11 @@ PHRASES: dict[str, dict[str, Stance]] = {
         "레벨 사이 중립": "횡보",
     },
     "derivatives": {
+        "현물 유입 동반 상승": "상방",
+        "선물 단독 견인 경계": "하방",
+        "하락 구간 현물 매집 관찰": "상방",
+        "레버리지 청산 진행": "횡보",
+        "혼조": "횡보",
         "롱 쏠림 경계": "하방",
         "숏 쏠림 경계": "상방",
         "중립": "횡보",
@@ -167,6 +172,7 @@ def _overall_stance(counts: dict[str, int], confluence: dict[str, Any] | None) -
 #      단, 반대측 최고 신뢰 이벤트 ≥ 65면 confidence_class는 "약"으로 강등 (혼합 신호 노출)
 #   3. 그 외 (undetermined, 레인지 없음/이벤트 근거 부족) → "레인지 미형성"
 
+
 def _wyckoff_line(analysis: dict[str, Any]) -> dict[str, Any]:
     wyckoff = analysis.get("wyckoff") if isinstance(analysis.get("wyckoff"), dict) else {}
     if not wyckoff:
@@ -206,6 +212,7 @@ def _wyckoff_line(analysis: dict[str, Any]) -> dict[str, Any]:
 # ── 유동성 ────────────────────────────────────────────────────────
 # 결정 트리: 확정 스윕(최근 것 우선) → 방향. 확정 스윕 없고 풀 존재 → "풀 대기". 그 외 "신호 없음".
 
+
 def _liquidity_line(analysis: dict[str, Any]) -> dict[str, Any]:
     liquidity = analysis.get("liquidity") if isinstance(analysis.get("liquidity"), dict) else {}
     if not liquidity:
@@ -232,6 +239,7 @@ def _liquidity_line(analysis: dict[str, Any]) -> dict[str, Any]:
 # ── 볼륨 ──────────────────────────────────────────────────────────
 # 결정 트리: 실체결 없음 → "데이터 부족". |delta| ≥ 0.2 → 우위 (0.45 강 / 0.3 중 / 약). 그 외 "균형".
 
+
 def _volume_line(analysis: dict[str, Any]) -> dict[str, Any]:
     xray = analysis.get("volume_xray") if isinstance(analysis.get("volume_xray"), dict) else {}
     if not xray or not xray.get("data_available"):
@@ -251,6 +259,7 @@ def _volume_line(analysis: dict[str, Any]) -> dict[str, Any]:
 
 # ── 하모닉 ────────────────────────────────────────────────────────
 # 결정 트리: 최고 신뢰 패턴 방향 → 반전 구간. PRZ 거리 >5%면 "약" 강등. 패턴 없으면 "패턴 없음".
+
 
 def _harmonic_line(analysis: dict[str, Any]) -> dict[str, Any]:
     patterns = [pattern for pattern in (analysis.get("harmonic_patterns") or []) if isinstance(pattern, dict)]
@@ -279,6 +288,7 @@ def _harmonic_line(analysis: dict[str, Any]) -> dict[str, Any]:
 # ── 레벨 ──────────────────────────────────────────────────────────
 # 결정 트리: 지지-저항 밴드 내 위치. 하단 1/3 (지지 근접·상회) → "지지 위 유지",
 # 상단 1/3 → "저항 아래 정체", 중앙 → "레벨 사이 중립". 레벨 없으면 "데이터 부족".
+
 
 def _levels_line(analysis: dict[str, Any]) -> dict[str, Any]:
     levels = analysis.get("price_levels") if isinstance(analysis.get("price_levels"), dict) else {}
@@ -314,11 +324,24 @@ def _levels_line(analysis: dict[str, Any]) -> dict[str, Any]:
 # 결정 트리: 펀딩 극단 양수(롱 과밀) → "롱 쏠림 경계"(하방), 극단 음수 → "숏 쏠림 경계"(상방).
 # 극단 아님 → "중립". 파생 데이터 없음 → "데이터 부족".
 
+
 def _derivatives_line(analysis: dict[str, Any]) -> dict[str, Any]:
     derivatives = analysis.get("derivatives") if isinstance(analysis.get("derivatives"), dict) else {}
     signals = derivatives.get("signals") if isinstance(derivatives.get("signals"), dict) else {}
     if not signals:
         return _line("derivatives", FALLBACK_PHRASE, "약", "derivatives=absent")
+    money_flow = signals.get("money_flow") if isinstance(signals.get("money_flow"), dict) else {}
+    if money_flow.get("available"):
+        state = str(money_flow.get("state") or "mixed")
+        phrase = {
+            "spot_led": "현물 유입 동반 상승",
+            "futures_led": "선물 단독 견인 경계",
+            "spot_absorb": "하락 구간 현물 매집 관찰",
+            "delever": "레버리지 청산 진행",
+            "mixed": "혼조",
+        }.get(state, "혼조")
+        confidence = "약" if money_flow.get("provisional") else "강" if state != "mixed" else "중"
+        return _line("derivatives", phrase, confidence, f"derivatives.money_flow={state}")
     funding = signals.get("funding_state") if isinstance(signals.get("funding_state"), dict) else {}
     crowding = signals.get("crowding_score") if isinstance(signals.get("crowding_score"), dict) else {}
     try:
@@ -340,6 +363,7 @@ def _derivatives_line(analysis: dict[str, Any]) -> dict[str, Any]:
 # ── 지표 ──────────────────────────────────────────────────────────
 # 결정 트리: 3표 합산 — RSI(>55 / <45), MACD 히스토그램 부호, 볼린저 중심선 대비 종가.
 # |합| 3 → 강, 2 → 중, 1 → 약. 0 → "중립".
+
 
 def _indicators_line(analysis: dict[str, Any]) -> dict[str, Any]:
     indicators = analysis.get("indicators") if isinstance(analysis.get("indicators"), dict) else {}

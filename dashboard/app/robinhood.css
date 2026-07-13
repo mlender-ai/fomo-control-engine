@@ -1104,6 +1104,43 @@ textarea:focus {
   font-weight: 550;
 }
 
+.moneyFlowCard {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--rh-border);
+  border-radius: var(--rh-radius-md);
+  background: var(--rh-canvas);
+}
+
+.moneyFlowCard > header,
+.moneyFlowCard > footer,
+.moneyFlowSparks > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.moneyFlowCard > header span,
+.moneyFlowSparks span,
+.moneyFlowCard > footer,
+.moneyFlowCard small {
+  color: var(--rh-muted);
+  font-size: 11px;
+}
+
+.moneyFlowCard > header strong { color: var(--rh-white); font-size: 14px; }
+.moneyFlowCard.positive > header strong { color: var(--rh-green); }
+.moneyFlowCard.negative > header strong { color: var(--rh-orange); }
+.moneyFlowCard p { margin: 0; color: var(--rh-muted); font-size: 12px; line-height: 1.45; }
+.moneyFlowCard.inactive { opacity: .58; }
+.moneyFlowSparks { display: grid; gap: 7px; }
+.moneyFlowSparks svg { width: 68%; height: 22px; overflow: visible; }
+.moneyFlowSparks polyline { fill: none; stroke: var(--rh-muted); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.moneyFlowSparks > div:first-child polyline { stroke: var(--rh-green); }
+.moneyFlowCard.negative .moneyFlowSparks > div:last-child polyline { stroke: var(--rh-orange); }
+
 .directionGaugeTrack i,
 .pressureGaugeTrack i {
   height: 5px;

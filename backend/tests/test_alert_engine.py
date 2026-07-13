@@ -11,6 +11,7 @@ from app.core.config import Settings
 from app.db.repository import MemoryRepository
 from app.exchange.mock import MockMarketDataProvider
 from app.notify.alerts import AlertEngine
+from app.notify.rules import evaluate_position_alerts, rearm_signals
 from app.notify.state import NotificationState
 from app.notify.telegram import TelegramSender
 
@@ -117,6 +118,7 @@ def _derivatives_payload(
     divergence_state: str = "price_up_oi_up",
     coinglass_status: str = "locked",
     cluster_price: float | None = None,
+    money_flow_state: str | None = None,
 ) -> dict:
     clusters = []
     if cluster_price is not None:
@@ -146,8 +148,37 @@ def _derivatives_payload(
             },
             "crowding_score": {"score": 82, "label": "쏠림"},
             "liquidation_clusters": clusters,
+            "money_flow": {
+                "state": money_flow_state,
+                "label": "선물 단독 견인 - 레버리지 상승 경계",
+                "available": money_flow_state is not None,
+                "provisional": False,
+                "source_label": "Bitget 단일 거래소 프록시",
+                "as_of": "2026-07-05T12:00:00+00:00",
+            },
         },
     }
+
+
+def test_flow_divergence_uses_stable_identity_and_rearms_only_after_state_exit() -> None:
+    settings = _settings(alert_enabled_rules="flow_divergence")
+    position_id = uuid4()
+    payload = _payload(
+        position_id=position_id,
+        derivatives=_derivatives_payload(money_flow_state="futures_led"),
+    )
+
+    candidates = evaluate_position_alerts(payload, settings)
+
+    assert [candidate.identity for candidate in candidates] == ["futures_led"]
+    state_key = candidates[0].state_key
+    assert rearm_signals(payload, settings)[state_key] is False
+
+    cleared = _payload(
+        position_id=position_id,
+        derivatives=_derivatives_payload(money_flow_state="spot_led"),
+    )
+    assert rearm_signals(cleared, settings)[state_key] is True
 
 
 @pytest.fixture()

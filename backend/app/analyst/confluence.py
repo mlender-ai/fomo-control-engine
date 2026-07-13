@@ -366,6 +366,21 @@ def _derivative_evidence(analysis: dict[str, Any], as_of: str | None) -> list[di
     derivatives = analysis.get("derivatives") if isinstance(analysis.get("derivatives"), dict) else {}
     signals = derivatives.get("signals") if isinstance(derivatives.get("signals"), dict) else {}
     result: list[dict[str, Any]] = []
+    money_flow = signals.get("money_flow") if isinstance(signals.get("money_flow"), dict) else None
+    if money_flow and money_flow.get("available") and not money_flow.get("provisional"):
+        state = str(money_flow.get("state") or "mixed")
+        direction = "long" if state in {"spot_led", "spot_absorb"} else "short" if state == "futures_led" else "neutral"
+        if state != "mixed":
+            result.append(
+                _evidence(
+                    "derivatives",
+                    str(money_flow.get("label") or "자금 흐름"),
+                    direction,
+                    _num(money_flow.get("confidence"), 0),
+                    money_flow.get("as_of") or signals.get("as_of") or as_of,
+                    source=money_flow,
+                )
+            )
     divergence = signals.get("oi_price_divergence") if isinstance(signals.get("oi_price_divergence"), dict) else None
     if divergence:
         state = str(divergence.get("state") or "")

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.db.models import DerivativeMetric, LiquidationEvent
+from app.marketdata.money_flow import classify_money_flow, coinglass_flow_observation, observations_from_metrics
 
 MIN_FUNDING_SAMPLES = 20
 
@@ -28,7 +29,41 @@ def build_derivative_signals(
             "funding_state": None,
             "crowding_score": None,
             "liquidation_clusters": liquidation_clusters or [],
+            "money_flow": classify_money_flow(None, []),
         }
+    observations = observations_from_metrics(ordered)
+    current_observation = next(
+        (
+            observation
+            for metric in ordered
+            if metric.source == "bitget"
+            if isinstance(metric.raw_json, dict)
+            if isinstance((observation := metric.raw_json.get("money_flow_observation")), dict)
+        ),
+        observations[0] if observations else None,
+    )
+    coinglass_observation = next(
+        (observation for metric in ordered if metric.source == "coinglass" if (observation := coinglass_flow_observation(metric)) is not None),
+        None,
+    )
+    if coinglass_observation is not None:
+        bitget_observation = current_observation or {}
+        current_observation = {
+            **bitget_observation,
+            **coinglass_observation,
+            "price_change_pct": coinglass_observation.get("price_change_pct")
+            if coinglass_observation.get("price_change_pct") is not None
+            else bitget_observation.get("price_change_pct"),
+            "oi_change_pct": coinglass_observation.get("oi_change_pct")
+            if coinglass_observation.get("oi_change_pct") is not None
+            else bitget_observation.get("oi_change_pct"),
+            "coverage": {
+                **(bitget_observation.get("coverage") or {}),
+                **(coinglass_observation.get("coverage") or {}),
+            },
+        }
+    current_source = current_observation.get("source") if isinstance(current_observation, dict) else None
+    source_history = [item for item in observations if item.get("source") == current_source] if current_source else observations
     return {
         "as_of": latest.as_of.isoformat(),
         "coverage": {
@@ -40,6 +75,7 @@ def build_derivative_signals(
         "funding_state": funding_state(latest, ordered),
         "crowding_score": crowding_score(latest, ordered),
         "liquidation_clusters": liquidation_clusters or [],
+        "money_flow": classify_money_flow(current_observation, source_history),
     }
 
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -32,6 +33,9 @@ from app.demo.derivatives import FakeDerivativesProvider
 from app.demo.seed import seed_demo_data as _seed_demo_data
 from app.marketdata.bitget_derivatives import BitgetDerivProvider
 from app.marketdata.coinglass import CoinglassProvider
+from app.marketdata.money_flow import flow_observation
+from app.marketdata.signals import build_derivative_signals
+from app.exchange.bitget.trades import timeframe_seconds
 from app.paper.service import paper_dashboard as _paper_dashboard
 from app.paper.service import paper_gate_funnel as _paper_gate_funnel
 from app.paper.service import paper_universe as _paper_universe
@@ -159,7 +163,27 @@ def refresh_derivative_data() -> dict[str, Any]:
         try:
             bitget_collection = bitget_provider.collect(symbol)
             bitget_metric = _with_oi_change(bitget_collection.metrics[0])
+            reference_price: float | None = None
+            if not runtime.settings.demo_mode and hasattr(runtime.market_provider, "get_spot_trade_flow"):
+                market_snapshot = runtime.market_provider.get_snapshot(symbol, "4h")
+                confirmed_candles, confirmed_at, confirmed_change = _confirmed_money_flow_context(
+                    market_snapshot.candles,
+                    "4h",
+                )
+                futures_flow = runtime.market_provider.get_trade_flow(symbol, "4h", confirmed_candles)
+                spot_flow = runtime.market_provider.get_spot_trade_flow(symbol, "4h", confirmed_candles)
+                observation = flow_observation(
+                    price_change_pct=confirmed_change,
+                    spot_flow=spot_flow,
+                    futures_flow=futures_flow,
+                    oi_change_pct=bitget_metric.oi_change_pct,
+                    as_of=confirmed_at,
+                    confirmed=bool(confirmed_candles),
+                )
+                reference_price = float(confirmed_candles[-1].close) if confirmed_candles else None
+                bitget_metric = bitget_metric.model_copy(update={"raw_json": {**bitget_metric.raw_json, "money_flow_observation": observation}})
             runtime.repository.add_derivative_metric(bitget_metric)
+            _record_money_flow_candidate(bitget_metric, reference_price=reference_price)
             if bitget_collection.snapshot is not None:
                 bitget_snapshot = bitget_collection.snapshot.model_copy(update={"open_interest_change_pct": bitget_metric.oi_change_pct})
                 runtime.repository.add_derivative_snapshot(bitget_snapshot)
@@ -217,6 +241,22 @@ def refresh_derivative_data() -> dict[str, Any]:
     }
 
 
+def _confirmed_money_flow_context(candles: list[Any], timeframe: str) -> tuple[list[Any], Any, float | None]:
+    now = utc_now()
+    duration = timedelta(seconds=timeframe_seconds(timeframe))
+    confirmed = sorted(
+        (candle for candle in candles if candle.timestamp + duration <= now),
+        key=lambda candle: candle.timestamp,
+    )
+    if not confirmed:
+        return [], now, None
+    current = confirmed[-1]
+    window = confirmed[-24:]
+    reference = window[0]
+    change = ((current.close / reference.close) - 1) * 100 if reference.close else None
+    return confirmed, current.timestamp + duration, change
+
+
 def latest_flow(symbol: str) -> dict[str, Any]:
     normalized = symbol.upper()
     context = derivative_context_for_symbol(runtime.repository, runtime.settings, normalized)
@@ -225,6 +265,39 @@ def latest_flow(symbol: str) -> dict[str, Any]:
         "history": [item.model_dump(mode="json") for item in runtime.repository.list_derivative_snapshots(symbol=normalized, provider="bitget", limit=50)],
         "rate_budget": _coinglass_budget(runtime.settings, len(tracked_symbols())),
     }
+
+
+def _record_money_flow_candidate(metric: DerivativeMetric, *, reference_price: float | None = None) -> None:
+    history = runtime.repository.list_derivative_metrics(symbol=metric.symbol, limit=500)
+    flow = build_derivative_signals(history).get("money_flow")
+    if not isinstance(flow, dict) or flow.get("state") != "futures_led" or flow.get("provisional"):
+        return
+    try:
+        as_of = datetime.fromisoformat(str(flow.get("as_of")).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        as_of = metric.as_of
+    runtime.repository.add_judgment(
+        JudgmentLedgerEntry(
+            judgment_id=f"candidate:{metric.symbol}:4h:futures_led:{as_of.isoformat()}",
+            position_id=UUID(int=0),
+            source_type="candidate_signature",
+            source_id=f"futures_led:{metric.symbol}:{as_of.isoformat()}",
+            as_of=as_of,
+            type="candidate_signature",
+            claim={
+                "symbol": metric.symbol,
+                "timeframe": "4h",
+                "engine": "money_flow",
+                "event_type": "futures_led_rally",
+                "direction": "short",
+                "condition": "observe_pullback_after_futures_led_rally",
+                "expected_move": "down",
+                "price": reference_price,
+                "lifecycle_state": "candidate",
+                "components": flow,
+            },
+        )
+    )
 
 
 def _with_oi_change(metric: DerivativeMetric) -> DerivativeMetric:

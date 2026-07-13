@@ -1097,6 +1097,25 @@ export type DerivativeSnapshot = {
   liquidation_clusters: Array<Record<string, unknown>>;
   source_status: "ok" | "partial" | "locked" | "error" | string;
   notes: string[];
+  raw_json?: Record<string, unknown>;
+};
+
+export type MoneyFlowSignal = {
+  state: "spot_led" | "futures_led" | "spot_absorb" | "delever" | "mixed";
+  label: string;
+  available: boolean;
+  provisional: boolean;
+  reason: string;
+  source: "bitget_spot" | "coinglass_agg" | string;
+  source_label: string;
+  as_of: string | null;
+  sample_size: number;
+  confidence?: number;
+  spot_cvd_delta_ratio: number | null;
+  futures_cvd_delta_ratio: number | null;
+  spot_cvd: Array<{ time: number | string; value: number }>;
+  futures_cvd: Array<{ time: number | string; value: number }>;
+  coverage: Record<string, unknown>;
 };
 
 export type DerivativeSignals = {
@@ -1128,6 +1147,7 @@ export type DerivativeSignals = {
     formula: string;
   } | null;
   liquidation_clusters: Array<Record<string, unknown>>;
+  money_flow?: MoneyFlowSignal;
 };
 
 export type DerivativesContext = {

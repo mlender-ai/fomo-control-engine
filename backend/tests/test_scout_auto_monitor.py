@@ -355,3 +355,51 @@ def test_full_alignment_shares_universe_daily_limit_and_symbol_cooldown() -> Non
     blocked = process_scout_scan(repo, settings, {"rows": [row], "scanned_at": utc_now().isoformat(), "count": 1})
 
     assert blocked["_alert_candidate_objects"] == []
+
+
+def test_tracked_money_flow_alerts_once_per_futures_led_episode() -> None:
+    repo = MemoryRepository()
+    settings = _settings(
+        alert_enabled_rules="flow_divergence",
+        scout_auto_arm_enabled=False,
+    )
+    start = utc_now()
+
+    def payload(state: str, offset_hours: int) -> dict:
+        as_of = (start + timedelta(hours=offset_hours)).isoformat()
+        return {
+            "rows": [
+                {
+                    "symbol": "BTCUSDT",
+                    "timeframe": "4h",
+                    "as_of": as_of,
+                    "mark_price": 100,
+                    "tracked": True,
+                    "setup_candidates": [],
+                    "analysis": {
+                        "derivatives": {
+                            "signals": {
+                                "money_flow": {
+                                    "state": state,
+                                    "as_of": as_of,
+                                    "provisional": False,
+                                    "source_label": "Bitget 단일 거래소 프록시",
+                                }
+                            }
+                        }
+                    },
+                }
+            ],
+            "scanned_at": as_of,
+            "count": 1,
+        }
+
+    first = process_scout_scan(repo, settings, payload("futures_led", 0))
+    same_episode = process_scout_scan(repo, settings, payload("futures_led", 4))
+    process_scout_scan(repo, settings, payload("mixed", 8))
+    reentered = process_scout_scan(repo, settings, payload("futures_led", 12))
+
+    assert [item.rule_id for item in first["_alert_candidate_objects"]] == ["flow_divergence"]
+    assert same_episode["_alert_candidate_objects"] == []
+    assert [item.rule_id for item in reentered["_alert_candidate_objects"]] == ["flow_divergence"]
+    assert first["_alert_candidate_objects"][0].identity != reentered["_alert_candidate_objects"][0].identity

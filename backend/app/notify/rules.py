@@ -57,6 +57,7 @@ RULE_LABELS: dict[str, str] = {
     "evidence_insufficient": "판단 근거 부족",
     "periodic_pulse": "정기 상태 펄스",
     "full_alignment": "만장일치 정렬 발굴",
+    "flow_divergence": "현물·선물 흐름 역행",
 }
 
 RULE_SEVERITY: dict[str, AlertSeverity] = {
@@ -88,6 +89,7 @@ RULE_SEVERITY: dict[str, AlertSeverity] = {
     "stance_flipped": "warn",
     "evidence_insufficient": "info",
     "periodic_pulse": "info",
+    "flow_divergence": "warn",
     "full_alignment": "info",
 }
 
@@ -153,6 +155,10 @@ def rearm_signals(payload: dict[str, Any], settings: Settings) -> dict[str, bool
     signals[f"liq_unknown_high_lev:{position_id}:missing"] = bool(position_liq is not None or leverage < 10)
     signals[f"status_worsened:{position_id}:severity"] = True
     signals[f"health_drop:{position_id}:health"] = True
+    derivatives = _derivatives(payload) or {}
+    derivative_signals = derivatives.get("signals") if isinstance(derivatives.get("signals"), dict) else {}
+    money_flow = derivative_signals.get("money_flow") if isinstance(derivative_signals.get("money_flow"), dict) else {}
+    signals[f"flow_divergence:{position_id}:futures_led"] = money_flow.get("state") != "futures_led"
     return signals
 
 
@@ -385,11 +391,7 @@ def _take_profit_candidates(payload: dict[str, Any]) -> list[AlertCandidate]:
         if trigger["kind"] != "take_profit":
             continue
         price = _float(trigger.get("price"))
-        if (
-            price is None
-            or not _is_valid_take_profit_target(direction, position, price)
-            or not _take_profit_reached(direction, current, price)
-        ):
+        if price is None or not _is_valid_take_profit_target(direction, position, price) or not _take_profit_reached(direction, current, price):
             continue
         distance = _take_profit_progress_pct(direction, current, price)
         title = f"{trigger.get('label', '익절')} 도달"
@@ -655,6 +657,29 @@ def _derivative_position_candidates(payload: dict[str, Any], settings: Settings)
     signals = derivatives.get("signals") if isinstance(derivatives.get("signals"), dict) else {}
     current = _current_price(payload)
     candidates: list[AlertCandidate] = []
+    money_flow = signals.get("money_flow") if isinstance(signals.get("money_flow"), dict) else None
+    if "flow_divergence" in enabled and money_flow and money_flow.get("state") == "futures_led" and not money_flow.get("provisional"):
+        title = "선물 단독 견인 경계"
+        message = "\n".join(
+            [
+                _headline(payload, "🟠", title),
+                "가격 상승에 선물 매수와 OI 증가가 동반됐지만 현물 CVD 유입은 확인되지 않았습니다.",
+                "→ 레버리지 주도 상승 여부를 확인할 구간입니다. 이 관측은 방향 확정이 아니라 상승의 자금 구성을 뜻합니다.",
+                f"출처: {escape(str(money_flow.get('source_label') or 'Bitget 단일 거래소 프록시'))} · 기준 {escape(str(money_flow.get('as_of') or '-'))}",
+            ]
+        )
+        candidates.append(
+            _candidate(
+                "flow_divergence",
+                "warn",
+                position,
+                state,
+                "futures_led",
+                title,
+                message,
+                {"money_flow": money_flow, "number_sources": []},
+            )
+        )
     if "funding_extreme" in enabled:
         funding = signals.get("funding_state") if isinstance(signals.get("funding_state"), dict) else None
         funding_value = _float((funding or {}).get("funding"))
@@ -964,6 +989,7 @@ def _rule_threshold(rule_id: str, settings: Settings) -> float | int | str | Non
         "funding_extreme": "p90",
         "oi_divergence": 4,
         "liq_cluster_near": settings.alert_trigger_near_pct,
+        "flow_divergence": "30일 백분위",
         "setup_near": settings.scout_setup_near_pct,
         "setup_triggered": None,
         "setup_invalidated": None,

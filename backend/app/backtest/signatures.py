@@ -52,7 +52,17 @@ def signatures_from_analysis(analysis: dict[str, Any]) -> list[dict[str, Any]]:
     signatures.extend(_harmonic_signatures(analysis, asset_class, timeframe))
     signatures.extend(_level_signatures(analysis, asset_class, timeframe))
     signatures.extend(_full_alignment_signatures(analysis, asset_class, timeframe))
+    signatures.extend(_money_flow_signatures(analysis, asset_class, timeframe))
     return _dedupe(signatures)
+
+
+def _money_flow_signatures(analysis: dict[str, Any], asset_class: str, timeframe: str) -> list[dict[str, Any]]:
+    derivatives = analysis.get("derivatives") if isinstance(analysis.get("derivatives"), dict) else {}
+    signals = derivatives.get("signals") if isinstance(derivatives.get("signals"), dict) else {}
+    flow = signals.get("money_flow") if isinstance(signals.get("money_flow"), dict) else {}
+    if flow.get("state") != "futures_led" or flow.get("provisional") or not flow.get("available"):
+        return []
+    return [_signature("money_flow", "futures_led_rally", "candidate", "short", asset_class, timeframe)]
 
 
 def _full_alignment_signatures(analysis: dict[str, Any], asset_class: str, timeframe: str) -> list[dict[str, Any]]:
@@ -95,6 +105,7 @@ def signature_label(signature: dict[str, Any]) -> str:
         "vcp": "변동성 수축",
         "stage2_template": "2단계 상승 조건",
         "full_alignment": "만장일치 정렬",
+        "money_flow": "자금 흐름",
     }.get(engine, engine)
     event_label = {
         "sweep_low": "저점 스윕",
@@ -110,6 +121,7 @@ def signature_label(signature: dict[str, Any]) -> str:
         "contraction": "수축 확인",
         "stage2_active": "조건 진입",
         "unanimous": "확인",
+        "futures_led_rally": "선물 단독 견인",
     }.get(event, event)
     direction_label = "롱" if direction == "long" else "숏" if direction == "short" else "중립"
     return f"{engine_label} {event_label} · {strength} · {direction_label}"

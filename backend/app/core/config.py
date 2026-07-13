@@ -43,7 +43,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("FCE_BITGET_API_PASSPHRASE", "BITGET_API_PASSPHRASE"),
     )
     bitget_trade_fill_lookback_hours: int = Field(
-        48,
+        96,
         validation_alias=AliasChoices("FCE_BITGET_TRADE_FILL_LOOKBACK_HOURS", "BITGET_TRADE_FILL_LOOKBACK_HOURS"),
     )
     bitget_trade_fill_cache_ttl_seconds: int = Field(
@@ -98,7 +98,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("FCE_COINGLASS_RATE_LIMIT_PER_MINUTE", "COINGLASS_RATE_LIMIT_PER_MINUTE"),
     )
     coinglass_requests_per_symbol: int = Field(
-        6,
+        10,
         validation_alias=AliasChoices("FCE_COINGLASS_REQUESTS_PER_SYMBOL", "COINGLASS_REQUESTS_PER_SYMBOL"),
     )
     db_backup_enabled: bool = Field(
@@ -660,7 +660,7 @@ class Settings(BaseSettings):
     )
     alert_rules_enabled: str = Field(
         "trigger_near,invalidation_breach,take_profit_hit,status_worsened,health_drop,liq_proximity,liq_unknown_high_lev,wyckoff_event,data_stall,funding_extreme,oi_divergence,liq_cluster_near,setup_near,setup_triggered,setup_invalidated,intent_approaching,intent_zone_entered,intent_zone_entered_partial,intent_invalidated,universe_discovery,mdd_limit_warn,mdd_limit_critical,"
-        "position_opened,position_closed,verdict_changed,stance_flipped,evidence_insufficient,periodic_pulse,full_alignment",
+        "position_opened,position_closed,verdict_changed,stance_flipped,evidence_insufficient,periodic_pulse,full_alignment,flow_divergence",
         validation_alias=AliasChoices("FCE_ALERT_RULES_ENABLED", "ALERT_RULES_ENABLED"),
     )
     # WO-44 포지션 라이프사이클 알림.

@@ -52,7 +52,7 @@ class BitgetMarketDataProvider(MarketDataProvider):
         product_type: str = "USDT-FUTURES",
         margin_coin: str = "USDT",
         trade_cache: BitgetTradeFillCache | None = None,
-        trade_fill_lookback_hours: int = 48,
+        trade_fill_lookback_hours: int = 96,
         trade_fill_cache_ttl_seconds: int = 60,
         snapshot_cache_ttl_seconds: int = 20,
     ) -> None:
@@ -87,6 +87,9 @@ class BitgetMarketDataProvider(MarketDataProvider):
 
     def get_trade_flow(self, symbol: str, timeframe: str, candles: list[MarketCandle]) -> dict:
         return _run(self.get_trade_flow_async(symbol, timeframe, candles))
+
+    def get_spot_trade_flow(self, symbol: str, timeframe: str, candles: list[MarketCandle]) -> dict:
+        return _run(self.get_spot_trade_flow_async(symbol, timeframe, candles))
 
     def get_derivative_snapshot(self, symbol: str, ratio_period: str = "5m") -> dict:
         return _run(self.get_derivative_snapshot_async(symbol, ratio_period))
@@ -376,22 +379,70 @@ class BitgetMarketDataProvider(MarketDataProvider):
                 await asyncio.sleep(0.25)
         return sorted(fills, key=lambda fill: fill.timestamp)
 
+    async def get_spot_trade_fills(
+        self,
+        symbol: str,
+        start_time: datetime,
+        end_time: datetime,
+        limit: int = 1000,
+        max_pages: int = 8,
+    ) -> list[BitgetTradeFill]:
+        normalized = normalize_symbol(symbol)
+        fills: list[BitgetTradeFill] = []
+        seen: set[str] = set()
+        id_less_than: str | None = None
+        page_limit = min(max(limit, 1), 1000)
+        for page in range(max_pages):
+            payload = await self.client.public_get(
+                "/api/v2/spot/market/fills-history",
+                {
+                    "symbol": normalized,
+                    "startTime": str(int(start_time.timestamp() * 1000)),
+                    "endTime": str(int(end_time.timestamp() * 1000)),
+                    "limit": str(page_limit),
+                    "idLessThan": id_less_than,
+                },
+            )
+            rows = payload.get("data")
+            if not isinstance(rows, list):
+                raise BitgetAPIError("spot_mapping_unavailable", f"Bitget spot market is unavailable for {normalized}.")
+            page_fills = [parse_trade_fill(row, normalized) for row in rows if isinstance(row, dict)]
+            for fill in page_fills:
+                if fill.trade_id not in seen:
+                    seen.add(fill.trade_id)
+                    fills.append(fill)
+            if len(rows) < page_limit or not page_fills:
+                break
+            oldest = min(page_fills, key=lambda item: item.timestamp)
+            if oldest.timestamp <= start_time:
+                break
+            id_less_than = oldest.trade_id
+            if page < max_pages - 1:
+                await asyncio.sleep(0.25)
+        return sorted(fills, key=lambda fill: fill.timestamp)
+
+    async def get_spot_trade_flow_async(self, symbol: str, timeframe: str, candles: list[MarketCandle]) -> dict:
+        return await self._market_trade_flow_async(symbol, timeframe, candles, market="spot")
+
     async def get_trade_flow_async(self, symbol: str, timeframe: str, candles: list[MarketCandle]) -> dict:
+        return await self._market_trade_flow_async(symbol, timeframe, candles, market="futures")
+
+    async def _market_trade_flow_async(self, symbol: str, timeframe: str, candles: list[MarketCandle], *, market: str) -> dict:
         if not candles:
             return _empty_trade_flow("no_candles", "캔들 데이터가 없어 실체결 집계를 만들 수 없습니다.")
         normalized = normalize_symbol(symbol)
+        cache_symbol = normalized if market == "futures" else f"SPOT:{normalized}"
         ordered = sorted(candles, key=lambda candle: candle.timestamp)
-        end_time = datetime.now(timezone.utc)
+        now = datetime.now(timezone.utc)
         candle_end = ordered[-1].timestamp + timedelta(seconds=timeframe_seconds(timeframe))
-        if candle_end > end_time:
-            end_time = candle_end
+        end_time = min(now, candle_end)
         start_time = max(
             ordered[0].timestamp,
             end_time - timedelta(hours=self.trade_fill_lookback_hours),
         )
         fills = (
             self.trade_cache.fresh_fills(
-                normalized,
+                cache_symbol,
                 timeframe,
                 start_time,
                 end_time,
@@ -403,14 +454,14 @@ class BitgetMarketDataProvider(MarketDataProvider):
         source = "bitget_fills_history_cache" if fills is not None else "bitget_fills_history"
         error_note = None
         if fills is None:
-            key_lock = self._key_lock(self._trade_flow_locks, (normalized, timeframe.lower()))
+            key_lock = self._key_lock(self._trade_flow_locks, (cache_symbol, timeframe.lower()))
             await asyncio.to_thread(key_lock.acquire)
             try:
                 # Another request may have populated the cache while this request
                 # waited. Recheck before calling the paginated fills endpoint.
                 fills = (
                     self.trade_cache.fresh_fills(
-                        normalized,
+                        cache_symbol,
                         timeframe,
                         start_time,
                         end_time,
@@ -423,16 +474,29 @@ class BitgetMarketDataProvider(MarketDataProvider):
                     source = "bitget_fills_history_cache"
                 else:
                     try:
-                        fills = await self.get_trade_fills(normalized, start_time, end_time)
+                        fills = (
+                            await self.get_spot_trade_fills(normalized, start_time, end_time)
+                            if market == "spot"
+                            else await self.get_trade_fills(normalized, start_time, end_time)
+                        )
                         if self.trade_cache is not None:
-                            self.trade_cache.store_fills(normalized, timeframe, start_time, end_time, fills)
+                            self.trade_cache.store_fills(cache_symbol, timeframe, start_time, end_time, fills)
                     except BitgetAPIError as exc:
-                        stale = self.trade_cache.stale_fills(normalized, start_time, end_time) if self.trade_cache else []
+                        stale = self.trade_cache.stale_fills(cache_symbol, start_time, end_time) if self.trade_cache else []
                         if not stale:
-                            return _empty_trade_flow(
+                            empty = _empty_trade_flow(
                                 "fills_unavailable",
-                                "Bitget 실체결 데이터를 가져오지 못해 체결 델타 판정을 보류합니다.",
+                                "Bitget 현물 마켓 매핑 또는 체결 데이터를 확인할 수 없습니다."
+                                if market == "spot"
+                                else "Bitget 실체결 데이터를 가져오지 못해 체결 델타 판정을 보류합니다.",
                             )
+                            empty.update(
+                                {
+                                    "source": "bitget_spot" if market == "spot" else "bitget_futures",
+                                    "status": "mapping_unavailable" if market == "spot" else "unavailable",
+                                }
+                            )
+                            return empty
                         fills = stale
                         source = "bitget_fills_history_stale_cache"
                         error_note = str(exc)
@@ -447,7 +511,9 @@ class BitgetMarketDataProvider(MarketDataProvider):
             notes.append("Bitget 실체결 API 오류로 캐시된 체결 데이터를 사용했습니다.")
         return {
             "method": "trade_fills" if fills else "data_unavailable",
-            "source": source,
+            "source": "bitget_spot" if market == "spot" else "bitget_futures",
+            "cache_source": source,
+            "status": "ok",
             "data_available": bool(fills),
             "coverage": {
                 "from": start_time.isoformat(),
