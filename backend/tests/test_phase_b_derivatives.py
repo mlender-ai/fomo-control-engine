@@ -7,6 +7,7 @@ import pytest
 
 from app.api.deps import configure_runtime
 from app.core.config import Settings
+import app.db.maintenance as maintenance_module
 from app.db.maintenance import enforce_retention, run_database_backup
 import app.db.migrations as migration_module
 from app.db.migrations import DatabaseMigrationError, run_migrations
@@ -22,6 +23,7 @@ from app.db.models import (
     PositionStatus,
 )
 from app.db.repository import MemoryRepository, create_repository
+from app.db.sqlite_utils import connect_sqlite
 from app.derivatives.engine import flow_summary
 from app.exchange.mock import MockMarketDataProvider
 from app.marketdata.coinglass import CoinglassProvider
@@ -133,7 +135,9 @@ def test_database_backup_and_retention_records_events(tmp_path) -> None:
     assert backup_dir.exists()
     assert list(backup_dir.glob("fce_*.db.gz"))
     assert "restore_table_counts" in backup["details"]
+    assert backup["details"]["restore_table_counts"] == backup["details"]["table_counts"]
     assert retention["details"]["derivative_snapshots_deleted"] == 1
+    assert retention["details"]["permanent_tables_verified"] is True
     remaining = repo.list_derivative_snapshots("BTCUSDT")
     assert [item.id for item in remaining] == [fresh_snapshot.id]
     event_types = {event.event_type for event in repo.list_database_maintenance_events(limit=10)}
@@ -262,6 +266,7 @@ def test_retention_downsamples_snapshots_and_preserves_judgment_data(tmp_path) -
         heartbeat_count = connection.execute("SELECT COUNT(*) FROM worker_heartbeat WHERE job_name = 'old_job'").fetchone()[0]
 
     assert retention["details"]["position_snapshots_deleted"] > 0
+    assert retention["details"]["position_snapshot_aggregate_verified"] is True
     assert 1 <= len(closed_remaining) < len(closed_snapshots)
     assert len(open_remaining) == 12
     assert {alert.id for alert in alerts} == {preserved_alert.id}
@@ -269,6 +274,94 @@ def test_retention_downsamples_snapshots_and_preserves_judgment_data(tmp_path) -
     assert old_alert.id not in {alert.id for alert in alerts}
     assert trade_fill_count == 0
     assert heartbeat_count == 0
+
+
+def test_retention_preserves_permanent_ledger_and_competition_tables(tmp_path) -> None:
+    db_path = tmp_path / "permanent.db"
+    repo = create_repository(f"sqlite:///{db_path}")
+    old = (datetime.now(timezone.utc) - timedelta(days=400)).isoformat()
+    statements = (
+        (
+            "INSERT INTO judgment_ledger (id, position_id, judgment_id, as_of, type, created_at, payload) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("j1", "p1", "judgment-1", old, "paper_entry", old, "{}"),
+        ),
+        (
+            "INSERT INTO judgment_scores (id, position_id, trade_id, judgment_id, outcome, created_at, payload) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("js1", "p1", "t1", "judgment-1", "correct", old, "{}"),
+        ),
+        (
+            "INSERT INTO paper_trades (id, symbol, timeframe, status, entry_bar_at, exit_at, updated_at, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            ("pt1", "BTCUSDT", "4h", "closed", old, old, old, "{}"),
+        ),
+        (
+            "INSERT INTO paper_engine_states (symbol, timeframe, state, updated_at) VALUES (?, ?, ?, ?)",
+            ("BTCUSDT", "4h", "{}", old),
+        ),
+        (
+            "INSERT INTO paper_gate_funnel (symbol, timeframe, bar_at, payload, created_at) VALUES (?, ?, ?, ?, ?)",
+            ("BTCUSDT", "4h", old, "{}", old),
+        ),
+        (
+            "INSERT INTO backtest_stats (id, signature_key, symbol, timeframe, asset_class, scope, generated_at, sample_size, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ("bt1", "sig", "BTCUSDT", "4h", "crypto", "symbol", old, 30, "{}"),
+        ),
+        (
+            "INSERT INTO trades (id, position_id, symbol, created_at, payload) VALUES (?, ?, ?, ?, ?)",
+            ("t1", "p1", "BTCUSDT", old, "{}"),
+        ),
+        (
+            "INSERT INTO autonomy_log (id, signature_key, new_state, transition, autonomous, created_at, payload) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("a1", "sig", "validated", "promotion_applied", 0, old, "{}"),
+        ),
+    )
+    with sqlite3.connect(db_path) as connection:
+        for statement, params in statements:
+            connection.execute(statement, params)
+
+    result = enforce_retention(Settings(database_url=f"sqlite:///{db_path}"), repo)
+
+    assert result["details"]["permanent_tables_verified"] is True
+    assert result["details"]["permanent_table_counts"] == {
+        "judgment_ledger": 1,
+        "judgment_scores": 1,
+        "paper_trades": 1,
+        "paper_engine_states": 1,
+        "paper_gate_funnel": 1,
+        "backtest_stats": 1,
+        "trades": 1,
+        "autonomy_log": 1,
+    }
+
+
+def test_backup_failure_records_warn_alert(monkeypatch, tmp_path) -> None:
+    db_path = tmp_path / "backup-failure.db"
+    repo = create_repository(f"sqlite:///{db_path}")
+    settings = Settings(database_url=f"sqlite:///{db_path}", db_backup_dir=str(tmp_path / "backups"))
+
+    def fail_gzip(*_args, **_kwargs):
+        raise OSError("gzip unavailable")
+
+    monkeypatch.setattr(maintenance_module.gzip, "open", fail_gzip)
+    result = run_database_backup(settings, repo)
+
+    assert result["status"] == "error"
+    warning = next(alert for alert in repo.list_alerts(limit=10) if alert.rule_id == "database_backup_failed")
+    assert warning.severity == "warn"
+    assert "gzip unavailable" in warning.payload["message"]
+    assert not list((tmp_path / "backups").glob("fce_*.db.gz"))
+
+
+def test_sqlite_uses_wal_and_busy_timeout(tmp_path) -> None:
+    db_path = tmp_path / "sqlite-pragmas.db"
+    create_repository(f"sqlite:///{db_path}")
+
+    with connect_sqlite(db_path) as connection:
+        journal_mode = str(connection.execute("PRAGMA journal_mode").fetchone()[0]).lower()
+        busy_timeout = int(connection.execute("PRAGMA busy_timeout").fetchone()[0])
+
+    assert journal_mode == "wal"
+    assert busy_timeout == 5000
+    assert Settings().db_trade_fill_retention_days == 7
 
 
 def test_retention_downsamples_derivative_metrics_and_prunes_liquidations(
