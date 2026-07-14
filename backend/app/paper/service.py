@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Iterable
-from uuid import uuid4
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from app.analyst.gauges import build_gauges
 from app.analyst.signature_registry import current_state
-from app.backtest.signatures import signatures_from_analysis
+from app.backtest.candidate_scoring import CANDIDATE_ENGINES
+from app.backtest.outcomes import atr
+from app.backtest.signatures import SetupSignature, signature_key, signatures_from_analysis
 from app.db.models import (
     Direction,
     JudgmentLedgerEntry,
@@ -24,10 +26,20 @@ from app.paper.policy import (
     evaluate_exit,
     open_trade,
 )
+from app.paper.user_fills import (
+    USER_FILL_SYNC_SYMBOL,
+    USER_FILL_SYNC_TIMEFRAME,
+    sync_user_fills as _sync_user_fills,
+)
 
 
 AnalysisLoader = Callable[[str, str], dict[str, Any]]
 SimulationLoader = Callable[[str, str, str, float], dict[str, Any]]
+
+VALIDATION_BOOTSTRAP_MAX_POSITIONS = 2
+VALIDATION_BOOTSTRAP_MIN_EVIDENCE = 3
+VALIDATION_BOOTSTRAP_MIN_CHECKLIST_PASSED = 3
+VALIDATION_BOOTSTRAP_MIN_RR = 1.0
 
 
 def policy_from_settings(settings: Any, asset_class: str = "crypto") -> PaperPolicy:
@@ -44,6 +56,8 @@ def policy_from_settings(settings: Any, asset_class: str = "crypto") -> PaperPol
         min_rr=float(settings.paper_min_rr),
         min_signature_ci_low_pct=float(settings.universe_backtest_min_ci_low_pct),
         max_holding_bars=int(settings.paper_max_holding_bars),
+        take_profit_atr_k1=float(getattr(settings, "paper_take_profit_atr_k1", 1.0)),
+        take_profit_atr_k2=float(getattr(settings, "paper_take_profit_atr_k2", 2.0)),
         taker_fee_pct=float(settings.backtest_taker_fee_pct),
         slippage_pct=slippage,
     )
@@ -71,6 +85,7 @@ def run_paper_engine(
     if not bool(settings.paper_engine_enabled):
         return {"enabled": False, "evaluated": 0, "opened": 0, "partial": 0, "closed": 0, "errors": []}
     now = now or utc_now()
+    suppressed_duplicates = _suppress_duplicate_bootstrap_trades(repo, now=now)
     opened = partial = closed = evaluated = 0
     skipped_same_bar = 0
     errors: list[dict[str, str]] = []
@@ -126,7 +141,7 @@ def run_paper_engine(
                 )
                 if exit_decision.action == "partial":
                     partial += 1
-                    events.append(_paper_event("partial", updated))
+                    events.append(_paper_event("partial", updated, reason=exit_decision.reason))
                 elif exit_decision.action == "close":
                     closed += 1
                     updated = _finalize_closed_trade(repo, updated, analysis)
@@ -141,6 +156,7 @@ def run_paper_engine(
                 signature_gates = {"signature_gate": False, "regime_gate": False}
                 action_plan: dict[str, Any] = {}
                 invalidation = take_profit = None
+                target_plan: dict[str, Any] = {}
                 evidence: list[dict[str, Any]] = []
                 entry_decision = None
                 if direction is not None:
@@ -149,7 +165,16 @@ def run_paper_engine(
                     qualified = _dict(signature_gates.get("qualified")) or None
                     action_plan = _dict(simulation.get("action_plan"))
                     invalidation = _price_from(action_plan.get("invalidation") or action_plan.get("engine_invalidation"))
-                    take_profit = _first_take_profit(action_plan)
+                    target_plan = _paper_target_plan(
+                        analysis,
+                        gauges,
+                        bar=bar,
+                        direction=direction,
+                        invalidation_price=invalidation,
+                        action_plan=action_plan,
+                        policy=policy_from_settings(settings, str(analysis.get("asset_class") or "unknown")),
+                    )
+                    take_profit = _float(target_plan.get("take_profit_1"))
                     evidence = _direction_evidence(confluence, direction)
                     entry_decision = evaluate_entry(
                         stance_state=_stance_state(confluence),
@@ -157,7 +182,8 @@ def run_paper_engine(
                         evidence_count=len(evidence),
                         checklist_passed=int(simulation.get("checklist_passed") or 0),
                         checklist_total=int(simulation.get("checklist_total") or 0),
-                        rr_ratio=_float(simulation.get("rr_ratio")),
+                        rr_ratio=_float(target_plan.get("rr_ratio")),
+                        invalidation_hygiene=simulation.get("invalidation_too_close") is not True,
                         survives_to_invalidation=simulation.get("survives_to_invalidation") is True,
                         validated_signature=bool(signature_gates["signature_gate"]),
                         signature_ci_low_pct=(float(settings.universe_backtest_min_ci_low_pct) if signature_gates["regime_gate"] else None),
@@ -210,12 +236,26 @@ def run_paper_engine(
                             "items": simulation.get("checklist") or [],
                             "passed": simulation.get("checklist_passed"),
                             "total": simulation.get("checklist_total"),
-                            "rr_ratio": simulation.get("rr_ratio"),
+                            "rr_ratio": target_plan.get("rr_ratio"),
+                            "simulation_rr_ratio": simulation.get("rr_ratio"),
                             "survives_to_invalidation": simulation.get("survives_to_invalidation"),
                         },
                         stance_snapshot=_stance_state(confluence),
                         signature_snapshot=qualified or {},
                         policy=policy_from_settings(settings, str(analysis.get("asset_class") or "unknown")),
+                        take_profit_2_price=_float(target_plan.get("take_profit_2")),
+                        entry_atr=_float(target_plan.get("atr")),
+                        target_plan=target_plan,
+                    )
+                    paper_trade = paper_trade.model_copy(
+                        update={
+                            "entry_evidence": {
+                                **paper_trade.entry_evidence,
+                                "signature_gate_mode": signature_gates.get("gate_mode"),
+                                "candidate_bootstrap": signature_gates.get("gate_mode") == "candidate_bootstrap",
+                                "exit_policy": "ATR TP1 부분익절 · TP2 전량익절 · 시간 만료 시 stance 재검토",
+                            }
+                        }
                     )
                     repo.upsert_paper_trade(paper_trade)
                     _record_entry_judgment(repo, paper_trade)
@@ -227,12 +267,25 @@ def run_paper_engine(
                 timeframe,
                 {
                     "last_bar_at": bar_key,
+                    "last_price": bar.close,
+                    "stance_state": _stance_state(confluence),
                     "take_profit_pressure_high_streak": high_streak,
                     "updated_at": now.isoformat(),
                 },
             )
         except Exception as exc:  # each symbol is isolated; worker continues
             errors.append({"symbol": symbol, "error": f"{type(exc).__name__}: {exc}"})
+
+    bootstrap = _bootstrap_validation_positions(
+        repo,
+        settings,
+        analysis_loader=analysis_loader,
+        simulation_loader=simulation_loader,
+        now=now,
+    )
+    opened += int(bootstrap.get("opened") or 0)
+    events.extend(bootstrap.get("events") or [])
+    errors.extend(bootstrap.get("errors") or [])
 
     diagnostic = _gate_diagnostic_event(repo, now=now)
     if diagnostic is not None:
@@ -245,9 +298,194 @@ def run_paper_engine(
         "closed": closed,
         "skipped_same_bar": skipped_same_bar,
         "open_count": len(repo.list_paper_trades(status="open", limit=100)),
+        "suppressed_duplicates": suppressed_duplicates,
         "events": events,
         "errors": errors,
     }
+
+
+def _bootstrap_validation_positions(
+    repo: Any,
+    settings: Any,
+    *,
+    analysis_loader: AnalysisLoader,
+    simulation_loader: SimulationLoader,
+    now: datetime,
+) -> dict[str, Any]:
+    """Seed the 4-week paper benchmark once without weakening normal flip entries."""
+    benchmark = paper_benchmark(repo)
+    started_at = _parse_datetime(benchmark.get("started_at"))
+    if started_at is None:
+        return {"opened": 0, "events": [], "errors": []}
+    benchmark_trades = [trade for trade in repo.list_paper_trades(limit=5000) if trade.entry_at >= started_at]
+    if benchmark_trades:
+        return {"opened": 0, "events": [], "errors": []}
+
+    capacity = max(0, int(settings.paper_max_open_positions) - len(repo.list_paper_trades(status="open", limit=100)))
+    target = min(capacity, VALIDATION_BOOTSTRAP_MAX_POSITIONS)
+    if target <= 0:
+        return {"opened": 0, "events": [], "errors": []}
+
+    candidates: list[dict[str, Any]] = []
+    errors: list[dict[str, str]] = []
+    for symbol, timeframe in paper_universe(repo):
+        try:
+            if any(trade.timeframe == timeframe for trade in repo.list_paper_trades(status="open", symbol=symbol, limit=10)):
+                continue
+            payload = analysis_loader(symbol, timeframe)
+            analysis = _dict(payload.get("analysis"))
+            confluence = _dict(_dict(payload.get("analyst_briefing")).get("confluence"))
+            gauges = _dict(payload.get("gauges"))
+            bar = _confirmed_bar(analysis, gauges)
+            direction = _stance_direction(confluence)
+            stance_state = _stance_state(confluence)
+            if bar is None or direction is None or stance_state.get("transitioning") is True:
+                continue
+
+            evidence = _direction_evidence(confluence, direction)
+            simulation = simulation_loader(symbol, timeframe, direction.value, bar.close)
+            action_plan = _dict(simulation.get("action_plan"))
+            invalidation = _price_from(action_plan.get("invalidation") or action_plan.get("engine_invalidation"))
+            target_plan = _paper_target_plan(
+                analysis,
+                gauges,
+                bar=bar,
+                direction=direction,
+                invalidation_price=invalidation,
+                action_plan=action_plan,
+                policy=policy_from_settings(settings, str(analysis.get("asset_class") or "unknown")),
+            )
+            take_profit = _float(target_plan.get("take_profit_1"))
+            checklist_passed = int(simulation.get("checklist_passed") or 0)
+            checklist_total = int(simulation.get("checklist_total") or 0)
+            rr_ratio = _float(target_plan.get("rr_ratio"))
+            signature_gates = _signature_gate_evaluation(repo, settings, analysis, payload, direction)
+            gates = {
+                "confirmed_stance": True,
+                "not_transitioning": True,
+                "evidence": len(evidence) >= VALIDATION_BOOTSTRAP_MIN_EVIDENCE,
+                "checklist": checklist_total > 0 and checklist_passed >= VALIDATION_BOOTSTRAP_MIN_CHECKLIST_PASSED,
+                "invalidation_hygiene": simulation.get("invalidation_too_close") is not True,
+                "risk_reward": rr_ratio is not None and rr_ratio >= VALIDATION_BOOTSTRAP_MIN_RR,
+                "liquidation_safety": simulation.get("survives_to_invalidation") is True,
+                "action_levels": invalidation is not None and take_profit is not None,
+                "event_window": _earnings_clear(analysis),
+                "freshness": _data_fresh(bar, timeframe, now),
+                "signature_gate": bool(signature_gates.get("signature_gate")),
+                "regime_gate": bool(signature_gates.get("regime_gate")),
+            }
+            if not all(gates.values()) or invalidation is None or take_profit is None or rr_ratio is None:
+                continue
+            candidates.append(
+                {
+                    "symbol": symbol,
+                    "timeframe": timeframe,
+                    "analysis": analysis,
+                    "bar": bar,
+                    "direction": direction,
+                    "evidence": evidence,
+                    "simulation": simulation,
+                    "invalidation": invalidation,
+                    "take_profit": take_profit,
+                    "target_plan": target_plan,
+                    "stance_state": stance_state,
+                    "signature_gates": signature_gates,
+                    "gates": gates,
+                    "rank": (checklist_passed / checklist_total, rr_ratio, len(evidence)),
+                }
+            )
+        except Exception as exc:
+            errors.append({"symbol": symbol, "error": f"{type(exc).__name__}: {exc}"})
+
+    opened: list[PaperTrade] = []
+    for candidate in sorted(candidates, key=lambda item: item["rank"], reverse=True)[:target]:
+        simulation = candidate["simulation"]
+        signature_gates = candidate["signature_gates"]
+        trade = open_trade(
+            trade_id=uuid5(
+                NAMESPACE_URL,
+                f"fce:paper:validation-bootstrap:{started_at.isoformat()}:{candidate['symbol']}:{candidate['timeframe']}",
+            ),
+            symbol=candidate["symbol"],
+            timeframe=candidate["timeframe"],
+            asset_class=str(candidate["analysis"].get("asset_class") or "unknown"),
+            direction=candidate["direction"],
+            bar=candidate["bar"],
+            invalidation_price=candidate["invalidation"],
+            take_profit_price=candidate["take_profit"],
+            evidence={
+                "entry_mode": "validation_bootstrap",
+                "items": candidate["evidence"],
+                "gates": candidate["gates"],
+                "signature_gate_mode": signature_gates.get("gate_mode"),
+                "candidate_bootstrap": signature_gates.get("gate_mode") == "candidate_bootstrap",
+                "note": "4주 대결 최초 표본 수집용 · 성적 시그니처 게이트 통과",
+                "exit_policy": "ATR TP1 부분익절 · TP2 전량익절 · 시간 만료 시 stance 재검토",
+            },
+            checklist={
+                "entry_mode": "validation_bootstrap",
+                "items": simulation.get("checklist") or [],
+                "passed": simulation.get("checklist_passed"),
+                "total": simulation.get("checklist_total"),
+                "rr_ratio": candidate["target_plan"].get("rr_ratio"),
+                "simulation_rr_ratio": simulation.get("rr_ratio"),
+                "survives_to_invalidation": simulation.get("survives_to_invalidation"),
+            },
+            stance_snapshot=candidate["stance_state"],
+            signature_snapshot={
+                "entry_mode": "validation_bootstrap",
+                "signature_gate": bool(signature_gates.get("signature_gate")),
+                "regime_gate": bool(signature_gates.get("regime_gate")),
+                "gate_mode": signature_gates.get("gate_mode"),
+                "qualified": signature_gates.get("qualified"),
+            },
+            policy=policy_from_settings(settings, str(candidate["analysis"].get("asset_class") or "unknown")),
+            take_profit_2_price=_float(candidate["target_plan"].get("take_profit_2")),
+            entry_atr=_float(candidate["target_plan"].get("atr")),
+            target_plan=candidate["target_plan"],
+        )
+        repo.upsert_paper_trade(trade)
+        _record_entry_judgment(repo, trade)
+        opened.append(trade)
+
+    return {
+        "opened": len(opened),
+        "events": [_paper_event("opened", trade) for trade in opened],
+        "errors": errors,
+    }
+
+
+def _suppress_duplicate_bootstrap_trades(repo: Any, *, now: datetime) -> int:
+    groups: dict[tuple[str, str, datetime], list[PaperTrade]] = {}
+    for trade in repo.list_paper_trades(status="open", limit=5000):
+        if _dict(trade.entry_evidence).get("entry_mode") != "validation_bootstrap":
+            continue
+        groups.setdefault((trade.symbol, trade.timeframe, trade.entry_bar_at), []).append(trade)
+
+    suppressed = 0
+    for trades in groups.values():
+        ordered = sorted(trades, key=lambda trade: (trade.created_at, str(trade.id)))
+        for duplicate in ordered[1:]:
+            repo.upsert_paper_trade(
+                duplicate.model_copy(
+                    update={
+                        "status": "closed",
+                        "remaining_quantity": 0.0,
+                        "exit_bar_at": duplicate.entry_bar_at,
+                        "exit_at": duplicate.entry_at,
+                        "exit_price": duplicate.entry_price,
+                        "exit_reason": "duplicate_bootstrap_suppressed",
+                        "gross_pnl_usdt": 0.0,
+                        "costs_usdt": 0.0,
+                        "net_pnl_usdt": 0.0,
+                        "net_return_pct": 0.0,
+                        "loss_tags": [*duplicate.loss_tags, "duplicate_bootstrap_suppressed"],
+                        "updated_at": now,
+                    }
+                )
+            )
+            suppressed += 1
+    return suppressed
 
 
 BENCHMARK_SYMBOL = "__SYSTEM__"
@@ -282,48 +520,97 @@ def start_paper_benchmark(repo: Any, *, reset: bool = False, now: datetime | Non
     return {**paper_benchmark(repo), "created": True, "target_count": len(paper_universe(repo))}
 
 
+def sync_user_fills(repo: Any, provider: Any, *, now: datetime | None = None) -> dict[str, Any]:
+    benchmark = paper_benchmark(repo)
+    return _sync_user_fills(
+        repo,
+        provider,
+        benchmark_started_at=_parse_datetime(benchmark.get("started_at")),
+        now=now,
+    )
+
+
 def paper_scoreboard(repo: Any, settings: Any, *, now: datetime | None = None) -> dict[str, Any]:
     now = now or utc_now()
     benchmark = paper_benchmark(repo)
     started_at = _parse_datetime(benchmark.get("started_at"))
     all_paper = repo.list_paper_trades(limit=5000)
+    all_paper_closed = [
+        item
+        for item in all_paper
+        if item.status == "closed"
+        and item.exit_reason != "duplicate_bootstrap_suppressed"
+    ]
     effective_start = started_at or min((item.entry_at for item in all_paper), default=now)
-    paper_closed = [item for item in all_paper if item.status == "closed" and item.entry_at >= effective_start]
-    rolling_start = max(now - timedelta(days=28), effective_start)
-    user_trades = [trade for trade in repo.list_trades() if trade.created_at >= effective_start]
-    rolling_paper = [trade for trade in paper_closed if (trade.exit_at or trade.updated_at) >= rolling_start]
-    rolling_user = [trade for trade in user_trades if trade.created_at >= rolling_start]
-    paper_metrics = _paper_metrics(paper_closed)
-    user_metrics = _user_metrics(user_trades)
-    rolling_engine = _paper_metrics(rolling_paper)
-    rolling_user_metrics = _user_metrics(rolling_user)
+    recent_start = now - timedelta(days=28)
+    comparison_paper = [trade for trade in all_paper_closed if trade.entry_at >= effective_start]
+    comparison_user = repo.list_user_trades(since=effective_start, limit=5000)
+    recent_paper = [trade for trade in all_paper_closed if (trade.exit_at or trade.updated_at) >= recent_start]
+    recent_user = repo.list_user_trades(since=recent_start, limit=5000)
+    paper_metrics = _paper_metrics(comparison_paper)
+    user_metrics = _user_metrics(comparison_user)
+    recent_engine = _paper_metrics(recent_paper)
+    recent_user_metrics = _user_metrics(recent_user)
+    sample_sufficient = bool(paper_metrics["sample_sufficient"] and user_metrics["sample_sufficient"])
     engine_leading = bool(
-        rolling_engine["trade_count"] > 0
-        and rolling_user_metrics["trade_count"] > 0
-        and rolling_engine["net_return_pct"] > rolling_user_metrics["net_return_pct"]
-        and rolling_engine["mdd_pct"] <= rolling_user_metrics["mdd_pct"]
+        sample_sufficient
+        and paper_metrics["net_return_pct"] > user_metrics["net_return_pct"]
+        and paper_metrics["mdd_pct"] <= user_metrics["mdd_pct"]
     )
-    poor = bool(paper_metrics["trade_count"] > 0 and (paper_metrics["win_rate_pct"] < 45.0 or paper_metrics["mdd_pct"] > float(settings.paper_poor_mdd_pct)))
+    paper_win_rate = _float(paper_metrics.get("win_rate_pct"))
+    poor = bool(
+        paper_metrics["trade_count"] > 0
+        and ((paper_win_rate is not None and paper_win_rate < 45.0) or paper_metrics["mdd_pct"] > float(settings.paper_poor_mdd_pct))
+    )
     autonomy = repo.list_autonomy_logs(since=effective_start, limit=100)
+    fill_sync = repo.get_paper_engine_state(USER_FILL_SYNC_SYMBOL, USER_FILL_SYNC_TIMEFRAME) or {
+        "status": "waiting",
+        "stored_fill_count": 0,
+        "reconstructed_trade_count": 0,
+        "pnl_status": "reconstructed",
+    }
     return {
         "as_of": now.isoformat(),
         "started_at": started_at.isoformat() if started_at else None,
         "benchmark": benchmark,
         "engine": paper_metrics,
         "user": user_metrics,
+        "user_fill_sync": fill_sync,
         "equity_curve": {
-            "engine": _paper_equity_curve(paper_closed),
-            "user": _user_equity_curve(user_trades),
+            "engine": _paper_equity_curve(comparison_paper),
+            "user": _user_equity_curve(comparison_user),
+        },
+        "competition": {
+            "window": "benchmark_anchor",
+            "started_at": effective_start.isoformat(),
+            "engine": paper_metrics,
+            "user": user_metrics,
+            "engine_leading": engine_leading,
+            "verdict": "insufficient_samples" if not sample_sufficient else "engine_leading" if engine_leading else "no_engine_advantage",
+            "equity_curve": {
+                "engine": _paper_equity_curve(comparison_paper),
+                "user": _user_equity_curve(comparison_user),
+            },
+        },
+        "recent_28d": {
+            "window": "rolling_28d",
+            "started_at": recent_start.isoformat(),
+            "engine": recent_engine,
+            "user": recent_user_metrics,
+            "equity_curve": {
+                "engine": _paper_equity_curve(recent_paper),
+                "user": _user_equity_curve(recent_user),
+            },
         },
         "rolling_4w": {
-            "engine": rolling_engine,
-            "user": rolling_user_metrics,
+            "engine": paper_metrics,
+            "user": user_metrics,
             "engine_leading": engine_leading,
-            "verdict": "engine_leading" if engine_leading else "no_engine_advantage",
+            "verdict": "insufficient_samples" if not sample_sufficient else "engine_leading" if engine_leading else "no_engine_advantage",
         },
         "poor_performance": poor,
         "autonomy_actions": [item.model_dump(mode="json") for item in autonomy],
-        "fairness_note": "조건 상이 — 절대 금액이 아닌 방향·타이밍 판단력의 비율 비교",
+        "fairness_note": "대결 판정은 시작 앵커 이후만 비교 · 최근 28일은 참고 성과 · 내 실계좌 손익은 인증 체결 기반 재구성",
         "live_orders_enabled": False,
     }
 
@@ -334,12 +621,23 @@ def paper_dashboard(repo: Any, settings: Any, *, calibration: dict[str, Any] | N
 
     scoreboard = paper_scoreboard(repo, settings)
     open_trades = repo.list_paper_trades(status="open", limit=100)
-    closed_trades = repo.list_paper_trades(status="closed", limit=500)
+    closed_trades = [
+        trade
+        for trade in repo.list_paper_trades(status="closed", limit=500)
+        if trade.exit_reason != "duplicate_bootstrap_suppressed"
+    ]
     states = state_map(repo)
     state_counts = {"validated": 0, "degraded": 0, "quarantined": 0, "candidate": 0}
     for state in states.values():
         state_counts[state] = state_counts.get(state, 0) + 1
     calibration = calibration or {}
+    candidate_review = calibration.get("candidate_review") if isinstance(calibration.get("candidate_review"), dict) else {}
+    reviewed_keys = set(states)
+    for item in candidate_review.get("signatures", []) if isinstance(candidate_review.get("signatures"), list) else []:
+        if not isinstance(item, dict) or item.get("signature_key") in reviewed_keys:
+            continue
+        state = str(item.get("state") or "candidate")
+        state_counts[state] = state_counts.get(state, 0) + 1
     weekly_report = calibration.get("weekly_report") or {}
     poor = bool(scoreboard.get("poor_performance"))
     actions = scoreboard.get("autonomy_actions") or []
@@ -348,7 +646,7 @@ def paper_dashboard(repo: Any, settings: Any, *, calibration: dict[str, Any] | N
     activation = _paper_activation(repo, settings, funnel_24h, funnel_7d)
     return {
         "scoreboard": scoreboard,
-        "open_trades": [item.model_dump(mode="json") for item in open_trades],
+        "open_trades": [_open_trade_payload(repo, item) for item in open_trades],
         "closed_trades": [item.model_dump(mode="json") for item in closed_trades],
         "calibration": {
             "computed_at": calibration.get("computed_at"),
@@ -361,6 +659,7 @@ def paper_dashboard(repo: Any, settings: Any, *, calibration: dict[str, Any] | N
             "suggestion_status_counts": calibration.get("suggestion_status_counts") or {},
             "engine_params": calibration.get("engine_params") or [],
             "signature_state_counts": state_counts,
+            "candidate_review": candidate_review or {"candidate_count": 0, "promotion_ready": 0, "signatures": []},
         },
         "performance_action": {
             "poor": poor,
@@ -382,7 +681,13 @@ def _paper_activation(repo: Any, settings: Any, funnel_24h: dict[str, Any], funn
     target_count = len(paper_universe(repo))
     evaluations = int(funnel_24h.get("evaluations") or 0)
     flip_count = _stage_count(funnel_7d, "confirmed_flip")
-    entry_count = int(funnel_7d.get("entered") or 0)
+    recent_trade_count = sum(
+        1
+        for trade in repo.list_paper_trades(limit=5000)
+        if trade.entry_at >= utc_now() - timedelta(days=7)
+        and trade.exit_reason != "duplicate_bootstrap_suppressed"
+    )
+    entry_count = max(int(funnel_7d.get("entered") or 0), recent_trade_count)
     items = [
         {
             "id": "enabled",
@@ -463,6 +768,7 @@ GATE_ORDER = (
     "confirmed_flip",
     "evidence",
     "checklist",
+    "invalidation_hygiene",
     "risk_reward",
     "liquidation_safety",
     "action_levels",
@@ -476,6 +782,7 @@ GATE_STAGE_LABELS = {
     "confirmed_flip": "스탠스 전환 통과",
     "evidence": "근거 수 통과",
     "checklist": "체크리스트 통과",
+    "invalidation_hygiene": "무효화 거리 통과",
     "risk_reward": "R:R 통과",
     "liquidation_safety": "청산 안전거리 통과",
     "action_levels": "행동 가격 확보",
@@ -489,6 +796,7 @@ GATE_REJECTION_LABELS = {
     "confirmed_flip": "스탠스 전환 미확정",
     "evidence": "근거 수 부족",
     "checklist": "체크리스트 미달",
+    "invalidation_hygiene": "무효화 과근접",
     "risk_reward": "R:R 미달",
     "liquidation_safety": "청산 안전거리 미달",
     "action_levels": "무효화·익절가 부재",
@@ -522,6 +830,15 @@ def paper_gate_funnel(repo: Any, *, days: int = 7, now: datetime | None = None) 
         if bottleneck:
             pill_bottlenecks[bottleneck] = pill_bottlenecks.get(bottleneck, 0) + 1
     pill_bottleneck = max(pill_bottlenecks, key=pill_bottlenecks.get) if pill_bottlenecks else None
+    validated_count = sum(1 for state in repo.latest_autonomy_states().values() if state == "validated")
+    signature_stage = next((stage for stage in stages if stage.get("id") == "signature_gate"), None)
+    signature_gate_note = None
+    if signature_stage and int(signature_stage.get("count") or 0) == 0:
+        signature_gate_note = (
+            "검증 시그니처 통과 0 · validated 시그니처 부재 — candidate 일일 채점·승격 심사 진행 중"
+            if validated_count == 0
+            else "검증 시그니처 통과 0 · 현재 방향과 일치하는 검증 성적 없음"
+        )
     return {
         "period_days": days,
         "as_of": now.isoformat(),
@@ -530,6 +847,7 @@ def paper_gate_funnel(repo: Any, *, days: int = 7, now: datetime | None = None) 
         "stages": [*stages, {"id": "entered", "label": "진입", "count": entered}],
         "top_rejection": ({"id": top_gate, "label": GATE_REJECTION_LABELS.get(top_gate, top_gate), "count": rejection_counts[top_gate]} if top_gate else None),
         "rejection_counts": rejection_counts,
+        "signature_gate_note": signature_gate_note,
         "pill_diagnostics": {
             "rendered": len(rendered_ids),
             "bottleneck": pill_bottleneck,
@@ -561,6 +879,7 @@ def _gate_funnel_record(
         "confirmed_flip": bool(decision_gates.get("confirmed_flip")),
         "evidence": bool(decision_gates.get("evidence")),
         "checklist": bool(decision_gates.get("checklist")),
+        "invalidation_hygiene": bool(decision_gates.get("invalidation_hygiene")),
         "risk_reward": bool(decision_gates.get("risk_reward")),
         "liquidation_safety": bool(decision_gates.get("liquidation_safety")),
         "action_levels": action_levels,
@@ -588,6 +907,8 @@ def _gate_funnel_record(
         "rejection_reasons": [gate for gate in GATE_ORDER if not gates[gate]],
         "pill_diagnostics": pill_diagnostics or {},
         "event_pill_ids": event_pill_ids or [],
+        "signature_gate_mode": signature_gates.get("gate_mode"),
+        "candidate_bootstrap_active": bool(signature_gates.get("bootstrap_active")),
     }
 
 
@@ -614,8 +935,9 @@ def _gate_diagnostic_event(repo: Any, *, now: datetime) -> dict[str, Any] | None
 
 
 def _finalize_closed_trade(repo: Any, trade: PaperTrade, analysis: dict[str, Any]) -> PaperTrade:
-    loss_tags: list[str] = []
-    if trade.net_pnl_usdt < 0:
+    neutral = trade.exit_reason in {"time_stop", "time_decay"}
+    loss_tags: list[str] = ["time_decay", f"exit:{trade.exit_reason}"] if neutral else []
+    if trade.net_pnl_usdt < 0 and not neutral:
         signature_key = str(trade.signature_snapshot.get("signature_key") or "unknown")
         loss_tags = [f"validated_signature_failed:{signature_key}", f"exit:{trade.exit_reason}"]
         regime = analysis.get("market_regime") or analysis.get("regime")
@@ -628,18 +950,25 @@ def _finalize_closed_trade(repo: Any, trade: PaperTrade, analysis: dict[str, Any
             position_id=trade.id,
             judgment_type="paper_trade_entry",
             claim={"direction": trade.direction.value, "entry_price": trade.entry_price},
-            outcome="correct" if trade.net_pnl_usdt > 0 else "wrong" if trade.net_pnl_usdt < 0 else "untested",
+            outcome="untested" if neutral else "correct" if trade.net_pnl_usdt > 0 else "wrong" if trade.net_pnl_usdt < 0 else "untested",
             detail=f"paper trade closed by {trade.exit_reason}; net={trade.net_pnl_usdt:.4f} USDT",
-            metrics={"net_pnl_usdt": trade.net_pnl_usdt, "net_return_pct": trade.net_return_pct},
+            metrics={
+                "net_pnl_usdt": trade.net_pnl_usdt,
+                "net_return_pct": trade.net_return_pct,
+                "result_class": "neutral" if neutral else "win" if trade.net_pnl_usdt > 0 else "loss" if trade.net_pnl_usdt < 0 else "neutral",
+                "time_decay": neutral,
+            },
         )
     )
     return result
 
 
 def _record_entry_judgment(repo: Any, trade: PaperTrade) -> None:
+    judgment_id = trade.judgment_id or f"paper:{trade.id}:entry"
     repo.add_judgment(
         JudgmentLedgerEntry(
-            judgment_id=trade.judgment_id or f"paper:{trade.id}:entry",
+            id=uuid5(NAMESPACE_URL, f"fce:{judgment_id}"),
+            judgment_id=judgment_id,
             position_id=trade.id,
             source_type="paper_engine",
             source_id=str(trade.id),
@@ -699,23 +1028,117 @@ def _signature_gate_evaluation(
     signature_gate = False
     regime_gate = False
     qualified: dict[str, Any] | None = None
-    for signature in signatures_from_analysis(analysis):
+    bootstrap_active = _candidate_bootstrap_active(repo, settings)
+    active_signatures = [
+        *signatures_from_analysis(analysis),
+        *_candidate_signatures_for_gate(repo, analysis, payload, direction),
+    ]
+    for signature in active_signatures:
         if signature.get("direction") != direction.value:
             continue
         key = str(signature.get("key") or "")
         stat = by_key.get(key)
+        if not stat and key:
+            stored = repo.list_backtest_stats(signature_key=key, limit=1)
+            stat = stored[0].model_dump(mode="json") if stored else None
+            if stat:
+                stat.update(_dict(stat.get("payload")))
         if not stat:
             continue
-        if current_state(repo, key, stat=stat, settings=settings) != "validated":
+        state = current_state(repo, key, stat=stat, settings=settings)
+        if state == "candidate" and bootstrap_active:
+            sample_size = int(stat.get("sample_size") or 0)
+            win_1r_pct = _float(stat.get("win_1r_pct"))
+            if (
+                sample_size >= int(getattr(settings, "paper_candidate_bootstrap_min_sample", 15))
+                and win_1r_pct is not None
+                and win_1r_pct >= float(getattr(settings, "paper_candidate_bootstrap_min_win_1r_pct", 50.0))
+            ):
+                signature_gate = True
+                regime_gate = True
+                qualified = {
+                    "signature_key": key,
+                    "signature": signature,
+                    "stat": stat,
+                    "state": state,
+                    "gate_mode": "candidate_bootstrap",
+                    "bootstrap_thresholds": {
+                        "min_sample_size": int(getattr(settings, "paper_candidate_bootstrap_min_sample", 15)),
+                        "min_win_1r_pct": float(getattr(settings, "paper_candidate_bootstrap_min_win_1r_pct", 50.0)),
+                    },
+                }
+                break
+        if state != "validated":
             continue
         signature_gate = True
         ci_low = _ci_low(stat)
         if ci_low is None or ci_low < float(settings.universe_backtest_min_ci_low_pct):
             continue
         regime_gate = True
-        qualified = {"signature_key": key, "signature": signature, "stat": stat, "ci_low": ci_low}
+        qualified = {"signature_key": key, "signature": signature, "stat": stat, "ci_low": ci_low, "state": state, "gate_mode": "validated"}
         break
-    return {"qualified": qualified, "signature_gate": signature_gate, "regime_gate": regime_gate}
+    return {
+        "qualified": qualified,
+        "signature_gate": signature_gate,
+        "regime_gate": regime_gate,
+        "gate_mode": qualified.get("gate_mode") if qualified else None,
+        "bootstrap_active": bootstrap_active,
+    }
+
+
+def _candidate_bootstrap_active(repo: Any, settings: Any, *, now: datetime | None = None) -> bool:
+    if not bool(getattr(settings, "paper_candidate_bootstrap_enabled", True)):
+        return False
+    benchmark = paper_benchmark(repo)
+    ends_at = _parse_datetime(benchmark.get("ends_at"))
+    if ends_at is not None and (now or utc_now()) >= ends_at:
+        return False
+    validated = sum(1 for state in repo.latest_autonomy_states().values() if state == "validated")
+    return validated < int(getattr(settings, "paper_candidate_bootstrap_disable_validated_count", 3))
+
+
+def _candidate_signatures_for_gate(
+    repo: Any,
+    analysis: dict[str, Any],
+    payload: dict[str, Any],
+    direction: Direction,
+) -> list[dict[str, Any]]:
+    briefing = _dict(payload.get("analyst_briefing"))
+    confluence = _dict(briefing.get("confluence"))
+    target_at = _parse_datetime(_dict(confluence.get("stance_state")).get("last_bar_at"))
+    symbol = str(analysis.get("symbol") or payload.get("symbol") or "").upper()
+    timeframe = str(analysis.get("timeframe") or payload.get("timeframe") or "4h")
+    asset_class = str(analysis.get("asset_class") or "unknown")
+    if not symbol:
+        return []
+    if target_at is None:
+        candles = [item for item in analysis.get("candles", []) if isinstance(item, dict)]
+        if candles:
+            target_at = _timestamp(candles[-1].get("time") or candles[-1].get("timestamp"))
+    result: list[dict[str, Any]] = []
+    for judgment in repo.list_judgments(UUID(int=0), limit=500):
+        claim = judgment.claim
+        engine = str(claim.get("engine") or "")
+        if (
+            engine not in CANDIDATE_ENGINES
+            or str(claim.get("symbol") or "").upper() != symbol
+            or str(claim.get("timeframe") or "4h") != timeframe
+            or str(claim.get("direction") or "") != direction.value
+        ):
+            continue
+        if target_at is None or abs((judgment.as_of - target_at).total_seconds()) > 60:
+            continue
+        signature = SetupSignature(
+            engine=engine,
+            event_type=str(claim.get("event_type") or "candidate"),
+            strength_class="candidate",
+            direction=direction.value,
+            asset_class=asset_class,
+            timeframe=timeframe,
+        ).model_dump()
+        signature["key"] = signature_key(signature)
+        result.append(signature)
+    return list({str(item["key"]): item for item in result}.values())
 
 
 def _qualified_signature(repo: Any, settings: Any, analysis: dict[str, Any], payload: dict[str, Any], direction: Direction) -> dict[str, Any] | None:
@@ -725,22 +1148,31 @@ def _qualified_signature(repo: Any, settings: Any, analysis: dict[str, Any], pay
 def _paper_metrics(trades: Iterable[PaperTrade]) -> dict[str, Any]:
     rows = list(trades)
     returns = [trade.net_return_pct for trade in sorted(rows, key=lambda item: item.exit_at or item.updated_at)]
-    wins = [trade for trade in rows if trade.net_pnl_usdt > 0]
+    scored = [trade for trade in rows if trade.exit_reason not in {"time_stop", "time_decay"}]
+    wins = [trade for trade in scored if trade.net_pnl_usdt > 0]
     gross_profit = sum(max(0.0, trade.net_pnl_usdt) for trade in rows)
     gross_loss = abs(sum(min(0.0, trade.net_pnl_usdt) for trade in rows))
-    return _metric_payload(returns, len(wins), gross_profit, gross_loss)
+    return _metric_payload(returns, len(wins), gross_profit, gross_loss, scored_count=len(scored), neutral_count=len(rows) - len(scored))
 
 
 def _user_metrics(trades: Iterable[Any]) -> dict[str, Any]:
     rows = list(trades)
-    returns = [float(trade.pnl_percent) for trade in sorted(rows, key=lambda item: item.created_at)]
-    wins = [trade for trade in rows if float(trade.pnl_amount) > 0]
-    gross_profit = sum(max(0.0, float(trade.pnl_amount)) for trade in rows)
-    gross_loss = abs(sum(min(0.0, float(trade.pnl_amount)) for trade in rows))
-    return _metric_payload(returns, len(wins), gross_profit, gross_loss)
+    returns = [float(trade.net_return_pct) for trade in sorted(rows, key=lambda item: item.exit_at)]
+    wins = [trade for trade in rows if float(trade.net_pnl_usdt) > 0]
+    gross_profit = sum(max(0.0, float(trade.net_pnl_usdt)) for trade in rows)
+    gross_loss = abs(sum(min(0.0, float(trade.net_pnl_usdt)) for trade in rows))
+    return _metric_payload(returns, len(wins), gross_profit, gross_loss, scored_count=len(rows), neutral_count=0)
 
 
-def _metric_payload(returns: list[float], wins: int, gross_profit: float, gross_loss: float) -> dict[str, Any]:
+def _metric_payload(
+    returns: list[float],
+    wins: int,
+    gross_profit: float,
+    gross_loss: float,
+    *,
+    scored_count: int,
+    neutral_count: int,
+) -> dict[str, Any]:
     equity = peak = 0.0
     mdd = 0.0
     for value in returns:
@@ -750,10 +1182,13 @@ def _metric_payload(returns: list[float], wins: int, gross_profit: float, gross_
     count = len(returns)
     return {
         "net_return_pct": round(sum(returns), 4),
-        "win_rate_pct": round((wins / count) * 100.0, 2) if count else 0.0,
+        "win_rate_pct": round((wins / scored_count) * 100.0, 2) if scored_count else None,
         "profit_factor": round(gross_profit / gross_loss, 4) if gross_loss > 0 else None,
         "mdd_pct": round(mdd, 4),
         "trade_count": count,
+        "scored_trade_count": scored_count,
+        "neutral_count": neutral_count,
+        "sample_sufficient": scored_count >= 10,
     }
 
 
@@ -762,7 +1197,7 @@ def _paper_equity_curve(trades: Iterable[PaperTrade]) -> list[dict[str, Any]]:
 
 
 def _user_equity_curve(trades: Iterable[Any]) -> list[dict[str, Any]]:
-    return _return_curve(((trade.created_at, float(trade.pnl_percent)) for trade in trades))
+    return _return_curve(((trade.exit_at, float(trade.net_return_pct)) for trade in trades))
 
 
 def _return_curve(points: Iterable[tuple[datetime, float]]) -> list[dict[str, Any]]:
@@ -774,11 +1209,87 @@ def _return_curve(points: Iterable[tuple[datetime, float]]) -> list[dict[str, An
     return curve
 
 
-def _paper_event(kind: str, trade: PaperTrade) -> dict[str, Any]:
+def _paper_event(kind: str, trade: PaperTrade, *, reason: str | None = None) -> dict[str, Any]:
     return {
         "kind": kind,
+        "reason": reason or trade.exit_reason,
         "trade": trade.model_dump(mode="json"),
     }
+
+
+def paper_exit_monitor(trade: PaperTrade | dict[str, Any], mark_price: float | None) -> dict[str, float] | None:
+    payload = trade.model_dump(mode="json") if isinstance(trade, PaperTrade) else trade
+    mark = _float(mark_price)
+    entry = _float(payload.get("entry_price"))
+    stop_price = _float(payload.get("stop_price")) or _float(payload.get("invalidation_price"))
+    take_profit = _float(payload.get("take_profit_price"))
+    if mark is None or mark <= 0 or entry is None or entry <= 0 or stop_price is None or take_profit is None:
+        return None
+    direction_sign = 1.0 if str(payload.get("direction")) == "long" else -1.0
+    remaining_quantity = float(_float(payload.get("remaining_quantity")) or 0.0)
+    unrealized_pnl = (mark - entry) * remaining_quantity * direction_sign
+    mark_net_pnl = float(_float(payload.get("gross_pnl_usdt")) or 0.0) + unrealized_pnl - float(
+        _float(payload.get("costs_usdt")) or 0.0
+    )
+    margin = _float(payload.get("margin_usdt"))
+    monitor = {
+        "mark_price": round(mark, 8),
+        "unrealized_pnl_usdt": round(unrealized_pnl, 4),
+        "mark_net_pnl_usdt": round(mark_net_pnl, 4),
+        "mark_net_return_pct": round(mark_net_pnl / margin * 100.0, 4) if margin and margin > 0 else 0.0,
+        "invalidation_distance_pct": round(-abs(stop_price / mark - 1.0) * 100.0, 3),
+        "take_profit_distance_pct": round(abs(take_profit / mark - 1.0) * 100.0, 3),
+    }
+    take_profit_2 = _float(payload.get("take_profit_2_price"))
+    if take_profit_2 is not None:
+        monitor["take_profit_2_distance_pct"] = round(abs(take_profit_2 / mark - 1.0) * 100.0, 3)
+    return monitor
+
+
+def audit_atr_target_reachability(
+    candles: list[MarketCandle],
+    *,
+    atr_multiplier: float = 1.0,
+    max_holding_bars: int = 30,
+) -> dict[str, Any]:
+    ordered = sorted(candles, key=lambda item: item.timestamp)
+    samples = reached = 0
+    misses_by_direction = {"long": 0, "short": 0}
+    if atr_multiplier <= 0 or max_holding_bars <= 0:
+        raise ValueError("ATR multiplier and max holding bars must be positive")
+    for index in range(14, len(ordered) - max_holding_bars):
+        entry = ordered[index].close
+        distance = atr(ordered[: index + 1]) * atr_multiplier
+        future = ordered[index + 1 : index + 1 + max_holding_bars]
+        long_reached = max(item.high for item in future) >= entry + distance
+        short_reached = min(item.low for item in future) <= entry - distance
+        for direction, touched in (("long", long_reached), ("short", short_reached)):
+            samples += 1
+            reached += int(touched)
+            if not touched:
+                misses_by_direction[direction] += 1
+    misses = samples - reached
+    return {
+        "samples": samples,
+        "reached": reached,
+        "reach_rate_pct": round(reached / samples * 100.0, 2) if samples else None,
+        "time_decay_rate_pct": round(misses / samples * 100.0, 2) if samples else None,
+        "misses_by_direction": misses_by_direction,
+        "atr_multiplier": atr_multiplier,
+        "max_holding_bars": max_holding_bars,
+        "method": "confirmed_candle_atr_target_replay",
+    }
+
+
+def _open_trade_payload(repo: Any, trade: PaperTrade) -> dict[str, Any]:
+    payload = trade.model_dump(mode="json")
+    state = repo.get_paper_engine_state(trade.symbol, trade.timeframe) or {}
+    if isinstance(state.get("stance_state"), dict):
+        payload["current_stance"] = state["stance_state"]
+    monitor = paper_exit_monitor(trade, _float(state.get("last_price")))
+    if monitor is not None:
+        payload["exit_monitor"] = monitor
+    return payload
 
 
 def _poor_performance_summary(scoreboard: dict[str, Any]) -> str:
@@ -826,6 +1337,75 @@ def _first_take_profit(action_plan: dict[str, Any]) -> float | None:
         if price is not None:
             return price
     return None
+
+
+def _paper_target_plan(
+    analysis: dict[str, Any],
+    gauges: dict[str, Any],
+    *,
+    bar: MarketCandle,
+    direction: Direction,
+    invalidation_price: float | None,
+    action_plan: dict[str, Any],
+    policy: PaperPolicy,
+) -> dict[str, Any]:
+    candles = _confirmed_candles(analysis, gauges)
+    atr_value = atr(candles) if candles else max(bar.close * 0.015, 1e-9)
+    sign = 1.0 if direction == Direction.long else -1.0
+    tp1_distance = atr_value * policy.take_profit_atr_k1
+    tp2_distance = atr_value * policy.take_profit_atr_k2
+    structural = _first_take_profit(action_plan)
+    structural_distance = (structural - bar.close) * sign if structural is not None else None
+    tp2_source = "atr"
+    if structural_distance is not None and tp1_distance < structural_distance < tp2_distance:
+        tp2_distance = structural_distance
+        tp2_source = "action_plan_nearer"
+    risk = abs(bar.close - invalidation_price) if invalidation_price is not None else None
+    invalidation_directional = bool(
+        invalidation_price is not None
+        and ((direction == Direction.long and invalidation_price < bar.close) or (direction == Direction.short and invalidation_price > bar.close))
+    )
+    rr_ratio = tp1_distance / risk if risk and risk > 0 and invalidation_directional else None
+    return {
+        "method": "atr_multistage",
+        "atr": round(atr_value, 8),
+        "atr_period": 14,
+        "k1": policy.take_profit_atr_k1,
+        "k2": policy.take_profit_atr_k2,
+        "take_profit_1": round(bar.close + sign * tp1_distance, 8),
+        "take_profit_2": round(bar.close + sign * tp2_distance, 8),
+        "take_profit_2_source": tp2_source,
+        "action_plan_take_profit_1": structural,
+        "risk_distance": round(risk, 8) if risk is not None else None,
+        "rr_ratio": round(rr_ratio, 4) if rr_ratio is not None else None,
+        "minimum_rr": policy.min_rr,
+        "rr_eligible": bool(rr_ratio is not None and rr_ratio >= policy.min_rr),
+    }
+
+
+def _confirmed_candles(analysis: dict[str, Any], gauges: dict[str, Any]) -> list[MarketCandle]:
+    rows = [item for item in analysis.get("candles", []) if isinstance(item, dict)]
+    if _dict(gauges.get("bar_state")).get("provisional") is True and rows:
+        rows = rows[:-1]
+    candles: list[MarketCandle] = []
+    for item in rows:
+        timestamp = _timestamp(item.get("time") or item.get("timestamp"))
+        if timestamp is None:
+            continue
+        try:
+            candles.append(
+                MarketCandle(
+                    timestamp=timestamp,
+                    open=float(item["open"]),
+                    high=float(item["high"]),
+                    low=float(item["low"]),
+                    close=float(item["close"]),
+                    volume=float(item.get("volume") or 0.0),
+                )
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+    return candles
 
 
 def _price_from(value: Any) -> float | None:

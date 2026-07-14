@@ -145,3 +145,19 @@ def test_daily_maintenance_schedule_uses_configured_timezone() -> None:
     assert next_run.tzinfo is timezone.utc
     assert next_run.astimezone(timezone(timedelta(hours=9))).hour == 4
     assert next_run.astimezone(timezone(timedelta(hours=9))).minute == 30
+
+
+def test_candidate_scoring_job_is_registered_as_daily_low_priority(tmp_path) -> None:
+    manager = WorkerManager(_settings(tmp_path))
+
+    job = manager.jobs["score_candidates"]
+    assert job.enabled is True
+    assert job.interval_seconds == 86_400
+
+
+def test_user_fill_sync_job_runs_independently_every_two_minutes(tmp_path) -> None:
+    manager = WorkerManager(_settings(tmp_path))
+
+    job = manager.jobs["sync_user_fills"]
+    assert job.enabled is True
+    assert job.interval_seconds == 120

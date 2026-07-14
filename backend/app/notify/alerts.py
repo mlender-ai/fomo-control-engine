@@ -185,6 +185,48 @@ class AlertEngine:
             sent += await self._fire_if_allowed(candidate)
         return sent
 
+    async def evaluate_whale_events(self, events: list[dict[str, Any]], dashboard: dict[str, Any]) -> int:
+        if (
+            not self.settings.telegram_alerts_enabled
+            or self.state.is_muted()
+            or "whale_entry" not in self.settings.alert_enabled_rule_set
+        ):
+            return 0
+        wallets = dashboard.get("wallets") if isinstance(dashboard.get("wallets"), list) else []
+        sent = 0
+        for event in events:
+            if not isinstance(event, dict) or event.get("event") not in {"open", "flip"}:
+                continue
+            raw = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+            if raw.get("baseline"):
+                continue
+            address = str(event.get("wallet_address") or "")
+            wallet = next((item for item in wallets if item.get("address") == address), {})
+            review = wallet.get("review") if isinstance(wallet.get("review"), dict) else {}
+            validated = review.get("state") == "validated"
+            side = "롱" if event.get("side") == "long" else "숏"
+            size = _compact_usd(float(event.get("size_usd") or 0.0))
+            entry = float(event.get("entry_px") or 0.0)
+            sample_size = int(review.get("sample_size") or 0)
+            accuracy = f"과거 적중 {review.get('win_1r_pct')}% (N={sample_size})" if sample_size >= 30 else f"적중률 축적 중 (N={sample_size})"
+            level = "검증 고래" if validated else "미검증 관측"
+            candidate = AlertCandidate(
+                rule_id="whale_entry",
+                severity="warn" if validated else "info",
+                position_id=None,
+                symbol=str(event.get("symbol") or event.get("coin") or "HL"),
+                identity=str(event.get("id") or event.get("fill_id") or "whale"),
+                title=f"{event.get('wallet_label')} {event.get('coin')} {side} 관측",
+                message=(
+                    f"🐋 <b>{event.get('wallet_label')} {event.get('coin')} {side} {size}</b> @ {entry:,.2f}\n"
+                    f"{level} · {accuracy}\n"
+                    "관측 정보이며 따라가기 신호가 아닙니다. 별칭은 사용자 지정 추정입니다."
+                ),
+                payload={**event, "validation_state": review.get("state"), "summary": f"{side} {size} · {accuracy}"},
+            )
+            sent += await self._fire_if_allowed(candidate)
+        return sent
+
     async def maybe_send_daily_summary(self, payload: dict[str, Any]) -> int:
         if not self.settings.telegram_alerts_enabled or self.state.is_muted():
             return 0
@@ -440,6 +482,8 @@ def _severity_emoji(severity: str) -> str:
 
 
 def _summary_line(payload: dict[str, Any]) -> str:
+    if payload.get("summary"):
+        return str(payload["summary"])
     current = payload.get("current_price")
     trigger = payload.get("trigger_price")
     if trigger is not None and current is not None:
@@ -470,3 +514,11 @@ def _float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _compact_usd(value: float) -> str:
+    if value >= 1_000_000:
+        return f"{value / 1_000_000:.1f}M"
+    if value >= 1_000:
+        return f"{value / 1_000:.0f}K"
+    return f"{value:.0f}"

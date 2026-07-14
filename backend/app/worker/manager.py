@@ -233,6 +233,12 @@ class WorkerManager:
             await self.alerts.evaluate_derivatives(snapshots)
         return payload
 
+    async def _collect_whales(self) -> dict[str, Any]:
+        payload = await asyncio.to_thread(service.collect_whales)
+        dashboard = await asyncio.to_thread(service.whale_dashboard)
+        await self.alerts.evaluate_whale_events(payload.get("events", []), dashboard)
+        return payload
+
     async def _scout_scan(self) -> dict[str, Any]:
         payload = await asyncio.to_thread(service.refresh_scout_scan_cache)
         candidates = payload.get("_alert_candidate_objects", [])
@@ -293,6 +299,12 @@ class WorkerManager:
                 self.settings.derivative_tracking_interval_seconds,
                 self._collect_derivatives,
                 enabled=self.settings.derivative_tracking_enabled,
+            ),
+            "collect_whale_positions": WorkerJob(
+                "collect_whale_positions",
+                self.settings.hyperliquid_whale_poll_interval_seconds,
+                self._collect_whales,
+                enabled=self.settings.hyperliquid_whale_tracking_enabled,
             ),
             "regen_stale_insights": WorkerJob(
                 "regen_stale_insights",
@@ -360,6 +372,18 @@ class WorkerManager:
                 "refresh_calibration_cache",
                 self.settings.worker_calibration_cache_interval_seconds,
                 lambda: asyncio.to_thread(service.refresh_calibration_report_cache),
+            ),
+            "score_candidates": WorkerJob(
+                "score_candidates",
+                self.settings.worker_candidate_scoring_interval_seconds,
+                lambda: asyncio.to_thread(service.score_candidates),
+                enabled=self.settings.worker_candidate_scoring_enabled,
+            ),
+            "sync_user_fills": WorkerJob(
+                "sync_user_fills",
+                self.settings.worker_user_fill_sync_interval_seconds,
+                lambda: asyncio.to_thread(service.sync_user_fills),
+                enabled=self.settings.worker_user_fill_sync_enabled,
             ),
             "refresh_symbol_catalog": WorkerJob(
                 "refresh_symbol_catalog",
@@ -442,17 +466,21 @@ class WorkerManager:
             return _next_daily_time(4, 0, self.settings.db_maintenance_timezone)
         if name == "database_backup":
             return _next_daily_time(4, 30, self.settings.db_maintenance_timezone)
+        if name == "score_candidates":
+            return _next_daily_time(3, 30, self.settings.db_maintenance_timezone)
         # Starting every network-heavy job on the same second caused duplicate
         # Bitget requests and held SQLite writes long enough to starve API reads.
         # Keep position sync immediate, then spread independent collectors.
         startup_offsets = {
             "sync_positions": 0,
             "refresh_calibration_cache": 4,
+            "sync_user_fills": 6,
             "refresh_symbol_catalog": 8,
             "daily_summary": 12,
             "weekly_calibration_report": 18,
             "regen_stale_insights": 28,
             "collect_derivatives": 40,
+            "collect_whale_positions": 46,
             "refresh_market_data": 55,
             "alert_response_scoring": 70,
             "interim_scoring": 85,

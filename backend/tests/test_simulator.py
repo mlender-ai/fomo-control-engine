@@ -146,6 +146,59 @@ def test_rr_fail_below_threshold():
     assert rr_item["status"] == "fail"
 
 
+def test_rr_is_not_calculated_when_invalidation_is_too_close():
+    analysis = _analysis(
+        100.0,
+        support=[{"price": 99.68, "score": 85, "label": "과근접 지지"}],
+        resistance=[{"price": 108.0, "score": 80, "label": "저항"}],
+    )
+    result = simulate_entry(
+        symbol="NVDAUSDT",
+        direction="long",
+        entry_price=100.0,
+        leverage=10,
+        margin_usdt=100,
+        margin_mode="isolated",
+        chart_analysis=analysis,
+        mmr=None,
+        direction_score=60,
+    )
+
+    assert result["invalidation_distance_pct"] == -0.32
+    assert result["invalidation_too_close"] is True
+    assert result["rr_ratio"] is None
+    assert result["rr_ratio_raw"] == 25.0
+    assert result["quality_anomalies"]["rr_above_display_cap"] is True
+    assert "R:R 산출 불가" in result["verdict_line"]
+    rr_item = next(item for item in result["checklist"] if item["key"] == "rr")
+    assert rr_item["status"] == "fail"
+    assert "무효화 과근접" in rr_item["reason"]
+
+
+def test_rr_display_is_capped_without_changing_raw_value():
+    analysis = _analysis(
+        100.0,
+        support=[{"price": 99.0, "score": 85, "label": "지지"}],
+        resistance=[{"price": 112.0, "score": 80, "label": "저항"}],
+    )
+    result = simulate_entry(
+        symbol="NVDAUSDT",
+        direction="long",
+        entry_price=100.0,
+        leverage=10,
+        margin_usdt=100,
+        margin_mode="isolated",
+        chart_analysis=analysis,
+        mmr=None,
+        direction_score=60,
+    )
+
+    assert result["rr_ratio"] == 12.0
+    assert result["rr_ratio_raw"] == 12.0
+    assert result["rr_ratio_display"] == "10+"
+    assert "R:R 10+" in result["verdict_line"]
+
+
 def test_htf_conflict_checklist_fail():
     analysis = _analysis(
         100.0,

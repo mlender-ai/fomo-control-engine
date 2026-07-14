@@ -10,6 +10,7 @@ from app.core.config import Settings
 from app.notify.bot.callbacks import encode_callback, parse_callback
 from app.notify.bot.formatters import (
     detail_keyboard,
+    engine_keyboard,
     format_action_plan,
     format_briefing,
     format_flow,
@@ -153,6 +154,12 @@ class TelegramBotSupervisor:
         async def engine(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await guarded(update, self._engine, context)
 
+        async def whales(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+            await guarded(update, self._whales, context)
+
+        async def whale(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+            await guarded(update, self._whale, context)
+
         async def veto(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await guarded(update, self._veto, context)
 
@@ -190,7 +197,9 @@ class TelegramBotSupervisor:
         app.add_handler(CommandHandler("review", review))
         app.add_handler(CommandHandler("calib", calib))
         app.add_handler(CommandHandler("perf", perf))
-        app.add_handler(CommandHandler("engine", engine))
+        app.add_handler(CommandHandler(["engine", "paper"], engine))
+        app.add_handler(CommandHandler("whales", whales))
+        app.add_handler(CommandHandler("whale", whale))
         app.add_handler(CommandHandler("veto", veto))
         app.add_handler(CommandHandler("experiments", experiments))
         app.add_handler(CommandHandler("status", status))
@@ -339,7 +348,35 @@ class TelegramBotSupervisor:
 
     async def _engine(self, update: Any, context: Any) -> None:
         payload = await self._run(service.paper_dashboard)
-        await self._reply(update.effective_message, format_engine_scoreboard(payload))
+        await self._reply(
+            update.effective_message,
+            format_engine_scoreboard(payload),
+            reply_markup=_markup(engine_keyboard(), context),
+        )
+
+    async def _whales(self, update: Any, context: Any) -> None:
+        payload = await self._run(service.whale_dashboard)
+        await self._reply(update.effective_message, _format_whales(payload))
+
+    async def _whale(self, update: Any, context: Any) -> None:
+        args = list(context.args or [])
+        if not args:
+            await self._reply(update.effective_message, "사용법: /whale add 0x주소 [추정별칭] · /whale 0x주소")
+            return
+        if args[0].lower() == "add":
+            if len(args) < 2:
+                await self._reply(update.effective_message, "사용법: /whale add 0x주소 [추정별칭]")
+                return
+            wallet = await self._run(service.add_whale_wallet, args[1], " ".join(args[2:]) or None, "bot")
+            await self._reply(update.effective_message, f"🐋 등록 완료: <b>{escape(str(wallet.get('label') or '-'))}</b> · 별칭은 사용자 추정이며 신원 확정이 아닙니다.")
+            return
+        payload = await self._run(service.whale_dashboard)
+        address = args[0].lower()
+        wallet = next((item for item in payload.get("wallets", []) if item.get("address") == address), None)
+        if wallet is None:
+            await self._reply(update.effective_message, "등록된 지갑이 아닙니다. /whale add 0x주소 [추정별칭]")
+            return
+        await self._reply(update.effective_message, _format_whale(wallet))
 
     async def _veto(self, update: Any, context: Any) -> None:
         suggestion_id = _first_arg(context.args)
@@ -428,7 +465,7 @@ class TelegramBotSupervisor:
             await self._edit(
                 query,
                 format_engine_scoreboard(payload),
-                reply_markup=_markup(main_menu_keyboard(), context),
+                reply_markup=_markup(engine_keyboard(), context),
             )
         elif parsed.action == "review":
             trades = await self._run(service.recent_reviews)
@@ -751,6 +788,45 @@ def parse_duration_seconds(value: str) -> int:
 
 def _first_arg(args: list[str] | tuple[str, ...] | None) -> str | None:
     return args[0] if args else None
+
+
+def _format_whales(payload: dict[str, Any]) -> str:
+    wallets = payload.get("wallets") if isinstance(payload.get("wallets"), list) else []
+    lines = [f"🐋 <b>Hyperliquid 고래 관측</b> · {len(wallets)}/{payload.get('max_wallets', 20)}"]
+    if not wallets:
+        lines.append("등록된 지갑 없음 · /whale add 0x주소 [추정별칭]")
+    for wallet in wallets[:20]:
+        review = wallet.get("review") if isinstance(wallet.get("review"), dict) else {}
+        state = "검증" if review.get("state") == "validated" else "축적"
+        positions = wallet.get("positions") if isinstance(wallet.get("positions"), list) else []
+        summary = ", ".join(f"{item.get('coin')} {'롱' if item.get('side') == 'long' else '숏'} {_compact_whale_size(float(item.get('size_usd') or 0))}" for item in positions[:3]) or "포지션 없음"
+        lines.append(f"• <b>{escape(str(wallet.get('label') or '-'))}</b> · {state} N={review.get('sample_size', 0)} · {escape(summary)}")
+    lines.append("미검증 지갑은 관측 정보이며 따라가기 신호가 아닙니다. 별칭은 사용자 추정입니다.")
+    return "\n".join(lines)
+
+
+def _format_whale(wallet: dict[str, Any]) -> str:
+    review = wallet.get("review") if isinstance(wallet.get("review"), dict) else {}
+    positions = wallet.get("positions") if isinstance(wallet.get("positions"), list) else []
+    lines = [
+        f"🐋 <b>{escape(str(wallet.get('label') or '-'))}</b>",
+        f"<code>{escape(str(wallet.get('address') or '-'))}</code>",
+        f"채점 {escape(str(review.get('state') or 'candidate'))} · N={review.get('sample_size', 0)} · 1R {review.get('win_1r_pct') if review.get('win_1r_pct') is not None else '대기'}",
+    ]
+    for item in positions:
+        lines.append(f"• {item.get('coin')} {'롱' if item.get('side') == 'long' else '숏'} {_compact_whale_size(float(item.get('size_usd') or 0))} · 진입 {float(item.get('entry_px') or 0):,.2f}")
+    if not positions:
+        lines.append("현재 공개 포지션 없음")
+    lines.append("관측 정보이며 따라가기 신호가 아닙니다. 별칭은 사용자 추정입니다.")
+    return "\n".join(lines)
+
+
+def _compact_whale_size(value: float) -> str:
+    if value >= 1_000_000:
+        return f"{value / 1_000_000:.1f}M"
+    if value >= 1_000:
+        return f"{value / 1_000:.0f}K"
+    return f"{value:.0f}"
 
 
 def _looks_like_symbol(value: str) -> bool:

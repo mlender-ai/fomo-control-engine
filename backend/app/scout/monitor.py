@@ -349,7 +349,9 @@ def evaluate_setup_alerts(repo: Any, settings: Settings, setups: list[ArmedSetup
                 }
             )
             repo.upsert_armed_setup(triggered)
-            candidates.append(_setup_candidate("setup_triggered", "action", triggered, current, distance))
+            candidate = _gated_setup_candidate(settings, "setup_triggered", "action", triggered, current, distance)
+            if candidate is not None:
+                candidates.append(candidate)
             continue
         if "setup_near" in enabled and rearmed_setup.setup_near_alerted_at is None and abs(distance) <= settings.scout_setup_near_pct:
             updated = rearmed_setup.model_copy(
@@ -360,7 +362,9 @@ def evaluate_setup_alerts(repo: Any, settings: Settings, setups: list[ArmedSetup
                 }
             )
             repo.upsert_armed_setup(updated)
-            candidates.append(_setup_candidate("setup_near", "info", updated, current, distance))
+            candidate = _gated_setup_candidate(settings, "setup_near", "info", updated, current, distance)
+            if candidate is not None:
+                candidates.append(candidate)
     return candidates
 
 
@@ -576,6 +580,7 @@ def build_scout_calibration_summary(scores: list[JudgmentScore]) -> dict[str, An
         "untested": untested,
         "accuracy_pct": round((correct / tested) * 100, 1) if tested else None,
         "by_type": by_type,
+        "quality": _setup_quality_summary(scout_scores),
         "entry_intents": _intent_calibration_summary(intent_scores),
         "discoveries": _generic_score_summary(discovery_scores),
         "sample_warning": "진입하지 않은 셋업도 트리거 이후 가격 경로로 결과론적 채점합니다. N<10 구간은 결론을 보류합니다.",
@@ -598,6 +603,20 @@ def _generic_score_summary(scores: list[JudgmentScore]) -> dict[str, Any]:
         "untested": untested,
         "accuracy_pct": round((correct / tested) * 100, 1) if tested else None,
         "sample_warning": "발견 채널은 기존 관심종목 셋업과 분리 집계합니다. N<10 구간은 결론을 보류합니다.",
+    }
+
+
+def _setup_quality_summary(scores: list[JudgmentScore]) -> dict[str, Any]:
+    total = len(scores)
+    invalidation_too_close = sum(1 for score in scores if score.metrics.get("invalidation_too_close") is True)
+    rr_outliers = sum(1 for score in scores if score.metrics.get("rr_above_display_cap") is True)
+    briefing_htf_countertrend = sum(1 for score in scores if score.metrics.get("briefing_htf_countertrend") is True)
+    return {
+        "sample_size": total,
+        "invalidation_too_close": invalidation_too_close,
+        "rr_above_display_cap": rr_outliers,
+        "briefing_htf_countertrend": briefing_htf_countertrend,
+        "briefing_htf_countertrend_rate_pct": round((briefing_htf_countertrend / total) * 100, 1) if total else None,
     }
 
 
@@ -746,18 +765,50 @@ def _crowding_level_candidates(
     return level_candidates
 
 
+def _gated_setup_candidate(
+    settings: Settings,
+    rule_id: str,
+    severity: str,
+    setup: ArmedSetup,
+    current: float,
+    distance: float,
+) -> AlertCandidate | None:
+    state = _setup_direction_state(setup)
+    if state["conflict"] and not settings.scout_conflict_setup_alerts_enabled:
+        return None
+    effective_severity = severity
+    if state["conflict"] and rule_id == "setup_triggered" and not state["htf_aligned"]:
+        effective_severity = "info"
+    if _invalidation_too_close(setup):
+        effective_severity = "info"
+    return _setup_candidate(rule_id, effective_severity, setup, current, distance)
+
+
 def _setup_candidate(rule_id: str, severity: str, setup: ArmedSetup, current: float, distance: float) -> AlertCandidate:
     title_map = {
         "setup_near": "셋업 접근",
         "setup_triggered": "셋업 트리거",
         "setup_invalidated": "셋업 무효화",
     }
+    state = _setup_direction_state(setup)
+    too_close = _invalidation_too_close(setup)
     emoji = "🎯" if rule_id == "setup_near" else "🟢" if rule_id == "setup_triggered" else "🟡"
     preview = _preview_line(setup)
     context = _setup_context_line(setup)
     briefing = _briefing_preview_line(setup)
     backtest = _backtest_preview_line(setup)
     title = title_map.get(rule_id, "셋업")
+    if rule_id != "setup_invalidated":
+        if state["conflict"]:
+            title = "충돌 셋업 · 양방향 근거"
+            emoji = "⚖️"
+        elif state["overall_direction"] is None:
+            title = "셋업 감지 · 종합 판단 유보"
+        elif too_close:
+            title = "셋업 품질 경고 · 무효화 과근접"
+            emoji = "⚠️"
+        else:
+            title = f"{title} · 종합 정합"
     lines = [
         f"{emoji} <b>{escape(setup.symbol)}</b> — {escape(title)}",
         f"{escape(setup.trigger_label)} {_price(setup.trigger_price)} (거리 {_signed_pct(distance)}) · 신뢰도 {setup.confidence or '-'}",
@@ -765,8 +816,22 @@ def _setup_candidate(rule_id: str, severity: str, setup: ArmedSetup, current: fl
         preview,
         backtest,
         briefing,
-        "→ 종합 판정과 셋업 방향이 충돌하면 보류 신호입니다. 시뮬레이션으로 R:R과 무효화를 다시 확인하세요.",
     ]
+    if state["conflict"]:
+        lines.append(
+            f"셋업({escape(_setup_kind_label(setup))})은 {state['setup_label']}, 종합은 {state['overall_label']}. "
+            "소수 지표가 맞을 수도 있음 — 상위 추세 직접 확인 권고."
+        )
+        if state["htf_aligned"]:
+            lines.append("⚠️ 셋업이 상위 추세와 정렬 — 종합 판정이 추세 역행 가능")
+        lines.append("→ 양측 근거 정보입니다. 자동 진입 신호가 아닙니다.")
+    elif state["overall_direction"] is None and rule_id != "setup_invalidated":
+        lines.append("종합 판단 유보 중 · 셋업만 감지")
+        lines.append("→ 개별 이벤트 관찰 정보이며 방향 결론이 아닙니다.")
+    elif rule_id != "setup_invalidated":
+        lines.append("→ 개별 셋업과 종합 방향이 정합합니다. 무효화와 R:R을 함께 확인하세요.")
+    if too_close and rule_id != "setup_invalidated":
+        lines.append("⚠️ 무효화 과근접 — 노이즈 의심. R:R 산출 불가 · 자동 진입 제외")
     return AlertCandidate(
         rule_id=rule_id,
         severity=severity,  # type: ignore[arg-type]
@@ -789,6 +854,12 @@ def _setup_candidate(rule_id: str, severity: str, setup: ArmedSetup, current: fl
             "confidence": setup.confidence,
             "basis": setup.basis,
             "preview": setup.preview,
+            "direction_conflict": state["conflict"],
+            "overall_direction": state["overall_direction"],
+            "htf_direction": state["htf_direction"],
+            "htf_aligned": state["htf_aligned"],
+            "briefing_htf_countertrend": state["briefing_htf_countertrend"],
+            "invalidation_too_close": too_close,
             "number_sources": [
                 {
                     "label": "trigger_price",
@@ -827,6 +898,8 @@ def _record_setup_judgment(repo: Any, setup: ArmedSetup, snapshot: ScoutSnapshot
 
 
 def _setup_claim(setup: ArmedSetup) -> dict[str, Any]:
+    preview = setup.preview if isinstance(setup.preview, dict) else {}
+    direction_state = _setup_direction_state(setup)
     return {
         "setup_id": str(setup.id),
         "symbol": setup.symbol,
@@ -837,6 +910,13 @@ def _setup_claim(setup: ArmedSetup) -> dict[str, Any]:
         "condition": setup.trigger_condition,
         "basis": setup.basis,
         "source": setup.source,
+        "quality_metrics": {
+            "invalidation_distance_pct": preview.get("invalidation_distance_pct"),
+            "invalidation_too_close": _invalidation_too_close(setup),
+            "rr_ratio_raw": preview.get("rr_ratio_raw", preview.get("rr_ratio")),
+            "rr_above_display_cap": bool(_quality_anomalies(setup).get("rr_above_display_cap")),
+            "briefing_htf_countertrend": direction_state["briefing_htf_countertrend"],
+        },
     }
 
 
@@ -844,11 +924,11 @@ def _score_setup_path(setup: ArmedSetup, snapshots: list[ScoutSnapshot], setting
     resolved_at = setup.triggered_at or setup.invalidated_at or setup.updated_at
     path = [snapshot for snapshot in snapshots if snapshot.as_of > resolved_at]
     if not path:
-        return "untested", "트리거 이후 가격 경로 표본이 없습니다.", {"samples": 0}
+        return "untested", "트리거 이후 가격 경로 표본이 없습니다.", {"samples": 0, **_setup_quality_metrics(setup)}
     prices = [_float(snapshot.mark_price) for snapshot in path]
     prices = [price for price in prices if price is not None]
     if not prices or setup.trigger_price is None:
-        return "untested", "트리거 또는 이후 가격이 부족합니다.", {"samples": len(path)}
+        return "untested", "트리거 또는 이후 가격이 부족합니다.", {"samples": len(path), **_setup_quality_metrics(setup)}
     max_price, min_price = max(prices), min(prices)
     direction = setup.direction or "long"
     favorable = (
@@ -865,6 +945,7 @@ def _score_setup_path(setup: ArmedSetup, snapshots: list[ScoutSnapshot], setting
         "samples": len(path),
         "favorable_pct": round(favorable, 2),
         "adverse_pct": round(adverse, 2),
+        **_setup_quality_metrics(setup),
     }
     if setup.status == "invalidated":
         return "wrong", "셋업 전제가 붕괴되어 무효 처리됐습니다.", metrics
@@ -1076,9 +1157,9 @@ def _intent_preview_line(intent: EntryIntent) -> str:
     checks = ""
     if preview.get("checklist_passed") is not None and preview.get("checklist_total") is not None:
         checks = f" · 체크 {preview.get('checklist_passed')}/{preview.get('checklist_total')}"
-    if rr is None and not checks:
+    if rr is None and not checks and not preview.get("invalidation_too_close"):
         return ""
-    return f"프리뷰({_direction_label(intent.direction)} 10x 가정): R:R {rr or '-'}{checks}"
+    return f"프리뷰({_direction_label(intent.direction)} 10x 가정): R:R {_rr_preview_value(preview)}{checks}"
 
 
 def _conditions_text(condition_state: dict[str, Any]) -> str:
@@ -1157,6 +1238,89 @@ def _setup_id(symbol: str, timeframe: str, candidate: dict[str, Any]) -> UUID:
     )
 
 
+def _setup_direction_state(setup: ArmedSetup) -> dict[str, Any]:
+    preview = setup.preview if isinstance(setup.preview, dict) else {}
+    setup_direction = setup.direction if setup.direction in {"long", "short"} else None
+    overall_value = (
+        preview.get("briefing_stance_state")
+        or preview.get("scout_overall_stance")
+        or preview.get("briefing_stance")
+    )
+    overall_direction = _direction_from_label(overall_value)
+    htf_direction = _direction_from_label(preview.get("htf_trend"))
+    conflict = bool(setup_direction and overall_direction and setup_direction != overall_direction)
+    return {
+        "setup_direction": setup_direction,
+        "setup_label": _direction_label(setup_direction) if setup_direction else "방향 미지정",
+        "overall_direction": overall_direction,
+        "overall_label": f"{_direction_label(overall_direction)} 우세" if overall_direction else "판단 유보",
+        "htf_direction": htf_direction,
+        "htf_aligned": bool(setup_direction and htf_direction and setup_direction == htf_direction),
+        "conflict": conflict,
+        "briefing_htf_countertrend": bool(overall_direction and htf_direction and overall_direction != htf_direction),
+    }
+
+
+def _direction_from_label(value: Any) -> str | None:
+    normalized = str(value or "").strip().lower()
+    if normalized in {"long", "long_leaning", "bullish", "up", "uptrend", "상방", "롱", "상승"}:
+        return "long"
+    if normalized in {"short", "short_leaning", "bearish", "down", "downtrend", "하방", "숏", "하락"}:
+        return "short"
+    if "bullish" in normalized or "long" in normalized or "롱" in normalized or "상방" in normalized or "상승" in normalized:
+        return "long"
+    if "bearish" in normalized or "short" in normalized or "숏" in normalized or "하방" in normalized or "하락" in normalized:
+        return "short"
+    return None
+
+
+def _quality_anomalies(setup: ArmedSetup) -> dict[str, Any]:
+    preview = setup.preview if isinstance(setup.preview, dict) else {}
+    return preview.get("quality_anomalies") if isinstance(preview.get("quality_anomalies"), dict) else {}
+
+
+def _invalidation_too_close(setup: ArmedSetup) -> bool:
+    preview = setup.preview if isinstance(setup.preview, dict) else {}
+    return bool(preview.get("invalidation_too_close") or _quality_anomalies(setup).get("invalidation_too_close"))
+
+
+def _setup_quality_metrics(setup: ArmedSetup) -> dict[str, Any]:
+    preview = setup.preview if isinstance(setup.preview, dict) else {}
+    state = _setup_direction_state(setup)
+    return {
+        "invalidation_distance_pct": preview.get("invalidation_distance_pct"),
+        "invalidation_too_close": _invalidation_too_close(setup),
+        "rr_ratio_raw": preview.get("rr_ratio_raw", preview.get("rr_ratio")),
+        "rr_above_display_cap": bool(_quality_anomalies(setup).get("rr_above_display_cap")),
+        "briefing_htf_countertrend": state["briefing_htf_countertrend"],
+    }
+
+
+def _setup_kind_label(setup: ArmedSetup) -> str:
+    if setup.trigger_label:
+        return setup.trigger_label
+    labels = {
+        "harmonic_prz": "하모닉 PRZ",
+        "structure_level": "구조 레벨",
+        "crowding_level": "수급 구조 레벨",
+        "wyckoff_event": "와이코프 이벤트",
+    }
+    return labels.get(setup.setup_type, "개별 이벤트")
+
+
+def _rr_preview_value(preview: dict[str, Any]) -> str:
+    if preview.get("invalidation_too_close"):
+        return "산출 불가 · 무효화 너무 가까움"
+    display = preview.get("rr_ratio_display")
+    if display is not None:
+        return str(display)
+    rr = _float(preview.get("rr_ratio"))
+    cap = _float(preview.get("rr_display_cap")) or 10.0
+    if rr is None:
+        return "-"
+    return f"{cap:g}+" if rr > cap else f"{rr:g}"
+
+
 def _preview_line(setup: ArmedSetup) -> str:
     preview = setup.preview if isinstance(setup.preview, dict) else {}
     rr = preview.get("rr_ratio")
@@ -1164,10 +1328,10 @@ def _preview_line(setup: ArmedSetup) -> str:
     checks = ""
     if preview.get("checklist_passed") is not None and preview.get("checklist_total") is not None:
         checks = f" · 체크 {preview.get('checklist_passed')}/{preview.get('checklist_total')}"
-    if rr is None and inv is None and not checks:
+    if rr is None and inv is None and not checks and not preview.get("invalidation_too_close"):
         return ""
     direction = _direction_label(setup.direction) if setup.direction else "-"
-    return f"프리뷰({direction} 10x 가정): R:R {rr or '-'} · 무효화 {_signed_pct(inv)}{checks}"
+    return f"프리뷰({direction} 10x 가정): R:R {_rr_preview_value(preview)} · 무효화 {_signed_pct(inv)}{checks}"
 
 
 def _backtest_preview_line(setup: ArmedSetup) -> str:
@@ -1188,26 +1352,13 @@ def _briefing_preview_line(setup: ArmedSetup) -> str:
 
 
 def _setup_context_line(setup: ArmedSetup) -> str:
-    direction = _direction_label(setup.direction) if setup.direction else "미지정"
-    preview = setup.preview if isinstance(setup.preview, dict) else {}
-    stance = str(preview.get("scout_overall_stance") or "").strip()
-    if not stance:
+    state = _setup_direction_state(setup)
+    direction = state["setup_label"]
+    if state["overall_direction"] is None:
         return f"셋업 방향: {direction} · 개별 이벤트 기준"
-    stance_label = _stance_label(stance)
-    expected = "상방" if setup.direction == "long" else "하방" if setup.direction == "short" else ""
-    conflict = " · 충돌" if expected and stance in {"상방", "하방"} and stance != expected else ""
+    stance_label = "상방 근거 우세" if state["overall_direction"] == "long" else "하방 근거 우세"
+    conflict = " · 충돌" if state["conflict"] else ""
     return f"셋업 방향: {direction} · 현재 종합: {stance_label}{conflict}"
-
-
-def _stance_label(stance: str) -> str:
-    labels = {
-        "상방": "상방 근거 우세",
-        "하방": "하방 근거 우세",
-        "횡보": "중립",
-        "판단불가": "근거 부족",
-    }
-    return labels.get(stance, stance)
-
 
 def _strip_briefing_prefix(value: str) -> str:
     text = value.strip()

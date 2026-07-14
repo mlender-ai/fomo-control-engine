@@ -2,16 +2,17 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Bot, RefreshCw } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Bot, Plus, RefreshCw, Trash2, Waves } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { TerminalWarning } from "@/components/terminal";
-import { api, type PaperDashboard, type PaperGateFunnel, type PaperTrade } from "@/lib/api";
+import { api, type OnchainWhaleDashboard, type PaperDashboard, type PaperGateFunnel, type PaperTrade } from "@/lib/api";
 
 const tabs = [
   { id: "battle", label: "대결" },
   { id: "positions", label: "엔진 포지션" },
   { id: "journal", label: "거래 일지" },
-  { id: "status", label: "엔진 상태" }
+  { id: "status", label: "엔진 상태" },
+  { id: "onchain", label: "온체인" }
 ] as const;
 
 type TabId = (typeof tabs)[number]["id"];
@@ -21,6 +22,7 @@ export function EngineTradingShell() {
   const requested = search.get("tab") as TabId | null;
   const active = tabs.some((tab) => tab.id === requested) ? requested! : "battle";
   const [data, setData] = useState<PaperDashboard | null>(null);
+  const [whales, setWhales] = useState<OnchainWhaleDashboard | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [starting, setStarting] = useState(false);
@@ -29,7 +31,9 @@ export function EngineTradingShell() {
     setLoading(true);
     setError("");
     try {
-      setData(await api.paperDashboard());
+      const [paper, onchain] = await Promise.all([api.paperDashboard(), api.onchainWhales()]);
+      setData(paper);
+      setWhales(onchain);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "엔진 트레이딩 데이터를 불러오지 못했습니다.");
     } finally {
@@ -69,14 +73,16 @@ export function EngineTradingShell() {
       </nav>
 
       {error ? <TerminalWarning tone="error">{error}</TerminalWarning> : null}
-      {!data ? <EngineLoading /> : active === "battle" ? <BattleView data={data} starting={starting} onStart={startBenchmark} /> : active === "positions" ? <PositionsView trades={data.open_trades} funnel={data.gate_funnel} /> : active === "journal" ? <JournalView trades={data.closed_trades} /> : <EngineStatusView data={data} />}
+      {!data ? <EngineLoading /> : active === "battle" ? <BattleView data={data} whales={whales} starting={starting} onStart={startBenchmark} /> : active === "positions" ? <PositionsView trades={data.open_trades} funnel={data.gate_funnel} /> : active === "journal" ? <JournalView trades={data.closed_trades} /> : active === "onchain" ? <OnchainView data={whales} onReload={load} /> : <EngineStatusView data={data} />}
     </div>
   );
 }
 
-function BattleView({ data, starting, onStart }: { data: PaperDashboard; starting: boolean; onStart: (reset?: boolean) => void }) {
+function BattleView({ data, whales, starting, onStart }: { data: PaperDashboard; whales: OnchainWhaleDashboard | null; starting: boolean; onStart: (reset?: boolean) => void }) {
   const board = data.scoreboard;
   const benchmark = board.benchmark;
+  const competition = board.competition;
+  const recent = board.recent_28d;
   return (
     <div className="engineView" data-testid="engine-battle-tab">
       <section className={`engineActivationStrip ${data.activation.running ? "running" : "blocked"}`} data-testid="paper-activation-strip">
@@ -84,6 +90,7 @@ function BattleView({ data, starting, onStart }: { data: PaperDashboard; startin
           <strong>{data.activation.running ? "가동 중" : "가동 확인 필요"}</strong>
           <span>{benchmark.started ? `${shortDate(benchmark.started_at)}~${shortDate(benchmark.ends_at)}` : "대결 시작 전"}</span>
           <small className="engineActivationProof">{activationProof(data.activation)}</small>
+          <small className="engineActivationProof">내 실계좌 체결 {board.user_fill_sync.stored_fill_count ?? 0}건 수집 · 마지막 {board.user_fill_sync.last_fill_at ? shortDateTime(board.user_fill_sync.last_fill_at) : statusLabel(board.user_fill_sync.status)}</small>
         </div>
         <div className="engineActivationItems">
           {data.activation.items.map((item) => <span className={item.ok ? "ok" : "error"} key={item.id} title={item.reason ?? "정상"}><i />{item.label} {item.value}</span>)}
@@ -94,19 +101,101 @@ function BattleView({ data, starting, onStart }: { data: PaperDashboard; startin
       </section>
       <section className="engineBattleHero">
         <div>
-          <span className="engineSectionLabel">4주 롤링 판정</span>
-          <strong className={board.rolling_4w.engine_leading ? "positive" : "neutral"}>{board.rolling_4w.engine_leading ? "엔진 우세" : "우세 미확정"}</strong>
-          <small>엔진 N={board.engine.trade_count} · 나 N={board.user.trade_count}</small>
+          <span className="engineSectionLabel">대결 기간 판정 · {shortDate(competition.started_at)} 이후</span>
+          <strong className={competition.engine_leading ? "positive" : "neutral"}>{competition.engine_leading ? "엔진 우세" : competition.verdict === "insufficient_samples" ? "표본 부족" : "우세 미확정"}</strong>
+          <small>엔진 채점 N={competition.engine.scored_trade_count} · 나 채점 N={competition.user.scored_trade_count}</small>
+          {!competition.engine.sample_sufficient || !competition.user.sample_sufficient ? <small>각 N≥10 전까지 우세 판정 유보</small> : null}
         </div>
-        <EquityComparison engine={board.equity_curve.engine} user={board.equity_curve.user} />
+        <EquityComparison engine={competition.equity_curve.engine} user={competition.equity_curve.user} />
       </section>
+      <div className="engineWindowHeader"><strong>대결 기간 성과</strong><span>판정용 · 동일 시작 앵커</span></div>
       <section className="engineMetricGrid">
-        <ComparisonMetric label="수익률" engine={pct(board.engine.net_return_pct)} user={pct(board.user.net_return_pct)} />
-        <ComparisonMetric label="승률" engine={pct(board.engine.win_rate_pct)} user={pct(board.user.win_rate_pct)} />
-        <ComparisonMetric label="수익팩터" engine={ratio(board.engine.profit_factor)} user={ratio(board.user.profit_factor)} />
-        <ComparisonMetric label="최대 낙폭" engine={pct(board.engine.mdd_pct)} user={pct(board.user.mdd_pct)} inverse />
+        <ComparisonMetric label="수익률" engine={pct(competition.engine.net_return_pct)} user={pct(competition.user.net_return_pct)} />
+        <ComparisonMetric label="승률" engine={winRate(competition.engine)} user={winRate(competition.user)} />
+        <ComparisonMetric label="수익팩터" engine={ratio(competition.engine.profit_factor)} user={ratio(competition.user.profit_factor)} />
+        <ComparisonMetric label="최대 낙폭" engine={pct(competition.engine.mdd_pct)} user={pct(competition.user.mdd_pct)} inverse />
+      </section>
+      <div className="engineWindowHeader"><strong>최근 28일 참고 성과</strong><span>표시용 · 대결 판정에 미사용</span></div>
+      <section className="engineMetricGrid engineRecentMetrics">
+        <ComparisonMetric label="수익률" engine={pct(recent.engine.net_return_pct)} user={pct(recent.user.net_return_pct)} />
+        <ComparisonMetric label="승률" engine={winRate(recent.engine)} user={winRate(recent.user)} />
+        <ComparisonMetric label="종료 거래" engine={`N=${recent.engine.trade_count}`} user={`N=${recent.user.trade_count}`} />
+        <ComparisonMetric label="중립 종료" engine={`N=${recent.engine.neutral_count}`} user={`N=${recent.user.neutral_count}`} />
       </section>
       <p className="engineFairnessNote">{board.fairness_note} · N은 종료 거래 수입니다.</p>
+      <WhaleBenchmarkReference data={whales} />
+    </div>
+  );
+}
+
+function WhaleBenchmarkReference({ data }: { data: OnchainWhaleDashboard | null }) {
+  const validated = (data?.wallets ?? []).filter((wallet) => wallet.review.state === "validated");
+  return (
+    <section className="whaleBattleReference" data-testid="whale-battle-reference">
+      <div><Waves size={17} /><span>고래 참고군</span><strong>{validated.length ? `검증 ${validated.length}지갑` : "검증 표본 대기"}</strong></div>
+      <p>{validated.length ? validated.slice(0, 3).map((wallet) => `${wallet.label} 1R ${wallet.review.win_1r_pct}% (N=${wallet.review.sample_size})`).join(" · ") : "candidate 고래는 엔진 vs 나 판정에 포함하지 않습니다. N≥30·CI 하한 55% 승격 후에만 3자 참고군으로 표시됩니다."}</p>
+    </section>
+  );
+}
+
+function OnchainView({ data, onReload }: { data: OnchainWhaleDashboard | null; onReload: () => Promise<void> }) {
+  const [address, setAddress] = useState("");
+  const [label, setLabel] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+
+  async function addWallet(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true); setMessage("");
+    try {
+      await api.addOnchainWhale({ address, ...(label.trim() ? { label: label.trim() } : {}) });
+      setAddress(""); setLabel("");
+      await onReload();
+    } catch (reason) {
+      setMessage(reason instanceof Error ? reason.message : "지갑을 등록하지 못했습니다.");
+    } finally { setBusy(false); }
+  }
+
+  async function removeWallet(walletAddress: string) {
+    setBusy(true); setMessage("");
+    try { await api.removeOnchainWhale(walletAddress); await onReload(); }
+    catch (reason) { setMessage(reason instanceof Error ? reason.message : "지갑을 삭제하지 못했습니다."); }
+    finally { setBusy(false); }
+  }
+
+  async function collectNow() {
+    setBusy(true); setMessage("");
+    try { await api.collectOnchainWhales(); await onReload(); }
+    catch (reason) { setMessage(reason instanceof Error ? reason.message : "온체인 수집에 실패했습니다."); }
+    finally { setBusy(false); }
+  }
+
+  if (!data) return <EngineLoading />;
+  return (
+    <div className="engineView onchainView" data-testid="engine-onchain-tab">
+      <section className="onchainToolbar">
+        <div><span className="engineSectionLabel">Hyperliquid · read only</span><strong>등록 {data.wallet_count}/{data.max_wallets}</strong><small>최소 관측 규모 {compactMoney(data.minimum_event_size_usd)} USDT · 별칭은 사용자 추정</small></div>
+        <button className="button secondary" disabled={busy || !data.wallet_count} onClick={collectNow} type="button"><RefreshCw size={15} />지금 수집</button>
+      </section>
+      <form className="onchainAddForm" onSubmit={addWallet}>
+        <label><span>지갑 주소</span><input aria-label="Hyperliquid 지갑 주소" onChange={(event) => setAddress(event.target.value)} placeholder="0x…" required value={address} /></label>
+        <label><span>추정 별칭</span><input aria-label="고래 별칭" onChange={(event) => setLabel(event.target.value)} placeholder="예: BTC 스윙 A" value={label} /></label>
+        <button className="button" disabled={busy || !address.trim()} type="submit"><Plus size={15} />등록</button>
+      </form>
+      {message ? <TerminalWarning tone="error">{message}</TerminalWarning> : null}
+      <p className="onchainPolicy">{data.policy}</p>
+      {!data.wallets.length ? <EngineEmpty title="등록된 고래 지갑 없음" body="지갑을 수동 등록하면 확정 체결 이후부터 관측과 candidate 채점이 시작됩니다." /> : (
+        <div className="onchainWalletList">
+          {data.wallets.map((wallet) => (
+            <section className={`onchainWalletRow ${wallet.review.state}`} key={wallet.address}>
+              <header><div><strong>{wallet.label}</strong><code>{wallet.address_short}</code><small>{wallet.alias_disclaimer}</small></div><div><span>{whaleState(wallet.review.state)}</span><b>{wallet.review.sample_size >= 30 && wallet.review.win_1r_pct !== null ? `1R ${wallet.review.win_1r_pct}% · N=${wallet.review.sample_size}` : `축적 N=${wallet.review.sample_size} · 잔여 ${wallet.review.remaining_samples}`}</b><button aria-label={`${wallet.label} 삭제`} disabled={busy} onClick={() => void removeWallet(wallet.address)} title="워치리스트에서 삭제" type="button"><Trash2 size={15} /></button></div></header>
+              <div className="onchainPositions">
+                {wallet.positions.length ? wallet.positions.map((position) => <div key={position.coin}><strong>{position.coin} {position.side === "long" ? "롱" : "숏"}</strong><span>{compactMoney(position.size_usd)} · 진입 {price(position.entry_px)}</span><b className={(position.unrealized_pnl ?? 0) >= 0 ? "positive" : "negative"}>{money(position.unrealized_pnl ?? 0)} USDT</b></div>) : <p>현재 공개 포지션 없음</p>}
+              </div>
+            </section>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -118,10 +207,12 @@ function PositionsView({ trades, funnel }: { trades: PaperTrade[]; funnel: Paper
 
 function PaperPositionCard({ trade }: { trade: PaperTrade }) {
   const evidence = evidenceLines(trade).slice(0, 3);
+  const validationBootstrap = record(trade.entry_evidence).entry_mode === "validation_bootstrap";
   return (
     <article className="enginePositionCard">
-      <header><div><strong>{trade.symbol}</strong><span>{direction(trade.direction)} · {trade.leverage}x</span></div><b>{pct(trade.net_return_pct)}</b></header>
-      <dl><div><dt>진입</dt><dd>{price(trade.entry_price)}</dd></div><div><dt>무효화</dt><dd>{price(trade.invalidation_price)}</dd></div><div><dt>익절1</dt><dd>{price(trade.take_profit_price)}</dd></div></dl>
+      <header><div><strong>{trade.symbol}</strong><span>{direction(trade.direction)} · {trade.leverage}x{validationBootstrap ? " · 검증 시작 진입" : ""}</span></div><b>{pct(trade.net_return_pct)}</b></header>
+      <dl><div><dt>진입</dt><dd>{price(trade.entry_price)}</dd></div><div><dt>무효화</dt><dd>{price(trade.invalidation_price)}</dd></div><div><dt>익절1</dt><dd>{price(trade.take_profit_price)}</dd></div><div><dt>익절2</dt><dd>{price(trade.take_profit_2_price)}</dd></div></dl>
+      {trade.exit_monitor ? <p className="engineExitMonitor">자동 청산 감시 · 무효화까지 {signedPct(trade.exit_monitor.invalidation_distance_pct)} · 익절1까지 {signedPct(trade.exit_monitor.take_profit_distance_pct)}</p> : null}
       <div className="engineEvidence"><span>진입 근거</span>{evidence.map((line, index) => <p key={`${line}-${index}`}>{line}</p>)}</div>
     </article>
   );
@@ -130,10 +221,10 @@ function PaperPositionCard({ trade }: { trade: PaperTrade }) {
 function JournalView({ trades }: { trades: PaperTrade[] }) {
   const search = useSearchParams();
   const filter = search.get("filter") ?? "all";
-  const rows = trades.filter((trade) => filter === "win" ? trade.net_pnl_usdt > 0 : filter === "loss" ? trade.net_pnl_usdt <= 0 : filter === "all" ? true : trade.exit_reason === filter);
+  const rows = trades.filter((trade) => filter === "win" ? trade.net_pnl_usdt > 0 && !isNeutralExit(trade.exit_reason) : filter === "loss" ? trade.net_pnl_usdt <= 0 && !isNeutralExit(trade.exit_reason) : filter === "neutral" ? isNeutralExit(trade.exit_reason) : filter === "all" ? true : trade.exit_reason === filter);
   return (
     <div className="engineView" data-testid="engine-journal-tab">
-      <div className="engineFilters">{[["all","전체"],["win","승"],["loss","패"],["invalidation_breach","무효화"],["opposite_stance_flip","반대 전환"],["time_stop","시간 종료"]].map(([id,label]) => <Link className={filter === id ? "active" : ""} href={`/engine?tab=journal&filter=${id}`} key={id}>{label}</Link>)}</div>
+      <div className="engineFilters">{[["all","전체"],["win","승"],["loss","패"],["neutral","중립"],["invalidation_breach","무효화"],["opposite_stance_flip","반대 전환"],["time_decay","시간 감쇠"]].map(([id,label]) => <Link className={filter === id ? "active" : ""} href={`/engine?tab=journal&filter=${id}`} key={id}>{label}</Link>)}</div>
       {!rows.length ? <EngineEmpty title="표시할 거래 없음" body="선택한 조건의 종료 거래가 없습니다." /> : <div className="engineJournalList">{rows.map((trade) => <PaperJournalRow key={trade.id} trade={trade} />)}</div>}
     </div>
   );
@@ -161,7 +252,23 @@ function EngineStatusView({ data }: { data: PaperDashboard }) {
       {data.performance_action.poor ? <section className="engineCausalRow"><div><span>페이퍼 부진</span><strong>{data.performance_action.summary}</strong></div><i>→</i><div><span>같은 기간 엔진 조치</span><strong>{actionSummary(data.performance_action.actions)}</strong></div></section> : null}
       <section className="engineStatusCard"><header><h2>파라미터 자율 피드</h2><span>예정 {calibration.suggestion_status_counts.scheduled ?? 0} · 실험 {calibration.suggestion_status_counts.experiment ?? 0}</span></header>{suggestions.length ? suggestions.map((item) => <div className="engineFeedRow" key={item.id}><span>{item.title}</span><b>{statusLabel(item.status)}</b></div>) : <p className="engineEmptyLine">진행 중인 변경이 없습니다.</p>}</section>
       <section className="engineStatusCard"><header><h2>시그니처 상태</h2><span>변동만 추적</span></header><div className="signatureCounts"><div><strong>{counts.validated ?? 0}</strong><span>검증됨</span></div><div><strong>{counts.degraded ?? 0}</strong><span>저하</span></div><div><strong>{counts.quarantined ?? 0}</strong><span>격리</span></div><div><strong>{counts.candidate ?? 0}</strong><span>표본 축적</span></div></div></section>
+      <CandidateReview review={calibration.candidate_review} />
     </div>
+  );
+}
+
+function CandidateReview({ review }: { review: PaperDashboard["calibration"]["candidate_review"] }) {
+  return (
+    <section className="engineStatusCard engineCandidateReview">
+      <header><h2>candidate 심사 현황</h2><span>승격 준비 {review.promotion_ready ?? 0}</span></header>
+      {(review.signatures ?? []).length ? (review.signatures ?? []).slice(0, 10).map((item) => (
+        <div className="engineFeedRow" key={item.signature_key}>
+          <span>{item.label} · N={item.sample_size} · {item.win_1r_pct === null ? "성적 대기" : `1R ${item.win_1r_pct}%`}</span>
+          <b>{item.prediction_warning ?? (item.remaining_samples > 0 ? `승격까지 ${item.remaining_samples}` : item.state)}</b>
+        </div>
+      )) : <p className="engineEmptyLine">candidate 채점 워커 실행 대기</p>}
+      <p className="engineEmptyLine">{review.sample_warning ?? "백테스트와 라이브 검증 표본을 분리 집계합니다."}</p>
+    </section>
   );
 }
 
@@ -177,6 +284,7 @@ function GateFunnel({ funnel }: { funnel: PaperGateFunnel }) {
         ))}
       </div>
       <p>{funnel.top_rejection ? `최다 탈락: ${funnel.top_rejection.label} · ${funnel.top_rejection.count}회` : "평가가 쌓이면 최다 탈락 관문을 표시합니다."}</p>
+      {funnel.signature_gate_note ? <p>{funnel.signature_gate_note}</p> : null}
       <p data-testid="event-pill-diagnostics">
         최근 {funnel.period_days}일 알약 렌더 {pills?.rendered ?? 0}개 · {pillBottleneckLabel(pills?.bottleneck)}
       </p>
@@ -216,14 +324,20 @@ function eta(minutes: number | null | undefined): string {
 function evidenceLines(trade: PaperTrade): string[] { const raw = trade.entry_evidence.items; if (!Array.isArray(raw)) return ["진입 규정 게이트 통과"]; return raw.map((item) => { const row = record(item); return String(row.claim ?? row.label ?? row.reason ?? "검증 근거"); }); }
 function record(value: unknown): Record<string, unknown> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
 function actionSummary(actions: Array<Record<string, unknown>>): string { return actions.length ? actions.slice(0, 3).map((item) => String(item.reason ?? item.transition ?? item.signature_key ?? "자율 조치")).join(" · ") : "기록된 자율 조치 없음"; }
-function statusLabel(value: string): string { return ({ scheduled: "예정", experiment: "실험 중", adopted: "적용됨", rolled_back: "롤백됨", vetoed: "거부됨", dwell_blocked: "대기 기간" } as Record<string,string>)[value] ?? value; }
+function statusLabel(value: string): string { return ({ scheduled: "예정", experiment: "실험 중", adopted: "적용됨", rolled_back: "롤백됨", vetoed: "거부됨", dwell_blocked: "대기 기간", waiting: "수집 대기", not_configured: "인증 확인 필요", error: "수집 오류", ok: "정상" } as Record<string,string>)[value] ?? value; }
 function pillBottleneckLabel(value: string | null | undefined): string { return ({ window_events: "최근 이벤트 없음", validated: "검증 통계 단계에서 최다 탈락", confirmed: "확정 캔들 단계에서 최다 탈락", event_mapping: "이벤트-캔들 매핑 단계에서 최다 탈락" } as Record<string,string>)[value ?? ""] ?? "진단 표본 대기"; }
 function stanceLabel(value: Record<string, unknown>): string { return ({ long: "상방", long_leaning: "상방", short: "하방", short_leaning: "하방", conflicted: "충돌" } as Record<string,string>)[String(value.stance ?? "")] ?? "판단 유보"; }
 function direction(value: string): string { return value === "long" ? "롱" : "숏"; }
-function exitReason(value: string | null): string { return ({ invalidation_breach: "무효화 이탈", breakeven_stop: "본전 스탑", opposite_stance_flip: "반대 스탠스 전환", take_profit_pressure: "익절 압력 지속", time_stop: "최대 보유시간" } as Record<string,string>)[value ?? ""] ?? "기록 없음"; }
+function exitReason(value: string | null): string { return ({ invalidation_breach: "무효화 이탈", breakeven_stop: "본전 스탑", opposite_stance_flip: "반대 스탠스 전환", take_profit_pressure: "익절 압력 지속", take_profit_2: "익절2 도달", time_decay: "시간 감쇠 · 중립", time_stop: "기존 시간 종료 · 중립" } as Record<string,string>)[value ?? ""] ?? "기록 없음"; }
 function pct(value: number): string { return `${value > 0 ? "+" : ""}${Number(value || 0).toFixed(2)}%`; }
+function signedPct(value: number): string { return `${value > 0 ? "+" : ""}${Number(value || 0).toFixed(2)}%`; }
 function ratio(value: number | null): string { return value === null ? "유보" : Number(value).toFixed(2); }
+function winRate(value: PaperDashboard["scoreboard"]["engine"]): string { return value.sample_sufficient && value.win_rate_pct !== null ? pct(value.win_rate_pct) : `유보 · N=${value.scored_trade_count}`; }
+function isNeutralExit(value: string | null): boolean { return value === "time_stop" || value === "time_decay"; }
 function price(value: number | null): string { if (value === null || !Number.isFinite(value)) return "-"; return value >= 100 ? value.toLocaleString(undefined, { maximumFractionDigits: 2 }) : value.toFixed(value >= 1 ? 4 : 6); }
 function money(value: number): string { return `${value > 0 ? "+" : ""}${Number(value).toFixed(2)}`; }
+function compactMoney(value: number): string { return value >= 1_000_000 ? `${(value / 1_000_000).toFixed(1)}M` : value >= 1_000 ? `${Math.round(value / 1_000)}K` : value.toFixed(0); }
+function whaleState(value: string): string { return ({ validated: "검증됨", degraded: "성적 저하", candidate: "표본 축적", quarantined: "격리" } as Record<string,string>)[value] ?? "표본 축적"; }
 function metricTone(value: string, inverse: boolean): string { const number = Number(value.replace(/[+%,]/g, "")); if (!Number.isFinite(number) || number === 0) return "neutral"; const positive = inverse ? number < 0 : number > 0; return positive ? "positive" : "negative"; }
 function shortDate(value: string | null): string { return value ? new Date(value).toLocaleDateString("ko-KR", { month: "numeric", day: "numeric" }) : "-"; }
+function shortDateTime(value: string): string { return new Date(value).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }); }

@@ -93,6 +93,7 @@ ENGINE_BASE_WEIGHTS: dict[str, float] = {
     "volume": 9.0,
     "mtf": 10.0,
     "structure": 8.0,
+    "onchain": 6.0,
 }
 
 ENGINE_JUDGMENT_TYPES: dict[str, str] = {
@@ -206,7 +207,29 @@ def _collect_evidence(analysis: dict[str, Any], htf_context: dict[str, Any], dir
     evidence.extend(_volume_evidence(analysis, as_of))
     evidence.extend(_derivative_evidence(analysis, as_of))
     evidence.extend(_mtf_evidence(analysis, as_of, htf_context, directional_v2))
+    evidence.extend(_validated_onchain_evidence(analysis, as_of))
     return evidence
+
+
+def _validated_onchain_evidence(analysis: dict[str, Any], as_of: str | None) -> list[dict[str, Any]]:
+    """Only already-promoted whale signatures may enter directional scoring."""
+    result: list[dict[str, Any]] = []
+    for item in _list(analysis.get("validated_onchain_evidence")):
+        direction = str(item.get("direction") or "")
+        if direction not in {"long", "short"}:
+            continue
+        result.append(
+            _evidence(
+                "onchain",
+                str(item.get("claim") or "검증 고래 포지션"),
+                direction,
+                _num(item.get("confidence"), 55),
+                item.get("as_of") or as_of,
+                price=item.get("price"),
+                source={**item, "validation_state": "validated"},
+            )
+        )
+    return result
 
 
 def _level_evidence(analysis: dict[str, Any], as_of: str | None) -> list[dict[str, Any]]:

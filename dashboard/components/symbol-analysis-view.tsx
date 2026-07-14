@@ -2,6 +2,7 @@
 
 import { ReactNode, useEffect, useState } from "react";
 import { HealthScoreBreakdownView } from "@/components/score-breakdown";
+import { MoneyFlowCard } from "@/components/position/CompactChartWorkspace";
 import { PositionChart, type PositionChartOverlay } from "@/components/position/PositionChart";
 import { VolumeProfilePanel } from "@/components/position/VolumeProfilePanel";
 import { VolumeXrayPanel } from "@/components/position/VolumeXrayPanel";
@@ -186,20 +187,23 @@ export function SymbolAnalysisView({
   return (
     <>
       <section className={gridClassName}>
-        <PositionChart
-          analysis={chartAnalysis}
-          loading={chartLoading}
-          error={chartError}
-          onRetry={onRetryChart}
-          trendSummary={trendSummary}
-          plan={plan}
-          layers={workspace.layers}
-          onToggleLayer={workspace.handleToggleLayer}
-          highlightPrice={workspace.highlightPrice}
-          positionOverlay={chartOverlayFromPayload(payload)}
-          density={workspace.density}
-          intentZoneSelector={intentZoneSelector}
-        />
+        <div className="analysisChartColumn">
+          <PositionChart
+            analysis={chartAnalysis}
+            loading={chartLoading}
+            error={chartError}
+            onRetry={onRetryChart}
+            trendSummary={trendSummary}
+            plan={plan}
+            layers={workspace.layers}
+            onToggleLayer={workspace.handleToggleLayer}
+            highlightPrice={workspace.highlightPrice}
+            positionOverlay={chartOverlayFromPayload(payload)}
+            density={workspace.density}
+            intentZoneSelector={intentZoneSelector}
+          />
+          <MoneyFlowCard derivatives={chartAnalysis?.derivatives} />
+        </div>
         <aside className="evidenceRoomRail">
           {sidePanel}
           <EvidenceRoomPanel payload={payload} chartAnalysis={chartAnalysis} layers={workspace.layers} focusedLayer={workspace.focusedLayer} />
@@ -296,7 +300,7 @@ function signatureMatchesLayer(signature: Record<string, unknown> | undefined, l
   const source = `${signature?.engine ?? ""} ${signature?.event_type ?? ""}`.toLowerCase();
   const aliases: Record<ChartLayerId, string[]> = {
     plan: ["plan"], levels: ["level"], liquidity: ["liquidity", "sweep"], volume_profile: ["volume", "poc"],
-    wyckoff: ["wyckoff", "spring", "utad"], harmonic: ["harmonic", "prz"], flow: ["flow", "funding", "oi"], indicators: ["indicator", "technical"]
+    wyckoff: ["wyckoff", "spring", "utad"], harmonic: ["harmonic", "prz"], flow: ["flow", "funding", "oi"], indicators: ["indicator", "technical"], onchain: ["onchain", "whale", "hyperliquid"]
   };
   return aliases[layer].some((alias) => source.includes(alias));
 }

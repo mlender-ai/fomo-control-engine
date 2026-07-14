@@ -38,7 +38,7 @@ def base_state(stat: dict[str, Any] | None, *, min_sample: int = 30, min_ci_low:
         return "candidate"
     signature = stat.get("signature") if isinstance(stat.get("signature"), dict) else {}
     engine = str(signature.get("engine") or stat.get("engine") or "")
-    if engine in CANDIDATE_ENGINES:
+    if engine in CANDIDATE_ENGINES or engine == "whale":
         return "candidate"
     n = int(stat.get("sample_size") or 0)
     ci_low = _ci_low(stat)

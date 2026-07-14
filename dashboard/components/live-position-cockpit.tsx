@@ -4,6 +4,7 @@ import Link from "next/link";
 import {
   Activity,
   AlertTriangle,
+  ArrowLeft,
   BrainCircuit,
   Calculator,
   FileClock,
@@ -15,7 +16,7 @@ import {
   UploadCloud
 } from "lucide-react";
 import { FormEvent, useEffect, useRef, useState } from "react";
-import { CompactChartWorkspace, MoneyFlowCard, type CompactNextPrice } from "@/components/position/CompactChartWorkspace";
+import { CompactChartWorkspace, type CompactNextPrice } from "@/components/position/CompactChartWorkspace";
 import { MinimalAssetCard } from "@/components/position/MinimalAssetCard";
 import { TerminalPanel, TerminalWarning } from "@/components/terminal";
 import {
@@ -106,7 +107,11 @@ export function LivePositionCockpit() {
       setData(normalized);
       hasPositionDataRef.current = true;
       setError("");
-      setSelectedId((current) => current || normalized.positions[0]?.position.id || "");
+      setSelectedId((current) => {
+        const requested = new URLSearchParams(window.location.search).get("position");
+        if (requested && normalized.positions.some((item) => item.position.id === requested)) return requested;
+        return current || normalized.positions[0]?.position.id || "";
+      });
       return true;
     } catch (err) {
       if (sync || !hasPositionDataRef.current) {
@@ -207,6 +212,30 @@ export function LivePositionCockpit() {
   const selectedPayload = selectedDetail?.position.id === selected?.position.id ? selectedDetail : selected;
   const selectedChartForPayload = selectedChartAnalysis?.position_id === selectedPayload?.position.id ? selectedChartAnalysis : null;
   const stripChartKey = positions.map((item) => item.position.id).join("|");
+
+  function selectPosition(positionId: string) {
+    setSelectedId(positionId);
+    const url = new URL(window.location.href);
+    if (url.searchParams.get("position") !== positionId) {
+      url.searchParams.set("position", positionId);
+      window.history.pushState({ ...window.history.state, fcePositionId: positionId }, "", url);
+    }
+    document.querySelector(".cockpitToolbar")?.scrollIntoView({ block: "start" });
+  }
+
+  function returnToPositionList() {
+    document.querySelector('[data-testid="position-strip"]')?.scrollIntoView({ block: "start", behavior: "smooth" });
+  }
+
+  useEffect(() => {
+    const restoreSelection = () => {
+      const requested = new URLSearchParams(window.location.search).get("position");
+      const restored = positions.find((item) => item.position.id === requested)?.position.id ?? positions[0]?.position.id ?? "";
+      setSelectedId(restored);
+    };
+    window.addEventListener("popstate", restoreSelection);
+    return () => window.removeEventListener("popstate", restoreSelection);
+  }, [stripChartKey]);
 
   async function loadSelectedChart(positionId: string, showSpinner = true, compact = viewMode === "minimal") {
     const requestId = selectedChartRequestRef.current + 1;
@@ -331,10 +360,7 @@ export function LivePositionCockpit() {
             positions={positions}
             referenceTime={data?.timestamp ?? null}
             selectedId={selected?.position.id ?? ""}
-            onSelect={(positionId) => {
-              setSelectedId(positionId);
-              document.querySelector(".cockpitToolbar")?.scrollIntoView({ block: "start" });
-            }}
+            onSelect={selectPosition}
             compact={viewMode === "minimal"}
           />
           {selectedPayload ? (
@@ -349,6 +375,7 @@ export function LivePositionCockpit() {
                   onRefresh={() => void refreshSelected(selectedPayload.position.id)}
                   refreshing={actionLoading === `refresh:${selectedPayload.position.id}`}
                   onShowPro={() => updateViewMode("pro")}
+                  onBack={returnToPositionList}
                   workspace={workspace}
                 />
               ) : (
@@ -569,6 +596,7 @@ function MinimalPositionWorkspace({
   onRefresh,
   refreshing,
   onShowPro,
+  onBack,
   workspace
 }: {
   payload: LivePositionPayload;
@@ -579,6 +607,7 @@ function MinimalPositionWorkspace({
   onRefresh: () => void;
   refreshing: boolean;
   onShowPro: () => void;
+  onBack: () => void;
   workspace: ReturnType<typeof useAnalysisWorkspace>;
 }) {
   const plan = actionPlanForPayload(payload);
@@ -591,6 +620,13 @@ function MinimalPositionWorkspace({
   void workspace;
   return (
     <section className="minimalPositionWorkspace" data-testid="minimal-position-workspace">
+      <div className="minimalChartBackbar">
+        <button className="button secondary" onClick={onBack} type="button">
+          <ArrowLeft size={15} />
+          포지션 목록
+        </button>
+        <span>{payload.position.symbol} · 내 진입 {formatPrice(payload.position.entry_price)}</span>
+      </div>
       <CompactChartWorkspace
         analysis={chartAnalysis}
         loading={chartLoading}
@@ -1187,9 +1223,7 @@ function DerivativeEvidenceCards({ payload }: { payload: LivePositionPayload }) 
   const coinglass = derivatives?.coinglass;
   const sourceLabel = coinglass?.source_status === "ok" ? `${latest.provider ?? "bitget"} + Coinglass` : latest.provider ?? "bitget";
   return (
-    <>
-      <MoneyFlowCard derivatives={payload.state.analysis.derivatives} />
-      <div className="derivativeEvidenceGrid">
+    <div className="derivativeEvidenceGrid">
       <div className="derivativeEvidenceCard">
         <span>수급 기준</span>
         <strong>{derivatives?.as_of ? new Date(derivatives.as_of).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" }) : "-"}</strong>
@@ -1210,8 +1244,7 @@ function DerivativeEvidenceCards({ payload }: { payload: LivePositionPayload }) 
         <strong>{coinglass?.source_status === "ok" ? `${signals?.liquidation_clusters?.length ?? 0}개 추정` : "Coinglass 연결 필요"}</strong>
         <em>추정 모델 · 확정 아님</em>
       </div>
-      </div>
-    </>
+    </div>
   );
 }
 
@@ -1738,7 +1771,8 @@ function riskRewardSummary(payload: LivePositionPayload): string {
   const risk = signedDistanceFromPlanItem(invalidation, current);
   const reward = signedDistanceFromPlanItem(target, current);
   const rr = typeof risk === "number" && typeof reward === "number" && Math.abs(risk) > 0 ? Math.abs(reward / risk) : null;
-  if (rr !== null) return `R:R ${rr.toFixed(1)} · 익절 ${formatDistance(reward)} / 무효화 ${formatDistance(risk)}`;
+  if (typeof risk === "number" && Math.abs(risk) < 0.8) return "R:R 산출 불가 · 무효화 과근접";
+  if (rr !== null) return `R:R ${rr > 10 ? "10+" : rr.toFixed(1)} · 익절 ${formatDistance(reward)} / 무효화 ${formatDistance(risk)}`;
   return "액션 플랜의 익절·무효화 가격을 확인하세요.";
 }
 

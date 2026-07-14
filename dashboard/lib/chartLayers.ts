@@ -1,4 +1,4 @@
-export type TaFocusLayer = "levels" | "volume_profile" | "wyckoff" | "liquidity" | "harmonic" | "indicators";
+export type TaFocusLayer = "levels" | "volume_profile" | "wyckoff" | "liquidity" | "harmonic" | "indicators" | "onchain";
 export type ChartLayerId = "plan" | "flow" | TaFocusLayer;
 export type MinimalEvidenceLayer = "plan" | "levels" | "liquidity" | "wyckoff" | "harmonic" | "flow";
 
@@ -33,12 +33,13 @@ export const CHART_LAYER_DEFS: Array<{ id: ChartLayerId; label: string; descript
   { id: "liquidity", label: "유동성", description: "동일 고저점·전고전저 풀과 확정 스윕" },
   { id: "volume_profile", label: "볼륨", description: "볼륨 프로파일 · 최다 거래 가격(POC)" },
   { id: "wyckoff", label: "와이코프", description: "국면 박스와 이벤트 마커" },
-  { id: "harmonic", label: "하모닉", description: "패턴 구조와 반전 후보 구간(PRZ)" }
+  { id: "harmonic", label: "하모닉", description: "패턴 구조와 반전 후보 구간(PRZ)" },
+  { id: "onchain", label: "온체인", description: "Hyperliquid 등록 지갑의 확정 체결 관측" }
 ];
 
 const VISIBLE_LAYER_IDS = new Set(CHART_LAYER_DEFS.map((layer) => layer.id));
 
-export const TA_FOCUS_LAYERS: TaFocusLayer[] = ["levels", "volume_profile", "wyckoff", "liquidity", "harmonic", "indicators"];
+export const TA_FOCUS_LAYERS: TaFocusLayer[] = ["levels", "volume_profile", "wyckoff", "liquidity", "harmonic", "indicators", "onchain"];
 export const MAX_COMPARE_LAYERS = 2;
 
 export function isTaLayer(id: ChartLayerId): id is TaFocusLayer {
@@ -73,6 +74,9 @@ export function setFocusedLayer(state: ChartLayerState, id: ChartLayerId): Chart
 export function toggleLayer(state: ChartLayerState, id: ChartLayerId, additive = false): ChartLayerState {
   if (id === "plan") return { ...state, plan: !state.plan };
   const active = activeFocusLayers(state);
+  if (id === "onchain" || active.includes("onchain")) {
+    return focusState(state, active.length === 1 && active[0] === id ? [] : [id]);
+  }
   if (!additive) {
     return focusState(state, active.length === 1 && active[0] === id ? [] : [id]);
   }

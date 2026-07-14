@@ -956,8 +956,17 @@ export type EntrySimulation = {
   liquidation_formula: string;
   action_plan: PositionActionPlan;
   invalidation_distance_pct: number | null;
+  invalidation_too_close: boolean;
+  min_invalidation_distance_pct: number;
   first_take_profit_distance_pct: number | null;
   rr_ratio: number | null;
+  rr_ratio_raw: number | null;
+  rr_ratio_display: string | null;
+  rr_display_cap: number;
+  quality_anomalies: {
+    invalidation_too_close: boolean;
+    rr_above_display_cap: boolean;
+  };
   loss_usdt: number | null;
   profit_usdt: number | null;
   survives_to_invalidation: boolean | null;
@@ -1117,12 +1126,23 @@ export type MoneyFlowSignal = {
   source_label: string;
   as_of: string | null;
   sample_size: number;
+  required_samples?: number;
   confidence?: number;
+  price_change_pct: number | null;
   spot_cvd_delta_ratio: number | null;
   futures_cvd_delta_ratio: number | null;
+  oi_change_pct: number | null;
+  directions?: {
+    price: "up" | "down" | "flat";
+    spot_cvd: "up" | "down" | "flat";
+    futures_cvd: "up" | "down" | "flat";
+    oi: "up" | "down" | "flat";
+  };
+  thresholds?: Record<string, number>;
   spot_cvd: Array<{ time: number | string; value: number }>;
   futures_cvd: Array<{ time: number | string; value: number }>;
   coverage: Record<string, unknown>;
+  notes?: string[];
 };
 
 export type DerivativeSignals = {
@@ -1259,6 +1279,7 @@ export type PositionChartAnalysis = {
   };
   liquidity: LiquidityContext;
   derivatives?: DerivativesContext;
+  onchain?: OnchainChartContext;
   wyckoff: Record<string, unknown>;
   wyckoff_range: WyckoffRange | null;
   wyckoff_phase: WyckoffPhase;
@@ -1286,6 +1307,94 @@ export type PositionChartAnalysis = {
     last_candle_at: string;
   };
   historical_backtest?: HistoricalBacktest | null;
+};
+
+export type OnchainWhaleReview = {
+  signature_key: string;
+  state: string;
+  sample_size: number;
+  win_1r_pct: number | null;
+  win_1r_ci: [number, number] | null;
+  remaining_samples: number;
+  warning?: string | null;
+};
+
+export type OnchainWhaleEvent = {
+  id: string;
+  wallet_address: string;
+  wallet_label: string;
+  coin: string;
+  symbol: string;
+  side: "long" | "short";
+  event: "open" | "increase" | "reduce" | "close" | "flip";
+  size_usd: number;
+  entry_px: number | null;
+  mark_px: number | null;
+  unrealized_pnl: number | null;
+  event_at: string;
+  validation_state: string;
+  sample_size: number;
+  win_1r_pct: number | null;
+  accuracy_label: string;
+  alias_disclaimer: string;
+};
+
+export type OnchainChartMarker = {
+  time: number;
+  kind: "entry" | "exit";
+  side: "long" | "short";
+  event: string;
+  count: number;
+  size_usd: number;
+  size_tier: 1 | 2 | 3;
+  label: string;
+  emphasized: boolean;
+  items: OnchainWhaleEvent[];
+};
+
+export type OnchainChartContext = {
+  supported: boolean;
+  unsupported_reason?: string | null;
+  symbol: string;
+  markers: OnchainChartMarker[];
+  validated_evidence: Array<Record<string, unknown>>;
+  policy: string;
+};
+
+export type OnchainWhaleWallet = {
+  address: string;
+  address_short: string;
+  label: string;
+  source: string;
+  active: boolean;
+  last_polled_at: string | null;
+  last_fill_at: string | null;
+  alias_disclaimer: string;
+  marker_emphasis: boolean;
+  direction_eligible: boolean;
+  review: OnchainWhaleReview;
+  positions: Array<{
+    coin: string;
+    symbol: string;
+    side: "long" | "short";
+    size_usd: number;
+    entry_px: number | null;
+    mark_px: number | null;
+    unrealized_pnl: number | null;
+    liquidation_px: number | null;
+    as_of: string;
+  }>;
+};
+
+export type OnchainWhaleDashboard = {
+  enabled: boolean;
+  wallet_count: number;
+  max_wallets: number;
+  minimum_event_size_usd: number;
+  wallets: OnchainWhaleWallet[];
+  recent_events: OnchainWhaleEvent[];
+  rate_budget: Record<string, unknown>;
+  policy: string;
 };
 
 export type Trade = {
@@ -1483,6 +1592,9 @@ export type PaperTrade = {
   remaining_quantity: number;
   invalidation_price: number;
   take_profit_price: number;
+  take_profit_2_price: number | null;
+  entry_atr: number | null;
+  target_plan: Record<string, unknown>;
   entry_evidence: Record<string, unknown>;
   checklist: Record<string, unknown>;
   stance_snapshot: Record<string, unknown>;
@@ -1493,14 +1605,22 @@ export type PaperTrade = {
   net_return_pct: number;
   holding_bars: number;
   loss_tags: string[];
+  exit_monitor?: {
+    mark_price: number;
+    invalidation_distance_pct: number;
+    take_profit_distance_pct: number;
+  };
 };
 
 export type PaperMetrics = {
   net_return_pct: number;
-  win_rate_pct: number;
+  win_rate_pct: number | null;
   profit_factor: number | null;
   mdd_pct: number;
   trade_count: number;
+  scored_trade_count: number;
+  neutral_count: number;
+  sample_sufficient: boolean;
 };
 
 export type PaperGateFunnel = {
@@ -1511,6 +1631,7 @@ export type PaperGateFunnel = {
   stages: Array<{ id: string; label: string; count: number }>;
   top_rejection: { id: string; label: string; count: number } | null;
   rejection_counts: Record<string, number>;
+  signature_gate_note?: string | null;
   pill_diagnostics?: {
     rendered: number;
     bottleneck: string | null;
@@ -1525,9 +1646,34 @@ export type PaperDashboard = {
     benchmark: { started: boolean; started_at: string | null; ends_at: string | null; reset_count: number };
     engine: PaperMetrics;
     user: PaperMetrics;
+    user_fill_sync: {
+      status: string;
+      stored_fill_count: number;
+      reconstructed_trade_count: number;
+      last_fill_at?: string | null;
+      last_success_at?: string | null;
+      pnl_status: "reconstructed";
+      note?: string;
+    };
     equity_curve: {
       engine: Array<{ ts: string; return_pct: number }>;
       user: Array<{ ts: string; return_pct: number }>;
+    };
+    competition: {
+      window: "benchmark_anchor";
+      started_at: string;
+      engine: PaperMetrics;
+      user: PaperMetrics;
+      engine_leading: boolean;
+      verdict: string;
+      equity_curve: { engine: Array<{ ts: string; return_pct: number }>; user: Array<{ ts: string; return_pct: number }> };
+    };
+    recent_28d: {
+      window: "rolling_28d";
+      started_at: string;
+      engine: PaperMetrics;
+      user: PaperMetrics;
+      equity_curve: { engine: Array<{ ts: string; return_pct: number }>; user: Array<{ ts: string; return_pct: number }> };
     };
     rolling_4w: { engine: PaperMetrics; user: PaperMetrics; engine_leading: boolean; verdict: string };
     poor_performance: boolean;
@@ -1542,6 +1688,23 @@ export type PaperDashboard = {
     suggestion_status_counts: Record<string, number>;
     engine_params: EngineParamVersion[];
     signature_state_counts: Record<string, number>;
+    candidate_review: {
+      candidate_count: number;
+      promotion_ready: number;
+      sample_warning?: string;
+      signatures: Array<{
+        signature_key: string;
+        engine: string;
+        label: string;
+        state: string;
+        sample_size: number;
+        win_1r_pct: number | null;
+        win_1r_ci: [number, number] | null;
+        remaining_samples: number;
+        prediction_warning?: string | null;
+        sources: { backtest: { sample_size: number }; live: { observed: number; sample_size: number } };
+      }>;
+    };
   };
   performance_action: { poor: boolean; summary: string; actions: Array<Record<string, unknown>> };
   gate_funnel: PaperGateFunnel;
@@ -1893,6 +2056,13 @@ export const api = {
     }),
   performance: () => request<PerformanceSummary>("/api/performance"),
   paperDashboard: () => request<PaperDashboard>("/api/paper/dashboard"),
+  onchainWhales: () => request<OnchainWhaleDashboard>("/api/onchain/whales"),
+  addOnchainWhale: (payload: { address: string; label?: string }) => request<{ wallet: OnchainWhaleWallet }>("/api/onchain/whales", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  }),
+  removeOnchainWhale: (address: string) => request<{ removed: string }>(`/api/onchain/whales/${encodeURIComponent(address)}`, { method: "DELETE" }),
+  collectOnchainWhales: () => request<Record<string, unknown>>("/api/onchain/collect", { method: "POST" }),
   startPaperBenchmark: (reset = false) => request<{ started: boolean; started_at: string; ends_at: string; target_count: number; created: boolean }>("/api/paper/benchmark/start", {
     method: "POST",
     body: JSON.stringify({ reset })

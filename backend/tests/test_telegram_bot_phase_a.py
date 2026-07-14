@@ -218,11 +218,34 @@ def test_engine_scoreboard_and_paper_event_formatters() -> None:
     scoreboard = format_engine_scoreboard(
         {
             "scoreboard": {
-                "engine": {"net_return_pct": 4.2, "win_rate_pct": 60, "profit_factor": 1.7, "mdd_pct": 3.1, "trade_count": 10},
+                "engine": {"net_return_pct": 4.2, "win_rate_pct": 60, "profit_factor": 1.7, "mdd_pct": 3.1, "trade_count": 10, "scored_trade_count": 10},
                 "user": {"net_return_pct": 2.1, "win_rate_pct": 50, "profit_factor": 1.2, "mdd_pct": 5.4, "trade_count": 8},
                 "rolling_4w": {"engine_leading": True},
+                "recent_28d": {"engine": {"net_return_pct": 2.8, "win_rate_pct": 55, "scored_trade_count": 9}},
                 "fairness_note": "조건 상이 — 방향·타이밍 판단력의 비교",
-            }
+            },
+            "open_trades": [
+                {
+                    "symbol": "BTCUSDT",
+                    "direction": "short",
+                    "leverage": 3,
+                    "entry_price": 63000,
+                    "stop_price": 64500,
+                    "take_profit_price": 61500,
+                    "take_profit_2_price": 60000,
+                    "holding_bars": 4,
+                    "current_stance": {"stance": "short_leaning", "transitioning": False},
+                    "entry_evidence": {"items": [{"claim": "UTAD 확인"}, {"claim": "고점 Strong 스윕"}]},
+                    "exit_monitor": {
+                        "mark_price": 62000,
+                        "mark_net_pnl_usdt": 4.5,
+                        "mark_net_return_pct": 4.5,
+                        "invalidation_distance_pct": -4.03,
+                        "take_profit_distance_pct": 0.81,
+                        "take_profit_2_distance_pct": 3.23,
+                    },
+                }
+            ],
         }
     )
     event = format_paper_event(
@@ -236,13 +259,57 @@ def test_engine_scoreboard_and_paper_event_formatters() -> None:
             },
         }
     )
+    partial = format_paper_event(
+        {
+            "kind": "partial",
+            "reason": "take_profit_1",
+            "trade": {
+                "symbol": "ETHUSDT",
+                "direction": "short",
+                "partial_exit_price": 2900,
+                "net_return_pct": 2.1,
+            },
+        }
+    )
 
     assert "🤖 엔진 트레이딩 대결" in scoreboard
     assert "엔진 우세" in scoreboard
     assert "엔진 N=10 | 나 N=8" in scoreboard
+    assert "최근 28일" in scoreboard
+    assert "BTCUSDT · 숏 3.00x" in scoreboard
+    assert "현재 62000.00" in scoreboard
+    assert "UTAD 확인 + 고점 Strong 스윕" in scoreboard
+    assert "TP2 60000.00" in scoreboard
+    assert "현재 판정: 하방 우세 · 포지션 방향 유지" in scoreboard
     assert "🤖 엔진 진입 · SOXLUSDT 롱" in event
     assert "저점 Strong 스윕 + 상방 전환 확정" in event
     assert "실주문이 아닌 엔진 가상 거래" in event
+    assert "🤖 엔진 부분 익절 · ETHUSDT 숏" in partial
+    assert "사유 1차 익절" in partial
+
+
+def test_engine_scoreboard_keeps_time_exit_samples_neutral() -> None:
+    text = format_engine_scoreboard(
+        {
+            "scoreboard": {
+                "engine": {
+                    "net_return_pct": 0.9,
+                    "win_rate_pct": None,
+                    "profit_factor": None,
+                    "mdd_pct": 0,
+                    "trade_count": 2,
+                    "scored_trade_count": 0,
+                    "neutral_count": 2,
+                },
+                "user": {"trade_count": 0},
+                "rolling_4w": {"engine_leading": False},
+            },
+            "open_trades": [],
+        }
+    )
+
+    assert "표본 판정 N=0 / 전체 2 · 시간종료 중립 2" in text
+    assert "승률 표본 부족" in text
 
 
 def test_insight_formatter_uses_regenerate_button_without_pre() -> None:

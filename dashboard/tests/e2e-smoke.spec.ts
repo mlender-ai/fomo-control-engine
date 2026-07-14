@@ -32,21 +32,51 @@ test("live position cockpit smoke path", async ({ page }) => {
   await expect(page.getByTestId("stance-hud")).toContainText("상방");
   await expect(page.getByTestId("stance-hud")).toContainText("하방");
   await expect(page.getByTestId("chart-canvas-frame").getByTestId("stance-hud")).toHaveCount(0);
+  await expect(page.getByTestId("chart-canvas-frame").getByTestId("stance-ribbon")).toHaveCount(0);
   expect(await page.locator("[data-stance-flip='true']").count()).toBeGreaterThan(0);
   expect(await page.locator("[data-compact-level-label]").count()).toBeLessThanOrEqual(3);
   await expect(page.getByTestId("position-market-context")).toBeVisible();
   await expect(page.getByTestId("direction-gauge")).toHaveCount(0);
   await expect(page.getByTestId("take-profit-gauge")).toBeVisible();
+  const moneyFlow = page.getByTestId("money-flow-card");
+  await expect(moneyFlow).toBeVisible();
+  await expect(moneyFlow).toContainText("현물 체결");
+  await expect(moneyFlow).toContainText("선물 체결");
+  await expect(moneyFlow).toContainText("미결제약정");
+  await expect(moneyFlow).toContainText("CVD = 실제 입금액이 아닌");
+  await expect(moneyFlow.locator("polyline")).toHaveCount(0);
+  await expect(page.getByTestId("compact-gauge-panel").getByTestId("money-flow-card")).toHaveCount(0);
+  const chartFrameBox = await page.getByTestId("chart-canvas-frame").boundingBox();
+  const moneyFlowBox = await moneyFlow.boundingBox();
+  expect(chartFrameBox).not.toBeNull();
+  expect(moneyFlowBox).not.toBeNull();
+  expect(moneyFlowBox!.y).toBeGreaterThanOrEqual(chartFrameBox!.y + chartFrameBox!.height - 1);
   await expect(page.getByTestId("position-chart")).toBeVisible();
   await expect(page.getByTestId("chart-canvas-frame")).toBeVisible();
+  await expect(page.getByRole("button", { name: "포지션 목록" })).toBeVisible();
+  await expect(page.getByTestId("position-entry-line")).toHaveCount(1);
+  await expect(page.getByTestId("position-entry-line")).toHaveAttribute("x2", /\d+/);
   await expect(page.locator("[data-testid^='chart-layer-']")).toHaveCount(0);
 
+  const initialChartHeading = await page.getByTestId("position-chart").getByRole("heading").innerText();
   await page.getByTestId("minimal-asset-card").filter({ hasText: "ETHUSDT" }).click();
+  await expect(page).toHaveURL(/position=/);
   await expect(page.locator("[data-event-pill]").first()).toBeVisible({ timeout: 30_000 });
+  await page.goBack();
+  await expect(page).not.toHaveURL(/position=/);
+  await expect(page.getByTestId("position-chart").getByRole("heading")).toHaveText(initialChartHeading);
+  await page.getByTestId("minimal-asset-card").filter({ hasText: "ETHUSDT" }).click();
 
   await page.getByTestId("pro-mode-button").click();
   await expect(page.getByTestId("verdict-bar")).toBeVisible();
   await expect(page.getByTestId("action-plan")).toBeVisible();
+  await expect(page.locator(".analysisChartColumn").getByTestId("money-flow-card")).toBeVisible();
+  await expect(page.locator(".evidenceRoomRail").getByTestId("money-flow-card")).toHaveCount(0);
+  const proPanelBox = await page.locator(".analysisChartColumn .positionChartPanel").boundingBox();
+  const proFrameBox = await page.locator(".analysisChartColumn").getByTestId("chart-canvas-frame").boundingBox();
+  expect(proPanelBox).not.toBeNull();
+  expect(proFrameBox).not.toBeNull();
+  expect(proPanelBox!.height - proFrameBox!.height).toBeLessThan(220);
   await expect(page.getByTestId("chart-layer-flow")).toHaveCount(0);
   await expect(page.getByTestId("chart-layer-indicators")).toHaveCount(0);
   await page.getByTestId("chart-layer-wyckoff").click();
@@ -64,6 +94,54 @@ test("live position cockpit smoke path", async ({ page }) => {
   await expect(page.getByTestId("chart-guide-layer")).toHaveCount(0);
   await expect(page.getByTestId("evidence-room-panel")).toHaveAttribute("data-focus-layer", "wyckoff");
   await expect(page.getByTestId("chart-layer-plan")).toHaveAttribute("aria-pressed", "true");
+});
+
+test("money flow exposes the driver, magnitude, and execution history", async ({ page }) => {
+  await page.route("**/api/live/positions/*/chart-analysis*", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    if (body.derivatives?.signals) {
+      body.derivatives.signals.money_flow = {
+        as_of: "2026-07-13T12:00:00Z",
+        source: "bitget_spot",
+        source_label: "Bitget 단일 거래소 프록시",
+        spot_cvd_delta_ratio: 0.32,
+        futures_cvd_delta_ratio: 0.08,
+        price_change_pct: 2.8,
+        oi_change_pct: 1.4,
+        spot_cvd: Array.from({ length: 20 }, (_, index) => ({ time: index, value: index * 14 + (index % 4 === 0 ? -8 : 0) })),
+        futures_cvd: Array.from({ length: 20 }, (_, index) => ({ time: index, value: index * 4 + (index % 3 === 0 ? -7 : 0) })),
+        coverage: { spot_available: true, futures_available: true },
+        notes: [],
+        state: "spot_led",
+        label: "현물 유입 동반 상승",
+        available: true,
+        provisional: false,
+        sample_size: 34,
+        required_samples: 10,
+        confidence: 78,
+        directions: { price: "up", spot_cvd: "up", futures_cvd: "up", oi: "up" },
+        reason: "최근 30일 관측 분포의 40백분위로 방향을 구분했습니다."
+      };
+    }
+    await route.fulfill({ response, json: body });
+  });
+
+  await page.goto("/");
+  const moneyFlow = page.getByTestId("money-flow-card");
+  await expect(moneyFlow).toBeVisible({ timeout: 30_000 });
+  await expect(moneyFlow).toContainText("현물 주도 상승");
+  await expect(moneyFlow).toContainText("현물 매수 체결이 가격 상승을 지지");
+  await expect(moneyFlow).toContainText("판정 신뢰 78%");
+  await expect(moneyFlow).toContainText("+32.0%");
+  await expect(moneyFlow).toContainText("+8.00%");
+  await expect(moneyFlow.locator(".flowHistogramPlot")).toHaveCount(2);
+  await expect(moneyFlow.locator("polyline")).toHaveCount(0);
+
+  await page.setViewportSize({ width: 390, height: 1200 });
+  await expect(moneyFlow).toBeVisible();
+  const horizontalOverflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+  expect(horizontalOverflow).toBeLessThanOrEqual(0);
 });
 
 test("minimal evidence deep-links into a reproducible evidence room", async ({ page }) => {

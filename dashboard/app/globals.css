@@ -2485,9 +2485,16 @@ h3 {
 }
 
 .volumeProfileOverlay .validatedEventPill,
-.volumeProfileOverlay [data-stance-flip="true"] {
+.volumeProfileOverlay [data-stance-flip="true"],
+.volumeProfileOverlay .onchainMarker,
+.volumeProfileOverlay .onchainMarkerLabel {
   pointer-events: auto;
   cursor: help;
+}
+
+.volumeProfileOverlay .onchainMarker.candidate,
+.volumeProfileOverlay .onchainMarkerLabel.candidate {
+  opacity: 0.72;
 }
 
 .volumeProfileOverlay .tier2OverlayGroup.is-switching {

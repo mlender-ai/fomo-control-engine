@@ -7,6 +7,7 @@ from app.db.models import AlertRecord, EntryIntent, ScoutSnapshot, utc_now
 from app.db.repository import MemoryRepository
 from app.scout.monitor import (
     SCOUT_SENTINEL_POSITION_ID,
+    build_scout_calibration_summary,
     process_scout_scan,
     scout_rate_budget,
     score_entry_intents,
@@ -133,12 +134,71 @@ def test_scout_setup_alert_distinguishes_overall_stance_from_trigger_direction()
         _scan_payload("SOXLUSDT", mark=101.1, trigger=101, direction="short", analysis=analysis, preview=preview),
     )
 
-    message = triggered["_alert_candidate_objects"][0].message
+    alert = triggered["_alert_candidate_objects"][0]
+    message = alert.message
+    assert alert.title == "충돌 셋업 · 양방향 근거"
+    assert alert.severity == "info"
     assert "셋업 방향: 숏 · 현재 종합: 상방 근거 우세 · 충돌" in message
     assert "프리뷰(숏 10x 가정)" in message
     assert "종합 브리핑: 숏 우위" in message
     assert "브리핑: 브리핑" not in message
     assert "short 10x" not in message
+    assert "소수 지표가 맞을 수도 있음" in message
+    assert "보류 신호" not in message
+
+
+def test_conflicting_setup_aligned_with_htf_keeps_action_severity() -> None:
+    repo = MemoryRepository()
+    settings = _settings()
+    analysis = {"one_liners": {"overall_stance": "상방", "summary": "상방 우세"}}
+    preview = {
+        "briefing_stance_state": "long_leaning",
+        "htf_trend": "bearish",
+        "invalidation_distance_pct": -2.0,
+    }
+
+    process_scout_scan(repo, settings, _scan_payload("NVDAUSDT", 100, 101, analysis=analysis, preview=preview))
+    result = process_scout_scan(repo, settings, _scan_payload("NVDAUSDT", 101.1, 101, analysis=analysis, preview=preview))
+
+    alert = result["_alert_candidate_objects"][0]
+    assert alert.title == "충돌 셋업 · 양방향 근거"
+    assert alert.severity == "action"
+    assert "셋업이 상위 추세와 정렬" in alert.message
+    assert alert.payload["briefing_htf_countertrend"] is True
+
+
+def test_conflicting_setup_alert_can_be_disabled() -> None:
+    repo = MemoryRepository()
+    settings = _settings(scout_conflict_setup_alerts_enabled=False)
+    analysis = {"one_liners": {"overall_stance": "상방", "summary": "상방 우세"}}
+
+    near = process_scout_scan(repo, settings, _scan_payload("NVDAUSDT", 100, 101, analysis=analysis))
+    triggered = process_scout_scan(repo, settings, _scan_payload("NVDAUSDT", 101.1, 101, analysis=analysis))
+
+    assert not [item for item in near["_alert_candidate_objects"] if item.rule_id.startswith("setup_")]
+    assert not [item for item in triggered["_alert_candidate_objects"] if item.rule_id.startswith("setup_")]
+    assert repo.list_armed_setups(symbol="NVDAUSDT", status="triggered")
+
+
+def test_too_close_invalidation_never_emits_action_setup_alert() -> None:
+    repo = MemoryRepository()
+    settings = _settings()
+    analysis = {"one_liners": {"overall_stance": "하방", "summary": "하방 우세"}}
+    preview = {
+        "rr_ratio": None,
+        "rr_ratio_raw": 26.62,
+        "invalidation_distance_pct": -0.32,
+        "invalidation_too_close": True,
+        "quality_anomalies": {"invalidation_too_close": True, "rr_above_display_cap": True},
+    }
+
+    process_scout_scan(repo, settings, _scan_payload("NVDAUSDT", 100, 101, analysis=analysis, preview=preview))
+    result = process_scout_scan(repo, settings, _scan_payload("NVDAUSDT", 101.1, 101, analysis=analysis, preview=preview))
+
+    alert = result["_alert_candidate_objects"][0]
+    assert alert.severity == "info"
+    assert "R:R 산출 불가 · 무효화 너무 가까움" in alert.message
+    assert "자동 진입 제외" in alert.message
 
 
 def test_scout_setup_scores_without_position_after_price_path() -> None:
@@ -147,7 +207,20 @@ def test_scout_setup_scores_without_position_after_price_path() -> None:
     process_scout_scan(
         repo,
         settings,
-        _scan_payload("BASEDUSDT", mark=100, trigger=101, direction="short"),
+        _scan_payload(
+            "BASEDUSDT",
+            mark=100,
+            trigger=101,
+            direction="short",
+            analysis={"one_liners": {"overall_stance": "상방", "summary": "상방 우세"}},
+            preview={
+                "htf_trend": "bearish",
+                "rr_ratio_raw": 26.62,
+                "invalidation_distance_pct": -0.32,
+                "invalidation_too_close": True,
+                "quality_anomalies": {"invalidation_too_close": True, "rr_above_display_cap": True},
+            },
+        ),
     )
     setup = repo.list_armed_setups(symbol="BASEDUSDT", status="armed")[0]
     old_time = utc_now() - timedelta(hours=2)
@@ -184,6 +257,13 @@ def test_scout_setup_scores_without_position_after_price_path() -> None:
     assert scores[0].judgment_type == "scout_setup"
     assert scores[0].outcome == "correct"
     assert scores[0].claim["symbol"] == "BASEDUSDT"
+    assert scores[0].metrics["invalidation_too_close"] is True
+    assert scores[0].metrics["rr_above_display_cap"] is True
+    assert scores[0].metrics["briefing_htf_countertrend"] is True
+    quality = build_scout_calibration_summary(scores)["quality"]
+    assert quality["invalidation_too_close"] == 1
+    assert quality["rr_above_display_cap"] == 1
+    assert quality["briefing_htf_countertrend_rate_pct"] == 100.0
 
 
 def test_entry_intent_partial_then_triggered_alert_chain() -> None:

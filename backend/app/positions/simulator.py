@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 from uuid import uuid4
 
@@ -14,8 +15,11 @@ from app.positions.action_plan import build_action_plan
 DEFAULT_MMR = 0.005  # Bitget 티어값 미수신 시 보수적 기본 유지증거금률
 FEE_BUFFER = 0.0006  # 청산 근처 수수료/펀딩 버퍼
 RR_MIN = 1.5
+DEFAULT_MIN_INVALIDATION_DISTANCE_PCT = 0.8
+DEFAULT_RR_DISPLAY_CAP = 10.0
 LEVEL_SCORE_MIN = 55
 FUNDING_ADVERSE_THRESHOLD = 0.0005  # 방향에 불리한 펀딩 임계 (config 대체 가능)
+logger = logging.getLogger(__name__)
 
 
 def estimate_liquidation(entry_price: float, leverage: float, direction: str, mmr: float | None = None) -> float | None:
@@ -42,6 +46,14 @@ def _distance_pct(price: float | None, entry: float, direction: str) -> float | 
     return round(((price - entry) / entry) * 100 * side, 2)
 
 
+def format_rr_ratio(value: float | None, cap: float = DEFAULT_RR_DISPLAY_CAP) -> str:
+    if value is None:
+        return "-"
+    if value > cap:
+        return f"{cap:g}+"
+    return f"{value:g}"
+
+
 def simulate_entry(
     *,
     symbol: str,
@@ -53,6 +65,8 @@ def simulate_entry(
     chart_analysis: dict[str, Any],
     mmr: float | None,
     direction_score: int | None,
+    min_invalidation_distance_pct: float = DEFAULT_MIN_INVALIDATION_DISTANCE_PCT,
+    rr_display_cap: float = DEFAULT_RR_DISPLAY_CAP,
 ) -> dict[str, Any]:
     """가상 진입 시뮬레이션 결과 (액션 플랜 프리뷰 + R:R + 생존 마진 + 체크리스트)."""
     direction_enum = Direction.long if direction == "long" else Direction.short
@@ -92,15 +106,34 @@ def simulate_entry(
     first_tp = take_profit[0] if take_profit else None
     tp_distance = _distance_pct(first_tp.get("price"), entry_price, direction) if first_tp else None
 
+    rr_ratio_raw = None
     rr_ratio = None
     loss_usdt = None
     profit_usdt = None
+    min_invalidation_distance_pct = max(0.0, float(min_invalidation_distance_pct))
+    invalidation_too_close = bool(
+        invalidation_distance is not None
+        and invalidation_distance < 0
+        and abs(invalidation_distance) < min_invalidation_distance_pct
+    )
     if invalidation_distance is not None and tp_distance is not None and invalidation_distance < 0 and tp_distance > 0:
-        rr_ratio = round(tp_distance / abs(invalidation_distance), 2)
-        if margin_usdt:
+        rr_ratio_raw = round(tp_distance / abs(invalidation_distance), 2)
+        if not invalidation_too_close:
+            rr_ratio = rr_ratio_raw
+        if margin_usdt and not invalidation_too_close:
             # 손익 = 증거금 × 레버리지 × 가격변화율
             loss_usdt = round(margin_usdt * leverage * abs(invalidation_distance) / 100, 2)
             profit_usdt = round(margin_usdt * leverage * tp_distance / 100, 2)
+    if invalidation_too_close or (rr_ratio_raw is not None and rr_ratio_raw > rr_display_cap):
+        logger.info(
+            "setup_rr_quality symbol=%s direction=%s invalidation_distance_pct=%s rr_ratio_raw=%s too_close=%s display_cap=%s",
+            symbol.upper(),
+            direction,
+            invalidation_distance,
+            rr_ratio_raw,
+            invalidation_too_close,
+            rr_display_cap,
+        )
 
     liq_distance = _distance_pct(liquidation, entry_price, direction)
     # 생존 마진: 무효화가 청산보다 entry에 가까워야(안쪽) 손절이 먼저 걸린다.
@@ -113,6 +146,9 @@ def simulate_entry(
 
     checklist = _build_checklist(
         rr_ratio=rr_ratio,
+        invalidation_too_close=invalidation_too_close,
+        min_invalidation_distance_pct=min_invalidation_distance_pct,
+        rr_display_cap=rr_display_cap,
         survives=survives,
         invalidation=invalidation if isinstance(invalidation, dict) else None,
         htf_conflict=htf_conflict,
@@ -137,8 +173,17 @@ def simulate_entry(
         "liquidation_formula": "격리 기준 추정: entry × (1 ∓ 1/lev ± MMR ± 수수료버퍼). 실제 청산가는 거래소 계산과 다를 수 있음",
         "action_plan": action_plan,
         "invalidation_distance_pct": invalidation_distance,
+        "invalidation_too_close": invalidation_too_close,
+        "min_invalidation_distance_pct": min_invalidation_distance_pct,
         "first_take_profit_distance_pct": tp_distance,
         "rr_ratio": rr_ratio,
+        "rr_ratio_raw": rr_ratio_raw,
+        "rr_ratio_display": format_rr_ratio(rr_ratio, rr_display_cap) if rr_ratio is not None else None,
+        "rr_display_cap": rr_display_cap,
+        "quality_anomalies": {
+            "invalidation_too_close": invalidation_too_close,
+            "rr_above_display_cap": bool(rr_ratio_raw is not None and rr_ratio_raw > rr_display_cap),
+        },
         "loss_usdt": loss_usdt,
         "profit_usdt": profit_usdt,
         "survives_to_invalidation": survives,
@@ -148,7 +193,15 @@ def simulate_entry(
         "checklist": checklist,
         "checklist_passed": passed,
         "checklist_total": total,
-        "verdict_line": _verdict_line(rr_ratio, invalidation_distance, liq_distance, htf_conflict),
+        "verdict_line": _verdict_line(
+            rr_ratio,
+            invalidation_distance,
+            liq_distance,
+            htf_conflict,
+            invalidation_too_close=invalidation_too_close,
+            min_invalidation_distance_pct=min_invalidation_distance_pct,
+            rr_display_cap=rr_display_cap,
+        ),
     }
 
 
@@ -165,6 +218,9 @@ def _mtf_from_analysis(chart_analysis: dict[str, Any]) -> dict[str, Any]:
 def _build_checklist(
     *,
     rr_ratio: float | None,
+    invalidation_too_close: bool,
+    min_invalidation_distance_pct: float,
+    rr_display_cap: float,
     survives: bool | None,
     invalidation: dict[str, Any] | None,
     htf_conflict: bool,
@@ -174,7 +230,16 @@ def _build_checklist(
 ) -> list[dict[str, str]]:
     checklist: list[dict[str, str]] = []
 
-    if rr_ratio is None:
+    if invalidation_too_close:
+        checklist.append(
+            _item(
+                "rr",
+                f"무효화 거리 ≥ {min_invalidation_distance_pct:g}%",
+                "fail",
+                "무효화 과근접 — 노이즈 의심, R:R 산출 불가",
+            )
+        )
+    elif rr_ratio is None:
         checklist.append(
             _item(
                 "rr",
@@ -184,14 +249,14 @@ def _build_checklist(
             )
         )
     elif rr_ratio >= RR_MIN:
-        checklist.append(_item("rr", f"손익비 R:R ≥ {RR_MIN}", "pass", f"R:R {rr_ratio}"))
+        checklist.append(_item("rr", f"손익비 R:R ≥ {RR_MIN}", "pass", f"R:R {format_rr_ratio(rr_ratio, rr_display_cap)}"))
     else:
         checklist.append(
             _item(
                 "rr",
                 f"손익비 R:R ≥ {RR_MIN}",
                 "fail",
-                f"R:R {rr_ratio} — 보상 대비 위험이 큼",
+                f"R:R {format_rr_ratio(rr_ratio, rr_display_cap)} — 보상 대비 위험이 큼",
             )
         )
 
@@ -316,9 +381,16 @@ def _verdict_line(
     invalidation_distance: float | None,
     liq_distance: float | None,
     htf_conflict: bool,
+    *,
+    invalidation_too_close: bool,
+    min_invalidation_distance_pct: float,
+    rr_display_cap: float,
 ) -> str:
     parts = []
-    parts.append(f"R:R {rr}" if rr is not None else "R:R -")
+    if invalidation_too_close:
+        parts.append(f"R:R 산출 불가 (무효화 {min_invalidation_distance_pct:g}% 미만)")
+    else:
+        parts.append(f"R:R {format_rr_ratio(rr, rr_display_cap)}")
     parts.append(f"무효화 {invalidation_distance:.1f}%" if invalidation_distance is not None else "무효화 -")
     parts.append(f"추정 청산 {liq_distance:.1f}%" if liq_distance is not None else "추정 청산 -")
     parts.append("상위TF 충돌" if htf_conflict else "상위TF 충돌 없음")

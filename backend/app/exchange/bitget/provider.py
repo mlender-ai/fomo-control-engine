@@ -18,9 +18,11 @@ from app.exchange.bitget.schemas import (
 )
 from app.exchange.bitget.trade_cache import BitgetTradeFillCache
 from app.exchange.bitget.trades import (
+    BitgetAccountFill,
     BitgetTradeFill,
     aggregate_trade_buckets,
     cvd_series_from_buckets,
+    parse_account_fill,
     parse_trade_fill,
     timeframe_seconds,
 )
@@ -84,6 +86,9 @@ class BitgetMarketDataProvider(MarketDataProvider):
 
     def get_positions(self) -> list[BitgetPosition]:
         return _run(self.get_account_positions())
+
+    def get_account_fills(self, start_time: datetime, end_time: datetime) -> list[BitgetAccountFill]:
+        return _run(self.get_account_trade_fills(start_time, end_time))
 
     def get_trade_flow(self, symbol: str, timeframe: str, candles: list[MarketCandle]) -> dict:
         return _run(self.get_trade_flow_async(symbol, timeframe, candles))
@@ -602,6 +607,52 @@ class BitgetMarketDataProvider(MarketDataProvider):
             raise BitgetAPIError("invalid_response", "Bitget positions response is missing data.")
         positions = [self._parse_position(row) for row in rows if isinstance(row, dict)]
         return [position for position in positions if position.total > 0]
+
+    async def get_account_trade_fills(
+        self,
+        start_time: datetime,
+        end_time: datetime,
+        *,
+        limit: int = 100,
+        max_pages: int = 50,
+    ) -> list[BitgetAccountFill]:
+        fills: list[BitgetAccountFill] = []
+        seen: set[str] = set()
+        id_less_than: str | None = None
+        page_limit = min(max(1, limit), 100)
+        for page in range(max_pages):
+            payload = await self.client.private_get(
+                "/api/v2/mix/order/fills",
+                {
+                    "productType": self.product_type,
+                    "startTime": str(int(start_time.timestamp() * 1000)),
+                    "endTime": str(int(end_time.timestamp() * 1000)),
+                    "limit": str(page_limit),
+                    "idLessThan": id_less_than,
+                },
+            )
+            data = payload.get("data")
+            rows = data.get("fillList") if isinstance(data, dict) else None
+            if not isinstance(rows, list):
+                raise BitgetAPIError("invalid_response", "Bitget account fills response is missing fillList.")
+            page_fills = [
+                parse_account_fill(row, self.margin_coin)
+                for row in rows
+                if isinstance(row, dict)
+            ]
+            for fill in page_fills:
+                if fill.trade_id not in seen:
+                    seen.add(fill.trade_id)
+                    fills.append(fill)
+            if len(rows) < page_limit or not page_fills:
+                break
+            oldest = min(page_fills, key=lambda item: item.timestamp)
+            if oldest.timestamp <= start_time:
+                break
+            id_less_than = str(data.get("endId") or oldest.trade_id)
+            if page < max_pages - 1:
+                await asyncio.sleep(0.1)
+        return sorted(fills, key=lambda fill: (fill.timestamp, fill.trade_id))
 
     async def _get_ticker(self, symbol: str) -> dict[str, Any]:
         payload = await self.client.public_get(

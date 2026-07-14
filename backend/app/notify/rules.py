@@ -58,6 +58,7 @@ RULE_LABELS: dict[str, str] = {
     "periodic_pulse": "정기 상태 펄스",
     "full_alignment": "만장일치 정렬 발굴",
     "flow_divergence": "현물·선물 흐름 역행",
+    "whale_entry": "Hyperliquid 고래 진입 관측",
 }
 
 RULE_SEVERITY: dict[str, AlertSeverity] = {
@@ -91,6 +92,7 @@ RULE_SEVERITY: dict[str, AlertSeverity] = {
     "periodic_pulse": "info",
     "flow_divergence": "warn",
     "full_alignment": "info",
+    "whale_entry": "info",
 }
 
 
@@ -605,7 +607,7 @@ def _liq_unknown_candidates(payload: dict[str, Any], settings: Settings) -> list
 def _wyckoff_candidates(payload: dict[str, Any], settings: Settings) -> list[AlertCandidate]:
     position = _position(payload)
     state = _state(payload)
-    markers = _wyckoff_markers(payload)
+    markers = _alertable_wyckoff_markers(payload, _wyckoff_markers(payload))
     candidates: list[AlertCandidate] = []
     for marker in markers:
         confidence = _float(marker.get("confidence"))
@@ -645,6 +647,37 @@ def _wyckoff_candidates(payload: dict[str, Any], settings: Settings) -> list[Ale
             )
         )
     return candidates
+
+
+def _alertable_wyckoff_markers(payload: dict[str, Any], markers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep fresh semantic events only; chart history may contain many repeated markers."""
+    analysis = payload.get("chart_analysis") if isinstance(payload.get("chart_analysis"), dict) else {}
+    candles = analysis.get("candles") if isinstance(analysis.get("candles"), list) else []
+    candle_times = []
+    for item in candles:
+        candle = _dump(item)
+        timestamp = _timestamp_seconds(candle.get("time") or candle.get("timestamp"))
+        if timestamp is not None:
+            candle_times.append(timestamp)
+    latest_candle = max(candle_times, default=None)
+    timeframe_seconds = _timeframe_seconds(str(analysis.get("timeframe") or _position(payload).get("timeframe") or "4h"))
+    freshest_by_type: dict[str, dict[str, Any]] = {}
+    for marker in markers:
+        marker_time = _timestamp_seconds(marker.get("time") or marker.get("timestamp"))
+        if latest_candle is not None and marker_time is not None:
+            age_seconds = latest_candle - marker_time
+            if age_seconds < 0 or age_seconds > timeframe_seconds * 2:
+                continue
+        marker_type = str(marker.get("type") or marker.get("label") or "event")
+        current = freshest_by_type.get(marker_type)
+        current_time = _timestamp_seconds((current or {}).get("time") or (current or {}).get("timestamp"))
+        if current is None or (marker_time or 0) > (current_time or 0):
+            freshest_by_type[marker_type] = marker
+    return sorted(
+        freshest_by_type.values(),
+        key=lambda marker: _timestamp_seconds(marker.get("time") or marker.get("timestamp")) or 0,
+        reverse=True,
+    )
 
 
 def _derivative_position_candidates(payload: dict[str, Any], settings: Settings) -> list[AlertCandidate]:
@@ -917,6 +950,37 @@ def _wyckoff_markers(payload: dict[str, Any]) -> list[dict[str, Any]]:
     if isinstance(low_conf, list):
         return [marker for marker in low_conf if isinstance(marker, dict)]
     return []
+
+
+def _timestamp_seconds(value: Any) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.timestamp()
+    try:
+        numeric = float(value)
+        return numeric / 1000.0 if numeric > 10_000_000_000 else numeric
+    except (TypeError, ValueError):
+        pass
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed.timestamp()
+
+
+def _timeframe_seconds(timeframe: str) -> int:
+    normalized = timeframe.strip().lower()
+    try:
+        if normalized.endswith("m"):
+            return max(60, int(normalized[:-1]) * 60)
+        if normalized.endswith("h"):
+            return max(3600, int(normalized[:-1]) * 3600)
+        if normalized.endswith("d"):
+            return max(86400, int(normalized[:-1]) * 86400)
+    except ValueError:
+        return 4 * 3600
+    return 4 * 3600
 
 
 def _current_price(payload: dict[str, Any]) -> float | None:

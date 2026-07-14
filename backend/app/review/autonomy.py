@@ -25,6 +25,8 @@ def process_parameter_autonomy(settings: Any, repository: Any, suggestions: list
 def process_one_suggestion(settings: Any, repository: Any, suggestion: CalibrationSuggestion) -> CalibrationSuggestion:
     if suggestion.status not in {"pending", "scheduled", "experiment"}:
         return suggestion
+    if suggestion.suggestion_type == "signature_promotion":
+        return suggestion
     proposed = suggestion.proposed_change or {}
     parameter = proposed.get("parameter")
     if not isinstance(parameter, str):

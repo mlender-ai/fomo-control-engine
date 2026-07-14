@@ -181,6 +181,51 @@ def test_flow_divergence_uses_stable_identity_and_rearms_only_after_state_exit()
     assert rearm_signals(cleared, settings)[state_key] is True
 
 
+def test_wyckoff_alerts_drop_historical_backlog_and_collapse_same_event_type() -> None:
+    settings = _settings(alert_enabled_rules="wyckoff_event", alert_wyckoff_min_confidence=80)
+    latest = datetime(2026, 7, 14, 0, 0, tzinfo=timezone.utc)
+    payload = _payload()
+    payload["chart_analysis"] = {
+        "timeframe": "4h",
+        "candles": [{"time": int(latest.timestamp()), "close": 100}],
+        "wyckoff_markers": [
+            {
+                "id": "sos-stale",
+                "type": "sos_confirmed",
+                "label": "SOS",
+                "confidence": 91,
+                "time": int((latest - timedelta(days=5)).timestamp()),
+            },
+            {
+                "id": "sos-older",
+                "type": "sos_confirmed",
+                "label": "SOS",
+                "confidence": 91,
+                "time": int((latest - timedelta(hours=8)).timestamp()),
+            },
+            {
+                "id": "sos-latest",
+                "type": "sos_confirmed",
+                "label": "SOS",
+                "confidence": 92,
+                "time": int((latest - timedelta(hours=4)).timestamp()),
+            },
+            {
+                "id": "utad-latest",
+                "type": "utad_candidate",
+                "label": "UTAD",
+                "confidence": 95,
+                "time": int(latest.timestamp()),
+            },
+        ],
+    }
+
+    candidates = evaluate_position_alerts(payload, settings)
+
+    assert [candidate.identity for candidate in candidates] == ["utad-latest", "sos-latest"]
+    assert [candidate.message.count("감지") for candidate in candidates] == [1, 1]
+
+
 @pytest.fixture()
 def repo():
     repository = MemoryRepository()

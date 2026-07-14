@@ -12,6 +12,8 @@ ExitReason = Literal[
     "breakeven_stop",
     "opposite_stance_flip",
     "take_profit_pressure",
+    "take_profit_2",
+    "time_decay",
     "time_stop",
 ]
 
@@ -27,6 +29,8 @@ class PaperPolicy:
     min_rr: float = 1.5
     min_signature_ci_low_pct: float = 50.0
     max_holding_bars: int = 30
+    take_profit_atr_k1: float = 1.0
+    take_profit_atr_k2: float = 2.0
     take_profit_pressure_bars: int = 2
     taker_fee_pct: float = 0.06
     slippage_pct: float = 0.03
@@ -48,6 +52,7 @@ class ExitDecision:
     action: Literal["hold", "partial", "close"]
     reason: ExitReason | Literal["take_profit_1", "none"] = "none"
     high_pressure_streak: int = 0
+    execution_price: float | None = None
 
 
 def evaluate_entry(
@@ -58,6 +63,7 @@ def evaluate_entry(
     checklist_passed: int,
     checklist_total: int,
     rr_ratio: float | None,
+    invalidation_hygiene: bool = True,
     survives_to_invalidation: bool,
     validated_signature: bool,
     signature_ci_low_pct: float | None,
@@ -78,6 +84,7 @@ def evaluate_entry(
         "evidence": evidence_count >= policy.min_evidence,
         "checklist": checklist_passed >= policy.min_checklist_passed
         and checklist_total >= policy.min_checklist_total,
+        "invalidation_hygiene": invalidation_hygiene,
         "risk_reward": rr_ratio is not None and rr_ratio >= policy.min_rr,
         "liquidation_safety": survives_to_invalidation,
         "validated_signature": validated_signature
@@ -105,6 +112,9 @@ def open_trade(
     stance_snapshot: dict[str, Any],
     signature_snapshot: dict[str, Any],
     policy: PaperPolicy,
+    take_profit_2_price: float | None = None,
+    entry_atr: float | None = None,
+    target_plan: dict[str, Any] | None = None,
 ) -> PaperTrade:
     notional = policy.margin_usdt * policy.leverage
     quantity = notional / bar.close
@@ -124,6 +134,9 @@ def open_trade(
         remaining_quantity=quantity,
         invalidation_price=invalidation_price,
         take_profit_price=take_profit_price,
+        take_profit_2_price=take_profit_2_price,
+        entry_atr=entry_atr,
+        target_plan=target_plan or {},
         stop_price=invalidation_price,
         entry_evidence=evidence,
         checklist=checklist,
@@ -153,7 +166,10 @@ def evaluate_exit(
         return ExitDecision("close", reason, 0)
 
     if trade.partial_exit_at is None and _take_profit_touched(trade, bar):
-        return ExitDecision("partial", "take_profit_1", 0)
+        return ExitDecision("partial", "take_profit_1", 0, trade.take_profit_price)
+
+    if trade.partial_exit_at is not None and _take_profit_2_touched(trade, bar):
+        return ExitDecision("close", "take_profit_2", 0, trade.take_profit_2_price)
 
     if _opposite_confirmed_flip(trade, stance_state):
         return ExitDecision("close", "opposite_stance_flip", 0)
@@ -162,7 +178,9 @@ def evaluate_exit(
     if high_streak >= policy.take_profit_pressure_bars:
         return ExitDecision("close", "take_profit_pressure", high_streak)
     if next_holding_bars >= policy.max_holding_bars:
-        return ExitDecision("close", "time_stop", high_streak)
+        if _stance_supports_trade(trade, stance_state):
+            return ExitDecision("hold", "none", high_streak)
+        return ExitDecision("close", "time_decay", high_streak)
     return ExitDecision("hold", "none", high_streak)
 
 
@@ -177,9 +195,10 @@ def apply_exit_decision(
     if decision.action == "hold":
         return trade.model_copy(update={"holding_bars": holding_bars, "updated_at": bar.timestamp})
 
+    execution_price = decision.execution_price or bar.close
     exit_quantity = trade.remaining_quantity * (0.5 if decision.action == "partial" else 1.0)
-    gross_increment = _gross_pnl(trade.direction, trade.entry_price, bar.close, exit_quantity)
-    exit_cost = bar.close * exit_quantity * policy.execution_cost_rate
+    gross_increment = _gross_pnl(trade.direction, trade.entry_price, execution_price, exit_quantity)
+    exit_cost = execution_price * exit_quantity * policy.execution_cost_rate
     gross = trade.gross_pnl_usdt + gross_increment
     costs = trade.costs_usdt + exit_cost
     net = gross - costs
@@ -197,7 +216,7 @@ def apply_exit_decision(
                 **common,
                 "remaining_quantity": trade.remaining_quantity - exit_quantity,
                 "partial_exit_at": bar.timestamp,
-                "partial_exit_price": bar.close,
+                "partial_exit_price": execution_price,
                 "partial_exit_quantity": exit_quantity,
                 "stop_price": trade.entry_price,
             }
@@ -209,7 +228,7 @@ def apply_exit_decision(
             "remaining_quantity": 0.0,
             "exit_bar_at": bar.timestamp,
             "exit_at": bar.timestamp,
-            "exit_price": bar.close,
+            "exit_price": execution_price,
             "exit_reason": decision.reason,
         }
     )
@@ -227,6 +246,15 @@ def _take_profit_touched(trade: PaperTrade, bar: MarketCandle) -> bool:
     return bar.low <= trade.take_profit_price
 
 
+def _take_profit_2_touched(trade: PaperTrade, bar: MarketCandle) -> bool:
+    target = trade.take_profit_2_price
+    if target is None:
+        return False
+    if trade.direction == Direction.long:
+        return bar.high >= target
+    return bar.low <= target
+
+
 def _opposite_confirmed_flip(trade: PaperTrade, stance_state: dict[str, Any]) -> bool:
     if stance_state.get("flipped") is not True or stance_state.get("transitioning") is True:
         return False
@@ -234,6 +262,15 @@ def _opposite_confirmed_flip(trade: PaperTrade, stance_state: dict[str, Any]) ->
     return (trade.direction == Direction.long and stance in {"short", "short_leaning"}) or (
         trade.direction == Direction.short and stance in {"long", "long_leaning"}
     )
+
+
+def _stance_supports_trade(trade: PaperTrade, stance_state: dict[str, Any]) -> bool:
+    if stance_state.get("transitioning") is True:
+        return False
+    stance = str(stance_state.get("stance") or "")
+    if trade.direction == Direction.long:
+        return stance in {"long", "long_leaning"}
+    return stance in {"short", "short_leaning"}
 
 
 def _gross_pnl(direction: Direction, entry: float, exit_price: float, quantity: float) -> float:

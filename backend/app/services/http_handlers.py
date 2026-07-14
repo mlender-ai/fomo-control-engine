@@ -10,6 +10,7 @@ from app.agents.orchestrator import create_research_run
 from app.analyst.briefing import build_analyst_briefing, hysteresis_params_from_settings, load_directional_prior, persist_directional_state
 from app.analyst.gauges import build_gauges
 from app.backtest.service import validated_event_stats_for_symbol
+from app.backtest.candidate_scoring import apply_signature_promotion, candidate_review_status
 from app.core.config import get_settings
 from app.db.models import (
     CalibrationSuggestion,
@@ -66,6 +67,7 @@ from app.positions.engine import (
 )
 from app.positions.insight import build_position_insight_input, make_ai_position_insight
 from app.positions.pnl import resolve_position_pnl_percent
+from app.onchain.service import chart_onchain_context
 from app.report.engine import generate_report
 from app.review.engine import (
     build_calibration_summary,
@@ -1522,6 +1524,9 @@ def _chart_analysis_bundle_for_position(
             _trade_flow_for_snapshot(position.symbol, timeframe, snapshot.candles) if include_trade_flow else None,
             derivatives=_derivative_context(position.symbol),
         )
+        onchain = chart_onchain_context(repository, position.symbol, timeframe, list(market_analysis.get("candles") or []))
+        market_analysis["onchain"] = onchain
+        market_analysis["validated_onchain_evidence"] = list(onchain.get("validated_evidence") or [])
         return market_analysis, apply_position_context(market_analysis, PositionContext.from_position(position))
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -1906,6 +1911,7 @@ def _calibration_preparing_payload() -> dict:
         "score_contexts": {},
         "alert_response_summary": {},
         "scout_setup_summary": {},
+        "candidate_review": {"candidate_count": 0, "promotion_ready": 0, "signatures": []},
         "briefing_performance": {},
         "wyckoff_confidence": [],
         "suggestion_status_counts": {},
@@ -1938,6 +1944,7 @@ def refresh_calibration_report_cache() -> dict:
         repository.list_alert_responses(limit=2000),
         self_audit=build_self_audit(repository),
     )
+    summary["candidate_review"] = candidate_review_status(repository)
     summary["engine_params"] = [param.model_dump(mode="json") for param in repository.list_engine_params(limit=100)]
     # WO-45: 대시보드 개선 카드가 이 경로의 weekly_report를 소비한다 — 다이제스트 임베드.
     weekly = summary.get("weekly_report")
@@ -1951,6 +1958,7 @@ def refresh_calibration_report_cache() -> dict:
         repository.list_alert_responses(limit=2000),
         self_audit=build_self_audit(repository),
     )
+    weekly_payload["candidate_review"] = summary["candidate_review"]
     weekly_payload["improvement_digest"] = review_improvement()["digest"]
     performance = _build_performance_summary()
     weekly_payload["performance"] = performance
@@ -2014,7 +2022,17 @@ def _set_calibration_suggestion_status(suggestion_id: UUID, status: str) -> Cali
     suggestion.updated_at = utc_now()
     saved = repository.add_calibration_suggestion(suggestion)
     if status == "approved":
-        saved = adopt_suggestion(settings, repository, saved, adopted_by="manual")
+        if saved.suggestion_type == "signature_promotion":
+            transition = apply_signature_promotion(repository, saved)
+            saved.autonomy = {
+                **saved.autonomy,
+                "approved_at": utc_now().isoformat(),
+                "transition_id": str(transition.id),
+                "applied_state": "validated",
+            }
+            saved = repository.add_calibration_suggestion(saved)
+        else:
+            saved = adopt_suggestion(settings, repository, saved, adopted_by="manual")
     return saved
 
 

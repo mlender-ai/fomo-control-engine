@@ -64,6 +64,34 @@ class Settings(BaseSettings):
             "DERIVATIVE_TRACKING_INTERVAL_SECONDS",
         ),
     )
+    hyperliquid_whale_tracking_enabled: bool = Field(
+        True,
+        validation_alias=AliasChoices("FCE_HYPERLIQUID_WHALE_TRACKING_ENABLED", "HYPERLIQUID_WHALE_TRACKING_ENABLED"),
+    )
+    hyperliquid_info_url: str = Field(
+        "https://api.hyperliquid.xyz/info",
+        validation_alias=AliasChoices("FCE_HYPERLIQUID_INFO_URL", "HYPERLIQUID_INFO_URL"),
+    )
+    hyperliquid_whale_poll_interval_seconds: int = Field(
+        120,
+        validation_alias=AliasChoices("FCE_HYPERLIQUID_WHALE_POLL_INTERVAL_SECONDS", "HYPERLIQUID_WHALE_POLL_INTERVAL_SECONDS"),
+    )
+    hyperliquid_whale_min_size_usd: float = Field(
+        100000.0,
+        validation_alias=AliasChoices("FCE_HYPERLIQUID_WHALE_MIN_SIZE_USD", "HYPERLIQUID_WHALE_MIN_SIZE_USD"),
+    )
+    hyperliquid_whale_initial_lookback_hours: int = Field(
+        168,
+        validation_alias=AliasChoices("FCE_HYPERLIQUID_WHALE_INITIAL_LOOKBACK_HOURS", "HYPERLIQUID_WHALE_INITIAL_LOOKBACK_HOURS"),
+    )
+    hyperliquid_whale_max_wallets: int = Field(
+        20,
+        validation_alias=AliasChoices("FCE_HYPERLIQUID_WHALE_MAX_WALLETS", "HYPERLIQUID_WHALE_MAX_WALLETS"),
+    )
+    hyperliquid_request_timeout_seconds: float = Field(
+        10.0,
+        validation_alias=AliasChoices("FCE_HYPERLIQUID_REQUEST_TIMEOUT_SECONDS", "HYPERLIQUID_REQUEST_TIMEOUT_SECONDS"),
+    )
     derivative_ratio_period: str = Field(
         "5m",
         validation_alias=AliasChoices("FCE_DERIVATIVE_RATIO_PERIOD", "DERIVATIVE_RATIO_PERIOD"),
@@ -295,6 +323,34 @@ class Settings(BaseSettings):
             "WORKER_CALIBRATION_CACHE_INTERVAL_SECONDS",
         ),
     )
+    worker_candidate_scoring_enabled: bool = Field(
+        True,
+        validation_alias=AliasChoices(
+            "FCE_WORKER_CANDIDATE_SCORING_ENABLED",
+            "WORKER_CANDIDATE_SCORING_ENABLED",
+        ),
+    )
+    worker_candidate_scoring_interval_seconds: int = Field(
+        86400,
+        validation_alias=AliasChoices(
+            "FCE_WORKER_CANDIDATE_SCORING_INTERVAL_SECONDS",
+            "WORKER_CANDIDATE_SCORING_INTERVAL_SECONDS",
+        ),
+    )
+    worker_user_fill_sync_enabled: bool = Field(
+        True,
+        validation_alias=AliasChoices(
+            "FCE_WORKER_USER_FILL_SYNC_ENABLED",
+            "WORKER_USER_FILL_SYNC_ENABLED",
+        ),
+    )
+    worker_user_fill_sync_interval_seconds: int = Field(
+        120,
+        validation_alias=AliasChoices(
+            "FCE_WORKER_USER_FILL_SYNC_INTERVAL_SECONDS",
+            "WORKER_USER_FILL_SYNC_INTERVAL_SECONDS",
+        ),
+    )
     worker_symbol_catalog_interval_seconds: int = Field(
         86400,
         validation_alias=AliasChoices(
@@ -359,6 +415,24 @@ class Settings(BaseSettings):
     scout_setup_score_after_hours: float = Field(
         24.0,
         validation_alias=AliasChoices("FCE_SCOUT_SETUP_SCORE_AFTER_HOURS", "SCOUT_SETUP_SCORE_AFTER_HOURS"),
+    )
+    scout_conflict_setup_alerts_enabled: bool = Field(
+        True,
+        validation_alias=AliasChoices(
+            "FCE_SCOUT_CONFLICT_SETUP_ALERTS_ENABLED",
+            "SCOUT_CONFLICT_SETUP_ALERTS_ENABLED",
+        ),
+    )
+    setup_min_invalidation_distance_pct: float = Field(
+        0.8,
+        validation_alias=AliasChoices(
+            "FCE_SETUP_MIN_INVALIDATION_DISTANCE_PCT",
+            "SETUP_MIN_INVALIDATION_DISTANCE_PCT",
+        ),
+    )
+    setup_rr_display_cap: float = Field(
+        10.0,
+        validation_alias=AliasChoices("FCE_SETUP_RR_DISPLAY_CAP", "SETUP_RR_DISPLAY_CAP"),
     )
     entry_intent_max_per_symbol: int = Field(
         3,
@@ -660,7 +734,7 @@ class Settings(BaseSettings):
     )
     alert_rules_enabled: str = Field(
         "trigger_near,invalidation_breach,take_profit_hit,status_worsened,health_drop,liq_proximity,liq_unknown_high_lev,wyckoff_event,data_stall,funding_extreme,oi_divergence,liq_cluster_near,setup_near,setup_triggered,setup_invalidated,intent_approaching,intent_zone_entered,intent_zone_entered_partial,intent_invalidated,universe_discovery,mdd_limit_warn,mdd_limit_critical,"
-        "position_opened,position_closed,verdict_changed,stance_flipped,evidence_insufficient,periodic_pulse,full_alignment,flow_divergence",
+        "position_opened,position_closed,verdict_changed,stance_flipped,evidence_insufficient,periodic_pulse,full_alignment,flow_divergence,whale_entry",
         validation_alias=AliasChoices("FCE_ALERT_RULES_ENABLED", "ALERT_RULES_ENABLED"),
     )
     # WO-44 포지션 라이프사이클 알림.
@@ -779,9 +853,47 @@ class Settings(BaseSettings):
         1.5,
         validation_alias=AliasChoices("FCE_PAPER_MIN_RR", "PAPER_MIN_RR"),
     )
+    paper_candidate_bootstrap_enabled: bool = Field(
+        True,
+        validation_alias=AliasChoices(
+            "FCE_PAPER_CANDIDATE_BOOTSTRAP_ENABLED",
+            "PAPER_CANDIDATE_BOOTSTRAP_ENABLED",
+        ),
+    )
+    paper_candidate_bootstrap_min_sample: int = Field(
+        15,
+        validation_alias=AliasChoices(
+            "FCE_PAPER_CANDIDATE_BOOTSTRAP_MIN_SAMPLE",
+            "PAPER_CANDIDATE_BOOTSTRAP_MIN_SAMPLE",
+        ),
+    )
+    paper_candidate_bootstrap_min_win_1r_pct: float = Field(
+        50.0,
+        validation_alias=AliasChoices(
+            "FCE_PAPER_CANDIDATE_BOOTSTRAP_MIN_WIN_1R_PCT",
+            "PAPER_CANDIDATE_BOOTSTRAP_MIN_WIN_1R_PCT",
+        ),
+    )
+    paper_candidate_bootstrap_disable_validated_count: int = Field(
+        3,
+        validation_alias=AliasChoices(
+            "FCE_PAPER_CANDIDATE_BOOTSTRAP_DISABLE_VALIDATED_COUNT",
+            "PAPER_CANDIDATE_BOOTSTRAP_DISABLE_VALIDATED_COUNT",
+        ),
+    )
     paper_max_holding_bars: int = Field(
         30,
         validation_alias=AliasChoices("FCE_PAPER_MAX_HOLDING_BARS", "PAPER_MAX_HOLDING_BARS"),
+    )
+    paper_take_profit_atr_k1: float = Field(
+        1.0,
+        gt=0,
+        validation_alias=AliasChoices("FCE_PAPER_TAKE_PROFIT_ATR_K1", "PAPER_TAKE_PROFIT_ATR_K1"),
+    )
+    paper_take_profit_atr_k2: float = Field(
+        2.0,
+        gt=0,
+        validation_alias=AliasChoices("FCE_PAPER_TAKE_PROFIT_ATR_K2", "PAPER_TAKE_PROFIT_ATR_K2"),
     )
     paper_poor_mdd_pct: float = Field(
         10.0,

@@ -12,6 +12,8 @@ from app.services import scout_handlers
 from app.services.scout_handlers import ScanRequest, SimulateRequest
 from app.analyst.briefing import briefing_summary
 from app.analyst.alignment import build_full_alignment
+from app.backtest.candidate_scoring import score_candidates as _score_candidates
+from app.backtest.candidate_scoring import score_live_candidate_judgments
 from app.db.maintenance import (
     enforce_retention,
     run_database_backup,
@@ -37,11 +39,19 @@ from app.marketdata.money_flow import flow_observation
 from app.marketdata.signals import build_derivative_signals
 from app.exchange.bitget.trades import timeframe_seconds
 from app.paper.service import paper_dashboard as _paper_dashboard
+from app.paper.service import paper_exit_monitor
 from app.paper.service import paper_gate_funnel as _paper_gate_funnel
 from app.paper.service import paper_universe as _paper_universe
 from app.paper.service import paper_scoreboard as _paper_scoreboard
+from app.paper.service import sync_user_fills as _sync_user_fills
 from app.paper.service import start_paper_benchmark as _start_paper_benchmark
 from app.paper.service import run_paper_engine as _run_paper_engine
+from app.onchain.service import (
+    add_whale_wallet as _add_whale_wallet,
+    collect as _collect_whales,
+    remove_whale_wallet as _remove_whale_wallet,
+    whale_dashboard as _whale_dashboard,
+)
 from app.review.engine import (
     score_interim_judgments,
 )
@@ -70,6 +80,22 @@ _coinglass_round_robin_cursor = 0
 
 def provider_name() -> str:
     return runtime._provider_name()
+
+
+def add_whale_wallet(address: str, label: str | None = None, source: str = "manual") -> dict[str, Any]:
+    return _add_whale_wallet(runtime.repository, runtime.settings, address, label, source=source).model_dump(mode="json")
+
+
+def remove_whale_wallet(address: str) -> bool:
+    return _remove_whale_wallet(runtime.repository, address)
+
+
+def whale_dashboard() -> dict[str, Any]:
+    return _whale_dashboard(runtime.repository, runtime.settings)
+
+
+def collect_whales() -> dict[str, Any]:
+    return _collect_whales(runtime.repository, runtime.settings)
 
 
 def sync_and_analyze_positions() -> dict[str, Any]:
@@ -885,6 +911,25 @@ def refresh_calibration_report_cache() -> dict[str, Any]:
     return runtime.refresh_calibration_report_cache()
 
 
+def score_candidates() -> dict[str, Any]:
+    refreshed: list[str] = []
+    errors: list[dict[str, str]] = []
+    for symbol, timeframe in _paper_universe(runtime.repository):
+        try:
+            scout_handlers.scout_analysis(symbol, timeframe=timeframe, force=True, detail=True)
+            refreshed.append(f"{symbol}:{timeframe}")
+        except Exception as exc:
+            errors.append({"symbol": symbol, "timeframe": timeframe, "error": f"{type(exc).__name__}: {exc}"})
+    live_scoring = score_live_candidate_judgments(
+        runtime.repository,
+        runtime.market_provider,
+        runtime.settings,
+    )
+    result = _score_candidates(runtime.repository, runtime.settings)
+    runtime.refresh_calibration_report_cache()
+    return {**result, "live_scoring": live_scoring, "refreshed": refreshed, "refresh_errors": errors}
+
+
 def refresh_symbol_catalog() -> dict[str, Any]:
     return scout_handlers.refresh_symbol_catalog(force=True)
 
@@ -958,12 +1003,28 @@ def paper_scoreboard() -> dict[str, Any]:
     return _paper_scoreboard(runtime.repository, runtime.settings)
 
 
+def sync_user_fills() -> dict[str, Any]:
+    return _sync_user_fills(
+        runtime.repository,
+        runtime.market_provider,
+    )
+
+
 def paper_dashboard() -> dict[str, Any]:
-    return _paper_dashboard(
+    payload = _paper_dashboard(
         runtime.repository,
         runtime.settings,
         calibration=calibration_snapshot(),
     )
+    for trade in payload.get("open_trades", []):
+        try:
+            snapshot = runtime.market_provider.get_snapshot(str(trade.get("symbol")), str(trade.get("timeframe") or "4h"))
+            monitor = paper_exit_monitor(trade, snapshot.price)
+            if monitor is not None:
+                trade["exit_monitor"] = monitor
+        except Exception:
+            continue
+    return payload
 
 
 def start_paper_benchmark(reset: bool = False) -> dict[str, Any]:
@@ -1019,7 +1080,12 @@ def _attach_scout_previews(payload: dict[str, Any]) -> dict[str, Any]:
                     **candidate,
                     "preview": {
                         "rr_ratio": preview.get("rr_ratio"),
+                        "rr_ratio_raw": preview.get("rr_ratio_raw"),
+                        "rr_ratio_display": preview.get("rr_ratio_display"),
                         "invalidation_distance_pct": preview.get("invalidation_distance_pct"),
+                        "invalidation_too_close": preview.get("invalidation_too_close"),
+                        "min_invalidation_distance_pct": preview.get("min_invalidation_distance_pct"),
+                        "quality_anomalies": preview.get("quality_anomalies"),
                         "estimated_liquidation_distance_pct": preview.get("estimated_liquidation_distance_pct"),
                         "checklist_passed": preview.get("checklist_passed"),
                         "checklist_total": preview.get("checklist_total"),
@@ -1032,7 +1098,14 @@ def _attach_scout_previews(payload: dict[str, Any]) -> dict[str, Any]:
                             if isinstance(preview.get("analyst_briefing"), dict)
                             else None
                         ),
+                        "briefing_stance_state": (
+                            ((preview.get("analyst_briefing") or {}).get("confluence") or {}).get("stance")
+                            if isinstance(preview.get("analyst_briefing"), dict)
+                            else None
+                        ),
                         "briefing_direction_conflict": preview.get("briefing_direction_conflict"),
+                        "htf_trend": ((preview.get("mtf") or {}).get("htf_trend") if isinstance(preview.get("mtf"), dict) else None),
+                        "htf_alignment": ((preview.get("mtf") or {}).get("alignment") if isinstance(preview.get("mtf"), dict) else None),
                     },
                 }
             )

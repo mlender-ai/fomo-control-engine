@@ -24,6 +24,7 @@ import type {
   PositionActionPlanItem,
   PositionChartAnalysis,
   PositionWatchTrigger,
+  OnchainChartMarker,
   WyckoffMarker
 } from "@/lib/api";
 import {
@@ -883,7 +884,6 @@ function renderTaOverlay(
     shapes.push(...compact.shapes);
     badges.push(...compact.badges);
     if (gauges) {
-      shapes.push(...stanceRibbonNodes(context, gauges));
       badges.push(...validatedEventPillNodes(context, gauges));
     }
   } else if (minimalEvidence) {
@@ -918,6 +918,11 @@ function renderTaOverlay(
       zones.push(...harmonic.zones);
       shapes.push(...harmonic.shapes);
       badges.push(...harmonic.badges);
+    }
+    if (layers.ta.includes("onchain")) {
+      const onchain = onchainOverlayNodes(context);
+      shapes.push(...onchain.shapes);
+      badges.push(...onchain.badges);
     }
   }
   if (!compressed && layers.plan) {
@@ -1016,87 +1021,6 @@ function compressedOverlayNodes(context: OverlayContext, gauges: CompactChartGau
   return group;
 }
 
-function stanceRibbonNodes(context: OverlayContext, gauges: CompactChartGauges): string[] {
-  const source = context.analysis.indicators.bollinger.middle?.length
-    ? context.analysis.indicators.bollinger.middle.map((point) => ({ time: point.time, value: point.value }))
-    : context.analysis.candles.map((candle) => ({ time: candle.time, value: candle.close }));
-  const points = source
-    .slice(-72)
-    .map((point) => ({ x: context.chart.timeScale().timeToCoordinate(point.time as Time), y: context.series.priceToCoordinate(point.value), time: point.time }))
-    .filter((point): point is { x: number; y: number; time: number } => point.x !== null && point.y !== null);
-  if (points.length < 2) return [];
-  const pointByTime = new Map(points.map((point) => [point.time, point]));
-  const history = (gauges.stance_history ?? [])
-    .map((state) => {
-      const point = pointByTime.get(state.time);
-      return point ? { ...state, ...point } : null;
-    })
-    .filter((state): state is NonNullable<typeof state> => state !== null);
-  if (!history.length) return [];
-  const segments = stanceSegments(history);
-  const nodes: string[] = [`<g data-testid="stance-ribbon" class="stanceRibbon">`];
-  for (const segment of segments) {
-    if (segment.points.length < 2) continue;
-    const color = stanceHistoryColor(context, segment.state);
-    const glowOpacity = 0.06 + Math.min(1, Math.max(0, segment.state.confidence ?? 0)) * 0.06;
-    nodes.push(`<path d="${svgRibbonGlowPath(segment.points, Math.max(24, context.height - 24))}" fill="${color}" fill-opacity="${glowOpacity.toFixed(3)}" stroke="none" />`);
-    nodes.push(`<path d="${svgSmoothPath(segment.points)}" fill="none" stroke="${color}" stroke-width="2.9" stroke-linecap="round" stroke-linejoin="round" />`);
-  }
-  for (let index = 1; index < history.length; index += 1) {
-    const current = history[index];
-    const previous = history[index - 1];
-    if (!current.flipped && current.stance === previous.stance) continue;
-    const color = stanceHistoryColor(context, current);
-    const caret = current.stance === "long_leaning" ? "▲" : current.stance === "short_leaning" ? "▼" : "◆";
-    nodes.push(`<line x1="${current.x}" x2="${current.x}" y1="18" y2="${Math.max(24, context.height - 30)}" stroke="${color}" stroke-opacity="0.2" stroke-width="1" />`);
-    nodes.push(`<circle data-stance-flip="true" cx="${current.x}" cy="${current.y}" r="6" fill="${color}" stroke="${context.palette.color("panel", 0.98)}" stroke-width="2"><title>${escapeSvgText(current.reason)}</title></circle>`);
-    nodes.push(`<text x="${current.x}" y="${clamp(current.y - 11, 14, context.height - 24)}" text-anchor="middle" fill="${color}" font-size="10" font-weight="850">${caret}</text>`);
-  }
-  if (history.length) {
-    const confirmed = history.at(-1)!;
-    const previewStance = confirmed.transitioning ? confirmed.preview_stance : null;
-    if (previewStance && previewStance !== confirmed.stance) {
-      const provisional = points.find((point) => point.time > confirmed.time);
-      const previous = history.at(-2);
-      const previewEnd = provisional && provisional.time > confirmed.time
-        ? provisional
-        : {
-            x: Math.min(context.right - 8, confirmed.x + 22),
-            y: clamp(confirmed.y + (previous ? confirmed.y - previous.y : 0) * 0.28, 14, context.height - 24),
-            time: confirmed.time + 1
-          };
-      const color = stanceHistoryColor(context, { stance: previewStance });
-      nodes.push(`<path d="${svgPath([confirmed, previewEnd])}" fill="none" stroke="${color}" stroke-opacity="0.72" stroke-width="2.9" stroke-dasharray="4 5" stroke-linecap="round"><title>${escapeSvgText(`전환 관찰 · 순간 ${stanceKorean(previewStance)} 시도`)}</title></path>`);
-    }
-  }
-  nodes.push("</g>");
-  return nodes;
-}
-
-type StanceHistoryNode = NonNullable<CompactChartGauges["stance_history"]>[number] & { x: number; y: number };
-
-function stanceSegments(history: StanceHistoryNode[]): Array<{ state: StanceHistoryNode; points: StanceHistoryNode[] }> {
-  const segments: Array<{ state: StanceHistoryNode; points: StanceHistoryNode[] }> = [];
-  for (const point of history) {
-    const key = point.stance;
-    const current = segments.at(-1);
-    const currentKey = current ? current.state.stance : "";
-    if (!current || currentKey !== key) {
-      const overlap = current?.points.at(-1);
-      segments.push({ state: point, points: overlap ? [overlap, point] : [point] });
-    } else {
-      current.points.push(point);
-    }
-  }
-  return segments;
-}
-
-function stanceHistoryColor(context: OverlayContext, state: Pick<StanceHistoryNode, "stance">): string {
-  if (state.stance === "long_leaning") return context.palette.color("green", 0.92);
-  if (state.stance === "short_leaning") return context.palette.color("red", 0.92);
-  return context.palette.color("neutral", 0.62);
-}
-
 function stanceKorean(stance: string | null | undefined): string {
   if (stance === "long_leaning" || stance === "long") return "상방";
   if (stance === "short_leaning" || stance === "short") return "하방";
@@ -1128,31 +1052,6 @@ function validatedEventPillNodes(context: OverlayContext, gauges: CompactChartGa
         `<text x="${left + 12}" y="${top + 16}" fill="${context.palette.color("panel")}" font-size="11" font-weight="800">${pill.direction === "long" ? "↑" : "↓"} ${escapeSvgText(label)}</text></g>`
       ];
     });
-}
-
-function svgPath(points: Array<{ x: number; y: number }>): string {
-  return points.map((point, index) => `${index ? "L" : "M"}${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" ");
-}
-
-function svgSmoothPath(points: Array<{ x: number; y: number }>): string {
-  if (points.length < 3) return svgPath(points);
-  const commands = [`M${points[0].x.toFixed(1)},${points[0].y.toFixed(1)}`];
-  for (let index = 1; index < points.length - 1; index += 1) {
-    const current = points[index];
-    const next = points[index + 1];
-    const midX = (current.x + next.x) / 2;
-    const midY = (current.y + next.y) / 2;
-    commands.push(`Q${current.x.toFixed(1)},${current.y.toFixed(1)} ${midX.toFixed(1)},${midY.toFixed(1)}`);
-  }
-  const last = points.at(-1)!;
-  commands.push(`T${last.x.toFixed(1)},${last.y.toFixed(1)}`);
-  return commands.join(" ");
-}
-
-function svgRibbonGlowPath(points: Array<{ x: number; y: number }>, bottom: number): string {
-  const first = points[0];
-  const last = points.at(-1)!;
-  return `${svgSmoothPath(points)} L${last.x.toFixed(1)},${bottom.toFixed(1)} L${first.x.toFixed(1)},${bottom.toFixed(1)} Z`;
 }
 
 function parseChartTime(value: string | null | undefined): number | null {
@@ -1457,8 +1356,9 @@ function riskRewardBoxNodes(context: OverlayContext): string[] {
   const profitHeight = Math.max(3, Math.abs(targetY - markY));
   const riskPct = directionDistancePct(invalidation.price, mark, context.analysis.direction);
   const profitPct = directionDistancePct(target.price, mark, context.analysis.direction);
-  const rr = riskPct < 0 && profitPct > 0 ? profitPct / Math.abs(riskPct) : null;
-  const label = `현재 기준 ${formatSignedPercent(profitPct)} / ${formatSignedPercent(riskPct)}${rr ? ` · R:R ${rr.toFixed(1)}` : ""}`;
+  const rr = riskPct <= -0.8 && profitPct > 0 ? profitPct / Math.abs(riskPct) : null;
+  const rrLabel = rr ? ` · R:R ${rr > 10 ? "10+" : rr.toFixed(1)}` : riskPct < 0 && Math.abs(riskPct) < 0.8 ? " · R:R 산출 불가" : "";
+  const label = `현재 기준 ${formatSignedPercent(profitPct)} / ${formatSignedPercent(riskPct)}${rrLabel}`;
   const profitFill = context.minimal ? context.palette.zone("profit", 0.045) : context.palette.zone("profit");
   const riskFill = context.minimal ? context.palette.zone("risk", 0.045) : context.palette.zone("risk");
   return [
@@ -1702,6 +1602,61 @@ function wyckoffOverlayNodes(context: OverlayContext): OverlayGroup {
   return { zones, shapes, badges };
 }
 
+function onchainOverlayNodes(context: OverlayContext): OverlayGroup {
+  const group: OverlayGroup = { zones: [], shapes: [], badges: [] };
+  const markers = context.analysis.onchain?.markers ?? [];
+  if (!context.analysis.onchain?.supported || !markers.length) {
+    group.badges.push(minimalFloatingLabel(context, "온체인 관측 없음", 18, 28, "text"));
+    return group;
+  }
+  for (const marker of markers.slice(0, 8)) {
+    const nodes = onchainMarkerNodes(context, marker);
+    group.shapes.push(...nodes.shapes);
+    group.badges.push(...nodes.badges);
+  }
+  return group;
+}
+
+function onchainMarkerNodes(context: OverlayContext, marker: OnchainChartMarker): { shapes: string[]; badges: string[] } {
+  const candle = context.analysis.candles.find((item) => item.time === marker.time);
+  const x = context.chart.timeScale().timeToCoordinate(marker.time as Time);
+  if (!candle || x === null) return { shapes: [], badges: [] };
+  const above = marker.kind === "entry" ? marker.side === "short" : marker.side === "long";
+  const anchorPrice = above ? candle.high : candle.low;
+  const priceY = context.series.priceToCoordinate(anchorPrice);
+  if (priceY === null) return { shapes: [], badges: [] };
+  const radius = marker.size_tier === 3 ? 11 : marker.size_tier === 2 ? 9 : 7;
+  const y = clamp(priceY + (above ? -(radius + 12) : radius + 12), 18, context.height - 22);
+  const green = context.palette.color("green", marker.emphasized ? 0.98 : 0.54);
+  const red = context.palette.color("red", marker.emphasized ? 0.98 : 0.54);
+  const strokeWidth = marker.emphasized ? 2 : 1.2;
+  const title = marker.items.map((item) => (
+    `${item.wallet_label} (${item.wallet_address.slice(0, 6)}…${item.wallet_address.slice(-4)}) · ${item.side === "long" ? "롱" : "숏"} ${formatCompactNumber(item.size_usd)} · 진입 ${item.entry_px ? formatPrice(item.entry_px) : "-"} · 미실현 ${item.unrealized_pnl === null ? "-" : formatCompactNumber(item.unrealized_pnl)} · ${item.accuracy_label} · 별칭은 추정`
+  )).join("\n");
+  const shapes: string[] = [];
+  if (marker.event === "flip") {
+    shapes.push(
+      `<g class="onchainMarker ${marker.emphasized ? "validated" : "candidate"}" data-testid="onchain-marker"><polygon points="${x - radius - 2},${y + radius} ${x - 2},${y - radius} ${x + radius - 2},${y + radius}" fill="${green}" stroke="${context.palette.color("text", 0.82)}" stroke-width="${strokeWidth}" /><polygon points="${x - radius + 2},${y - radius} ${x + 2},${y + radius} ${x + radius + 2},${y - radius}" fill="${red}" stroke="${context.palette.color("text", 0.82)}" stroke-width="${strokeWidth}" /><title>${escapeSvgText(title)}</title></g>`
+    );
+  } else {
+    const points = marker.side === "long"
+      ? `${x - radius},${y + radius} ${x},${y - radius} ${x + radius},${y + radius}`
+      : `${x - radius},${y - radius} ${x},${y + radius} ${x + radius},${y - radius}`;
+    const color = marker.side === "long" ? green : red;
+    const fill = marker.kind === "exit" ? context.palette.color("panel", 0.88) : color;
+    shapes.push(
+      `<g class="onchainMarker ${marker.emphasized ? "validated" : "candidate"}" data-testid="onchain-marker"><polygon points="${points}" fill="${fill}" stroke="${color}" stroke-width="${strokeWidth}" /><title>${escapeSvgText(title)}</title></g>`
+    );
+  }
+  const label = marker.count > 1 ? `${marker.side === "long" ? "▲" : "▼"}×${marker.count}` : marker.label;
+  const labelX = clamp(x + 12, 8, context.right - 130);
+  const labelY = clamp(y + (above ? -17 : 9), 8, context.height - 25);
+  const badges = [
+    `<g class="onchainMarkerLabel ${marker.emphasized ? "validated" : "candidate"}"><title>${escapeSvgText(title)}</title>${labelBadge(labelX, labelY, truncateSvgLabel(label, 20), context.palette.color("panel", marker.emphasized ? 0.92 : 0.74), marker.side === "long" ? green : red, context.palette.color("text", marker.emphasized ? 0.96 : 0.68), 128)}</g>`
+  ];
+  return { shapes, badges };
+}
+
 function wyckoffEventMarker(context: OverlayContext, marker: WyckoffMarker): string[] {
   const markerX = context.chart.timeScale().timeToCoordinate(marker.time as Time);
   const markerY = context.series.priceToCoordinate(marker.price);
@@ -1871,42 +1826,50 @@ function liquidationClusterNodes(context: OverlayContext): string[] {
 }
 
 function positionOverlayNodes(context: OverlayContext, position: PositionChartOverlay): string[] {
-  const y = context.series.priceToCoordinate(position.entryPrice);
-  if (y === null || y < 18 || y > context.height - 42) return [];
-  const labelX = 110;
-  const labelY = Math.max(24, Math.min(context.height - 42, y - 12));
+  const rawY = context.series.priceToCoordinate(position.entryPrice);
+  if (rawY === null) return [];
+  const offscreen = rawY < 18 || rawY > context.height - 42;
+  const y = Math.max(18, Math.min(context.height - 42, rawY));
+  const labelX = 18;
+  const labelY = Math.max(24, Math.min(context.height - 42, y - 30));
   const sideLabel = position.direction === "long" ? "롱" : "숏";
   const pnlText = formatSignedPercent(position.pnlPercent);
   const pnlColor = context.palette.flag(position.pnlPercent >= 0 ? "takeProfit" : "invalidation");
-  const sideWidth = 56;
+  const sideWidth = 106;
   const pnlWidth = Math.max(58, Math.min(86, pnlText.length * 7 + 18));
   const totalWidth = sideWidth + pnlWidth;
   const amountText = position.pnlAmount === null ? "손익 금액 미수신" : `${formatSignedNumber(position.pnlAmount)} USDT`;
   const detailText = `${formatCompactQuantity(position.quantity)} · ${amountText} · 진입 ${formatPrice(position.entryPrice)}`;
+  const rangeMarker = offscreen ? (rawY < 18 ? " ↑ 범위 위" : " ↓ 범위 아래") : "";
   const nodes = [
+    `<line data-testid="position-entry-line" data-offscreen="${offscreen}" x1="${labelX}" x2="${context.right}" y1="${y}" y2="${y}" stroke="${context.palette.flag("entry", 0.92)}" stroke-width="1.5" stroke-dasharray="6 4" />`,
     `<g><rect x="${labelX}" y="${labelY}" width="${totalWidth}" height="24" rx="5" fill="${context.palette.color("panel", 0.68)}" stroke="${context.palette.flag("entry", 0.84)}" stroke-width="1" />`,
     `<rect x="${labelX}" y="${labelY}" width="${sideWidth}" height="24" rx="5" fill="${context.palette.flag("entry", 0.92)}" />`,
-    `<text x="${labelX + 8}" y="${labelY + 16}" fill="${context.palette.color("panel")}" font-size="10.5" font-weight="750" font-family="SF Mono, Monaco, Consolas, monospace">${sideLabel} ${position.leverage}x</text>`,
+    `<text x="${labelX + 8}" y="${labelY + 16}" fill="${context.palette.color("panel")}" font-size="10.5" font-weight="750" font-family="SF Mono, Monaco, Consolas, monospace">내 진입 ${formatPrice(position.entryPrice)}${rangeMarker}</text>`,
     `<text x="${labelX + sideWidth + 9}" y="${labelY + 16}" fill="${pnlColor}" font-size="10.5" font-weight="750" font-family="SF Mono, Monaco, Consolas, monospace">${escapeSvgText(pnlText)}</text>`,
     `<title>${escapeSvgText(detailText)}</title></g>`
   ];
   const openedTime = position.openedAt ? Math.floor(new Date(position.openedAt).getTime() / 1000) : null;
   const entryCandle = openedTime ? nearestCandleAtOrAfter(context.analysis.candles, openedTime) : null;
-  if (entryCandle) {
+  if (entryCandle && !offscreen) {
     const x = context.chart.timeScale().timeToCoordinate(entryCandle.time as Time);
     if (x !== null && x > 0 && x < context.right) {
       nodes.push(`<line x1="${x}" x2="${x}" y1="${Math.max(0, y - 52)}" y2="${Math.min(context.height, y + 52)}" stroke="${context.palette.flag("entry", 0.65)}" stroke-width="1" stroke-dasharray="${chartTheme.stroke.minor.dash}" />`);
       nodes.push(`<path d="M ${x - 7} ${y - 11} L ${x + 7} ${y - 11} L ${x} ${y - 1} Z" fill="${context.palette.flag("entry", 0.92)}" />`);
       nodes.push(`<text x="${x + 8}" y="${Math.max(16, y - 14)}" fill="${context.palette.flag("entry", 0.92)}" font-size="10" font-family="SF Mono, Monaco, Consolas, monospace">진입</text>`);
     }
+  } else if (position.openedAt) {
+    nodes.push(`<path d="M ${labelX} ${y} L ${labelX + 9} ${y - 5} L ${labelX + 9} ${y + 5} Z" fill="${context.palette.flag("entry", 0.92)}" />`);
+    nodes.push(`<text x="${labelX + 12}" y="${Math.min(context.height - 8, y + 15)}" fill="${context.palette.flag("entry", 0.86)}" font-size="9.5" font-family="SF Mono, Monaco, Consolas, monospace">진입 시점은 표시 범위 이전 · ${sideLabel} ${position.leverage}x</text>`);
   }
   return nodes;
 }
 
 function actionPriceFlags(context: OverlayContext): PriceFlag[] {
   const flags: PriceFlag[] = [];
-  if (isFinitePrice(context.analysis.entry_price)) {
-    flags.push({ label: `진입 ${formatPrice(context.analysis.entry_price)}`, price: context.analysis.entry_price, kind: "entry", priority: 0 });
+  const entryPrice = context.positionOverlay?.entryPrice ?? context.analysis.entry_price;
+  if (isFinitePrice(entryPrice)) {
+    flags.push({ label: `${context.positionOverlay ? "내 진입" : "진입"} ${formatPrice(entryPrice)}`, price: entryPrice, kind: "entry", priority: 0 });
   }
   if (isFinitePrice(context.analysis.mark_price)) {
     flags.push({ label: `현재 ${formatPrice(context.analysis.mark_price)}`, price: context.analysis.mark_price, kind: "mark", priority: 1 });

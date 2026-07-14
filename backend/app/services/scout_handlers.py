@@ -42,7 +42,7 @@ from app.marketdata.assets import classify_asset_class
 from app.performance.metrics import attach_kelly_to_simulation
 from app.positions.chart_analysis import build_chart_analysis
 from app.positions.engine import direction_aware_score
-from app.positions.simulator import simulate_entry
+from app.positions.simulator import format_rr_ratio, simulate_entry
 from app.review.params import engine_param_snapshot
 from app.scout.monitor import (
     SCOUT_SENTINEL_POSITION_ID,
@@ -927,12 +927,18 @@ def create_entry_intent(symbol: str, request: EntryIntentRequest) -> dict:
             "entry_price": midpoint,
             "leverage": request.leverage,
             "rr_ratio": preview_result.get("rr_ratio"),
+            "rr_ratio_raw": preview_result.get("rr_ratio_raw"),
+            "rr_ratio_display": preview_result.get("rr_ratio_display"),
             "invalidation_distance_pct": preview_result.get("invalidation_distance_pct"),
+            "invalidation_too_close": preview_result.get("invalidation_too_close"),
+            "min_invalidation_distance_pct": preview_result.get("min_invalidation_distance_pct"),
+            "quality_anomalies": preview_result.get("quality_anomalies"),
             "estimated_liquidation_distance_pct": preview_result.get("estimated_liquidation_distance_pct"),
             "checklist_passed": preview_result.get("checklist_passed"),
             "checklist_total": preview_result.get("checklist_total"),
             "verdict_line": preview_result.get("verdict_line"),
             "briefing_direction_conflict": preview_result.get("briefing_direction_conflict"),
+            "mtf": preview_result.get("mtf"),
         }
     except Exception as exc:
         preview = {"error": str(exc), "entry_price": midpoint, "leverage": request.leverage}
@@ -1124,6 +1130,8 @@ def _simulate(request: SimulateRequest) -> dict[str, Any]:
         chart_analysis=analysis,
         mmr=_mmr_for_symbol(symbol),
         direction_score=direction_score,
+        min_invalidation_distance_pct=runtime.settings.setup_min_invalidation_distance_pct,
+        rr_display_cap=runtime.settings.setup_rr_display_cap,
     )
     result["analysis_as_of"] = entry["as_of"]
     briefing = _briefing_for_entry(symbol, request.timeframe, entry, action_plan=result.get("action_plan"), context="pre_entry")
@@ -1389,7 +1397,7 @@ def _plan_price(action_plan: dict[str, Any], kind: str) -> float | None:
 
 
 def _thesis_from_scenario(scenario: EntryScenario) -> str:
-    rr = f"R:R {scenario.rr_ratio}" if scenario.rr_ratio is not None else "R:R 미산정"
+    rr = f"R:R {format_rr_ratio(scenario.rr_ratio, runtime.settings.setup_rr_display_cap)}" if scenario.rr_ratio is not None else "R:R 미산정"
     return f"진입 시나리오({scenario.direction.value} {scenario.leverage:g}x · {rr}) 기반 진입"
 
 

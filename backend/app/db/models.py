@@ -426,6 +426,9 @@ class PaperTrade(BaseModel):
     remaining_quantity: float
     invalidation_price: float
     take_profit_price: float
+    take_profit_2_price: float | None = None
+    entry_atr: float | None = None
+    target_plan: dict = Field(default_factory=dict)
     stop_price: float
     entry_evidence: dict = Field(default_factory=dict)
     checklist: dict = Field(default_factory=dict)
@@ -447,6 +450,65 @@ class PaperTrade(BaseModel):
     judgment_id: str | None = None
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
+
+
+class UserTrade(BaseModel):
+    """Closed Bitget account position reconstructed from authenticated fills."""
+
+    id: UUID = Field(default_factory=uuid4)
+    symbol: str
+    direction: Direction
+    entry_at: datetime
+    exit_at: datetime
+    entry_price: float
+    exit_price: float
+    quantity: float
+    entry_notional_usdt: float
+    gross_pnl_usdt: float
+    fees_usdt: float = 0.0
+    net_pnl_usdt: float
+    net_return_pct: float
+    exchange_reported_profit_usdt: float | None = None
+    fill_count: int
+    entry_fill_ids: list[str] = Field(default_factory=list)
+    exit_fill_ids: list[str] = Field(default_factory=list)
+    source: Literal["bitget_account_fills"] = "bitget_account_fills"
+    pnl_status: Literal["reconstructed"] = "reconstructed"
+    reconstruction_note: str = "인증 계정 체결 기반 재구성 · 거래소 확정 손익과 미세 차이 가능"
+    payload: dict = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class WhaleWallet(BaseModel):
+    address: str
+    label: str
+    source: Literal["manual", "bot", "discovery"] = "manual"
+    active: bool = True
+    added_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+    last_polled_at: datetime | None = None
+    last_fill_at: datetime | None = None
+    payload: dict = Field(default_factory=dict)
+
+
+class WhaleEvent(BaseModel):
+    id: UUID = Field(default_factory=uuid4)
+    wallet_address: str
+    wallet_label: str
+    coin: str
+    symbol: str
+    side: Literal["long", "short"]
+    event: Literal["open", "increase", "reduce", "close", "flip"]
+    size: float
+    size_usd: float
+    entry_px: float | None = None
+    mark_px: float | None = None
+    unrealized_pnl: float | None = None
+    event_at: datetime
+    fill_id: str | None = None
+    payload: dict = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=utc_now)
 
 
 class TradeMemoUpdate(BaseModel):

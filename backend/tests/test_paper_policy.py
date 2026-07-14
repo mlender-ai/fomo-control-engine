@@ -5,13 +5,18 @@ from uuid import UUID
 import pytest
 
 from app.backtest.signatures import signatures_from_analysis
-from app.db.models import Direction, EntryIntent, MarketCandle, WatchlistItem
+from app.db.models import AutonomyLog, BacktestStat, Direction, EntryIntent, JudgmentLedgerEntry, MarketCandle, WatchlistItem
 from app.db.repository import MemoryRepository, SQLiteRepository
 from app.paper.policy import PaperPolicy, apply_exit_decision, evaluate_entry, evaluate_exit, open_trade
 from app.paper.service import (
+    _candidate_bootstrap_active,
     _gate_diagnostic_event,
+    _paper_target_plan,
+    _signature_gate_evaluation,
+    audit_atr_target_reachability,
     paper_benchmark,
     paper_gate_funnel,
+    paper_exit_monitor,
     paper_scoreboard,
     paper_universe,
     start_paper_benchmark,
@@ -70,6 +75,25 @@ def test_entry_requires_every_gate() -> None:
     )
     assert rejected.enter is False
     assert rejected.rejection_reasons == ("evidence",)
+
+    too_close = evaluate_entry(
+        stance_state={"stance": "long_leaning", "flipped": True, "transitioning": False},
+        direction=Direction.long,
+        evidence_count=4,
+        checklist_passed=5,
+        checklist_total=6,
+        rr_ratio=None,
+        invalidation_hygiene=False,
+        survives_to_invalidation=True,
+        validated_signature=True,
+        signature_ci_low_pct=50,
+        earnings_clear=True,
+        data_fresh=True,
+        confirmed_bar=True,
+        policy=policy,
+    )
+    assert too_close.enter is False
+    assert "invalidation_hygiene" in too_close.rejection_reasons
 
 
 def test_deterministic_partial_take_profit_then_pressure_exit_with_costs() -> None:
@@ -132,9 +156,161 @@ def test_deterministic_partial_take_profit_then_pressure_exit_with_costs() -> No
     trade = apply_exit_decision(trade, decision=second, bar=second_high, policy=policy)
     assert trade.status == "closed"
     assert trade.exit_price == 107
-    assert trade.gross_pnl_usdt == pytest.approx(22.5)
-    assert trade.costs_usdt == pytest.approx(0.27 + 108 * 1.5 * 0.0009 + 107 * 1.5 * 0.0009)
+    assert trade.gross_pnl_usdt == pytest.approx(25.5)
+    assert trade.costs_usdt == pytest.approx(0.27 + 110 * 1.5 * 0.0009 + 107 * 1.5 * 0.0009)
     assert trade.net_pnl_usdt == pytest.approx(trade.gross_pnl_usdt - trade.costs_usdt)
+
+
+def test_paper_exit_monitor_reports_live_mark_to_market_and_target_distances() -> None:
+    trade = open_trade(
+        trade_id=TRADE_ID,
+        symbol="TESTUSDT",
+        timeframe="4h",
+        asset_class="crypto",
+        direction=Direction.long,
+        bar=candle(0, close=100),
+        invalidation_price=95,
+        take_profit_price=104,
+        take_profit_2_price=108,
+        evidence={},
+        checklist={},
+        stance_snapshot={},
+        signature_snapshot={},
+        policy=PaperPolicy(),
+    )
+
+    monitor = paper_exit_monitor(trade, 102)
+
+    assert monitor is not None
+    assert monitor["mark_price"] == 102
+    assert monitor["unrealized_pnl_usdt"] == pytest.approx(6.0)
+    assert monitor["mark_net_pnl_usdt"] == pytest.approx(5.73)
+    assert monitor["mark_net_return_pct"] == pytest.approx(5.73)
+    assert monitor["invalidation_distance_pct"] < 0
+    assert monitor["take_profit_distance_pct"] > 0
+    assert monitor["take_profit_2_distance_pct"] > monitor["take_profit_distance_pct"]
+
+
+def test_atr_targets_use_nearer_structural_level_for_tp2_and_real_tp1_rr() -> None:
+    rows = [
+        {
+            "time": int(candle(index, close=100, high=102, low=98).timestamp.timestamp()),
+            "open": 100,
+            "high": 102,
+            "low": 98,
+            "close": 100,
+            "volume": 1_000,
+        }
+        for index in range(16)
+    ]
+    plan = _paper_target_plan(
+        {"candles": rows},
+        {"bar_state": {"provisional": False}},
+        bar=candle(15, close=100, high=102, low=98),
+        direction=Direction.long,
+        invalidation_price=99,
+        action_plan={"take_profit": [{"price": 106}]},
+        policy=PaperPolicy(take_profit_atr_k1=1.0, take_profit_atr_k2=2.0),
+    )
+
+    assert plan["atr"] == pytest.approx(4.0)
+    assert plan["take_profit_1"] == pytest.approx(104.0)
+    assert plan["take_profit_2"] == pytest.approx(106.0)
+    assert plan["take_profit_2_source"] == "action_plan_nearer"
+    assert plan["rr_ratio"] == pytest.approx(4.0)
+    assert plan["rr_eligible"] is True
+
+
+def test_tp2_closes_remainder_at_target_price() -> None:
+    policy = PaperPolicy()
+    trade = open_trade(
+        trade_id=TRADE_ID,
+        symbol="TESTUSDT",
+        timeframe="4h",
+        asset_class="crypto",
+        direction=Direction.long,
+        bar=candle(0, close=100),
+        invalidation_price=99,
+        take_profit_price=104,
+        take_profit_2_price=106,
+        evidence={},
+        checklist={},
+        stance_snapshot={"stance": "long_leaning"},
+        signature_snapshot={},
+        policy=policy,
+    )
+    first_bar = candle(1, close=103, high=105, low=101)
+    trade = apply_exit_decision(
+        trade,
+        decision=evaluate_exit(
+            trade,
+            bar=first_bar,
+            stance_state={"stance": "long_leaning", "flipped": False},
+            take_profit_pressure="low",
+            prior_high_pressure_streak=0,
+            policy=policy,
+        ),
+        bar=first_bar,
+        policy=policy,
+    )
+    second_bar = candle(2, close=105, high=107, low=103)
+    decision = evaluate_exit(
+        trade,
+        bar=second_bar,
+        stance_state={"stance": "long_leaning", "flipped": False},
+        take_profit_pressure="low",
+        prior_high_pressure_streak=0,
+        policy=policy,
+    )
+    closed = apply_exit_decision(trade, decision=decision, bar=second_bar, policy=policy)
+
+    assert (decision.action, decision.reason, decision.execution_price) == ("close", "take_profit_2", 106)
+    assert closed.status == "closed"
+    assert closed.partial_exit_price == 104
+    assert closed.exit_price == 106
+
+
+def test_holding_limit_extends_while_confirmed_stance_remains_valid() -> None:
+    trade = open_trade(
+        trade_id=TRADE_ID,
+        symbol="TESTUSDT",
+        timeframe="4h",
+        asset_class="crypto",
+        direction=Direction.long,
+        bar=candle(0, close=100),
+        invalidation_price=95,
+        take_profit_price=110,
+        evidence={},
+        checklist={},
+        stance_snapshot={},
+        signature_snapshot={},
+        policy=PaperPolicy(),
+    ).model_copy(update={"holding_bars": 29})
+
+    decision = evaluate_exit(
+        trade,
+        bar=candle(1, close=101),
+        stance_state={"stance": "long_leaning", "flipped": False, "transitioning": False},
+        take_profit_pressure="low",
+        prior_high_pressure_streak=0,
+        policy=PaperPolicy(),
+    )
+
+    assert (decision.action, decision.reason) == ("hold", "none")
+
+
+def test_atr_target_reachability_audit_reports_timeout_rate() -> None:
+    candles = [
+        candle(index, close=100 + (index % 8), high=102 + (index % 8), low=98 + (index % 8))
+        for index in range(90)
+    ]
+
+    audit = audit_atr_target_reachability(candles, atr_multiplier=1.0, max_holding_bars=30)
+
+    assert audit["samples"] > 0
+    assert audit["reach_rate_pct"] is not None
+    assert audit["time_decay_rate_pct"] is not None
+    assert audit["reached"] + sum(audit["misses_by_direction"].values()) == audit["samples"]
 
 
 def test_paper_repository_migration_and_reopen(tmp_path) -> None:
@@ -229,7 +405,7 @@ def test_worker_engine_opens_once_per_confirmed_bar_and_records_ledger() -> None
         "checklist_passed": 6,
         "checklist_total": 6,
         "action_plan": {
-            "invalidation": {"price": 95},
+            "invalidation": {"price": 99},
             "take_profit": [{"price": 110}],
         },
     }
@@ -259,6 +435,177 @@ def test_worker_engine_opens_once_per_confirmed_bar_and_records_ledger() -> None
     trade = repo.list_paper_trades(status="open")[0]
     assert trade.entry_evidence["items"]
     assert repo.list_judgments(trade.id)[0].type == "paper_trade_entry"
+
+
+def test_candidate_bootstrap_requires_scored_active_candidate_and_tags_trade() -> None:
+    repo = MemoryRepository()
+    repo.upsert_watchlist_item(WatchlistItem(symbol="TESTUSDT", asset_class="crypto"))
+    key = "fvg:gap_formed:candidate:long:crypto:4h"
+    candidate_stat = BacktestStat(
+            signature_key=key,
+            symbol="TESTUSDT",
+            timeframe="4h",
+            asset_class="crypto",
+            engine="fvg",
+            event_type="gap_formed",
+            strength_class="candidate",
+            direction="long",
+            sample_size=14,
+            win_1r_pct=50.0,
+            payload={"signature": {"engine": "fvg", "strength_class": "candidate"}},
+        )
+    repo.upsert_backtest_stat(candidate_stat)
+    repo.add_judgment(
+        JudgmentLedgerEntry(
+            judgment_id="candidate:TESTUSDT:4h:fvg:active",
+            position_id=UUID(int=0),
+            source_type="candidate_signature",
+            source_id="fvg:active",
+            as_of=BASE_TIME,
+            type="candidate_signature",
+            claim={
+                "symbol": "TESTUSDT",
+                "timeframe": "4h",
+                "engine": "fvg",
+                "event_type": "gap_formed",
+                "direction": "long",
+            },
+        )
+    )
+    payload = {
+        "analysis": {
+            "symbol": "TESTUSDT",
+            "timeframe": "4h",
+            "asset_class": "crypto",
+            "candles": [{"time": int(BASE_TIME.timestamp()), "open": 100, "high": 101, "low": 99, "close": 100, "volume": 1_000}],
+        },
+        "historical_backtest": {"stats": [], "event_stats": []},
+        "analyst_briefing": {
+            "confluence": {
+                "stance": "long_leaning",
+                "stance_state": {"stance": "long_leaning", "flipped": True, "transitioning": False, "last_bar_at": BASE_TIME.isoformat()},
+                "long_evidence": [{"claim": str(index)} for index in range(4)],
+                "short_evidence": [],
+            }
+        },
+        "gauges": {"bar_state": {"provisional": False}},
+    }
+    simulation = {
+        "rr_ratio": 2.0,
+        "survives_to_invalidation": True,
+        "checklist": [{"status": "pass"}] * 6,
+        "checklist_passed": 6,
+        "checklist_total": 6,
+        "action_plan": {"invalidation": {"price": 99}, "take_profit": [{"price": 110}]},
+    }
+
+    below_floor = _signature_gate_evaluation(repo, _settings(), payload["analysis"], payload, Direction.long)
+    assert below_floor["signature_gate"] is False
+    repo.upsert_backtest_stat(candidate_stat.model_copy(update={"sample_size": 15}))
+
+    result = run_paper_engine(
+        repo,
+        _settings(),
+        analysis_loader=lambda _symbol, _timeframe: payload,
+        simulation_loader=lambda _symbol, _timeframe, _direction, _entry: simulation,
+        now=BASE_TIME,
+    )
+
+    assert result["opened"] == 1
+    trade = repo.list_paper_trades(status="open")[0]
+    assert trade.entry_evidence["signature_gate_mode"] == "candidate_bootstrap"
+    assert trade.entry_evidence["candidate_bootstrap"] is True
+    assert trade.signature_snapshot["bootstrap_thresholds"] == {"min_sample_size": 15, "min_win_1r_pct": 50.0}
+    funnel = repo.list_paper_gate_funnel(symbol="TESTUSDT")[0]
+    assert funnel["signature_gate_mode"] == "candidate_bootstrap"
+
+
+def test_candidate_bootstrap_auto_disables_after_three_validated_promotions() -> None:
+    repo = MemoryRepository()
+    for index in range(3):
+        repo.add_autonomy_log(
+            AutonomyLog(
+                signature_key=f"candidate:{index}",
+                previous_state="candidate",
+                new_state="validated",
+                transition="validate",
+                reason="approved",
+                autonomous=False,
+                evidence={"sample_size": 30},
+            )
+        )
+
+    assert _candidate_bootstrap_active(repo, _settings(), now=BASE_TIME) is False
+
+
+@pytest.mark.parametrize(
+    ("bar", "stance_state", "holding_bars", "expected_kind", "expected_reason"),
+    [
+        (candle(1, close=94, high=100, low=94), {"stance": "long_leaning", "flipped": False}, 0, "closed", "invalidation_breach"),
+        (candle(1, close=108, high=111, low=104), {"stance": "long_leaning", "flipped": False}, 0, "partial", "take_profit_1"),
+        (candle(1, close=99), {"stance": "short_leaning", "flipped": True}, 0, "closed", "opposite_stance_flip"),
+        (candle(1, close=101), {"stance": "conflicted", "flipped": False}, 29, "closed", "time_decay"),
+    ],
+)
+def test_paper_worker_executes_all_exit_paths_and_records_reason_and_pnl(
+    bar: MarketCandle,
+    stance_state: dict,
+    holding_bars: int,
+    expected_kind: str,
+    expected_reason: str,
+) -> None:
+    repo = MemoryRepository()
+    trade = open_trade(
+        trade_id=TRADE_ID,
+        symbol="TESTUSDT",
+        timeframe="4h",
+        asset_class="crypto",
+        direction=Direction.long,
+        bar=candle(0, close=100),
+        invalidation_price=95,
+        take_profit_price=110,
+        evidence={"items": [{"claim": "confirmed"}]},
+        checklist={"passed": 6, "total": 6},
+        stance_snapshot={"stance": "long_leaning"},
+        signature_snapshot={"signature_key": "validated:test"},
+        policy=PaperPolicy(),
+    ).model_copy(update={"holding_bars": holding_bars})
+    repo.upsert_paper_trade(trade)
+    payload = {
+        "analysis": {
+            "symbol": "TESTUSDT",
+            "timeframe": "4h",
+            "asset_class": "crypto",
+            "mark_price": bar.close,
+            "candles": [{"time": int(bar.timestamp.timestamp()), "open": bar.open, "high": bar.high, "low": bar.low, "close": bar.close, "volume": bar.volume}],
+        },
+        "historical_backtest": {"stats": [], "event_stats": []},
+        "analyst_briefing": {"confluence": {"stance": stance_state["stance"], "stance_state": stance_state}},
+        "gauges": {"bar_state": {"provisional": False}},
+    }
+
+    result = run_paper_engine(
+        repo,
+        _settings(),
+        analysis_loader=lambda _symbol, _timeframe: payload,
+        simulation_loader=lambda *_args: {},
+        now=bar.timestamp,
+    )
+
+    assert result["events"][0]["kind"] == expected_kind
+    assert result["events"][0]["reason"] == expected_reason
+    saved = repo.get_paper_trade(TRADE_ID)
+    assert saved is not None
+    if expected_kind == "partial":
+        assert saved.status == "open"
+        assert saved.partial_exit_at == bar.timestamp
+        assert saved.stop_price == saved.entry_price
+    else:
+        assert saved.status == "closed"
+        assert saved.exit_reason == expected_reason
+        assert saved.exit_at == bar.timestamp
+        assert isinstance(saved.net_pnl_usdt, float)
+        assert repo.list_judgment_scores(trade_id=None, position_id=trade.id)[0].metrics["net_pnl_usdt"] == saved.net_pnl_usdt
 
 
 def test_scoreboard_compares_ratios_and_never_enables_live_orders() -> None:
@@ -312,7 +659,49 @@ def test_scoreboard_compares_ratios_and_never_enables_live_orders() -> None:
     assert result["engine"]["net_return_pct"] > 0
     assert result["equity_curve"]["engine"][-1]["return_pct"] == result["engine"]["net_return_pct"]
     assert result["live_orders_enabled"] is False
-    assert "조건 상이" in result["fairness_note"]
+    assert "대결 판정" in result["fairness_note"]
+
+
+def test_time_decay_is_neutral_and_excluded_from_win_rate() -> None:
+    repo = MemoryRepository()
+    trade = open_trade(
+        trade_id=TRADE_ID,
+        symbol="TESTUSDT",
+        timeframe="4h",
+        asset_class="crypto",
+        direction=Direction.long,
+        bar=candle(0, close=100),
+        invalidation_price=95,
+        take_profit_price=110,
+        evidence={},
+        checklist={},
+        stance_snapshot={},
+        signature_snapshot={},
+        policy=PaperPolicy(),
+    )
+    closed = apply_exit_decision(
+        trade,
+        decision=evaluate_exit(
+            trade.model_copy(update={"holding_bars": 29}),
+            bar=candle(1, close=101),
+            stance_state={"stance": "conflicted", "flipped": False, "transitioning": False},
+            take_profit_pressure="low",
+            prior_high_pressure_streak=0,
+            policy=PaperPolicy(),
+        ),
+        bar=candle(1, close=101),
+        policy=PaperPolicy(),
+    )
+    repo.upsert_paper_trade(closed)
+
+    metrics = paper_scoreboard(repo, _settings(), now=BASE_TIME + timedelta(days=1))["engine"]
+
+    assert closed.exit_reason == "time_decay"
+    assert closed.net_pnl_usdt > 0
+    assert metrics["trade_count"] == 1
+    assert metrics["scored_trade_count"] == 0
+    assert metrics["neutral_count"] == 1
+    assert metrics["win_rate_pct"] is None
 
 
 def test_benchmark_anchor_and_manual_tracking_join_paper_universe() -> None:
@@ -339,6 +728,96 @@ def test_benchmark_anchor_and_manual_tracking_join_paper_universe() -> None:
     assert paper_scoreboard(repo, _settings(), now=now)["benchmark"]["started"] is True
 
 
+def test_benchmark_bootstrap_opens_current_stance_once_without_flip() -> None:
+    repo = MemoryRepository()
+    repo.upsert_watchlist_item(WatchlistItem(symbol="TESTUSDT", asset_class="crypto"))
+    start_paper_benchmark(repo, now=BASE_TIME - timedelta(minutes=1))
+    analysis = {
+            "symbol": "TESTUSDT",
+            "timeframe": "4h",
+            "asset_class": "crypto",
+            "candles": [{"time": int(BASE_TIME.timestamp()), "open": 100, "high": 101, "low": 99, "close": 100, "volume": 1_000}],
+            "liquidity": {"sweeps": [{"confirmed": True, "side": "sell_side", "type": "sweep", "grade": "Strong"}]},
+        }
+    signature = signatures_from_analysis(analysis)[0]
+    payload = {
+        "analysis": analysis,
+        "historical_backtest": {
+            "stats": [{"signature_key": signature["key"], "signature": signature, "sample_size": 40, "win_1r_ci": [55.0, 70.0]}]
+        },
+        "analyst_briefing": {
+            "confluence": {
+                "stance": "long_leaning",
+                "stance_state": {"stance": "long_leaning", "flipped": False, "transitioning": False},
+                "long_evidence": [{"claim": str(index)} for index in range(3)],
+                "short_evidence": [],
+            }
+        },
+        "gauges": {"bar_state": {"provisional": False}},
+    }
+    simulation = {
+        "rr_ratio": 1.2,
+        "survives_to_invalidation": True,
+        "checklist": [{"status": "pass"}] * 3 + [{"status": "fail"}] * 2,
+        "checklist_passed": 3,
+        "checklist_total": 5,
+        "action_plan": {"invalidation": {"price": 99}, "take_profit": [{"price": 106}]},
+    }
+
+    first = run_paper_engine(
+        repo,
+        _settings(),
+        analysis_loader=lambda _symbol, _timeframe: payload,
+        simulation_loader=lambda _symbol, _timeframe, _direction, _entry: simulation,
+        now=BASE_TIME,
+    )
+    second = run_paper_engine(
+        repo,
+        _settings(),
+        analysis_loader=lambda _symbol, _timeframe: payload,
+        simulation_loader=lambda _symbol, _timeframe, _direction, _entry: simulation,
+        now=BASE_TIME,
+    )
+
+    assert first["opened"] == 1
+    assert second["opened"] == 0
+    trades = repo.list_paper_trades(status="open")
+    assert len(trades) == 1
+    assert trades[0].entry_evidence["entry_mode"] == "validation_bootstrap"
+    assert trades[0].stance_snapshot["flipped"] is False
+    assert repo.list_paper_gate_funnel(symbol="TESTUSDT")[0]["entered"] is False
+
+
+def test_bootstrap_concurrency_duplicates_are_suppressed_without_scoring() -> None:
+    repo = MemoryRepository()
+    policy = PaperPolicy()
+    common = {
+        "symbol": "BTCUSDT",
+        "timeframe": "4h",
+        "asset_class": "crypto",
+        "direction": Direction.short,
+        "bar": candle(0, close=100),
+        "invalidation_price": 105,
+        "take_profit_price": 95,
+        "evidence": {"entry_mode": "validation_bootstrap"},
+        "checklist": {},
+        "stance_snapshot": {"stance": "short_leaning"},
+        "signature_snapshot": {},
+        "policy": policy,
+    }
+    repo.upsert_paper_trade(open_trade(trade_id=UUID("00000000-0000-0000-0000-000000000064"), **common))
+    repo.upsert_paper_trade(open_trade(trade_id=UUID("00000000-0000-0000-0000-000000000065"), **common))
+
+    from app.paper.service import _suppress_duplicate_bootstrap_trades
+
+    assert _suppress_duplicate_bootstrap_trades(repo, now=BASE_TIME + timedelta(minutes=1)) == 1
+    assert len(repo.list_paper_trades(status="open")) == 1
+    suppressed = repo.list_paper_trades(status="closed")
+    assert len(suppressed) == 1
+    assert suppressed[0].exit_reason == "duplicate_bootstrap_suppressed"
+    assert paper_scoreboard(repo, _settings(), now=BASE_TIME + timedelta(days=1))["engine"]["trade_count"] == 0
+
+
 def test_gate_funnel_is_sequential_and_diagnostic_fires_once() -> None:
     repo = MemoryRepository()
     now = BASE_TIME + timedelta(days=8)
@@ -346,6 +825,7 @@ def test_gate_funnel_is_sequential_and_diagnostic_fires_once() -> None:
         "confirmed_flip": True,
         "evidence": True,
         "checklist": True,
+        "invalidation_hygiene": True,
         "risk_reward": True,
         "liquidation_safety": True,
         "action_levels": True,

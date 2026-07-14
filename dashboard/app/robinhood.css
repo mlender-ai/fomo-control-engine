@@ -835,6 +835,19 @@ textarea:focus {
   gap: 12px;
 }
 
+.minimalChartBackbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 40px;
+  padding: 0 2px;
+}
+
+.minimalChartBackbar span {
+  color: var(--rh-muted);
+  font: 600 11px/1.2 var(--rh-font-mono);
+}
+
 /* Evidence Room: the chart tells one story while the rail verifies it. */
 .evidenceRoomRail {
   display: grid;
@@ -916,6 +929,23 @@ textarea:focus {
 
 .compactChartWorkspace {
   grid-template-columns: minmax(0, 1fr) 242px;
+}
+
+.compactChartMain,
+.analysisChartColumn {
+  display: grid;
+  align-content: start;
+  align-self: start;
+  gap: 8px;
+  min-width: 0;
+  height: auto;
+}
+
+.compactChartMain .positionChartPanel,
+.analysisChartColumn .positionChartPanel {
+  align-content: start;
+  align-self: start;
+  height: auto;
 }
 
 .positionChartPanel,
@@ -1106,40 +1136,403 @@ textarea:focus {
 
 .moneyFlowCard {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   padding: 14px;
   border: 1px solid var(--rh-border);
   border-radius: var(--rh-radius-md);
   background: var(--rh-canvas);
 }
 
-.moneyFlowCard > header,
-.moneyFlowCard > footer,
-.moneyFlowSparks > div {
+.moneyFlowHeader,
+.moneyFlowCard > footer {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
 }
 
-.moneyFlowCard > header span,
-.moneyFlowSparks span,
+.moneyFlowHeader > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.moneyFlowHeader span,
 .moneyFlowCard > footer,
 .moneyFlowCard small {
   color: var(--rh-muted);
   font-size: 11px;
 }
 
-.moneyFlowCard > header strong { color: var(--rh-white); font-size: 14px; }
-.moneyFlowCard.positive > header strong { color: var(--rh-green); }
-.moneyFlowCard.negative > header strong { color: var(--rh-orange); }
-.moneyFlowCard p { margin: 0; color: var(--rh-muted); font-size: 12px; line-height: 1.45; }
-.moneyFlowCard.inactive { opacity: .58; }
-.moneyFlowSparks { display: grid; gap: 7px; }
-.moneyFlowSparks svg { width: 68%; height: 22px; overflow: visible; }
-.moneyFlowSparks polyline { fill: none; stroke: var(--rh-muted); stroke-width: 2; vector-effect: non-scaling-stroke; }
-.moneyFlowSparks > div:first-child polyline { stroke: var(--rh-green); }
-.moneyFlowCard.negative .moneyFlowSparks > div:last-child polyline { stroke: var(--rh-orange); }
+.moneyFlowHeader strong {
+  color: var(--rh-white);
+  font-size: 16px;
+  line-height: 1.2;
+}
+
+.moneyFlowHeader > em {
+  flex: 0 0 auto;
+  padding: 4px 7px;
+  border: 1px solid var(--rh-border);
+  border-radius: 5px;
+  color: var(--rh-muted-bright);
+  font-size: 10px;
+  font-style: normal;
+  white-space: nowrap;
+}
+
+.moneyFlowCard.positive .moneyFlowHeader strong { color: var(--rh-green); }
+.moneyFlowCard.negative .moneyFlowHeader strong { color: var(--rh-orange); }
+.moneyFlowCard p { margin: 0; color: var(--rh-muted); font-size: 11px; line-height: 1.5; }
+.moneyFlowCard.inactive { border-style: dashed; }
+
+.moneyFlowVerdict {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 9px;
+  align-items: start;
+  padding: 10px;
+  border: 1px solid var(--rh-border);
+  border-left: 3px solid var(--rh-muted);
+  border-radius: 6px;
+  background: var(--rh-surface);
+}
+
+.moneyFlowVerdict > svg {
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  color: var(--rh-muted-bright);
+}
+
+.moneyFlowVerdict > div { display: grid; gap: 4px; }
+.moneyFlowVerdict strong { color: var(--rh-white); font-size: 12px; line-height: 1.35; }
+.moneyFlowCard.positive .moneyFlowVerdict { border-left-color: var(--rh-green); }
+.moneyFlowCard.positive .moneyFlowVerdict > svg { color: var(--rh-green); }
+.moneyFlowCard.negative .moneyFlowVerdict { border-left-color: var(--rh-orange); }
+.moneyFlowCard.negative .moneyFlowVerdict > svg { color: var(--rh-orange); }
+
+.moneyFlowMetrics {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-top: 1px solid var(--rh-border);
+  border-left: 1px solid var(--rh-border);
+}
+
+.moneyFlowMetric {
+  display: grid;
+  min-width: 0;
+  min-height: 67px;
+  padding: 8px 9px;
+  border-right: 1px solid var(--rh-border);
+  border-bottom: 1px solid var(--rh-border);
+  background: color-mix(in srgb, var(--rh-surface) 72%, transparent);
+}
+
+.moneyFlowMetric > span,
+.flowHistogram header,
+.flowPressureRow > footer {
+  color: var(--rh-muted);
+  font-size: 9px;
+}
+
+.moneyFlowMetric > strong {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+  color: var(--rh-muted-bright);
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.moneyFlowMetric > strong svg { width: 13px; height: 13px; flex: 0 0 auto; }
+.moneyFlowMetric > em { color: var(--rh-white); font-size: 13px; font-style: normal; font-variant-numeric: tabular-nums; }
+.moneyFlowMetric.up > strong,
+.moneyFlowMetric.up > em { color: var(--rh-green); }
+.moneyFlowMetric.down > strong,
+.moneyFlowMetric.down > em { color: var(--rh-orange); }
+
+.moneyFlowPressure { display: grid; gap: 10px; }
+.flowPressureRow { display: grid; gap: 5px; }
+.flowPressureRow > div:first-child {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.flowPressureRow > div:first-child span { color: var(--rh-muted); font-size: 10px; }
+.flowPressureRow > div:first-child strong { color: var(--rh-muted-bright); font-size: 10px; }
+.flowPressureRow > div:first-child em { color: var(--rh-white); font-size: 11px; font-style: normal; font-variant-numeric: tabular-nums; }
+.flowPressureRow.buy > div:first-child strong,
+.flowPressureRow.buy > div:first-child em { color: var(--rh-green); }
+.flowPressureRow.sell > div:first-child strong,
+.flowPressureRow.sell > div:first-child em { color: var(--rh-orange); }
+
+.flowPressureAxis {
+  position: relative;
+  height: 9px;
+  overflow: hidden;
+  border: 1px solid var(--rh-border);
+  border-radius: 2px;
+  background: linear-gradient(90deg, rgba(255, 92, 92, .2), transparent 45%, transparent 55%, rgba(0, 220, 90, .18));
+}
+
+.flowPressureAxis > i {
+  position: absolute;
+  inset: 0 auto 0 50%;
+  width: 1px;
+  background: var(--rh-muted);
+}
+
+.flowPressureAxis > b {
+  position: absolute;
+  top: 1px;
+  bottom: 1px;
+  min-width: 0;
+  background: var(--rh-muted-bright);
+}
+
+.flowPressureRow.buy .flowPressureAxis > b { background: var(--rh-green); }
+.flowPressureRow.sell .flowPressureAxis > b { background: var(--rh-orange); }
+.flowPressureRow > footer { display: flex; justify-content: space-between; }
+
+.moneyFlowHistory {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.flowHistogram {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  padding: 8px;
+  border: 1px solid var(--rh-border);
+  border-radius: 5px;
+  background: var(--rh-surface);
+}
+
+.flowHistogram header { display: flex; justify-content: space-between; gap: 5px; }
+.flowHistogram header span { color: var(--rh-muted-bright); }
+.flowHistogram header em { overflow: hidden; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+.flowHistogramPlot {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 48px;
+}
+
+.flowHistogramPlot > i {
+  position: absolute;
+  inset: 50% 0 auto;
+  height: 1px;
+  background: var(--rh-border);
+}
+
+.flowHistogramPlot > b {
+  position: relative;
+  z-index: 1;
+  align-self: center;
+  flex: 1 1 0;
+  min-width: 2px;
+  max-width: 8px;
+}
+
+.flowHistogramPlot > b.buy { background: var(--rh-green); }
+.flowHistogramPlot > b.sell { background: var(--rh-orange); }
+.flowHistogramEmpty {
+  display: grid;
+  place-items: center;
+  height: 48px;
+  border-top: 1px dashed var(--rh-border);
+  color: var(--rh-muted);
+  font-size: 9px;
+}
+
+.moneyFlowReadout {
+  display: grid;
+  gap: 3px;
+  padding: 9px 10px;
+  border-left: 2px solid var(--rh-border-strong);
+  background: var(--rh-surface);
+}
+
+.moneyFlowReadout strong { color: var(--rh-white); font-size: 10px; }
+.moneyFlowMethod { line-height: 1.45; }
+.moneyFlowOption { padding-top: 7px; border-top: 1px solid var(--rh-border); }
+
+/* Money flow lives below the price chart so TA overlays retain the full canvas. */
+.moneyFlowIndicator {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--rh-border);
+  border-radius: var(--rh-radius-md);
+  background: var(--rh-canvas);
+}
+
+.moneyFlowIndicator.inactive { border-style: dashed; }
+
+.moneyFlowIndicatorHeader,
+.moneyFlowIndicatorFooter,
+.moneyFlowTitle,
+.moneyFlowMeta {
+  display: flex;
+  align-items: center;
+}
+
+.moneyFlowIndicatorHeader {
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.moneyFlowTitle {
+  min-width: 0;
+  gap: 8px;
+}
+
+.moneyFlowTitle > svg {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  color: var(--rh-muted-bright);
+}
+
+.moneyFlowTitle > span {
+  color: var(--rh-muted);
+  font-size: 10px;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
+.moneyFlowTitle > strong {
+  color: var(--rh-white);
+  font-size: 13px;
+}
+
+.moneyFlowIndicator.positive .moneyFlowTitle > strong,
+.moneyFlowIndicator.positive .moneyFlowTitle > svg { color: var(--rh-green); }
+.moneyFlowIndicator.negative .moneyFlowTitle > strong,
+.moneyFlowIndicator.negative .moneyFlowTitle > svg { color: var(--rh-orange); }
+
+.moneyFlowMeta {
+  flex: 0 0 auto;
+  gap: 7px;
+  color: var(--rh-muted);
+  font-family: var(--rh-font-mono);
+  font-size: 9px;
+}
+
+.moneyFlowMeta > i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--rh-dim);
+}
+
+.moneyFlowMeta > i.live {
+  background: var(--rh-green);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--rh-green) 14%, transparent);
+}
+
+.stanceIndicator {
+  display: grid;
+  grid-template-columns: auto minmax(160px, 1fr) auto auto;
+  gap: 9px;
+  align-items: center;
+  min-width: 0;
+  padding: 5px 0;
+  border-top: 1px solid var(--rh-border);
+  border-bottom: 1px solid var(--rh-border);
+}
+
+.stanceIndicator > span,
+.stanceIndicator > em {
+  color: var(--rh-muted);
+  font-size: 9px;
+  font-style: normal;
+}
+
+.stanceIndicator > strong { color: var(--rh-white); font-size: 10px; }
+
+.stanceIndicatorTrack {
+  display: flex;
+  gap: 1px;
+  align-items: stretch;
+  min-width: 0;
+  height: 7px;
+}
+
+.stanceIndicatorTrack > b { flex: 1 1 0; min-width: 2px; background: var(--rh-dim); }
+.stanceIndicatorTrack > b.long { background: var(--rh-green); }
+.stanceIndicatorTrack > b.short { background: var(--rh-orange); }
+.stanceIndicatorTrack > b.preview {
+  flex: 0 0 14px;
+  border: 1px dashed currentColor;
+  background: transparent;
+}
+.stanceIndicatorTrack > b.preview.long { color: var(--rh-green); }
+.stanceIndicatorTrack > b.preview.short { color: var(--rh-orange); }
+
+.moneyFlowIndicatorGrid {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.15fr) minmax(140px, .65fr) minmax(180px, .9fr) minmax(180px, 1fr);
+  gap: 12px;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.moneyFlowIndicator .moneyFlowPressure { align-content: center; gap: 7px; }
+.moneyFlowIndicator .flowPressureRow { gap: 3px; }
+.moneyFlowIndicator .flowPressureRow > div:first-child {
+  grid-template-columns: 62px minmax(0, 1fr) auto;
+}
+.moneyFlowIndicator .flowPressureAxis { height: 7px; }
+
+.moneyFlowIndicator .moneyFlowMetrics {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-self: stretch;
+}
+.moneyFlowIndicator .moneyFlowMetric {
+  min-height: 58px;
+  padding: 7px 8px;
+}
+
+.moneyFlowIndicator .moneyFlowHistory {
+  grid-template-columns: minmax(0, 1fr);
+  align-self: stretch;
+  gap: 4px;
+}
+.moneyFlowIndicator .flowHistogram { padding: 6px; }
+.moneyFlowIndicator .flowHistogramPlot,
+.moneyFlowIndicator .flowHistogramEmpty { height: 24px; }
+
+.moneyFlowIndicator .moneyFlowReadout {
+  align-content: center;
+  min-width: 0;
+  padding: 8px 10px;
+}
+.moneyFlowIndicator .moneyFlowReadout p {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--rh-muted);
+  font-size: 10px;
+  line-height: 1.45;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.moneyFlowIndicatorFooter {
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  color: var(--rh-muted);
+  font-size: 9px;
+}
+.moneyFlowIndicatorFooter small { color: inherit; font-size: inherit; }
 
 .directionGaugeTrack i,
 .pressureGaugeTrack i {
@@ -1803,6 +2196,14 @@ textarea:focus {
   gap: 12px;
 }
 
+.engineExitMonitor {
+  margin: 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--rh-border);
+  color: var(--rh-muted);
+  font-size: 12px;
+}
+
 .engineChartEmpty {
   position: absolute;
   inset: 0;
@@ -1869,6 +2270,28 @@ textarea:focus {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   border: 1px solid var(--rh-border);
   background: var(--rh-panel);
+}
+
+.engineWindowHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  padding-top: 4px;
+}
+
+.engineWindowHeader strong {
+  color: var(--rh-white);
+  font-size: 14px;
+}
+
+.engineWindowHeader span {
+  color: var(--rh-muted);
+  font-size: 11px;
+}
+
+.engineRecentMetrics {
+  background: transparent;
 }
 
 .engineMetric {
@@ -2025,6 +2448,201 @@ textarea:focus {
 
 .engineStatusGrid {
   grid-template-columns: 1fr 1fr;
+}
+
+.whaleBattleReference,
+.onchainToolbar,
+.onchainAddForm,
+.onchainWalletRow {
+  border: 1px solid var(--terminal-line);
+  background: rgba(12, 15, 20, 0.72);
+}
+
+.whaleBattleReference {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.4fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 18px;
+  padding: 16px 20px;
+}
+
+.whaleBattleReference > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.whaleBattleReference span,
+.whaleBattleReference p,
+.onchainPolicy {
+  color: var(--terminal-muted);
+}
+
+.whaleBattleReference p,
+.onchainPolicy {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.onchainView {
+  display: grid;
+  gap: 14px;
+}
+
+.onchainToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 20px;
+}
+
+.onchainToolbar > div,
+.onchainWalletRow header > div {
+  display: grid;
+  gap: 4px;
+}
+
+.onchainToolbar small,
+.onchainWalletRow small,
+.onchainPositions p {
+  color: var(--terminal-muted);
+  font-size: 11px;
+}
+
+.onchainAddForm {
+  display: grid;
+  grid-template-columns: minmax(240px, 1.3fr) minmax(160px, 0.7fr) auto;
+  align-items: end;
+  gap: 10px;
+  padding: 14px 20px;
+}
+
+.onchainAddForm label {
+  display: grid;
+  gap: 5px;
+}
+
+.onchainAddForm label span {
+  color: var(--terminal-muted);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.onchainAddForm input {
+  min-width: 0;
+  min-height: 38px;
+  border: 1px solid var(--terminal-line-strong);
+  border-radius: 5px;
+  background: #090c11;
+  color: var(--terminal-text);
+  padding: 0 10px;
+  font-family: "SF Mono", Monaco, Consolas, monospace;
+}
+
+.onchainWalletList {
+  display: grid;
+  border-top: 1px solid var(--terminal-line);
+}
+
+.onchainWalletRow {
+  border-top: 0;
+  padding: 0;
+}
+
+.onchainWalletRow.validated {
+  border-left: 3px solid var(--terminal-positive);
+}
+
+.onchainWalletRow.degraded {
+  opacity: 0.68;
+}
+
+.onchainWalletRow header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 14px 18px;
+}
+
+.onchainWalletRow header code {
+  color: var(--terminal-cyan);
+}
+
+.onchainWalletRow header > div:last-child {
+  grid-template-columns: auto auto 32px;
+  align-items: center;
+  gap: 10px;
+  text-align: right;
+}
+
+.onchainWalletRow header > div:last-child span {
+  color: var(--terminal-warning);
+  font-size: 11px;
+}
+
+.onchainWalletRow header button {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--terminal-line);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--terminal-muted);
+  cursor: pointer;
+}
+
+.onchainWalletRow header button:hover {
+  border-color: var(--terminal-negative);
+  color: var(--terminal-negative);
+}
+
+.onchainPositions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-top: 1px solid var(--terminal-line);
+}
+
+.onchainPositions > div,
+.onchainPositions > p {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+  padding: 12px 18px;
+}
+
+.onchainPositions > div + div {
+  border-left: 1px solid var(--terminal-line);
+}
+
+.onchainPositions span {
+  color: var(--terminal-muted);
+  font-size: 11px;
+}
+
+@media (max-width: 780px) {
+  .whaleBattleReference,
+  .onchainAddForm {
+    grid-template-columns: 1fr;
+  }
+
+  .onchainToolbar,
+  .onchainWalletRow header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .onchainPositions {
+    grid-template-columns: 1fr;
+  }
+
+  .onchainPositions > div + div {
+    border-left: 0;
+    border-top: 1px solid var(--terminal-line);
+  }
 }
 
 .engineStatusCard {
@@ -2207,6 +2825,14 @@ textarea:focus {
     grid-column: 1 / -1;
   }
 
+  .moneyFlowIndicatorGrid {
+    grid-template-columns: minmax(220px, 1fr) 170px minmax(210px, 1fr);
+  }
+
+  .moneyFlowIndicator .moneyFlowReadout {
+    grid-column: 1 / -1;
+  }
+
   .engineMetricGrid,
   .engineStatusGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2257,6 +2883,21 @@ textarea:focus {
     grid-column: auto;
   }
 
+  .moneyFlowIndicatorGrid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .moneyFlowIndicator .moneyFlowPressure,
+  .moneyFlowIndicator .moneyFlowReadout {
+    grid-column: 1 / -1;
+  }
+
+  .stanceIndicator {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+  }
+
+  .stanceIndicator > em { grid-column: 1 / -1; }
+
   .positionChartCanvasFrame,
   .compactChartMain .positionChartCanvasFrame {
     min-height: 430px;
@@ -2285,4 +2926,28 @@ textarea:focus {
   .engineJournalRow summary {
     grid-template-columns: 1fr 1fr;
   }
+}
+
+@media (max-width: 520px) {
+  .moneyFlowIndicatorHeader {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .moneyFlowIndicatorGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .moneyFlowIndicator .moneyFlowPressure,
+  .moneyFlowIndicator .moneyFlowReadout {
+    grid-column: auto;
+  }
+
+  .stanceIndicator {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .stanceIndicatorTrack { grid-column: 1 / -1; grid-row: 2; }
+  .stanceIndicator > em { grid-column: 1 / -1; }
 }

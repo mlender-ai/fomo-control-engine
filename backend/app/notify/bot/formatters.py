@@ -63,6 +63,16 @@ def main_menu_keyboard() -> list[list[dict[str, str]]]:
     ]
 
 
+def engine_keyboard() -> list[list[dict[str, str]]]:
+    return [
+        [
+            {"text": "새로고침", "callback_data": encode_callback("engine")},
+            {"text": "실계좌 포지션", "callback_data": encode_callback("list")},
+            {"text": "시스템 상태", "callback_data": encode_callback("status")},
+        ]
+    ]
+
+
 def detail_keyboard(symbol: str) -> list[list[dict[str, str]]]:
     return [
         [
@@ -181,7 +191,8 @@ def format_help() -> str:
             "/review — 최근 복기 3건",
             "/calib — 캘리브레이션 스냅샷",
             "/perf — 계좌 성과 요약",
-            "/engine — 엔진 페이퍼 대결 요약",
+            "/engine — 엔진 페이퍼 대결 요약 · /paper — 성과·포지션·진입 근거",
+            "/whales · /whale add 0x주소 [별칭] — Hyperliquid 고래 관측",
             "/experiments — 파라미터 자율 예정·섀도 실험",
             "/veto ID — 파라미터 자율 채택 거부",
             "/status — 워커·알림 상태",
@@ -435,7 +446,7 @@ def format_scout_quick_answer(payload: dict[str, Any]) -> str:
     trigger = _scout_trigger(summary)
     if trigger:
         lines.extend(["", f"트리거까지: {escape(trigger)}"])
-    lines.append("셋업 트리거는 개별 조건 알림입니다. 종합과 충돌하면 보류 신호로 보세요.")
+    lines.append("셋업 트리거는 개별 조건 알림입니다. 종합과 충돌하면 양측 근거와 상위 추세를 함께 확인하세요.")
     lines.append("과거 통계와 현재 판정은 판단 보조입니다.")
     return "\n".join(lines)
 
@@ -507,10 +518,15 @@ def format_improvement_digest(payload: dict[str, Any]) -> str:
 
 
 def format_simulation(result: dict[str, Any]) -> str:
+    rr_display = result.get("rr_ratio_display")
+    if result.get("invalidation_too_close"):
+        rr_display = "산출 불가 · 무효화 너무 가까움"
+    elif rr_display is None:
+        rr_display = result.get("rr_ratio") if result.get("rr_ratio") is not None else "-"
     lines = [
         f"<b>{escape(result.get('symbol', '-'))} 시뮬레이션</b>",
         f"{escape(str(result.get('direction', '-')))} {result.get('leverage', '-')}x · 진입 {_price(result.get('entry_price'))}",
-        f"R:R {result.get('rr_ratio') if result.get('rr_ratio') is not None else '-'} · 추정 청산 {_price(result.get('estimated_liquidation'))}",
+        f"R:R {rr_display} · 추정 청산 {_price(result.get('estimated_liquidation'))}",
         f"체크리스트 {result.get('checklist_passed', '-')}/{result.get('checklist_total', '-')}",
         escape(result.get("verdict_line") or ""),
     ]
@@ -703,21 +719,109 @@ def format_engine_scoreboard(payload: dict[str, Any]) -> str:
     engine = _dump(scoreboard.get("engine"))
     user = _dump(scoreboard.get("user"))
     rolling = _dump(scoreboard.get("rolling_4w"))
+    recent = _dump(_dump(scoreboard.get("recent_28d")).get("engine"))
+    open_trades = payload.get("open_trades") if isinstance(payload.get("open_trades"), list) else []
     verdict = "엔진 우세" if rolling.get("engine_leading") else "우세 미확정"
-    return "\n".join(
+    scored = int(engine.get("scored_trade_count") if engine.get("scored_trade_count") is not None else engine.get("trade_count") or 0)
+    total = int(engine.get("trade_count") or 0)
+    neutral = int(engine.get("neutral_count") or 0)
+    lines = [
+        "<b>🤖 엔진 트레이딩 대결 · 페이퍼 현황</b>",
+        f"4주 판정: <b>{verdict}</b> · 열린 포지션 {len(open_trades)}개",
+        f"엔진 수익 {_signed_pct(engine.get('net_return_pct'))} · 승률 {_nullable_pct(engine.get('win_rate_pct'))} · PF {_ratio(engine.get('profit_factor'))} · MDD {_nullable_pct(engine.get('mdd_pct'))}",
+        f"표본 판정 N={scored} / 전체 {total}{f' · 시간종료 중립 {neutral}' if neutral else ''}",
+    ]
+    if recent:
+        recent_scored = int(
+            recent.get("scored_trade_count") if recent.get("scored_trade_count") is not None else recent.get("trade_count") or 0
+        )
+        lines.append(
+            f"최근 28일: {_signed_pct(recent.get('net_return_pct'))} · 승률 {_nullable_pct(recent.get('win_rate_pct'))} · 판정 N={recent_scored}"
+        )
+    if scored < 10:
+        lines.append("⚠️ 종료 표본 10건 미만 · 승률 판정 유보")
+    lines.extend(["", "<b>현재 포지션</b>"])
+    if not open_trades:
+        lines.append("열린 포지션 없음 · 확정 캔들 진입 게이트를 감시 중입니다.")
+    for trade in open_trades[:8]:
+        lines.extend(_paper_position_lines(_dump(trade)))
+    lines.extend(
         [
-            "<b>🤖 엔진 트레이딩 대결</b>",
-            f"4주 판정: {verdict}",
             "",
-            f"수익률  엔진 {_signed_pct(engine.get('net_return_pct'))} | 나 {_signed_pct(user.get('net_return_pct'))}",
-            f"승률    엔진 {_nullable_pct(engine.get('win_rate_pct'))} | 나 {_nullable_pct(user.get('win_rate_pct'))}",
-            f"PF      엔진 {_ratio(engine.get('profit_factor'))} | 나 {_ratio(user.get('profit_factor'))}",
-            f"MDD     엔진 {_nullable_pct(engine.get('mdd_pct'))} | 나 {_nullable_pct(user.get('mdd_pct'))}",
-            f"거래수  엔진 N={engine.get('trade_count', 0)} | 나 N={user.get('trade_count', 0)}",
-            "",
-            escape(str(scoreboard.get("fairness_note") or "조건 상이 — 방향·타이밍 판단력의 비교")),
+            f"대결: 엔진 {_signed_pct(engine.get('net_return_pct'))} (N={total}) | 나 {_signed_pct(user.get('net_return_pct'))} (N={int(user.get('trade_count') or 0)})",
+            f"거래수: 엔진 N={total} | 나 N={int(user.get('trade_count') or 0)}",
+            "실주문이 아닌 엔진 가상 거래 · 현재 평가는 기발생 비용 반영",
         ]
     )
+    return "\n".join(lines)
+
+
+def _paper_position_lines(trade: dict[str, Any]) -> list[str]:
+    monitor = _dump(trade.get("exit_monitor"))
+    direction = "롱" if trade.get("direction") == "long" else "숏"
+    pnl_pct = monitor.get("mark_net_return_pct")
+    pnl_usdt = monitor.get("mark_net_pnl_usdt")
+    pnl_value = _float_or_none(pnl_pct)
+    pnl_icon = "⚪️" if pnl_value is None else "🟢" if pnl_value >= 0 else "🔴"
+    stage = "TP1 완료 · 잔여 50% · 본전 스탑" if trade.get("partial_exit_at") else "TP1 대기 · 전량 보유"
+    leverage = _number(trade.get("leverage"))
+    lines = [
+        "",
+        f"{pnl_icon} <b>{escape(str(trade.get('symbol') or '-'))} · {direction} {leverage}x</b> · {_signed_pct(pnl_pct)} ({_signed_number(pnl_usdt)} USDT)",
+        f"진입 {_price(trade.get('entry_price'))} → 현재 {_price(monitor.get('mark_price'))} · {int(trade.get('holding_bars') or 0)}캔들",
+        f"스탑 {_price(trade.get('stop_price') or trade.get('invalidation_price'))} ({_signed_pct(monitor.get('invalidation_distance_pct'))}) · TP1 {_price(trade.get('take_profit_price'))} ({_positive_distance(monitor.get('take_profit_distance_pct'))})",
+    ]
+    if trade.get("take_profit_2_price") is not None:
+        lines[-1] += f" · TP2 {_price(trade.get('take_profit_2_price'))} ({_positive_distance(monitor.get('take_profit_2_distance_pct'))})"
+    current_stance = _paper_current_stance(trade)
+    if current_stance:
+        lines.append(f"현재 판정: {current_stance}")
+    lines.append(f"진행: {stage}")
+    lines.append(f"진입 근거: {escape(_paper_entry_reason(trade))}")
+    return lines
+
+
+def _paper_entry_reason(trade: dict[str, Any]) -> str:
+    evidence = _dump(trade.get("entry_evidence"))
+    items = evidence.get("items") if isinstance(evidence.get("items"), list) else []
+    reasons: list[str] = []
+    for item in items:
+        row = _dump(item)
+        claim = _compact(str(row.get("claim") or row.get("label") or "").strip(), 34)
+        if claim and claim not in reasons:
+            reasons.append(claim)
+    if reasons:
+        return " + ".join(reasons[:3])
+    mode = str(evidence.get("entry_mode") or "")
+    if mode == "validation_bootstrap":
+        return "4주 검증 시작 시드 · 당시 종합 스탠스와 구조 근거"
+    stance = str(_dump(trade.get("stance_snapshot")).get("stance") or "")
+    return f"확정 스탠스 {stance} · 진입 게이트 통과" if stance else "검증 게이트 통과"
+
+
+def _paper_current_stance(trade: dict[str, Any]) -> str:
+    state = _dump(trade.get("current_stance"))
+    stance = str(state.get("stance") or "")
+    if not stance:
+        return ""
+    label = {
+        "long": "상방 우세",
+        "long_leaning": "상방 우세",
+        "short": "하방 우세",
+        "short_leaning": "하방 우세",
+        "conflicted": "혼조",
+        "insufficient": "근거 부족",
+    }.get(stance, stance)
+    if state.get("transitioning") is True:
+        return f"{label} · 전환 관찰 중"
+    aligned = (trade.get("direction") == "long" and stance in {"long", "long_leaning"}) or (
+        trade.get("direction") == "short" and stance in {"short", "short_leaning"}
+    )
+    opposed = (trade.get("direction") == "long" and stance in {"short", "short_leaning"}) or (
+        trade.get("direction") == "short" and stance in {"long", "long_leaning"}
+    )
+    suffix = "포지션 방향 유지" if aligned else "포지션과 역행" if opposed else "판정 유보"
+    return f"{label} · {suffix}"
 
 
 def format_paper_event(event: dict[str, Any]) -> str:
@@ -747,7 +851,7 @@ def format_paper_event(event: dict[str, Any]) -> str:
         labels = [_compact(str(_dump(item).get("claim") or _dump(item).get("label") or ""), 36) for item in evidence[:2]]
         lines.append(f"근거: {escape(' + '.join(item for item in labels if item) or '검증 게이트 통과')}")
     else:
-        lines.append(f"net {_signed_pct(trade.get('net_return_pct'))} · 사유 {escape(_exit_reason(trade.get('exit_reason')))}")
+        lines.append(f"net {_signed_pct(trade.get('net_return_pct'))} · 사유 {escape(_exit_reason(event.get('reason') or trade.get('exit_reason')))}")
     lines.append("실주문이 아닌 엔진 가상 거래 기록입니다.")
     return "\n".join(lines)
 
@@ -977,6 +1081,27 @@ def _signed_pct(value: Any) -> str:
     return f"{number:+.2f}%"
 
 
+def _positive_distance(value: Any) -> str:
+    try:
+        return f"+{abs(float(value)):.2f}%"
+    except (TypeError, ValueError):
+        return "-"
+
+
+def _signed_number(value: Any) -> str:
+    try:
+        return f"{float(value):+.2f}"
+    except (TypeError, ValueError):
+        return "-"
+
+
+def _float_or_none(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _nullable_pct(value: Any) -> str:
     if value is None:
         return "표본 부족"
@@ -997,7 +1122,9 @@ def _exit_reason(value: Any) -> str:
         "opposite_stance_flip": "반대 스탠스 전환",
         "take_profit_pressure": "익절 압력 지속",
         "time_stop": "최대 보유시간",
+        "time_decay": "스탠스 약화 시간종료",
         "take_profit_1": "1차 익절",
+        "take_profit_2": "2차 익절",
     }.get(str(value or ""), str(value or "기록 없음"))
 
 

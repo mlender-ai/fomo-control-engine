@@ -4,7 +4,7 @@ from bisect import bisect_right
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.db.models import MarketCandle
 from app.exchange.bitget.errors import BitgetAPIError
@@ -32,6 +32,22 @@ class BitgetTradeFill(BaseModel):
     price: float
     size: float
     side: Literal["buy", "sell"]
+    timestamp: datetime
+
+
+class BitgetAccountFill(BaseModel):
+    trade_id: str
+    order_id: str | None = None
+    symbol: str
+    price: float
+    size: float
+    quote_volume: float | None = None
+    side: Literal["buy", "sell"]
+    trade_side: str
+    position_mode: str | None = None
+    profit: float | None = None
+    fee_usdt: float = 0.0
+    fee_detail: list[dict[str, Any]] = Field(default_factory=list)
     timestamp: datetime
 
 
@@ -64,6 +80,39 @@ def parse_trade_fill(row: dict[str, Any], symbol: str) -> BitgetTradeFill:
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise BitgetAPIError("invalid_trade_fill", "Invalid Bitget trade fill row.") from exc
+
+
+def parse_account_fill(row: dict[str, Any], margin_coin: str = "USDT") -> BitgetAccountFill:
+    try:
+        side = str(row.get("side", "")).strip().lower()
+        if side not in {"buy", "sell"}:
+            raise ValueError("side must be buy or sell")
+        trade_id = str(row.get("tradeId") or "")
+        if not trade_id:
+            raise ValueError("tradeId is missing")
+        fee_detail = [item for item in row.get("feeDetail", []) if isinstance(item, dict)]
+        fee_usdt = sum(
+            abs(float(item.get("totalFee") or 0.0))
+            for item in fee_detail
+            if str(item.get("feeCoin") or "").upper() == margin_coin.upper()
+        )
+        return BitgetAccountFill(
+            trade_id=trade_id,
+            order_id=str(row.get("orderId")) if row.get("orderId") is not None else None,
+            symbol=str(row.get("symbol") or "").upper(),
+            price=float(row["price"]),
+            size=float(row.get("baseVolume") or row.get("size")),
+            quote_volume=_optional_float(row.get("quoteVolume")),
+            side=side,  # type: ignore[arg-type]
+            trade_side=str(row.get("tradeSide") or "").strip().lower(),
+            position_mode=str(row.get("posMode")) if row.get("posMode") is not None else None,
+            profit=_optional_float(row.get("profit")),
+            fee_usdt=round(fee_usdt, 12),
+            fee_detail=fee_detail,
+            timestamp=datetime.fromtimestamp(int(row["cTime"]) / 1000, tz=timezone.utc),
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise BitgetAPIError("invalid_account_fill", "Invalid Bitget account fill row.") from exc
 
 
 def aggregate_trade_buckets(fills: list[BitgetTradeFill], candles: list[MarketCandle], timeframe: str) -> list[TradeFlowBucket]:
@@ -136,3 +185,10 @@ def cvd_series_from_buckets(buckets: list[TradeFlowBucket]) -> list[dict]:
 
 def timeframe_seconds(timeframe: str) -> int:
     return TIMEFRAME_SECONDS.get(timeframe.lower(), 14400)
+
+
+def _optional_float(value: Any) -> float | None:
+    try:
+        return float(value) if value is not None and str(value) != "" else None
+    except (TypeError, ValueError):
+        return None

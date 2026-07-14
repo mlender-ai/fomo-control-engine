@@ -153,7 +153,11 @@ function SimulationResult({ sim, onSave, saving }: { sim: EntrySimulation; onSav
       ) : null}
 
       <div className="simMetricGrid">
-        <SimMetric label="손익비 R:R" value={sim.rr_ratio === null ? "-" : String(sim.rr_ratio)} tone={sim.rr_ratio !== null && sim.rr_ratio >= 1.5 ? "positive" : "warning"} />
+        <SimMetric
+          label="손익비 R:R"
+          value={sim.invalidation_too_close ? "산출 불가 · 무효화 과근접" : sim.rr_ratio_display ?? "-"}
+          tone={sim.rr_ratio !== null && sim.rr_ratio >= 1.5 ? "positive" : "warning"}
+        />
         <SimMetric label="무효화 거리" value={sim.invalidation_distance_pct === null ? "-" : signedPercent(sim.invalidation_distance_pct)} tone="warning" />
         <SimMetric
           label="추정 청산 (산식 기준)"

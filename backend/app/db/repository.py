@@ -40,8 +40,11 @@ from app.db.models import (
     ShadowProfile,
     Trade,
     UniverseDiscovery,
+    UserTrade,
     ValidationRun,
     WatchlistItem,
+    WhaleEvent,
+    WhaleWallet,
     utc_now,
 )
 from app.db.sqlite_utils import SQLITE_WRITE_LOCK, connect_sqlite
@@ -117,6 +120,10 @@ class Repository(Protocol):
         symbol: str | None = None,
         limit: int = 500,
     ) -> list[PaperTrade]: ...
+    def upsert_user_trade(self, trade: UserTrade) -> UserTrade: ...
+    def list_user_trades(self, since: datetime | None = None, limit: int = 5000) -> list[UserTrade]: ...
+    def upsert_user_account_fill(self, fill: dict) -> bool: ...
+    def list_user_account_fills(self, since: datetime | None = None, limit: int = 10000) -> list[dict]: ...
     def get_paper_engine_state(self, symbol: str, timeframe: str) -> dict | None: ...
     def upsert_paper_engine_state(self, symbol: str, timeframe: str, state: dict) -> bool: ...
     def upsert_paper_gate_funnel(self, record: dict) -> bool: ...
@@ -190,6 +197,22 @@ class Repository(Protocol):
     def list_entry_scenarios(self, symbol: str | None = None, limit: int = 50) -> list[EntryScenario]: ...
     def find_matching_scenario(self, symbol: str, direction: str, within_hours: int = 72) -> EntryScenario | None: ...
     def link_scenario_position(self, scenario_id: UUID, position_id: UUID) -> EntryScenario | None: ...
+    def upsert_whale_wallet(self, wallet: WhaleWallet) -> WhaleWallet: ...
+    def get_whale_wallet(self, address: str) -> WhaleWallet | None: ...
+    def list_whale_wallets(self, active: bool | None = None, limit: int = 20) -> list[WhaleWallet]: ...
+    def remove_whale_wallet(self, address: str) -> bool: ...
+    def add_whale_event(self, event: WhaleEvent) -> bool: ...
+    def list_whale_events(
+        self,
+        symbol: str | None = None,
+        wallet_address: str | None = None,
+        since: datetime | None = None,
+        limit: int = 500,
+    ) -> list[WhaleEvent]: ...
+    def get_whale_position_state(self, wallet_address: str, coin: str) -> dict | None: ...
+    def list_whale_position_states(self, wallet_address: str | None = None, limit: int = 500) -> list[dict]: ...
+    def upsert_whale_position_state(self, wallet_address: str, coin: str, state: dict) -> bool: ...
+    def delete_whale_position_state(self, wallet_address: str, coin: str) -> bool: ...
 
 
 class MemoryRepository:
@@ -211,6 +234,8 @@ class MemoryRepository:
         self.universe_discoveries: dict[UUID, UniverseDiscovery] = {}
         self.trades: dict[UUID, Trade] = {}
         self.paper_trades: dict[UUID, PaperTrade] = {}
+        self.user_trades: dict[UUID, UserTrade] = {}
+        self.user_account_fills: dict[str, dict] = {}
         self.paper_engine_states: dict[tuple[str, str], dict] = {}
         self.paper_gate_funnel: dict[tuple[str, str, str], dict] = {}
         self.judgments: dict[UUID, list[JudgmentLedgerEntry]] = {}
@@ -232,6 +257,9 @@ class MemoryRepository:
         self.symbol_catalog: dict[str, CatalogSymbol] = {}
         self.calibration_report_cache: dict[str, dict] = {}
         self.entry_scenarios: dict[UUID, EntryScenario] = {}
+        self.whale_wallets: dict[str, WhaleWallet] = {}
+        self.whale_events: dict[UUID, WhaleEvent] = {}
+        self.whale_position_states: dict[tuple[str, str], dict] = {}
 
     def add_report(self, report: Report) -> Report:
         self.reports[report.id] = report
@@ -489,6 +517,31 @@ class MemoryRepository:
         if symbol:
             trades = [trade for trade in trades if trade.symbol.upper() == symbol.upper()]
         return sorted(trades, key=lambda item: item.updated_at, reverse=True)[:limit]
+
+    def upsert_user_trade(self, trade: UserTrade) -> UserTrade:
+        normalized = trade.model_copy(update={"symbol": trade.symbol.upper(), "updated_at": utc_now()})
+        self.user_trades[normalized.id] = normalized
+        return normalized
+
+    def list_user_trades(self, since: datetime | None = None, limit: int = 5000) -> list[UserTrade]:
+        trades = list(self.user_trades.values())
+        if since is not None:
+            trades = [trade for trade in trades if trade.exit_at >= since]
+        return sorted(trades, key=lambda item: item.exit_at, reverse=True)[:limit]
+
+    def upsert_user_account_fill(self, fill: dict) -> bool:
+        trade_id = str(fill.get("trade_id") or "")
+        if not trade_id:
+            raise ValueError("account fill trade_id is required")
+        created = trade_id not in self.user_account_fills
+        self.user_account_fills[trade_id] = dict(fill)
+        return created
+
+    def list_user_account_fills(self, since: datetime | None = None, limit: int = 10000) -> list[dict]:
+        fills = list(self.user_account_fills.values())
+        if since is not None:
+            fills = [fill for fill in fills if _timestamp_or_min(fill.get("timestamp")) >= since]
+        return sorted(fills, key=lambda fill: str(fill.get("timestamp") or ""))[-limit:]
 
     def get_paper_engine_state(self, symbol: str, timeframe: str) -> dict | None:
         state = self.paper_engine_states.get((symbol.upper(), timeframe))
@@ -822,6 +875,63 @@ class MemoryRepository:
         updated = scenario.model_copy(update={"linked_position_id": position_id})
         self.entry_scenarios[scenario_id] = updated
         return updated
+
+    def upsert_whale_wallet(self, wallet: WhaleWallet) -> WhaleWallet:
+        self.whale_wallets[wallet.address.lower()] = wallet
+        return wallet
+
+    def get_whale_wallet(self, address: str) -> WhaleWallet | None:
+        return self.whale_wallets.get(address.lower())
+
+    def list_whale_wallets(self, active: bool | None = None, limit: int = 20) -> list[WhaleWallet]:
+        wallets = list(self.whale_wallets.values())
+        if active is not None:
+            wallets = [wallet for wallet in wallets if wallet.active is active]
+        return sorted(wallets, key=lambda wallet: wallet.added_at)[:limit]
+
+    def remove_whale_wallet(self, address: str) -> bool:
+        return self.whale_wallets.pop(address.lower(), None) is not None
+
+    def add_whale_event(self, event: WhaleEvent) -> bool:
+        if event.id in self.whale_events:
+            return False
+        self.whale_events[event.id] = event
+        return True
+
+    def list_whale_events(
+        self,
+        symbol: str | None = None,
+        wallet_address: str | None = None,
+        since: datetime | None = None,
+        limit: int = 500,
+    ) -> list[WhaleEvent]:
+        events = list(self.whale_events.values())
+        if symbol:
+            events = [event for event in events if event.symbol.upper() == symbol.upper()]
+        if wallet_address:
+            events = [event for event in events if event.wallet_address.lower() == wallet_address.lower()]
+        if since:
+            events = [event for event in events if event.event_at >= since]
+        return sorted(events, key=lambda event: event.event_at, reverse=True)[:limit]
+
+    def get_whale_position_state(self, wallet_address: str, coin: str) -> dict | None:
+        state = self.whale_position_states.get((wallet_address.lower(), coin.upper()))
+        return dict(state) if state is not None else None
+
+    def list_whale_position_states(self, wallet_address: str | None = None, limit: int = 500) -> list[dict]:
+        rows = [
+            dict(state)
+            for (address, _coin), state in self.whale_position_states.items()
+            if wallet_address is None or address == wallet_address.lower()
+        ]
+        return sorted(rows, key=lambda row: str(row.get("coin") or ""))[:limit]
+
+    def upsert_whale_position_state(self, wallet_address: str, coin: str, state: dict) -> bool:
+        self.whale_position_states[(wallet_address.lower(), coin.upper())] = dict(state)
+        return True
+
+    def delete_whale_position_state(self, wallet_address: str, coin: str) -> bool:
+        return self.whale_position_states.pop((wallet_address.lower(), coin.upper()), None) is not None
 
 
 class SQLiteRepository:
@@ -1484,6 +1594,71 @@ class SQLiteRepository:
         with self._connect() as connection:
             rows = connection.execute(query, tuple(params)).fetchall()
         return [PaperTrade.model_validate_json(row["payload"]) for row in rows]
+
+    def upsert_user_trade(self, trade: UserTrade) -> UserTrade:
+        normalized = trade.model_copy(update={"symbol": trade.symbol.upper(), "updated_at": utc_now()})
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO user_trades
+                    (id, symbol, direction, entry_at, exit_at, updated_at, payload)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(normalized.id),
+                    normalized.symbol,
+                    normalized.direction.value,
+                    normalized.entry_at.isoformat(),
+                    normalized.exit_at.isoformat(),
+                    normalized.updated_at.isoformat(),
+                    _dump_model(normalized),
+                ),
+            )
+        return normalized
+
+    def list_user_trades(self, since: datetime | None = None, limit: int = 5000) -> list[UserTrade]:
+        query = "SELECT payload FROM user_trades"
+        params: list[str | int] = []
+        if since is not None:
+            query += " WHERE exit_at >= ?"
+            params.append(since.isoformat())
+        query += " ORDER BY exit_at DESC LIMIT ?"
+        params.append(limit)
+        with self._connect() as connection:
+            rows = connection.execute(query, tuple(params)).fetchall()
+        return [UserTrade.model_validate_json(row["payload"]) for row in rows]
+
+    def upsert_user_account_fill(self, fill: dict) -> bool:
+        trade_id = str(fill.get("trade_id") or "")
+        timestamp = str(fill.get("timestamp") or "")
+        if not trade_id or not timestamp:
+            raise ValueError("account fill trade_id and timestamp are required")
+        encoded = json.dumps(fill, ensure_ascii=False, sort_keys=True, default=_json_cache_default)
+        with self._connect() as connection:
+            existed = connection.execute(
+                "SELECT 1 FROM user_account_fills WHERE trade_id = ?",
+                (trade_id,),
+            ).fetchone()
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO user_account_fills (trade_id, symbol, timestamp, payload, fetched_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (trade_id, str(fill.get("symbol") or "").upper(), timestamp, encoded, utc_now().isoformat()),
+            )
+        return existed is None
+
+    def list_user_account_fills(self, since: datetime | None = None, limit: int = 10000) -> list[dict]:
+        query = "SELECT payload FROM user_account_fills"
+        params: list[str | int] = []
+        if since is not None:
+            query += " WHERE timestamp >= ?"
+            params.append(since.isoformat())
+        query += " ORDER BY timestamp ASC LIMIT ?"
+        params.append(limit)
+        with self._connect() as connection:
+            rows = connection.execute(query, tuple(params)).fetchall()
+        return [json.loads(row["payload"]) for row in rows]
 
     def get_paper_engine_state(self, symbol: str, timeframe: str) -> dict | None:
         with self._connect() as connection:
@@ -2265,6 +2440,133 @@ class SQLiteRepository:
             return None
         updated = scenario.model_copy(update={"linked_position_id": position_id})
         return self.add_entry_scenario(updated)
+
+    def upsert_whale_wallet(self, wallet: WhaleWallet) -> WhaleWallet:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO whale_wallets (address, active, added_at, payload)
+                VALUES (?, ?, ?, ?)
+                """,
+                (wallet.address.lower(), int(wallet.active), wallet.added_at.isoformat(), _dump_model(wallet)),
+            )
+        return wallet
+
+    def get_whale_wallet(self, address: str) -> WhaleWallet | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT payload FROM whale_wallets WHERE address = ?",
+                (address.lower(),),
+            ).fetchone()
+        return WhaleWallet.model_validate_json(row["payload"]) if row else None
+
+    def list_whale_wallets(self, active: bool | None = None, limit: int = 20) -> list[WhaleWallet]:
+        with self._connect() as connection:
+            if active is None:
+                rows = connection.execute(
+                    "SELECT payload FROM whale_wallets ORDER BY added_at ASC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    "SELECT payload FROM whale_wallets WHERE active = ? ORDER BY added_at ASC LIMIT ?",
+                    (int(active), limit),
+                ).fetchall()
+        return [WhaleWallet.model_validate_json(row["payload"]) for row in rows]
+
+    def remove_whale_wallet(self, address: str) -> bool:
+        with self._connect() as connection:
+            cursor = connection.execute("DELETE FROM whale_wallets WHERE address = ?", (address.lower(),))
+        return cursor.rowcount > 0
+
+    def add_whale_event(self, event: WhaleEvent) -> bool:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                INSERT OR IGNORE INTO whale_events
+                    (id, wallet_address, symbol, event_type, event_at, size_usd, payload)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(event.id),
+                    event.wallet_address.lower(),
+                    event.symbol.upper(),
+                    event.event,
+                    event.event_at.isoformat(),
+                    event.size_usd,
+                    _dump_model(event),
+                ),
+            )
+        return cursor.rowcount > 0
+
+    def list_whale_events(
+        self,
+        symbol: str | None = None,
+        wallet_address: str | None = None,
+        since: datetime | None = None,
+        limit: int = 500,
+    ) -> list[WhaleEvent]:
+        clauses: list[str] = []
+        params: list[object] = []
+        if symbol:
+            clauses.append("symbol = ?")
+            params.append(symbol.upper())
+        if wallet_address:
+            clauses.append("wallet_address = ?")
+            params.append(wallet_address.lower())
+        if since:
+            clauses.append("event_at >= ?")
+            params.append(since.isoformat())
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(limit)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"SELECT payload FROM whale_events{where} ORDER BY event_at DESC LIMIT ?",
+                tuple(params),
+            ).fetchall()
+        return [WhaleEvent.model_validate_json(row["payload"]) for row in rows]
+
+    def get_whale_position_state(self, wallet_address: str, coin: str) -> dict | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT payload FROM whale_position_states WHERE wallet_address = ? AND coin = ?",
+                (wallet_address.lower(), coin.upper()),
+            ).fetchone()
+        return json.loads(row["payload"]) if row else None
+
+    def list_whale_position_states(self, wallet_address: str | None = None, limit: int = 500) -> list[dict]:
+        with self._connect() as connection:
+            if wallet_address:
+                rows = connection.execute(
+                    "SELECT payload FROM whale_position_states WHERE wallet_address = ? ORDER BY coin LIMIT ?",
+                    (wallet_address.lower(), limit),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    "SELECT payload FROM whale_position_states ORDER BY wallet_address, coin LIMIT ?",
+                    (limit,),
+                ).fetchall()
+        return [json.loads(row["payload"]) for row in rows]
+
+    def upsert_whale_position_state(self, wallet_address: str, coin: str, state: dict) -> bool:
+        payload = json.dumps(state, ensure_ascii=False, default=_json_cache_default)
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO whale_position_states (wallet_address, coin, payload)
+                VALUES (?, ?, ?)
+                """,
+                (wallet_address.lower(), coin.upper(), payload),
+            )
+        return True
+
+    def delete_whale_position_state(self, wallet_address: str, coin: str) -> bool:
+        with self._connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM whale_position_states WHERE wallet_address = ? AND coin = ?",
+                (wallet_address.lower(), coin.upper()),
+            )
+        return cursor.rowcount > 0
 
     def _upsert_position(self, position: Position) -> Position:
         with self._connect() as connection:
