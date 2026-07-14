@@ -64,6 +64,20 @@ export function CalibrationShell() {
     }
   }
 
+  async function reviewPromotion(signatureKey: string, action: "approve" | "veto") {
+    setBusy(signatureKey);
+    setError("");
+    try {
+      if (action === "approve") await api.approveCandidatePromotion(signatureKey);
+      else await api.vetoCandidatePromotion(signatureKey);
+      setCalibration(await api.reviewCalibration());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "승격 제안 처리에 실패했습니다.");
+    } finally {
+      setBusy("");
+    }
+  }
+
   useEffect(() => {
     void load();
   }, []);
@@ -112,7 +126,7 @@ export function CalibrationShell() {
 
             <div data-testid="calibration-module-weekly">
               <TerminalPanel title="주간 리포트" subtitle="일요일 20:00 텔레그램 리포트와 같은 결정론 요약" status="ok">
-                <WeeklyReport weekly={weekly} onApproveRecovery={approveRecovery} busy={busy} />
+                <WeeklyReport weekly={weekly} onApproveRecovery={approveRecovery} onReviewPromotion={reviewPromotion} busy={busy} />
               </TerminalPanel>
             </div>
           </section>
@@ -334,10 +348,12 @@ function LevelQuality({ data }: { data: Record<string, Array<Record<string, unkn
 function WeeklyReport({
   weekly,
   onApproveRecovery,
+  onReviewPromotion,
   busy
 }: {
   weekly: Record<string, unknown> | null;
   onApproveRecovery?: (signatureKey: string) => void;
+  onReviewPromotion?: (signatureKey: string, action: "approve" | "veto") => void;
   busy?: string;
 }) {
   if (!weekly) {
@@ -365,6 +381,25 @@ function WeeklyReport({
         <div className="calibrationMiniBox"><strong>최악 판단</strong><span>{worst.detail ? `${judgmentTypeLabel(String(worst.judgment_type))} · ${String(worst.detail)}` : "표본 없음"}</span></div>
       </div>
       <SelfAuditSection audit={asRecord(weekly.self_audit)} onApproveRecovery={onApproveRecovery} busy={busy} />
+      <CandidateReviewSection review={asRecord(weekly.candidate_review)} onReview={onReviewPromotion} busy={busy} />
+    </div>
+  );
+}
+
+function CandidateReviewSection({ review, onReview, busy }: { review: Record<string, unknown>; onReview?: (key: string, action: "approve" | "veto") => void; busy?: string }) {
+  const items = Array.isArray(review.items) ? review.items.map(asRecord) : [];
+  if (!items.length) return null;
+  return (
+    <div className="calibrationCandidateReview" data-testid="candidate-review-weekly">
+      <strong>Candidate 심사 현황</strong>
+      {items.map((item) => {
+        const keys = Array.isArray(item.promotion_signature_keys) ? item.promotion_signature_keys.map(String) : [];
+        const ci = Array.isArray(item.win_1r_ci) ? item.win_1r_ci : null;
+        return <div key={String(item.engine)}>
+          <span>{String(item.label)} · N {Number(item.sample_size || 0)} · 1R {typeof item.win_1r_pct === "number" ? `${item.win_1r_pct}%` : "유보"}{ci ? ` (CI ${ci[0]}~${ci[1]})` : ""} · 잔여 {Number(item.remaining_samples || 0)}</span>
+          {keys.map((key) => <span className="candidatePromotionActions" key={key}>{key}<button className="button secondary" onClick={() => onReview?.(key, "approve")} disabled={!onReview || busy === key}>승인</button><button className="button secondary" onClick={() => onReview?.(key, "veto")} disabled={!onReview || busy === key}>거부</button></span>)}
+        </div>;
+      })}
     </div>
   );
 }

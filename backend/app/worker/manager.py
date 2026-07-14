@@ -294,6 +294,11 @@ class WorkerManager:
                 self.settings.worker_refresh_market_data_interval_seconds,
                 lambda: asyncio.to_thread(service.refresh_market_data),
             ),
+            "score_candidates": WorkerJob(
+                "score_candidates",
+                self.settings.worker_score_candidates_interval_seconds,
+                lambda: asyncio.to_thread(service.score_candidates),
+            ),
             "collect_derivatives": WorkerJob(
                 "collect_derivatives",
                 self.settings.derivative_tracking_interval_seconds,
@@ -372,12 +377,6 @@ class WorkerManager:
                 "refresh_calibration_cache",
                 self.settings.worker_calibration_cache_interval_seconds,
                 lambda: asyncio.to_thread(service.refresh_calibration_report_cache),
-            ),
-            "score_candidates": WorkerJob(
-                "score_candidates",
-                self.settings.worker_candidate_scoring_interval_seconds,
-                lambda: asyncio.to_thread(service.score_candidates),
-                enabled=self.settings.worker_candidate_scoring_enabled,
             ),
             "sync_user_fills": WorkerJob(
                 "sync_user_fills",
@@ -486,6 +485,7 @@ class WorkerManager:
             "interim_scoring": 85,
             "scout_scan": 105,
             "universe_scan": 150,
+            "score_candidates": 180,
         }
         return fallback + timedelta(seconds=startup_offsets.get(name, 0))
 

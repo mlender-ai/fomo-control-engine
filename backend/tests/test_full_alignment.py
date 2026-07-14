@@ -49,3 +49,22 @@ def test_non_validated_module_does_not_vote() -> None:
 
     assert result["agreeing"] == 3
     assert result["unanimous"] is False
+
+
+def test_full_alignment_uses_candidate_review_for_predictive_warning() -> None:
+    history = _history()
+    history["candidate_review"] = {
+        "items": [
+            {
+                "engine": "full_alignment",
+                "sample_size": 30,
+                "win_1r_pct": 48.0,
+                "win_1r_ci": [36.0, 59.0],
+            }
+        ]
+    }
+
+    result = build_full_alignment(_confluence(), history)
+
+    assert result["sample_size"] == 30
+    assert result["predictive_warning"] is True

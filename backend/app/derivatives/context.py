@@ -5,6 +5,7 @@ from typing import Any
 from app.db.models import DerivativeMetric, LiquidationEvent
 from app.derivatives.engine import coinglass_status_snapshot, flow_summary
 from app.marketdata.signals import build_derivative_signals
+from app.validation.candidates import candidate_engine_review
 
 
 def derivative_context_for_symbol(
@@ -21,6 +22,12 @@ def derivative_context_for_symbol(
     metric_history: list[DerivativeMetric] = repository.list_derivative_metrics(symbol=normalized, limit=metric_limit)
     liquidation_history: list[LiquidationEvent] = repository.list_liquidation_events(symbol=normalized, limit=event_limit)
     signals = build_derivative_signals(metric_history, liquidation_history, coinglass.liquidation_clusters)
+    money_flow = signals.get("money_flow") if isinstance(signals.get("money_flow"), dict) else None
+    if money_flow is not None:
+        review = candidate_engine_review(repository, settings, "money_flow") or {}
+        money_flow["predictive_warning"] = bool(review.get("predictive_warning"))
+        money_flow["candidate_sample_size"] = int(review.get("sample_size") or 0)
+        money_flow["candidate_win_1r_ci"] = review.get("win_1r_ci")
     return {
         "symbol": normalized,
         "as_of": signals.get("as_of") or (latest.as_of.isoformat() if latest else None),

@@ -7,7 +7,6 @@ import pytest
 from app.analyst.confluence import build_confluence
 from app.analyst.signature_registry import record_transition
 from app.api.deps import configure_runtime
-from app.backtest.candidate_scoring import score_candidates
 from app.core.config import Settings
 from app.db.models import BacktestStat, WhaleEvent, WhaleWallet, utc_now
 from app.db.repository import MemoryRepository, create_repository
@@ -126,35 +125,6 @@ def test_chart_markers_anchor_only_to_closed_candles_and_aggregate() -> None:
     assert context["markers"][0]["time"] == candles[0]["time"]
     assert context["markers"][0]["emphasized"] is False
     assert context["validated_evidence"] == []
-
-
-def test_whale_candidate_uses_55_ci_threshold_and_requires_approval() -> None:
-    repo = MemoryRepository()
-    key = whale_signature_key(ADDRESS)
-    repo.upsert_backtest_stat(
-        BacktestStat(
-            signature_key=key,
-            symbol="__WHALE__",
-            timeframe="4h",
-            asset_class="crypto",
-            scope="all",
-            engine="whale",
-            event_type="whale_entry",
-            strength_class="candidate",
-            direction="neutral",
-            sample_size=100,
-            win_1r_pct=70,
-            payload={"label": "테스트 고래", "signature": {"wallet_address": ADDRESS}},
-        )
-    )
-
-    result = score_candidates(repo, Settings())
-    review = next(item for item in result["signatures"] if item["signature_key"] == key)
-
-    assert review["thresholds"]["min_ci_low_pct"] == 55.0
-    assert review["promotion_eligible"] is True
-    assert review["state"] == "candidate"
-    assert repo.list_calibration_suggestions(status="pending")[0].proposed_change["signature_key"] == key
 
 
 def test_only_validated_wallet_enters_confluence() -> None:

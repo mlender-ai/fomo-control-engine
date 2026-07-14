@@ -64,6 +64,14 @@ def test_full_alignment_is_registered_as_candidate_signature() -> None:
 def test_replay_uses_only_candles_up_to_confirmation_and_incremental_matches(monkeypatch) -> None:
     candles = [_candle(index, close=100 + index * 0.2) for index in range(36)]
     observed_lengths: list[int] = []
+    observed_candidate_lengths: list[int] = []
+    original_candidate_detector = replay_module.detect_candidate_signatures
+
+    def audited_candidate_detector(past):
+        observed_candidate_lengths.append(len(past))
+        result = original_candidate_detector(past)
+        assert all(str(event["as_of"]) <= past[-1].timestamp.isoformat() for event in result["events"])
+        return result
 
     def fake_levels(past, mark_price=None, volume_profile=None):
         observed_lengths.append(len(past))
@@ -82,6 +90,7 @@ def test_replay_uses_only_candles_up_to_confirmation_and_incremental_matches(mon
         }
 
     monkeypatch.setattr(replay_module, "detect_structure_levels", fake_levels)
+    monkeypatch.setattr(replay_module, "detect_candidate_signatures", audited_candidate_detector)
     monkeypatch.setattr(
         replay_module,
         "analyze_liquidity_structure",
@@ -100,6 +109,7 @@ def test_replay_uses_only_candles_up_to_confirmation_and_incremental_matches(mon
     assert full
     assert partial == expected
     assert max(observed_lengths) <= len(candles) - 1
+    assert max(observed_candidate_lengths) <= len(candles) - 1
     assert all(case["entry_price"] == candles[case["confirmation_index"]].close for case in full)
 
 

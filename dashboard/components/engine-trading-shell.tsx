@@ -252,22 +252,25 @@ function EngineStatusView({ data }: { data: PaperDashboard }) {
       {data.performance_action.poor ? <section className="engineCausalRow"><div><span>페이퍼 부진</span><strong>{data.performance_action.summary}</strong></div><i>→</i><div><span>같은 기간 엔진 조치</span><strong>{actionSummary(data.performance_action.actions)}</strong></div></section> : null}
       <section className="engineStatusCard"><header><h2>파라미터 자율 피드</h2><span>예정 {calibration.suggestion_status_counts.scheduled ?? 0} · 실험 {calibration.suggestion_status_counts.experiment ?? 0}</span></header>{suggestions.length ? suggestions.map((item) => <div className="engineFeedRow" key={item.id}><span>{item.title}</span><b>{statusLabel(item.status)}</b></div>) : <p className="engineEmptyLine">진행 중인 변경이 없습니다.</p>}</section>
       <section className="engineStatusCard"><header><h2>시그니처 상태</h2><span>변동만 추적</span></header><div className="signatureCounts"><div><strong>{counts.validated ?? 0}</strong><span>검증됨</span></div><div><strong>{counts.degraded ?? 0}</strong><span>저하</span></div><div><strong>{counts.quarantined ?? 0}</strong><span>격리</span></div><div><strong>{counts.candidate ?? 0}</strong><span>표본 축적</span></div></div></section>
-      <CandidateReview review={calibration.candidate_review} />
+      <CandidateReviewCard review={calibration.candidate_review} />
     </div>
   );
 }
 
-function CandidateReview({ review }: { review: PaperDashboard["calibration"]["candidate_review"] }) {
+function CandidateReviewCard({ review }: { review: PaperDashboard["calibration"]["candidate_review"] }) {
+  const items = review?.items ?? [];
   return (
-    <section className="engineStatusCard engineCandidateReview">
-      <header><h2>candidate 심사 현황</h2><span>승격 준비 {review.promotion_ready ?? 0}</span></header>
-      {(review.signatures ?? []).length ? (review.signatures ?? []).slice(0, 10).map((item) => (
-        <div className="engineFeedRow" key={item.signature_key}>
-          <span>{item.label} · N={item.sample_size} · {item.win_1r_pct === null ? "성적 대기" : `1R ${item.win_1r_pct}%`}</span>
-          <b>{item.prediction_warning ?? (item.remaining_samples > 0 ? `승격까지 ${item.remaining_samples}` : item.state)}</b>
+    <section className="engineStatusCard engineCandidateReview" data-testid="candidate-review-status">
+      <header><h2>Candidate 심사 현황</h2><span>승격 제안 {review?.pending_promotions ?? 0}</span></header>
+      {items.length ? <div className="candidateReviewRows">{items.map((item) => (
+        <div key={item.engine}>
+          <strong>{item.label}</strong>
+          <span>N {item.sample_size} · 1R {candidateRate(item.win_1r_pct, item.win_1r_ci)}</span>
+          <small>승격까지 {item.remaining_samples}표본 · live {item.source_counts.live ?? 0}</small>
+          <b>{candidateStatus(item.status)}</b>
         </div>
-      )) : <p className="engineEmptyLine">candidate 채점 워커 실행 대기</p>}
-      <p className="engineEmptyLine">{review.sample_warning ?? "백테스트와 라이브 검증 표본을 분리 집계합니다."}</p>
+      ))}</div> : <p className="engineEmptyLine">일일 채점 잡 실행을 기다리는 중입니다.</p>}
+      <p className="engineEmptyLine">백테스트와 라이브 검증 표본을 분리 집계합니다.</p>
     </section>
   );
 }
@@ -325,6 +328,8 @@ function evidenceLines(trade: PaperTrade): string[] { const raw = trade.entry_ev
 function record(value: unknown): Record<string, unknown> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
 function actionSummary(actions: Array<Record<string, unknown>>): string { return actions.length ? actions.slice(0, 3).map((item) => String(item.reason ?? item.transition ?? item.signature_key ?? "자율 조치")).join(" · ") : "기록된 자율 조치 없음"; }
 function statusLabel(value: string): string { return ({ scheduled: "예정", experiment: "실험 중", adopted: "적용됨", rolled_back: "롤백됨", vetoed: "거부됨", dwell_blocked: "대기 기간", waiting: "수집 대기", not_configured: "인증 확인 필요", error: "수집 오류", ok: "정상" } as Record<string,string>)[value] ?? value; }
+function candidateStatus(value: string): string { return ({ candidate: "표본 축적", promotion_proposed: "승격 제안", validated: "검증됨", degraded: "저하" } as Record<string,string>)[value] ?? value; }
+function candidateRate(value: number | null, ci: [number, number] | null): string { return value === null ? "유보" : `${value.toFixed(1)}%${ci ? ` (CI ${ci[0]}~${ci[1]})` : ""}`; }
 function pillBottleneckLabel(value: string | null | undefined): string { return ({ window_events: "최근 이벤트 없음", validated: "검증 통계 단계에서 최다 탈락", confirmed: "확정 캔들 단계에서 최다 탈락", event_mapping: "이벤트-캔들 매핑 단계에서 최다 탈락" } as Record<string,string>)[value ?? ""] ?? "진단 표본 대기"; }
 function stanceLabel(value: Record<string, unknown>): string { return ({ long: "상방", long_leaning: "상방", short: "하방", short_leaning: "하방", conflicted: "충돌" } as Record<string,string>)[String(value.stance ?? "")] ?? "판단 유보"; }
 function direction(value: string): string { return value === "long" ? "롱" : "숏"; }

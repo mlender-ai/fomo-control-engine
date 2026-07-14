@@ -2714,6 +2714,34 @@ textarea:focus {
   white-space: nowrap;
 }
 
+.engineCandidateReview {
+  grid-column: 1 / -1;
+}
+
+.candidateReviewRows {
+  display: grid;
+  gap: 0;
+}
+
+.candidateReviewRows > div {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.8fr) minmax(180px, 1.2fr) minmax(150px, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  min-height: 42px;
+  border-top: 1px solid var(--rh-border);
+}
+
+.candidateReviewRows span,
+.candidateReviewRows small {
+  color: var(--rh-muted);
+}
+
+.candidateReviewRows b {
+  color: var(--rh-green);
+  font-size: 12px;
+}
+
 .signatureCounts {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -2925,6 +2953,17 @@ textarea:focus {
 
   .engineJournalRow summary {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .candidateReviewRows > div {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 5px 12px;
+    padding: 10px 0;
+  }
+
+  .candidateReviewRows span,
+  .candidateReviewRows small {
+    grid-column: 1 / -1;
   }
 }
 

@@ -277,6 +277,13 @@ class Settings(BaseSettings):
             "WORKER_REFRESH_MARKET_DATA_INTERVAL_SECONDS",
         ),
     )
+    worker_score_candidates_interval_seconds: int = Field(
+        86400,
+        validation_alias=AliasChoices(
+            "FCE_WORKER_SCORE_CANDIDATES_INTERVAL_SECONDS",
+            "WORKER_SCORE_CANDIDATES_INTERVAL_SECONDS",
+        ),
+    )
     worker_regen_stale_insights_interval_seconds: int = Field(
         120,
         validation_alias=AliasChoices(

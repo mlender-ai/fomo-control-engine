@@ -35,11 +35,13 @@ def score_candidates(
     settings: Any,
     *,
     audit_overrides: dict[str, bool] | None = None,
+    engines: set[str] | None = None,
 ) -> dict[str, Any]:
+    selected_engines = engines or set(CANDIDATE_ENGINES)
     source_stats = [
         stat
         for stat in repo.list_backtest_stats(limit=5000)
-        if stat.engine in CANDIDATE_ENGINES and not bool(stat.payload.get("candidate_review"))
+        if stat.engine in selected_engines and not bool(stat.payload.get("candidate_review"))
     ]
     audit_engines = {*(item[0] for item in CANDIDATE_DEFINITIONS), *(stat.engine for stat in source_stats)}
     audit = candidate_lookahead_audit(audit_overrides, engines=audit_engines)
@@ -70,7 +72,7 @@ def score_candidates(
             transitions.append(transition.model_dump(mode="json"))
 
     for engine, event_type, label in CANDIDATE_DEFINITIONS:
-        if engine in seen_engines:
+        if engine not in selected_engines or engine in seen_engines:
             continue
         review = _empty_review(repo, settings, engine, event_type, label, live, audit)
         reviews.append(review)

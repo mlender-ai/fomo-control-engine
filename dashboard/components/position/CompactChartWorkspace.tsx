@@ -218,7 +218,8 @@ export function MoneyFlowCard({
           <p>{presentation.readout}</p>
         </div>
       </div>
-
+      <p>{flow?.reason || "현물·선물 체결 시계열을 수집하고 있습니다."}</p>
+      {flow?.state === "futures_led" && flow.predictive_warning ? <em>선물 단독 견인의 예측력 미검증</em> : null}
       <footer className="moneyFlowIndicatorFooter">
         <span>{flow?.source_label || "출처 확인 중"}</span>
         <small>CVD = 실제 입금액이 아닌 시장가 매수−매도 체결 우위</small>

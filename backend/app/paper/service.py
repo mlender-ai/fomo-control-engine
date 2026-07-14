@@ -633,11 +633,15 @@ def paper_dashboard(repo: Any, settings: Any, *, calibration: dict[str, Any] | N
     calibration = calibration or {}
     candidate_review = calibration.get("candidate_review") if isinstance(calibration.get("candidate_review"), dict) else {}
     reviewed_keys = set(states)
-    for item in candidate_review.get("signatures", []) if isinstance(candidate_review.get("signatures"), list) else []:
-        if not isinstance(item, dict) or item.get("signature_key") in reviewed_keys:
+    for item in candidate_review.get("items", []) if isinstance(candidate_review.get("items"), list) else []:
+        if not isinstance(item, dict):
             continue
-        state = str(item.get("state") or "candidate")
-        state_counts[state] = state_counts.get(state, 0) + 1
+        for signature_key in item.get("promotion_signature_keys", []):
+            if signature_key in reviewed_keys:
+                continue
+            reviewed_keys.add(signature_key)
+            state = str(item.get("status") or "candidate")
+            state_counts[state] = state_counts.get(state, 0) + 1
     weekly_report = calibration.get("weekly_report") or {}
     poor = bool(scoreboard.get("poor_performance"))
     actions = scoreboard.get("autonomy_actions") or []
@@ -659,7 +663,15 @@ def paper_dashboard(repo: Any, settings: Any, *, calibration: dict[str, Any] | N
             "suggestion_status_counts": calibration.get("suggestion_status_counts") or {},
             "engine_params": calibration.get("engine_params") or [],
             "signature_state_counts": state_counts,
-            "candidate_review": candidate_review or {"candidate_count": 0, "promotion_ready": 0, "signatures": []},
+            "candidate_review": candidate_review
+            or weekly_report.get("candidate_review")
+            or {
+                "generated_at": utc_now().isoformat(),
+                "policy": "candidate scoring pending",
+                "veto_window_hours": 48,
+                "pending_promotions": 0,
+                "items": [],
+            },
         },
         "performance_action": {
             "poor": poor,
