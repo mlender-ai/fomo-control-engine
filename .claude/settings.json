@@ -1,0 +1,53 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -m pytest*)",
+      "Bash(python3 -m ruff*)",
+      "Bash(python3 scripts/check_import_cycles.py)",
+      "Bash(python3 scripts/check_mypy_baseline.py)",
+      "Bash(python3 scripts/check_quality_baseline.py)",
+      "Bash(npm run lint)",
+      "Bash(npm run typecheck)",
+      "Bash(npm run build)",
+      "Bash(npm run test:e2e)",
+      "Bash(npx tsc --noEmit)",
+      "Bash(git status*)",
+      "Bash(git log*)",
+      "Bash(git diff*)",
+      "Bash(git branch*)",
+      "Bash(git add*)",
+      "Bash(git commit*)",
+      "Bash(git push)",
+      "Bash(git push origin main)",
+      "Bash(git pull)",
+      "Bash(git rev-list*)",
+      "Bash(git rev-parse*)",
+      "Bash(git merge-base*)",
+      "Bash(gh run list*)",
+      "Bash(gh run view*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/protect-secrets.sh"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/verify-merged.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

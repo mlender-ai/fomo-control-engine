@@ -98,10 +98,7 @@ def assess_candles(candles: list[MarketCandle], timeframe: str) -> dict[str, Any
     return {
         "score": score,
         "checked": total,
-        "violations": [
-            {"code": code, "count": count, "detail": _violation_detail(code)}
-            for code, count in sorted(violations.items())
-        ],
+        "violations": [{"code": code, "count": count, "detail": _violation_detail(code)} for code, count in sorted(violations.items())],
         "valid_candles": valid,
     }
 

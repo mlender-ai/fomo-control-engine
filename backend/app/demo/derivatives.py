@@ -32,8 +32,22 @@ class FakeDerivativesProvider:
             raw_json={"demo": True},
         )
         clusters = [
-            {"price": _cluster_price(normalized, 1.018), "side": "short_liquidation", "magnitude": 82, "distance_pct": 1.8, "priority": "high", "source": "demo_liq_cluster"},
-            {"price": _cluster_price(normalized, 0.972), "side": "long_liquidation", "magnitude": 64, "distance_pct": -2.8, "priority": "medium", "source": "demo_liq_cluster"},
+            {
+                "price": _cluster_price(normalized, 1.018),
+                "side": "short_liquidation",
+                "magnitude": 82,
+                "distance_pct": 1.8,
+                "priority": "high",
+                "source": "demo_liq_cluster",
+            },
+            {
+                "price": _cluster_price(normalized, 0.972),
+                "side": "long_liquidation",
+                "magnitude": 64,
+                "distance_pct": -2.8,
+                "priority": "medium",
+                "source": "demo_liq_cluster",
+            },
         ]
         snapshot = DerivativeDataSnapshot(
             symbol=normalized,

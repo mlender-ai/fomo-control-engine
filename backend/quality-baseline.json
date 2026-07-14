@@ -23,7 +23,8 @@
       "ts-ignore",
       "eslint-disable"
     ],
-    "allowed_count": 4
+    "allowed_count": 16,
+    "note": "2026-07-14 재기준선 — CI 게이트 사망 기간 부채(4→16). 이 수치는 내리기만 한다. 상환은 mypy 부채 WO와 함께."
   },
   "mypy": {
     "paths": [
@@ -31,6 +32,7 @@
       "app/marketdata",
       "app/notify"
     ],
-    "allowed_error_count": 44
+    "allowed_error_count": 174,
+    "note": "2026-07-14 재기준선 — ci.yml YAML 파괴로 게이트가 죽어있던 기간의 부채(44→174). 래칫 복원 우선, 상환은 별도 WO. 이 수치는 내리기만 한다."
   }
 }

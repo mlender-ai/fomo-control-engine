@@ -1241,11 +1241,7 @@ def _setup_id(symbol: str, timeframe: str, candidate: dict[str, Any]) -> UUID:
 def _setup_direction_state(setup: ArmedSetup) -> dict[str, Any]:
     preview = setup.preview if isinstance(setup.preview, dict) else {}
     setup_direction = setup.direction if setup.direction in {"long", "short"} else None
-    overall_value = (
-        preview.get("briefing_stance_state")
-        or preview.get("scout_overall_stance")
-        or preview.get("briefing_stance")
-    )
+    overall_value = preview.get("briefing_stance_state") or preview.get("scout_overall_stance") or preview.get("briefing_stance")
     overall_direction = _direction_from_label(overall_value)
     htf_direction = _direction_from_label(preview.get("htf_trend"))
     conflict = bool(setup_direction and overall_direction and setup_direction != overall_direction)
@@ -1359,6 +1355,7 @@ def _setup_context_line(setup: ArmedSetup) -> str:
     stance_label = "상방 근거 우세" if state["overall_direction"] == "long" else "하방 근거 우세"
     conflict = " · 충돌" if state["conflict"] else ""
     return f"셋업 방향: {direction} · 현재 종합: {stance_label}{conflict}"
+
 
 def _strip_briefing_prefix(value: str) -> str:
     text = value.strip()

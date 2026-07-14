@@ -26,10 +26,7 @@ def bootstrap_win_ci(
         return None
     seed = zlib.crc32("".join("1" if win else "0" for win in wins).encode())
     rng = random.Random(seed)
-    rates = sorted(
-        sum(1 for _ in range(n) if wins[rng.randrange(n)]) / n
-        for _ in range(max(100, iterations))
-    )
+    rates = sorted(sum(1 for _ in range(n) if wins[rng.randrange(n)]) / n for _ in range(max(100, iterations)))
     total = len(rates)
     low_index = max(0, int((1 - confidence) / 2 * total))
     high_index = min(total - 1, int((1 + confidence) / 2 * total) - 1)

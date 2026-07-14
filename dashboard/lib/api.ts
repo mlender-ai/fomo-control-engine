@@ -1656,9 +1656,22 @@ export type PaperGateFunnel = {
   as_of: string;
   evaluations: number;
   entered: number;
-  stages: Array<{ id: string; label: string; count: number }>;
+  stages: Array<{
+    id: string;
+    label: string;
+    count: number;
+    rejection_top3?: Array<{ detail: string; count: number }>;
+  }>;
   top_rejection: { id: string; label: string; count: number } | null;
   rejection_counts: Record<string, number>;
+  entry_block_count?: number;
+  checklist_pass_rates?: Array<{
+    key: string;
+    label: string;
+    passed: number;
+    evaluated: number;
+    pass_rate_pct: number;
+  }>;
   signature_gate_note?: string | null;
   pill_diagnostics?: {
     rendered: number;

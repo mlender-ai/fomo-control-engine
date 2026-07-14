@@ -76,20 +76,14 @@ def evaluate_entry(
     stance_direction = "long" if stance in {"long", "long_leaning"} else "short" if stance in {"short", "short_leaning"} else stance
     gates = {
         "confirmed_flip": bool(
-            confirmed_bar
-            and stance_state.get("flipped") is True
-            and stance_state.get("transitioning") is not True
-            and stance_direction == direction.value
+            confirmed_bar and stance_state.get("flipped") is True and stance_state.get("transitioning") is not True and stance_direction == direction.value
         ),
         "evidence": evidence_count >= policy.min_evidence,
-        "checklist": checklist_passed >= policy.min_checklist_passed
-        and checklist_total >= policy.min_checklist_total,
+        "checklist": checklist_passed >= policy.min_checklist_passed and checklist_total >= policy.min_checklist_total,
         "invalidation_hygiene": invalidation_hygiene,
         "risk_reward": rr_ratio is not None and rr_ratio >= policy.min_rr,
         "liquidation_safety": survives_to_invalidation,
-        "validated_signature": validated_signature
-        and signature_ci_low_pct is not None
-        and signature_ci_low_pct >= policy.min_signature_ci_low_pct,
+        "validated_signature": validated_signature and signature_ci_low_pct is not None and signature_ci_low_pct >= policy.min_signature_ci_low_pct,
         "earnings_clear": earnings_clear,
         "data_fresh": data_fresh,
     }

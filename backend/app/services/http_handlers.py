@@ -874,10 +874,7 @@ def list_live_positions(compact: bool = False) -> dict:
     positions = [position for position in all_positions if position.status == PositionStatus.open]
     return {
         "provider": _provider_name(),
-        "positions": [
-            _cached_live_position_payload(position) if compact else _live_position_payload(position, store_snapshot=False)
-            for position in positions
-        ],
+        "positions": [_cached_live_position_payload(position) if compact else _live_position_payload(position, store_snapshot=False) for position in positions],
         "open_count": len(positions),
         "needs_exit_record_count": len(
             [
@@ -1154,11 +1151,7 @@ def _compact_position_analysis(analysis: Any) -> dict[str, Any]:
 
 def _compact_score_json(score_json: Any) -> dict[str, Any]:
     source = score_json if isinstance(score_json, dict) else {}
-    return {
-        key: source.get(key)
-        for key in ("entry_score", "current_score", "score_change", "health_components", "fomo_index")
-        if key in source
-    }
+    return {key: source.get(key) for key in ("entry_score", "current_score", "score_change", "health_components", "fomo_index") if key in source}
 
 
 def _compact_insight_payload(insight: PositionInsight, status: dict[str, Any]) -> dict[str, Any]:
@@ -1232,10 +1225,7 @@ def _compact_chart_analysis(analysis: dict[str, Any]) -> dict[str, Any]:
     bollinger = indicators.get("bollinger") if isinstance(indicators.get("bollinger"), dict) else {}
     compact["indicators"] = {
         **indicators,
-        "bollinger": {
-            key: list(points or [])[-indicator_window:]
-            for key, points in bollinger.items()
-        },
+        "bollinger": {key: list(points or [])[-indicator_window:] for key, points in bollinger.items()},
     }
     return compact
 
@@ -1264,11 +1254,7 @@ def _slim_derivatives(context: dict[str, Any], metric_limit: int, event_limit: i
 def _without_raw_payload(value: Any) -> Any:
     if not isinstance(value, dict):
         return value
-    return {
-        key: item
-        for key, item in value.items()
-        if key not in {"raw_json", "data_quality"}
-    }
+    return {key: item for key, item in value.items() if key not in {"raw_json", "data_quality"}}
 
 
 def _slim_derivative_metric(value: Any) -> Any:

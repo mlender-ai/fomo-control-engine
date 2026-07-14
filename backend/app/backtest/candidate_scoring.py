@@ -38,11 +38,7 @@ def score_candidates(
     engines: set[str] | None = None,
 ) -> dict[str, Any]:
     selected_engines = engines or set(CANDIDATE_ENGINES)
-    source_stats = [
-        stat
-        for stat in repo.list_backtest_stats(limit=5000)
-        if stat.engine in selected_engines and not bool(stat.payload.get("candidate_review"))
-    ]
+    source_stats = [stat for stat in repo.list_backtest_stats(limit=5000) if stat.engine in selected_engines and not bool(stat.payload.get("candidate_review"))]
     audit_engines = {*(item[0] for item in CANDIDATE_DEFINITIONS), *(stat.engine for stat in source_stats)}
     audit = candidate_lookahead_audit(audit_overrides, engines=audit_engines)
     failed = [engine for engine, result in audit.items() if not result["passed"]]
@@ -138,11 +134,7 @@ def score_live_candidate_judgments(repo: Any, provider: Any, settings: Any) -> d
                 snapshots[key] = provider.get_snapshot(symbol, timeframe)
             duration = timedelta(seconds=_timeframe_seconds(timeframe))
             candles = sorted(
-                (
-                    candle
-                    for candle in snapshots[key].candles
-                    if candle.timestamp + duration <= now
-                ),
+                (candle for candle in snapshots[key].candles if candle.timestamp + duration <= now),
                 key=lambda candle: candle.timestamp,
             )
             past = [candle for candle in candles if candle.timestamp <= judgment.as_of]
@@ -257,27 +249,15 @@ def _review_signature(
     minimum_n = int(getattr(settings, "signature_validated_min_sample", 30))
     minimum_ci = 55.0 if first.engine == "whale" else float(getattr(settings, "universe_backtest_min_ci_low_pct", 50.0))
     ci_low = float(ci[0]) if ci else None
-    sampled_regimes = {
-        regime: row
-        for regime, row in regimes.items()
-        if int(row.get("sample_size") or 0) >= minimum_n
-    }
+    sampled_regimes = {regime: row for regime, row in regimes.items() if int(row.get("sample_size") or 0) >= minimum_n}
     qualifying_regimes = [
         regime
         for regime, row in sampled_regimes.items()
-        if isinstance(row.get("win_1r_ci"), list)
-        and row["win_1r_ci"]
-        and float(row["win_1r_ci"][0]) >= minimum_ci
+        if isinstance(row.get("win_1r_ci"), list) and row["win_1r_ci"] and float(row["win_1r_ci"][0]) >= minimum_ci
     ]
     blocked_regimes = sorted(set(sampled_regimes) - set(qualifying_regimes))
     regime_gate_passed = not regimes or (bool(qualifying_regimes) and not blocked_regimes)
-    promotion_eligible = bool(
-        state == "candidate"
-        and total_n >= minimum_n
-        and ci_low is not None
-        and ci_low >= minimum_ci
-        and regime_gate_passed
-    )
+    promotion_eligible = bool(state == "candidate" and total_n >= minimum_n and ci_low is not None and ci_low >= minimum_ci and regime_gate_passed)
     warning = _prediction_warning(first.engine, total_n, win_pct, ci_low, minimum_n, minimum_ci)
     return {
         "candidate_review": True,
@@ -381,10 +361,7 @@ def _promotion_proposal(repo: Any, review: dict[str, Any]) -> CalibrationSuggest
         id=suggestion_id,
         suggestion_type="signature_promotion",
         title=f"{review['label']} validated 승격 제안",
-        rationale=(
-            f"candidate N={review['sample_size']} · net 1R {review['win_1r_pct']}% · "
-            f"CI 하한 {review['win_1r_ci'][0]}%"
-        ),
+        rationale=(f"candidate N={review['sample_size']} · net 1R {review['win_1r_pct']}% · CI 하한 {review['win_1r_ci'][0]}%"),
         proposed_change={
             "signature_key": review["signature_key"],
             "from": "candidate",

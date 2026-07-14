@@ -61,10 +61,7 @@ def evaluate_signature(
 
     # R5: 복귀 — 최근 2창 연속 게이트 재통과 (CI 하한 ≥ 임계) 이고 현재 부패 신호 없음.
     recover = (
-        current in {"degraded", "quarantined"}
-        and not decayed
-        and len(windows) >= 2
-        and all((_window_ci(w) or (0.0, 0.0))[0] >= min_ci for w in windows[-2:])
+        current in {"degraded", "quarantined"} and not decayed and len(windows) >= 2 and all((_window_ci(w) or (0.0, 0.0))[0] >= min_ci for w in windows[-2:])
     )
 
     evidence = {
@@ -284,10 +281,7 @@ def build_self_audit(repo: Any, *, now: datetime | None = None, sweep: dict[str,
             latest_proposed[log.signature_key] = max(latest_proposed.get(log.signature_key, stamp), stamp)
         elif log.transition == "recover_applied":
             latest_applied[log.signature_key] = max(latest_applied.get(log.signature_key, stamp), stamp)
-    recovery_pending = sorted(
-        key for key, proposed_at in latest_proposed.items()
-        if key not in latest_applied or proposed_at > latest_applied[key]
-    )
+    recovery_pending = sorted(key for key, proposed_at in latest_proposed.items() if key not in latest_applied or proposed_at > latest_applied[key])
     divergence_top = _top_divergence(logs)
 
     return {
@@ -372,6 +366,7 @@ def autonomy_scorecard(repo: Any, *, now: datetime | None = None) -> dict[str, A
 
 
 # ── 내부 헬퍼 ─────────────────────────────────────────────────────
+
 
 def _latest_stats_by_signature(repo: Any) -> dict[str, dict[str, Any]]:
     """시그니처별 대표 통계 — 표본이 가장 큰 심볼의 행 (동률이면 최신).

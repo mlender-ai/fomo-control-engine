@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from uuid import NAMESPACE_URL, UUID, uuid5
+from uuid import NAMESPACE_URL, uuid5
 
 from app.backtest.candidate_scoring import CANDIDATE_SENTINEL_POSITION_ID
 from app.db.models import BacktestStat, JudgmentLedgerEntry, WhaleEvent, WhaleWallet, utc_now
@@ -55,9 +55,7 @@ def collect_whale_positions(repo: Any, settings: Any, client: Any) -> dict[str, 
                     created_events.append(event)
                     if event.event in {"open", "flip"}:
                         _record_candidate_observation(repo, event)
-            repo.upsert_whale_wallet(
-                wallet.model_copy(update={"last_polled_at": now, "last_fill_at": latest_fill, "updated_at": now})
-            )
+            repo.upsert_whale_wallet(wallet.model_copy(update={"last_polled_at": now, "last_fill_at": latest_fill, "updated_at": now}))
         except Exception as exc:
             errors.append({"address": wallet.address, "error": f"{type(exc).__name__}: {exc}"})
     return {

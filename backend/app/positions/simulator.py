@@ -112,9 +112,7 @@ def simulate_entry(
     profit_usdt = None
     min_invalidation_distance_pct = max(0.0, float(min_invalidation_distance_pct))
     invalidation_too_close = bool(
-        invalidation_distance is not None
-        and invalidation_distance < 0
-        and abs(invalidation_distance) < min_invalidation_distance_pct
+        invalidation_distance is not None and invalidation_distance < 0 and abs(invalidation_distance) < min_invalidation_distance_pct
     )
     if invalidation_distance is not None and tp_distance is not None and invalidation_distance < 0 and tp_distance > 0:
         rr_ratio_raw = round(tp_distance / abs(invalidation_distance), 2)

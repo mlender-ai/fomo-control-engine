@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
-from datetime import datetime, timezone
 from typing import Any
 
 from app.analyst.signature_registry import current_state
@@ -177,7 +176,9 @@ def _event_payload(repo: Any, event: WhaleEvent) -> dict[str, Any]:
         "sample_size": review["sample_size"],
         "win_1r_pct": review["win_1r_pct"],
         "win_1r_ci": review["win_1r_ci"],
-        "accuracy_label": f"과거 적중 {review['win_1r_pct']}% (N={review['sample_size']})" if review["sample_size"] >= 30 and review["win_1r_pct"] is not None else f"적중률 축적 중 (N={review['sample_size']})",
+        "accuracy_label": f"과거 적중 {review['win_1r_pct']}% (N={review['sample_size']})"
+        if review["sample_size"] >= 30 and review["win_1r_pct"] is not None
+        else f"적중률 축적 중 (N={review['sample_size']})",
         "alias_disclaimer": "사용자 지정 추정 별칭 · 신원 확정 아님",
     }
 

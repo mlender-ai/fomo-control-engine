@@ -152,11 +152,7 @@ def _standby_reason(candles: list[dict[str, Any]], support: list[dict[str, Any]]
     candle_count = len(candles) if isinstance(candles, list) else 0
     if candle_count and candle_count < 60:
         return f"캔들 {candle_count}개 — 표본 축적 중"
-    scored = [
-        float(item["score"])
-        for item in [*support, *resistance]
-        if isinstance(item.get("score"), (int, float))
-    ]
+    scored = [float(item["score"]) for item in [*support, *resistance] if isinstance(item.get("score"), (int, float))]
     if scored:
         return f"유효 레벨 부재 (최고 score {max(scored):.0f})"
     if candle_count:

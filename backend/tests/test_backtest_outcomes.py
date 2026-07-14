@@ -52,4 +52,3 @@ def _candle(index: int, *, open_: float, high: float, low: float, close: float) 
         close=close,
         volume=1000,
     )
-

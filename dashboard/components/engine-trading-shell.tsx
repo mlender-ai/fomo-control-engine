@@ -283,9 +283,23 @@ function GateFunnel({ funnel }: { funnel: PaperGateFunnel }) {
       <header><h2>최근 {funnel.period_days}일 진입 게이트</h2><span>확정 캔들 기준</span></header>
       <div className="engineFunnelStages">
         {visible.map((stage, index) => (
-          <div key={stage.id}><span>{stage.label}</span><strong>{stage.count}</strong>{index < visible.length - 1 ? <i>→</i> : null}</div>
+          <div key={stage.id}>
+            <span>{stage.label}</span>
+            <strong>{stage.count}</strong>
+            {stage.rejection_top3?.length ? (
+              <ul>{stage.rejection_top3.map((reason) => <li key={reason.detail}>{reason.detail} · {reason.count}회</li>)}</ul>
+            ) : <small>탈락 사유 없음</small>}
+            {index < visible.length - 1 ? <i>→</i> : null}
+          </div>
         ))}
       </div>
+      {funnel.checklist_pass_rates?.length ? (
+        <div className="engineChecklistRates" aria-label="체크리스트 항목별 통과율">
+          {funnel.checklist_pass_rates.map((item) => (
+            <span key={item.key}><b>{item.label}</b><small>{item.pass_rate_pct}% · {item.passed}/{item.evaluated}</small></span>
+          ))}
+        </div>
+      ) : null}
       <p>{funnel.top_rejection ? `최다 탈락: ${funnel.top_rejection.label} · ${funnel.top_rejection.count}회` : "평가가 쌓이면 최다 탈락 관문을 표시합니다."}</p>
       {funnel.signature_gate_note ? <p>{funnel.signature_gate_note}</p> : null}
       <p data-testid="event-pill-diagnostics">

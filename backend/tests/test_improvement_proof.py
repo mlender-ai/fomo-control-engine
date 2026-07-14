@@ -61,6 +61,7 @@ def _param(days_ago: float, param: str = "min_invalidation_level_score", old=40,
 
 # ── 조치별 효과표 ──────────────────────────────────────────────────
 
+
 def test_effect_table_detects_significant_improvement() -> None:
     # 조치 7일 전: 40% (N=20) → 조치 후: 85% (N=20) — CI 비겹침.
     scores = _scores_window(14, 7.01, 20, 0.40) + _scores_window(6.99, 0, 20, 0.85)
@@ -109,6 +110,7 @@ def test_effect_table_signature_downgrade_scope() -> None:
 
 # ── 레짐 통제 비교 ────────────────────────────────────────────────
 
+
 def test_regime_controlled_delta_same_regime() -> None:
     # 전주: uptrend 50% (N=20) / 이번 주: uptrend 90% (N=20) → 통제 비교 + 유의 개선.
     scores = _scores_window(14, 7.01, 20, 0.50, regime="uptrend") + _scores_window(6.99, 0, 20, 0.90, regime="uptrend")
@@ -137,6 +139,7 @@ def test_regime_control_insufficient_same_regime_sample() -> None:
 
 # ── 주간 다이제스트 (WO-49 소비 스키마) ────────────────────────────
 
+
 def _digest(scores, suggestions=None, params=None, logs=None, states=None):
     return weekly_improvement_digest(scores, suggestions or [], params or [], logs or [], states or {}, now=NOW)
 
@@ -145,9 +148,23 @@ def test_digest_schema_is_fixed_for_wo49() -> None:
     scores = _scores_window(14, 7.01, 20, 0.5, regime="uptrend") + _scores_window(6.99, 0, 20, 0.9, regime="uptrend")
     digest = _digest(scores)
     for key in (
-        "generated_at", "period", "schema_version", "tested", "accuracy_pct", "accuracy_ci",
-        "delta_pct", "delta_basis", "delta_verdict", "regime_control", "actions",
-        "quarantined", "experiments", "weakest", "improvement_claim", "headline", "sparkline",
+        "generated_at",
+        "period",
+        "schema_version",
+        "tested",
+        "accuracy_pct",
+        "accuracy_ci",
+        "delta_pct",
+        "delta_basis",
+        "delta_verdict",
+        "regime_control",
+        "actions",
+        "quarantined",
+        "experiments",
+        "weakest",
+        "improvement_claim",
+        "headline",
+        "sparkline",
     ):
         assert key in digest, key
     assert digest["schema_version"] == 1
@@ -157,6 +174,7 @@ def test_digest_schema_is_fixed_for_wo49() -> None:
 
 
 # ── 수용: 개선 연출 방지 — 무조치 주간에 개선 문구 미생성 ──────────
+
 
 def test_no_improvement_claim_on_flat_week_without_actions() -> None:
     scores = _scores_window(14, 7.01, 30, 0.60, regime="uptrend") + _scores_window(6.99, 0, 30, 0.61, regime="uptrend")
@@ -194,9 +212,8 @@ def test_digest_includes_quarantine_and_experiments() -> None:
 
 
 def test_weakest_type_surfaces_lowest_accuracy() -> None:
-    scores = (
-        _scores_window(6.99, 0, 20, 0.8, judgment_type="invalidation", regime="uptrend")
-        + _scores_window(6.99, 0, 20, 0.15, judgment_type="harmonic_prz", regime="uptrend")
+    scores = _scores_window(6.99, 0, 20, 0.8, judgment_type="invalidation", regime="uptrend") + _scores_window(
+        6.99, 0, 20, 0.15, judgment_type="harmonic_prz", regime="uptrend"
     )
     digest = _digest(scores)
     assert digest["weakest"]["judgment_type"] == "harmonic_prz"

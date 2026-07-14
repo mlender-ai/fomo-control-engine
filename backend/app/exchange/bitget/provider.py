@@ -635,11 +635,7 @@ class BitgetMarketDataProvider(MarketDataProvider):
             rows = data.get("fillList") if isinstance(data, dict) else None
             if not isinstance(rows, list):
                 raise BitgetAPIError("invalid_response", "Bitget account fills response is missing fillList.")
-            page_fills = [
-                parse_account_fill(row, self.margin_coin)
-                for row in rows
-                if isinstance(row, dict)
-            ]
+            page_fills = [parse_account_fill(row, self.margin_coin) for row in rows if isinstance(row, dict)]
             for fill in page_fills:
                 if fill.trade_id not in seen:
                     seen.add(fill.trade_id)

@@ -30,7 +30,9 @@ class MemoryMarketdataRepositoryMixin:
         self.whale_events[event.id] = event
         return True
 
-    def list_whale_events(self, symbol: str | None = None, wallet_address: str | None = None, since: datetime | None = None, limit: int = 500) -> list[WhaleEvent]:
+    def list_whale_events(
+        self, symbol: str | None = None, wallet_address: str | None = None, since: datetime | None = None, limit: int = 500
+    ) -> list[WhaleEvent]:
         events = list(self.whale_events.values())
         if symbol:
             events = [event for event in events if event.symbol.upper() == symbol.upper()]
@@ -170,11 +172,21 @@ class SQLiteMarketdataRepositoryMixin:
                 """INSERT OR IGNORE INTO whale_events
                 (id, wallet_address, symbol, event_type, event_at, size_usd, payload)
                 VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (str(event.id), event.wallet_address.lower(), event.symbol.upper(), event.event, event.event_at.isoformat(), event.size_usd, _dump_model(event)),
+                (
+                    str(event.id),
+                    event.wallet_address.lower(),
+                    event.symbol.upper(),
+                    event.event,
+                    event.event_at.isoformat(),
+                    event.size_usd,
+                    _dump_model(event),
+                ),
             )
         return cursor.rowcount > 0
 
-    def list_whale_events(self, symbol: str | None = None, wallet_address: str | None = None, since: datetime | None = None, limit: int = 500) -> list[WhaleEvent]:
+    def list_whale_events(
+        self, symbol: str | None = None, wallet_address: str | None = None, since: datetime | None = None, limit: int = 500
+    ) -> list[WhaleEvent]:
         clauses: list[str] = []
         params: list[object] = []
         if symbol:
@@ -194,13 +206,17 @@ class SQLiteMarketdataRepositoryMixin:
 
     def get_whale_position_state(self, wallet_address: str, coin: str) -> dict | None:
         with self._connect() as connection:
-            row = connection.execute("SELECT payload FROM whale_position_states WHERE wallet_address = ? AND coin = ?", (wallet_address.lower(), coin.upper())).fetchone()
+            row = connection.execute(
+                "SELECT payload FROM whale_position_states WHERE wallet_address = ? AND coin = ?", (wallet_address.lower(), coin.upper())
+            ).fetchone()
         return json.loads(row["payload"]) if row else None
 
     def list_whale_position_states(self, wallet_address: str | None = None, limit: int = 500) -> list[dict]:
         with self._connect() as connection:
             if wallet_address:
-                rows = connection.execute("SELECT payload FROM whale_position_states WHERE wallet_address = ? ORDER BY coin LIMIT ?", (wallet_address.lower(), limit)).fetchall()
+                rows = connection.execute(
+                    "SELECT payload FROM whale_position_states WHERE wallet_address = ? ORDER BY coin LIMIT ?", (wallet_address.lower(), limit)
+                ).fetchall()
             else:
                 rows = connection.execute("SELECT payload FROM whale_position_states ORDER BY wallet_address, coin LIMIT ?", (limit,)).fetchall()
         return [json.loads(row["payload"]) for row in rows]
@@ -208,7 +224,9 @@ class SQLiteMarketdataRepositoryMixin:
     def upsert_whale_position_state(self, wallet_address: str, coin: str, state: dict) -> bool:
         payload = json.dumps(state, ensure_ascii=False, default=_json_cache_default)
         with self._connect() as connection:
-            connection.execute("INSERT OR REPLACE INTO whale_position_states (wallet_address, coin, payload) VALUES (?, ?, ?)", (wallet_address.lower(), coin.upper(), payload))
+            connection.execute(
+                "INSERT OR REPLACE INTO whale_position_states (wallet_address, coin, payload) VALUES (?, ?, ?)", (wallet_address.lower(), coin.upper(), payload)
+            )
         return True
 
     def delete_whale_position_state(self, wallet_address: str, coin: str) -> bool:

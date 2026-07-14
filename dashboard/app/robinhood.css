@@ -2695,6 +2695,48 @@ textarea:focus {
   transform: translate(50%, -50%);
 }
 
+.engineFunnelStages ul {
+  display: grid;
+  gap: 4px;
+  min-height: 42px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.engineFunnelStages li,
+.engineFunnelStages small {
+  overflow-wrap: anywhere;
+  color: var(--rh-muted);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.engineChecklistRates {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  border-top: 1px solid var(--rh-border);
+  border-bottom: 1px solid var(--rh-border);
+}
+
+.engineChecklistRates > span {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 10px 12px;
+  border-right: 1px solid var(--rh-border);
+}
+
+.engineChecklistRates b,
+.engineChecklistRates small {
+  overflow-wrap: anywhere;
+}
+
+.engineChecklistRates small {
+  color: var(--rh-muted);
+  font-family: var(--font-mono);
+}
+
 .engineStatusCard h2 {
   margin: 6px 0 10px;
   color: var(--rh-white);

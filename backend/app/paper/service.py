@@ -161,7 +161,7 @@ def run_paper_engine(
                 entry_decision = None
                 if direction is not None:
                     simulation = simulation_loader(symbol, timeframe, direction.value, bar.close)
-                    signature_gates = _signature_gate_evaluation(repo, settings, analysis, payload, direction)
+                    signature_gates = _signature_gate_evaluation(repo, settings, analysis, payload, direction, now=now)
                     qualified = _dict(signature_gates.get("qualified")) or None
                     action_plan = _dict(simulation.get("action_plan"))
                     invalidation = _price_from(action_plan.get("invalidation") or action_plan.get("engine_invalidation"))
@@ -206,6 +206,8 @@ def run_paper_engine(
                     simulation=simulation,
                     signature_gates=signature_gates,
                     action_levels=bool(invalidation is not None and take_profit is not None),
+                    capacity_available=capacity_available,
+                    rr_ratio=_float(target_plan.get("rr_ratio")),
                     earnings_clear=_earnings_clear(analysis),
                     freshness=_data_fresh(bar, timeframe, now),
                     entry_decision=entry_decision,
@@ -214,6 +216,7 @@ def run_paper_engine(
                     event_pill_ids=[str(item.get("id")) for item in _list(gauges.get("event_pills")) if item.get("id")],
                 )
                 repo.upsert_paper_gate_funnel(gate_record)
+                _record_entry_block_logs(repo, gate_record, now=now)
                 if (
                     will_enter
                     and direction is not None
@@ -252,7 +255,8 @@ def run_paper_engine(
                             "entry_evidence": {
                                 **paper_trade.entry_evidence,
                                 "signature_gate_mode": signature_gates.get("gate_mode"),
-                                "candidate_bootstrap": signature_gates.get("gate_mode") == "candidate_bootstrap",
+                                "candidate_bootstrap": str(signature_gates.get("gate_mode") or "").startswith("candidate_bootstrap"),
+                                "bootstrap_relaxed": signature_gates.get("gate_mode") == "candidate_bootstrap_relaxed",
                                 "exit_policy": "ATR TP1 부분익절 · TP2 전량익절 · 시간 만료 시 stance 재검토",
                             }
                         }
@@ -359,7 +363,7 @@ def _bootstrap_validation_positions(
             checklist_passed = int(simulation.get("checklist_passed") or 0)
             checklist_total = int(simulation.get("checklist_total") or 0)
             rr_ratio = _float(target_plan.get("rr_ratio"))
-            signature_gates = _signature_gate_evaluation(repo, settings, analysis, payload, direction)
+            signature_gates = _signature_gate_evaluation(repo, settings, analysis, payload, direction, now=now)
             gates = {
                 "confirmed_stance": True,
                 "not_transitioning": True,
@@ -418,7 +422,8 @@ def _bootstrap_validation_positions(
                 "items": candidate["evidence"],
                 "gates": candidate["gates"],
                 "signature_gate_mode": signature_gates.get("gate_mode"),
-                "candidate_bootstrap": signature_gates.get("gate_mode") == "candidate_bootstrap",
+                "candidate_bootstrap": str(signature_gates.get("gate_mode") or "").startswith("candidate_bootstrap"),
+                "bootstrap_relaxed": signature_gates.get("gate_mode") == "candidate_bootstrap_relaxed",
                 "note": "4주 대결 최초 표본 수집용 · 성적 시그니처 게이트 통과",
                 "exit_policy": "ATR TP1 부분익절 · TP2 전량익절 · 시간 만료 시 stance 재검토",
             },
@@ -437,6 +442,7 @@ def _bootstrap_validation_positions(
                 "signature_gate": bool(signature_gates.get("signature_gate")),
                 "regime_gate": bool(signature_gates.get("regime_gate")),
                 "gate_mode": signature_gates.get("gate_mode"),
+                "bootstrap_relaxed": signature_gates.get("gate_mode") == "candidate_bootstrap_relaxed",
                 "qualified": signature_gates.get("qualified"),
             },
             policy=policy_from_settings(settings, str(candidate["analysis"].get("asset_class") or "unknown")),
@@ -535,12 +541,7 @@ def paper_scoreboard(repo: Any, settings: Any, *, now: datetime | None = None) -
     benchmark = paper_benchmark(repo)
     started_at = _parse_datetime(benchmark.get("started_at"))
     all_paper = repo.list_paper_trades(limit=5000)
-    all_paper_closed = [
-        item
-        for item in all_paper
-        if item.status == "closed"
-        and item.exit_reason != "duplicate_bootstrap_suppressed"
-    ]
+    all_paper_closed = [item for item in all_paper if item.status == "closed" and item.exit_reason != "duplicate_bootstrap_suppressed"]
     effective_start = started_at or min((item.entry_at for item in all_paper), default=now)
     recent_start = now - timedelta(days=28)
     comparison_paper = [trade for trade in all_paper_closed if trade.entry_at >= effective_start]
@@ -553,9 +554,7 @@ def paper_scoreboard(repo: Any, settings: Any, *, now: datetime | None = None) -
     recent_user_metrics = _user_metrics(recent_user)
     sample_sufficient = bool(paper_metrics["sample_sufficient"] and user_metrics["sample_sufficient"])
     engine_leading = bool(
-        sample_sufficient
-        and paper_metrics["net_return_pct"] > user_metrics["net_return_pct"]
-        and paper_metrics["mdd_pct"] <= user_metrics["mdd_pct"]
+        sample_sufficient and paper_metrics["net_return_pct"] > user_metrics["net_return_pct"] and paper_metrics["mdd_pct"] <= user_metrics["mdd_pct"]
     )
     paper_win_rate = _float(paper_metrics.get("win_rate_pct"))
     poor = bool(
@@ -621,11 +620,7 @@ def paper_dashboard(repo: Any, settings: Any, *, calibration: dict[str, Any] | N
 
     scoreboard = paper_scoreboard(repo, settings)
     open_trades = repo.list_paper_trades(status="open", limit=100)
-    closed_trades = [
-        trade
-        for trade in repo.list_paper_trades(status="closed", limit=500)
-        if trade.exit_reason != "duplicate_bootstrap_suppressed"
-    ]
+    closed_trades = [trade for trade in repo.list_paper_trades(status="closed", limit=500) if trade.exit_reason != "duplicate_bootstrap_suppressed"]
     states = state_map(repo)
     state_counts = {"validated": 0, "degraded": 0, "quarantined": 0, "candidate": 0}
     for state in states.values():
@@ -636,10 +631,10 @@ def paper_dashboard(repo: Any, settings: Any, *, calibration: dict[str, Any] | N
     for item in candidate_review.get("items", []) if isinstance(candidate_review.get("items"), list) else []:
         if not isinstance(item, dict):
             continue
-        for signature_key in item.get("promotion_signature_keys", []):
-            if signature_key in reviewed_keys:
+        for promoted_key in item.get("promotion_signature_keys", []):
+            if promoted_key in reviewed_keys:
                 continue
-            reviewed_keys.add(signature_key)
+            reviewed_keys.add(promoted_key)
             state = str(item.get("status") or "candidate")
             state_counts[state] = state_counts.get(state, 0) + 1
     weekly_report = calibration.get("weekly_report") or {}
@@ -696,8 +691,7 @@ def _paper_activation(repo: Any, settings: Any, funnel_24h: dict[str, Any], funn
     recent_trade_count = sum(
         1
         for trade in repo.list_paper_trades(limit=5000)
-        if trade.entry_at >= utc_now() - timedelta(days=7)
-        and trade.exit_reason != "duplicate_bootstrap_suppressed"
+        if trade.entry_at >= utc_now() - timedelta(days=7) and trade.exit_reason != "duplicate_bootstrap_suppressed"
     )
     entry_count = max(int(funnel_7d.get("entered") or 0), recent_trade_count)
     items = [
@@ -788,6 +782,7 @@ GATE_ORDER = (
     "regime_gate",
     "event_window",
     "freshness",
+    "capacity",
 )
 
 GATE_STAGE_LABELS = {
@@ -802,6 +797,7 @@ GATE_STAGE_LABELS = {
     "regime_gate": "현재 레짐 성적 통과",
     "event_window": "실적 이벤트 통과",
     "freshness": "데이터 신선도 통과",
+    "capacity": "포지션 여유 통과",
 }
 
 GATE_REJECTION_LABELS = {
@@ -816,6 +812,7 @@ GATE_REJECTION_LABELS = {
     "regime_gate": "현재 레짐 성적 미달",
     "event_window": "실적 이벤트 구간",
     "freshness": "데이터 신선도 미달",
+    "capacity": "최대 포지션 도달",
 }
 
 
@@ -823,11 +820,26 @@ def paper_gate_funnel(repo: Any, *, days: int = 7, now: datetime | None = None) 
     now = now or utc_now()
     since = now - timedelta(days=days)
     rows = repo.list_paper_gate_funnel(since=since, limit=50000)
+    block_logs = repo.list_entry_block_logs(since=since, limit=50000)
     stages: list[dict[str, Any]] = [{"id": "evaluated", "label": "평가", "count": len(rows)}]
     survivors = rows
     for gate in GATE_ORDER:
         survivors = [row for row in survivors if bool(_dict(row.get("gates")).get(gate))]
-        stages.append({"id": gate, "label": GATE_STAGE_LABELS[gate], "count": len(survivors)})
+        reason_counts: dict[str, int] = {}
+        for log in block_logs:
+            if str(log.get("failed_gate") or "") != gate:
+                continue
+            detail = str(log.get("detail") or GATE_REJECTION_LABELS.get(gate, gate))
+            reason_counts[detail] = reason_counts.get(detail, 0) + 1
+        top_reasons = sorted(reason_counts.items(), key=lambda item: (-item[1], item[0]))[:3]
+        stages.append(
+            {
+                "id": gate,
+                "label": GATE_STAGE_LABELS[gate],
+                "count": len(survivors),
+                "rejection_top3": [{"detail": detail, "count": count} for detail, count in top_reasons],
+            }
+        )
     entered = sum(1 for row in rows if row.get("entered") is True)
     rejection_counts: dict[str, int] = {}
     for row in rows:
@@ -859,6 +871,8 @@ def paper_gate_funnel(repo: Any, *, days: int = 7, now: datetime | None = None) 
         "stages": [*stages, {"id": "entered", "label": "진입", "count": entered}],
         "top_rejection": ({"id": top_gate, "label": GATE_REJECTION_LABELS.get(top_gate, top_gate), "count": rejection_counts[top_gate]} if top_gate else None),
         "rejection_counts": rejection_counts,
+        "entry_block_count": len(block_logs),
+        "checklist_pass_rates": _checklist_pass_rates(rows),
         "signature_gate_note": signature_gate_note,
         "pill_diagnostics": {
             "rendered": len(rendered_ids),
@@ -879,6 +893,8 @@ def _gate_funnel_record(
     simulation: dict[str, Any],
     signature_gates: dict[str, Any],
     action_levels: bool,
+    capacity_available: bool,
+    rr_ratio: float | None,
     earnings_clear: bool,
     freshness: bool,
     entry_decision: Any,
@@ -899,6 +915,7 @@ def _gate_funnel_record(
         "regime_gate": bool(signature_gates.get("regime_gate")),
         "event_window": earnings_clear,
         "freshness": freshness,
+        "capacity": capacity_available,
     }
     rejected_at = next((gate for gate in GATE_ORDER if not gates[gate]), None)
     return {
@@ -912,7 +929,8 @@ def _gate_funnel_record(
             "passed": int(simulation.get("checklist_passed") or 0),
             "total": int(simulation.get("checklist_total") or 0),
         },
-        "rr_ratio": _float(simulation.get("rr_ratio")),
+        "rr_ratio": rr_ratio,
+        "checklist_items": [dict(item) for item in _list(simulation.get("checklist"))],
         "gates": gates,
         "entered": entered,
         "rejected_at": rejected_at,
@@ -921,7 +939,95 @@ def _gate_funnel_record(
         "event_pill_ids": event_pill_ids or [],
         "signature_gate_mode": signature_gates.get("gate_mode"),
         "candidate_bootstrap_active": bool(signature_gates.get("bootstrap_active")),
+        "bootstrap_relaxed": signature_gates.get("gate_mode") == "candidate_bootstrap_relaxed",
+        "candidate_samples": signature_gates.get("candidate_samples") or [],
     }
+
+
+def _record_entry_block_logs(repo: Any, gate_record: dict[str, Any], *, now: datetime) -> int:
+    gates = _dict(gate_record.get("gates"))
+    if not gates.get("confirmed_flip") or gate_record.get("entered") is True:
+        return 0
+    created = 0
+    for failed_gate in GATE_ORDER:
+        if gates.get(failed_gate):
+            continue
+        record_id = str(
+            uuid5(
+                NAMESPACE_URL,
+                ":".join(
+                    (
+                        "fce:entry-block",
+                        str(gate_record.get("symbol") or ""),
+                        str(gate_record.get("timeframe") or "4h"),
+                        str(gate_record.get("bar_at") or ""),
+                        str(gate_record.get("direction") or "unknown"),
+                        failed_gate,
+                    )
+                ),
+            )
+        )
+        detail = _entry_block_detail(gate_record, failed_gate)
+        created += int(
+            repo.upsert_entry_block_log(
+                {
+                    "id": record_id,
+                    "bar_at": gate_record.get("bar_at"),
+                    "symbol": gate_record.get("symbol"),
+                    "timeframe": gate_record.get("timeframe"),
+                    "direction": gate_record.get("direction"),
+                    "failed_gate": failed_gate,
+                    "detail": detail,
+                    "bootstrap_relaxed": bool(gate_record.get("bootstrap_relaxed")),
+                    "created_at": now.isoformat(),
+                }
+            )
+        )
+    return created
+
+
+def _entry_block_detail(record: dict[str, Any], gate: str) -> str:
+    if gate == "checklist":
+        score = _dict(record.get("checklist_score"))
+        failed = [str(item.get("label") or item.get("key") or "미확인 항목") for item in _list(record.get("checklist_items")) if item.get("status") == "fail"]
+        suffix = f" — {' · '.join(failed[:3])}" if failed else ""
+        return f"체크리스트 {int(score.get('passed') or 0)}/{int(score.get('total') or 0)}{suffix}"
+    if gate == "signature_gate":
+        candidates = _list(record.get("candidate_samples"))
+        sample_text = ", ".join(
+            f"{item.get('engine') or 'candidate'} N={int(item.get('sample_size') or 0)} win={_format_gate_number(item.get('win_1r_pct'))}%"
+            for item in candidates[:5]
+        )
+        return f"validated 시그니처 0 · candidate {len(candidates)}종 {sample_text or '표본 없음'}"
+    if gate == "risk_reward":
+        return f"R:R {_format_gate_number(record.get('rr_ratio'))}<1.5"
+    if gate == "invalidation_hygiene":
+        return "무효화 과근접 — 0.8% 미만 노이즈 의심"
+    if gate == "evidence":
+        return f"방향 근거 {int(record.get('evidence_count') or 0)}개<4"
+    return GATE_REJECTION_LABELS.get(gate, gate)
+
+
+def _checklist_pass_rates(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    counts: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        for item in _list(row.get("checklist_items")):
+            status = str(item.get("status") or "")
+            if status not in {"pass", "fail"}:
+                continue
+            key = str(item.get("key") or item.get("label") or "unknown")
+            bucket = counts.setdefault(key, {"key": key, "label": str(item.get("label") or key), "passed": 0, "evaluated": 0})
+            bucket["evaluated"] += 1
+            bucket["passed"] += int(status == "pass")
+    return [
+        {**bucket, "pass_rate_pct": round(bucket["passed"] / bucket["evaluated"] * 100.0, 1)}
+        for bucket in sorted(counts.values(), key=lambda item: (item["passed"] / item["evaluated"], item["key"]))
+    ]
+
+
+def _format_gate_number(value: Any) -> str:
+    number = _float(value)
+    return "-" if number is None else f"{number:.1f}"
 
 
 def _gate_diagnostic_event(repo: Any, *, now: datetime) -> dict[str, Any] | None:
@@ -1027,7 +1133,10 @@ def _signature_gate_evaluation(
     analysis: dict[str, Any],
     payload: dict[str, Any],
     direction: Direction,
+    *,
+    now: datetime | None = None,
 ) -> dict[str, Any]:
+    now = now or utc_now()
     stats = [
         item
         for item in [
@@ -1040,7 +1149,13 @@ def _signature_gate_evaluation(
     signature_gate = False
     regime_gate = False
     qualified: dict[str, Any] | None = None
-    bootstrap_active = _candidate_bootstrap_active(repo, settings)
+    bootstrap_active = _candidate_bootstrap_active(repo, settings, now=now)
+    relaxed_active = _candidate_bootstrap_relaxed_active(repo, settings, now=now)
+    normal_min_sample = int(getattr(settings, "paper_candidate_bootstrap_min_sample", 15))
+    normal_min_win = float(getattr(settings, "paper_candidate_bootstrap_min_win_1r_pct", 50.0))
+    relaxed_min_sample = int(getattr(settings, "paper_candidate_bootstrap_relaxed_min_sample", 8))
+    relaxed_min_win = float(getattr(settings, "paper_candidate_bootstrap_relaxed_min_win_1r_pct", 45.0))
+    candidate_samples: list[dict[str, Any]] = []
     active_signatures = [
         *signatures_from_analysis(analysis),
         *_candidate_signatures_for_gate(repo, analysis, payload, direction),
@@ -1061,11 +1176,23 @@ def _signature_gate_evaluation(
         if state == "candidate" and bootstrap_active:
             sample_size = int(stat.get("sample_size") or 0)
             win_1r_pct = _float(stat.get("win_1r_pct"))
-            if (
-                sample_size >= int(getattr(settings, "paper_candidate_bootstrap_min_sample", 15))
-                and win_1r_pct is not None
-                and win_1r_pct >= float(getattr(settings, "paper_candidate_bootstrap_min_win_1r_pct", 50.0))
-            ):
+            candidate_samples.append(
+                {
+                    "signature_key": key,
+                    "engine": signature.get("engine"),
+                    "sample_size": sample_size,
+                    "win_1r_pct": win_1r_pct,
+                }
+            )
+            normal_passed = sample_size >= normal_min_sample and win_1r_pct is not None and win_1r_pct >= normal_min_win
+            relaxed_passed = relaxed_active and sample_size >= relaxed_min_sample and win_1r_pct is not None and win_1r_pct >= relaxed_min_win
+            if normal_passed or relaxed_passed:
+                gate_mode = "candidate_bootstrap" if normal_passed else "candidate_bootstrap_relaxed"
+                thresholds = (
+                    {"min_sample_size": normal_min_sample, "min_win_1r_pct": normal_min_win}
+                    if normal_passed
+                    else {"min_sample_size": relaxed_min_sample, "min_win_1r_pct": relaxed_min_win}
+                )
                 signature_gate = True
                 regime_gate = True
                 qualified = {
@@ -1073,11 +1200,9 @@ def _signature_gate_evaluation(
                     "signature": signature,
                     "stat": stat,
                     "state": state,
-                    "gate_mode": "candidate_bootstrap",
-                    "bootstrap_thresholds": {
-                        "min_sample_size": int(getattr(settings, "paper_candidate_bootstrap_min_sample", 15)),
-                        "min_win_1r_pct": float(getattr(settings, "paper_candidate_bootstrap_min_win_1r_pct", 50.0)),
-                    },
+                    "gate_mode": gate_mode,
+                    "bootstrap_relaxed": gate_mode == "candidate_bootstrap_relaxed",
+                    "bootstrap_thresholds": thresholds,
                 }
                 break
         if state != "validated":
@@ -1095,6 +1220,8 @@ def _signature_gate_evaluation(
         "regime_gate": regime_gate,
         "gate_mode": qualified.get("gate_mode") if qualified else None,
         "bootstrap_active": bootstrap_active,
+        "bootstrap_relaxed_active": relaxed_active,
+        "candidate_samples": candidate_samples,
     }
 
 
@@ -1107,6 +1234,21 @@ def _candidate_bootstrap_active(repo: Any, settings: Any, *, now: datetime | Non
         return False
     validated = sum(1 for state in repo.latest_autonomy_states().values() if state == "validated")
     return validated < int(getattr(settings, "paper_candidate_bootstrap_disable_validated_count", 3))
+
+
+def _candidate_bootstrap_relaxed_active(repo: Any, settings: Any, *, now: datetime | None = None) -> bool:
+    current = now or utc_now()
+    if not _candidate_bootstrap_active(repo, settings, now=current):
+        return False
+    benchmark = paper_benchmark(repo)
+    started_at = _parse_datetime(benchmark.get("started_at"))
+    if started_at is None:
+        return False
+    validated = sum(1 for state in repo.latest_autonomy_states().values() if state == "validated")
+    if validated > 0:
+        return False
+    relaxed_days = int(getattr(settings, "paper_candidate_bootstrap_relaxed_days", 14))
+    return current < started_at + timedelta(days=relaxed_days)
 
 
 def _candidate_signatures_for_gate(
@@ -1240,9 +1382,7 @@ def paper_exit_monitor(trade: PaperTrade | dict[str, Any], mark_price: float | N
     direction_sign = 1.0 if str(payload.get("direction")) == "long" else -1.0
     remaining_quantity = float(_float(payload.get("remaining_quantity")) or 0.0)
     unrealized_pnl = (mark - entry) * remaining_quantity * direction_sign
-    mark_net_pnl = float(_float(payload.get("gross_pnl_usdt")) or 0.0) + unrealized_pnl - float(
-        _float(payload.get("costs_usdt")) or 0.0
-    )
+    mark_net_pnl = float(_float(payload.get("gross_pnl_usdt")) or 0.0) + unrealized_pnl - float(_float(payload.get("costs_usdt")) or 0.0)
     margin = _float(payload.get("margin_usdt"))
     monitor = {
         "mark_price": round(mark, 8),

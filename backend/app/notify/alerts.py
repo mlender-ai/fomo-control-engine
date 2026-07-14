@@ -186,11 +186,7 @@ class AlertEngine:
         return sent
 
     async def evaluate_whale_events(self, events: list[dict[str, Any]], dashboard: dict[str, Any]) -> int:
-        if (
-            not self.settings.telegram_alerts_enabled
-            or self.state.is_muted()
-            or "whale_entry" not in self.settings.alert_enabled_rule_set
-        ):
+        if not self.settings.telegram_alerts_enabled or self.state.is_muted() or "whale_entry" not in self.settings.alert_enabled_rule_set:
             return 0
         wallets = dashboard.get("wallets") if isinstance(dashboard.get("wallets"), list) else []
         sent = 0

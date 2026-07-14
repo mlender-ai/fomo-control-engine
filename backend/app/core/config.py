@@ -881,6 +881,31 @@ class Settings(BaseSettings):
             "PAPER_CANDIDATE_BOOTSTRAP_MIN_WIN_1R_PCT",
         ),
     )
+    paper_candidate_bootstrap_relaxed_days: int = Field(
+        14,
+        ge=1,
+        validation_alias=AliasChoices(
+            "FCE_PAPER_CANDIDATE_BOOTSTRAP_RELAXED_DAYS",
+            "PAPER_CANDIDATE_BOOTSTRAP_RELAXED_DAYS",
+        ),
+    )
+    paper_candidate_bootstrap_relaxed_min_sample: int = Field(
+        8,
+        ge=1,
+        validation_alias=AliasChoices(
+            "FCE_PAPER_CANDIDATE_BOOTSTRAP_RELAXED_MIN_SAMPLE",
+            "PAPER_CANDIDATE_BOOTSTRAP_RELAXED_MIN_SAMPLE",
+        ),
+    )
+    paper_candidate_bootstrap_relaxed_min_win_1r_pct: float = Field(
+        45.0,
+        ge=0,
+        le=100,
+        validation_alias=AliasChoices(
+            "FCE_PAPER_CANDIDATE_BOOTSTRAP_RELAXED_MIN_WIN_1R_PCT",
+            "PAPER_CANDIDATE_BOOTSTRAP_RELAXED_MIN_WIN_1R_PCT",
+        ),
+    )
     paper_candidate_bootstrap_disable_validated_count: int = Field(
         3,
         validation_alias=AliasChoices(

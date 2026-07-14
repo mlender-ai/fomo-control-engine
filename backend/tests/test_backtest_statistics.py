@@ -62,6 +62,7 @@ def _case(index: int, *, win: bool, engine: str, event: str, direction: str, day
 
 # ── §3 부트스트랩 CI ────────────────────────────────────────────────
 
+
 def test_bootstrap_ci_is_deterministic() -> None:
     wins = [True] * 20 + [False] * 12
     assert bootstrap_win_ci(wins) == bootstrap_win_ci(wins)
@@ -81,6 +82,7 @@ def test_point_estimate_passes_but_ci_low_blocks() -> None:
 
 
 # ── realized_rr 회계 일관성 (전수 감사 수정) ───────────────────────
+
 
 def test_rr_stays_banked_when_stop_hits_after_1r() -> None:
     # 1R 도달(캔들1) 후 스탑(캔들2): win_1r=True와 rr이 모순되면 안 된다.
@@ -114,6 +116,7 @@ def test_empty_outcome_stop_respects_direction() -> None:
 
 # ── §2 거래비용 net ────────────────────────────────────────────────
 
+
 def test_net_cost_flips_marginal_win_to_loss() -> None:
     future = [_candle(1, open_=100, high=102.5, low=100.0, close=101.0)]
     gross = score_event_outcome(future, direction="long", entry_price=100.0, invalidation_price=98.0, cost_pct=0.0)
@@ -131,6 +134,7 @@ def test_roundtrip_cost_shallow_liquidity_surcharge() -> None:
 
 
 # ── §4 OOS + 워크포워드 ────────────────────────────────────────────
+
 
 def test_oos_split_flags_unstable_on_gap() -> None:
     cases = [_case(i, win=True, engine="liquidity", event="sweep_low", direction="long", day=i) for i in range(14)]
@@ -157,6 +161,7 @@ def test_walk_forward_curve_produces_windows() -> None:
 
 # ── §5 레짐 분해 ──────────────────────────────────────────────────
 
+
 def test_regime_uptrend_and_downtrend() -> None:
     up = label_regime(_series([100 + i for i in range(80)]))
     down = label_regime(_series([200 - i for i in range(80)]))
@@ -174,6 +179,7 @@ def test_regime_unknown_when_insufficient() -> None:
 
 
 # ── §6 증거 중복 상관 (스윕 + Spring) ──────────────────────────────
+
 
 def test_overlap_group_links_sweep_and_spring() -> None:
     cases = []
@@ -208,6 +214,7 @@ def test_suppress_overlaps_keeps_only_strongest() -> None:
 
 # ── §1 데이터 무결성 ──────────────────────────────────────────────
 
+
 def test_data_quality_flags_ohlc_violations() -> None:
     clean = _series([100 + i * 0.1 for i in range(50)])
     assert assess_candles(clean, "4h")["score"] == 100
@@ -240,6 +247,7 @@ def test_service_blocks_stats_below_quality_floor() -> None:
 
 
 # ── §7 표기 표준 ──────────────────────────────────────────────────
+
 
 def test_format_stat_line_full() -> None:
     stat = {"label": "스윕 롱", "sample_size": 32, "win_1r_pct": 64.0, "win_1r_ci": [51.0, 76.0]}

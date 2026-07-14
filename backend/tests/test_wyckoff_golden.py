@@ -113,6 +113,7 @@ def _accumulation_with_upthrust() -> list[MarketCandle]:
 
 # ── 골든 케이스 ────────────────────────────────────────────────────
 
+
 def test_golden_1_accumulation_full_sequence() -> None:
     result = analyze_wyckoff(_accumulation_full(), levels=LEVELS, include_mtf=False)
     assert result["side"] == "accumulation"
@@ -162,6 +163,7 @@ def test_golden_6_accumulation_phase_a_only() -> None:
 
 
 # ── 모순 출력 회귀 (매집 + UTAD 동시) ──────────────────────────────
+
 
 def test_contradiction_upthrust_relabeled_in_accumulation() -> None:
     result = analyze_wyckoff(_accumulation_with_upthrust(), levels=LEVELS, include_mtf=False)

@@ -37,6 +37,7 @@ VERDICT_INDETERMINATE = "판별 불가"
 
 # ── 조치별 효과표 (Part A) ─────────────────────────────────────────
 
+
 def action_effect_table(
     scores: list[Any],
     param_versions: list[Any],
@@ -82,11 +83,7 @@ def action_effect_table(
             continue
         # 시그니처 조치의 스코프: 해당 시그니처가 남긴 판단만. 대개 표본이 작아
         # "판별 불가"가 정직한 답이다 — 구조 조치(노출 차단)라는 사실과 당시 근거를 병기.
-        pool = [
-            score
-            for score in tested
-            if isinstance(score.claim, dict) and score.claim.get("signature_key") == log.signature_key
-        ]
+        pool = [score for score in tested if isinstance(score.claim, dict) and score.claim.get("signature_key") == log.signature_key]
         effect = _window_effect(pool, acted_at, now, window_days=window_days, min_sample=min_sample)
         evidence = log.evidence if isinstance(log.evidence, dict) else {}
         rows.append(
@@ -166,6 +163,7 @@ def _improvement_verdict(
 
 # ── 레짐 통제 주간 비교 (Part A) ───────────────────────────────────
 
+
 def regime_controlled_week_delta(
     scores: list[Any],
     *,
@@ -207,9 +205,7 @@ def regime_controlled_week_delta(
             **raw,
             "controlled": False,
             "regime": dominant,
-            "control_reason": (
-                f"판별 불가 — 동일 레짐({dominant}) 표본 부족 (전주 N={len(prev_regime)}, 이번 주 N={len(this_regime)})"
-            ),
+            "control_reason": (f"판별 불가 — 동일 레짐({dominant}) 표본 부족 (전주 N={len(prev_regime)}, 이번 주 N={len(this_regime)})"),
             "basis": "전체 (레짐 통제 불가)",
         }
     controlled = _delta_block(prev_regime, this_regime, min_sample=min_sample)
@@ -241,6 +237,7 @@ def _delta_block(prev: list[Any], current: list[Any], *, min_sample: int) -> dic
 
 
 # ── 주간 다이제스트 (Part B — WO-49 소비 스키마 고정) ──────────────
+
 
 def weekly_improvement_digest(
     scores: list[Any],
@@ -278,9 +275,7 @@ def weekly_improvement_digest(
     improvement_claim = bool(significant_action or significant_delta)
 
     if significant_delta:
-        headline = (
-            f"적중률 {delta['current']['accuracy_pct']}% · 전주 대비 {delta['delta_pct']:+.1f}%p ({delta['basis']})"
-        )
+        headline = f"적중률 {delta['current']['accuracy_pct']}% · 전주 대비 {delta['delta_pct']:+.1f}%p ({delta['basis']})"
     elif significant_action:
         best = next(row for row in actions_this_week if row["verdict"] == VERDICT_IMPROVED)
         headline = f"조치 효과 확인: {best['action']} ({best['verdict_reason']})"
@@ -354,6 +349,7 @@ def _weakest_type(scores: list[Any], *, now: datetime, min_sample: int = MIN_WIN
 
 
 # ── 공용 ──────────────────────────────────────────────────────────
+
 
 def _accuracy(bucket: list[Any]) -> dict[str, Any]:
     tested = len(bucket)

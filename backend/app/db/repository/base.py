@@ -132,6 +132,14 @@ class Repository(Protocol):
         symbol: str | None = None,
         limit: int = 10000,
     ) -> list[dict]: ...
+    def upsert_entry_block_log(self, record: dict) -> bool: ...
+    def list_entry_block_logs(
+        self,
+        since: datetime | None = None,
+        symbol: str | None = None,
+        failed_gate: str | None = None,
+        limit: int = 10000,
+    ) -> list[dict]: ...
     def add_judgment(self, judgment: JudgmentLedgerEntry) -> JudgmentLedgerEntry: ...
     def list_judgments(self, position_id: UUID, limit: int = 200) -> list[JudgmentLedgerEntry]: ...
     def add_judgment_score(self, score: JudgmentScore) -> JudgmentScore: ...
@@ -237,6 +245,7 @@ class MemoryRepositoryBase:
         self.user_account_fills: dict[str, dict] = {}
         self.paper_engine_states: dict[tuple[str, str], dict] = {}
         self.paper_gate_funnel: dict[tuple[str, str, str], dict] = {}
+        self.entry_block_logs: dict[str, dict] = {}
         self.judgments: dict[UUID, list[JudgmentLedgerEntry]] = {}
         self.judgment_scores: dict[UUID, JudgmentScore] = {}
         self.calibration_suggestions: dict[UUID, CalibrationSuggestion] = {}

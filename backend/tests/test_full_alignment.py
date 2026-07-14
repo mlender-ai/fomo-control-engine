@@ -4,10 +4,7 @@ from app.analyst.alignment import build_full_alignment
 def _confluence(*, dissent: bool = False, transitioning: bool = False, htf_bias: str = "long") -> dict:
     engines = ["liquidity", "wyckoff", "harmonic", "level"]
     return {
-        "long_evidence": [
-            {"engine": engine, "direction": "long", "score": 10 + index, "claim": f"{engine} long"}
-            for index, engine in enumerate(engines)
-        ],
+        "long_evidence": [{"engine": engine, "direction": "long", "score": 10 + index, "claim": f"{engine} long"} for index, engine in enumerate(engines)],
         "short_evidence": ([{"engine": "volume", "direction": "short", "score": 9, "claim": "volume short"}] if dissent else []),
         "htf_context": {"bias": htf_bias, "alignment": "aligned" if htf_bias == "long" else "conflicting"},
         "stance_state": {"transitioning": transitioning, "candles_in_state": 3, "last_bar_at": "2026-07-12T00:00:00+00:00"},
@@ -16,10 +13,7 @@ def _confluence(*, dissent: bool = False, transitioning: bool = False, htf_bias:
 
 def _history(*, include_dissent: bool = False) -> dict:
     engines = ["liquidity", "wyckoff", "harmonic", "level"]
-    stats = [
-        {"lifecycle_state": "validated", "signature": {"engine": engine, "direction": "long"}}
-        for engine in engines
-    ]
+    stats = [{"lifecycle_state": "validated", "signature": {"engine": engine, "direction": "long"}} for engine in engines]
     if include_dissent:
         stats.append({"lifecycle_state": "validated", "signature": {"engine": "volume", "direction": "short"}})
     return {"stats": stats, "event_stats": []}

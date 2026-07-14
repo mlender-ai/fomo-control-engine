@@ -233,10 +233,7 @@ def _analysis_fixture(count: int = 120) -> list[MarketCandle]:
 
 
 def _sweep_fixture(sweep_low: float, *, volume: float) -> list[MarketCandle]:
-    candles = [
-        _candle(index, open_price=101.0, high=102.0, low=100.5, close=101.0, volume=1000.0)
-        for index in range(40)
-    ]
+    candles = [_candle(index, open_price=101.0, high=102.0, low=100.5, close=101.0, volume=1000.0) for index in range(40)]
     candles.append(_candle(40, open_price=100.5, high=101.0, low=sweep_low, close=100.2, volume=volume))
     return candles
 

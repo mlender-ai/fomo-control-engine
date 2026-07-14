@@ -58,11 +58,7 @@ def attach_liquidity_crosscheck_to_wyckoff(wyckoff: dict[str, Any], liquidity: d
     cross = liquidity.get("wyckoff_crosscheck") if isinstance(liquidity, dict) else None
     if not isinstance(cross, dict):
         return wyckoff
-    confirmed_by_type = {
-        item.get("wyckoff_event"): item
-        for item in cross.get("confirmations", [])
-        if isinstance(item, dict) and item.get("wyckoff_event")
-    }
+    confirmed_by_type = {item.get("wyckoff_event"): item for item in cross.get("confirmations", []) if isinstance(item, dict) and item.get("wyckoff_event")}
     events = []
     for event in wyckoff.get("events", []) if isinstance(wyckoff.get("events"), list) else []:
         if not isinstance(event, dict):

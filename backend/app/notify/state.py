@@ -87,9 +87,7 @@ class NotificationState:
         self.last_summary_date = payload.get("last_summary_date")
         self.last_weekly_calibration_date = payload.get("last_weekly_calibration_date")
         self.suppressed_alerts = [item for item in payload.get("suppressed_alerts", []) if isinstance(item, dict)]
-        self.lifecycle_positions = {
-            str(key): value for key, value in (payload.get("lifecycle_positions") or {}).items() if isinstance(value, dict)
-        }
+        self.lifecycle_positions = {str(key): value for key, value in (payload.get("lifecycle_positions") or {}).items() if isinstance(value, dict)}
         self.last_pulse_at = _parse_dt(payload.get("last_pulse_at"))
         self.pending_redelivery = [item for item in payload.get("pending_redelivery", []) if isinstance(item, dict)]
         for key, raw in (payload.get("alert_rule_states") or {}).items():

@@ -150,7 +150,14 @@ def test_scout_quick_answer_uses_one_liner_strip() -> None:
     one_liners = {
         "lines": [
             {"module": "wyckoff", "module_label": "와이코프", "stance": "하방", "phrase": "분산 우세", "confidence_class": "중", "evidence_ref": "wyckoff"},
-            {"module": "liquidity", "module_label": "유동성", "stance": "하방", "phrase": "고점 청소 후 하락 경계", "confidence_class": "중", "evidence_ref": "liq"},
+            {
+                "module": "liquidity",
+                "module_label": "유동성",
+                "stance": "하방",
+                "phrase": "고점 청소 후 하락 경계",
+                "confidence_class": "중",
+                "evidence_ref": "liq",
+            },
             {"module": "volume", "module_label": "볼륨", "stance": "횡보", "phrase": "균형", "confidence_class": "약", "evidence_ref": "vol"},
             {"module": "harmonic", "module_label": "하모닉", "stance": "판단불가", "phrase": "패턴 없음", "confidence_class": "약", "evidence_ref": "harm"},
         ],

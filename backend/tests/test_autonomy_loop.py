@@ -66,12 +66,11 @@ KEY = "liquidity:sweep_low:strong:long:crypto:4h"
 
 def _seed_decaying(repo: MemoryRepository, key: str = KEY) -> None:
     # 장기 70%지만 최근 창은 25%(N=20) → CI 상한 < 70 → 부패.
-    repo.upsert_backtest_stat(
-        _stat(key, win=70.0, ci=[60.0, 80.0], unstable=False, windows=_windows([(70.0, 20), (25.0, 20)]))
-    )
+    repo.upsert_backtest_stat(_stat(key, win=70.0, ci=[60.0, 80.0], unstable=False, windows=_windows([(70.0, 20), (25.0, 20)])))
 
 
 # ── 상태 머신 · 근거 필수 ──────────────────────────────────────────
+
 
 def test_record_transition_requires_evidence() -> None:
     repo = MemoryRepository()
@@ -86,6 +85,7 @@ def test_autonomous_recovery_is_forbidden() -> None:
 
 
 # ── 자율 강등 → 격리 + 통보 ────────────────────────────────────────
+
 
 def test_degrade_then_quarantine_autonomous() -> None:
     repo = MemoryRepository()
@@ -117,15 +117,14 @@ def test_degrade_then_quarantine_autonomous() -> None:
 
 # ── 복귀는 제안만, 자동 적용 안 됨 (비대칭) ────────────────────────
 
+
 def test_recovery_is_proposal_only_not_auto_applied() -> None:
     repo = MemoryRepository()
     settings = _settings()
     # 먼저 자율 강등.
     record_transition(repo, signature_key=KEY, previous="validated", new="degraded", transition="degrade", reason="seed", evidence={"win": 40}, autonomous=True)
     # 이제 회복된 통계: 최근 2창 게이트 재통과, 부패 신호 없음.
-    repo.upsert_backtest_stat(
-        _stat(KEY, win=82.0, ci=[70.0, 90.0], unstable=False, windows=_windows([(85.0, 30), (84.0, 30)]))
-    )
+    repo.upsert_backtest_stat(_stat(KEY, win=82.0, ci=[70.0, 90.0], unstable=False, windows=_windows([(85.0, 30), (84.0, 30)])))
 
     sweep = run_decay_sweep(repo, settings)
     # 복귀는 제안만 — 상태는 여전히 degraded.
@@ -140,6 +139,7 @@ def test_recovery_is_proposal_only_not_auto_applied() -> None:
 
 # ── 주간 리포트 2단 ────────────────────────────────────────────────
 
+
 def test_self_audit_two_columns() -> None:
     repo = MemoryRepository()
     _seed_decaying(repo)
@@ -151,6 +151,7 @@ def test_self_audit_two_columns() -> None:
 
 
 # ── autonomy_log 스냅샷 + 오판율 ───────────────────────────────────
+
 
 def test_autonomy_log_keeps_evidence_and_scorecard() -> None:
     repo = MemoryRepository()
@@ -168,6 +169,7 @@ def test_autonomy_log_keeps_evidence_and_scorecard() -> None:
 
 
 # ── 주간 상한 · 킬스위치 ───────────────────────────────────────────
+
 
 def test_weekly_cap_defers_excess_to_proposal() -> None:
     repo = MemoryRepository()
@@ -192,7 +194,9 @@ def test_killswitch_converts_all_to_proposal() -> None:
 def test_all_quarantined_triggers_critical_freeze() -> None:
     repo = MemoryRepository()
     settings = _settings()
-    record_transition(repo, signature_key=KEY, previous="degraded", new="quarantined", transition="quarantine", reason="seed", evidence={"win": 20}, autonomous=True)
+    record_transition(
+        repo, signature_key=KEY, previous="degraded", new="quarantined", transition="quarantine", reason="seed", evidence={"win": 20}, autonomous=True
+    )
     _seed_decaying(repo)  # a validated one that would decay
     sweep = run_decay_sweep(repo, settings)
     assert sweep["critical"] is True
@@ -202,6 +206,7 @@ def test_all_quarantined_triggers_critical_freeze() -> None:
 
 
 # ── 게이트 소비 (강등 제외) ────────────────────────────────────────
+
 
 def test_gate_excludes_degraded_signature() -> None:
     settings = Settings()
@@ -223,6 +228,7 @@ def test_gate_excludes_degraded_signature() -> None:
 
 # ── 전수 감사 수정 회귀 ────────────────────────────────────────────
 
+
 def test_decay_uses_largest_sample_stat_per_signature() -> None:
     # 소표본 알트의 최신 unstable 통계가 BTC 대표본 통계를 밀어내 전역 강등하면 안 된다.
     repo = MemoryRepository()
@@ -240,9 +246,14 @@ def test_single_quarantine_does_not_trigger_engine_distrust() -> None:
     # 로그 있는 시그니처만 분모로 쓰면 첫 격리 1건 = 전면 불신 오탐.
     repo = MemoryRepository()
     record_transition(
-        repo, signature_key="liquidity:sweep_low:strong:long:crypto:1d",
-        previous="degraded", new="quarantined", transition="quarantine",
-        reason="seed", evidence={"win": 20}, autonomous=True,
+        repo,
+        signature_key="liquidity:sweep_low:strong:long:crypto:1d",
+        previous="degraded",
+        new="quarantined",
+        transition="quarantine",
+        reason="seed",
+        evidence={"win": 20},
+        autonomous=True,
     )
     # 로그 없는 건강한 시그니처가 존재.
     repo.upsert_backtest_stat(_stat(KEY, win=70.0, ci=[58.0, 80.0], unstable=False, windows=_windows([(70.0, 30), (69.0, 30)])))
@@ -262,6 +273,7 @@ def test_repeated_sweep_does_not_spam_proposals() -> None:
 
 
 # ── 레짐별 부분 부패 ───────────────────────────────────────────────
+
 
 def test_regime_partial_decay_tags_regime() -> None:
     # 전체는 멀쩡(최근 창 양호)하지만 하락추세 슬라이스만 CI 상한 < 전체 점추정.

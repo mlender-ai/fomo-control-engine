@@ -86,7 +86,14 @@ async def test_worker_three_ticks_create_snapshots_and_heartbeat(tmp_path) -> No
     manager = WorkerManager(_settings(tmp_path))
     await manager.start()
     try:
-        await asyncio.sleep(3.4)
+        # 고정 sleep 은 커버리지 계측·CI 부하에서 틱 스킵(1초 간격 < 실행시간)으로 깨진다 —
+        # 데드라인 폴링으로 "2회 실행 + 스냅샷 2개" 도달을 기다린다(도달 즉시 종료).
+        deadline = asyncio.get_running_loop().time() + 20
+        while asyncio.get_running_loop().time() < deadline:
+            runs = manager.status()["jobs"]["sync_positions"]["runs"]
+            if runs >= 2 and len(repo.list_position_snapshots(position.id, limit=10)) >= 2:
+                break
+            await asyncio.sleep(0.2)
     finally:
         await manager.stop()
 
@@ -135,9 +142,7 @@ def test_refresh_market_data_covers_held_and_tracked_symbols(tmp_path) -> None:
     payload = service.refresh_market_data()
 
     assert {"BTCUSDT", "ETHUSDT"}.issubset(set(payload["symbols"]))
-    assert {("BTCUSDT", "4h"), ("ETHUSDT", "4h")}.issubset(
-        {(row["symbol"], row["timeframe"]) for row in payload["pairs"]}
-    )
+    assert {("BTCUSDT", "4h"), ("ETHUSDT", "4h")}.issubset({(row["symbol"], row["timeframe"]) for row in payload["pairs"]})
 
 
 def test_daily_maintenance_schedule_uses_configured_timezone() -> None:

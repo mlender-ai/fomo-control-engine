@@ -184,4 +184,3 @@ def _empty(
         "gross_debug": {"win_1r": False, "win_2r": False},
         "policy": "평가 가능한 미래 캔들이 없습니다.",
     }
-

@@ -57,11 +57,7 @@ def sync_user_fills(
             )
         else:
             diagnostics["live_position_reconciliation"] = {"status": "unavailable"}
-        benchmark_trades = [
-            trade
-            for trade in trades
-            if benchmark_started_at is None or trade.exit_at >= benchmark_started_at
-        ]
+        benchmark_trades = [trade for trade in trades if benchmark_started_at is None or trade.exit_at >= benchmark_started_at]
         for trade in trades:
             repo.upsert_user_trade(trade)
         latest_fill = max((fill.timestamp for fill in stored), default=last_fill_at)
@@ -282,8 +278,7 @@ def _datetime(value: Any) -> datetime | None:
 
 def _reconcile_open_positions(reconstructed: list[dict[str, Any]], live_positions: list[Any]) -> dict[str, Any]:
     reconstructed_map = {
-        (str(item.get("symbol") or "").upper(), str(item.get("direction") or "")): float(item.get("quantity") or 0.0)
-        for item in reconstructed
+        (str(item.get("symbol") or "").upper(), str(item.get("direction") or "")): float(item.get("quantity") or 0.0) for item in reconstructed
     }
     live_map = {
         (str(getattr(item, "symbol", "") or "").upper(), str(getattr(item, "hold_side", "") or "")): float(getattr(item, "total", 0.0) or 0.0)

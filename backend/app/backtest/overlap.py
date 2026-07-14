@@ -76,11 +76,7 @@ def compute_overlap_groups(
             if base < min_pair_sample:
                 continue
             smaller, larger = (indices_a, indices_b) if len(indices_a) <= len(indices_b) else (indices_b, indices_a)
-            co_occurring = sum(
-                1
-                for index in smaller
-                if any(abs(index - other) <= bar_tolerance for other in larger)
-            )
+            co_occurring = sum(1 for index in smaller if any(abs(index - other) <= bar_tolerance for other in larger))
             overlap = round(co_occurring / base, 3)
             pairs.append(
                 {
@@ -115,11 +111,7 @@ def compute_overlap_groups(
                 "group_id": "measured:" + "~".join(":".join(item) for item in ordered_component),
                 "families": [list(item) for item in ordered_component],
                 "source": "measured",
-                "pairs": [
-                    pair
-                    for pair in pairs
-                    if pair["linked"] and tuple(pair["family_a"]) in component and tuple(pair["family_b"]) in component
-                ],
+                "pairs": [pair for pair in pairs if pair["linked"] and tuple(pair["family_a"]) in component and tuple(pair["family_b"]) in component],
             }
         )
     return groups

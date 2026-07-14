@@ -91,11 +91,7 @@ def parse_account_fill(row: dict[str, Any], margin_coin: str = "USDT") -> Bitget
         if not trade_id:
             raise ValueError("tradeId is missing")
         fee_detail = [item for item in row.get("feeDetail", []) if isinstance(item, dict)]
-        fee_usdt = sum(
-            abs(float(item.get("totalFee") or 0.0))
-            for item in fee_detail
-            if str(item.get("feeCoin") or "").upper() == margin_coin.upper()
-        )
+        fee_usdt = sum(abs(float(item.get("totalFee") or 0.0)) for item in fee_detail if str(item.get("feeCoin") or "").upper() == margin_coin.upper())
         return BitgetAccountFill(
             trade_id=trade_id,
             order_id=str(row.get("orderId")) if row.get("orderId") is not None else None,

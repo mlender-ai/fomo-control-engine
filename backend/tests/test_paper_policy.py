@@ -10,6 +10,7 @@ from app.db.repository import MemoryRepository, SQLiteRepository
 from app.paper.policy import PaperPolicy, apply_exit_decision, evaluate_entry, evaluate_exit, open_trade
 from app.paper.service import (
     _candidate_bootstrap_active,
+    _candidate_bootstrap_relaxed_active,
     _gate_diagnostic_event,
     _paper_target_plan,
     _signature_gate_evaluation,
@@ -300,10 +301,7 @@ def test_holding_limit_extends_while_confirmed_stance_remains_valid() -> None:
 
 
 def test_atr_target_reachability_audit_reports_timeout_rate() -> None:
-    candles = [
-        candle(index, close=100 + (index % 8), high=102 + (index % 8), low=98 + (index % 8))
-        for index in range(90)
-    ]
+    candles = [candle(index, close=100 + (index % 8), high=102 + (index % 8), low=98 + (index % 8)) for index in range(90)]
 
     audit = audit_atr_target_reachability(candles, atr_multiplier=1.0, max_holding_bars=30)
 
@@ -442,18 +440,18 @@ def test_candidate_bootstrap_requires_scored_active_candidate_and_tags_trade() -
     repo.upsert_watchlist_item(WatchlistItem(symbol="TESTUSDT", asset_class="crypto"))
     key = "fvg:gap_formed:candidate:long:crypto:4h"
     candidate_stat = BacktestStat(
-            signature_key=key,
-            symbol="TESTUSDT",
-            timeframe="4h",
-            asset_class="crypto",
-            engine="fvg",
-            event_type="gap_formed",
-            strength_class="candidate",
-            direction="long",
-            sample_size=14,
-            win_1r_pct=50.0,
-            payload={"signature": {"engine": "fvg", "strength_class": "candidate"}},
-        )
+        signature_key=key,
+        symbol="TESTUSDT",
+        timeframe="4h",
+        asset_class="crypto",
+        engine="fvg",
+        event_type="gap_formed",
+        strength_class="candidate",
+        direction="long",
+        sample_size=14,
+        win_1r_pct=50.0,
+        payload={"signature": {"engine": "fvg", "strength_class": "candidate"}},
+    )
     repo.upsert_backtest_stat(candidate_stat)
     repo.add_judgment(
         JudgmentLedgerEntry(
@@ -536,6 +534,99 @@ def test_candidate_bootstrap_auto_disables_after_three_validated_promotions() ->
         )
 
     assert _candidate_bootstrap_active(repo, _settings(), now=BASE_TIME) is False
+
+
+def test_candidate_bootstrap_relaxes_only_for_first_two_weeks_and_tags_trade() -> None:
+    repo = MemoryRepository()
+    repo.upsert_watchlist_item(WatchlistItem(symbol="TESTUSDT", asset_class="crypto"))
+    start_paper_benchmark(repo, now=BASE_TIME)
+    key = "fvg:gap_formed:candidate:long:crypto:4h"
+    repo.upsert_backtest_stat(
+        BacktestStat(
+            signature_key=key,
+            symbol="TESTUSDT",
+            timeframe="4h",
+            asset_class="crypto",
+            engine="fvg",
+            event_type="gap_formed",
+            strength_class="candidate",
+            direction="long",
+            sample_size=8,
+            win_1r_pct=45.0,
+            payload={"signature": {"engine": "fvg", "strength_class": "candidate"}},
+        )
+    )
+    repo.add_judgment(
+        JudgmentLedgerEntry(
+            judgment_id="candidate:TESTUSDT:4h:fvg:relaxed",
+            position_id=UUID(int=0),
+            source_type="candidate_signature",
+            source_id="fvg:relaxed",
+            as_of=BASE_TIME,
+            type="candidate_signature",
+            claim={"symbol": "TESTUSDT", "timeframe": "4h", "engine": "fvg", "event_type": "gap_formed", "direction": "long"},
+        )
+    )
+    payload = _candidate_entry_payload()
+    simulation = _candidate_entry_simulation()
+    now = BASE_TIME + timedelta(hours=1)
+
+    assert _candidate_bootstrap_relaxed_active(repo, _settings(), now=now) is True
+    gate = _signature_gate_evaluation(repo, _settings(), payload["analysis"], payload, Direction.long, now=now)
+    assert gate["gate_mode"] == "candidate_bootstrap_relaxed"
+
+    result = run_paper_engine(
+        repo,
+        _settings(),
+        analysis_loader=lambda _symbol, _timeframe: payload,
+        simulation_loader=lambda _symbol, _timeframe, _direction, _entry: simulation,
+        now=now,
+    )
+
+    assert result["opened"] == 1
+    trade = repo.list_paper_trades(status="open")[0]
+    assert trade.entry_evidence["bootstrap_relaxed"] is True
+    assert trade.signature_snapshot["bootstrap_thresholds"] == {"min_sample_size": 8, "min_win_1r_pct": 45.0}
+    assert repo.list_paper_gate_funnel(symbol="TESTUSDT")[0]["bootstrap_relaxed"] is True
+    assert _candidate_bootstrap_relaxed_active(repo, _settings(), now=BASE_TIME + timedelta(days=14)) is False
+
+
+def test_flip_block_logs_explain_each_failed_gate_and_checklist_rates() -> None:
+    repo = MemoryRepository()
+    repo.upsert_watchlist_item(WatchlistItem(symbol="TESTUSDT", asset_class="crypto"))
+    payload = _candidate_entry_payload()
+    simulation = _candidate_entry_simulation()
+    simulation.update(
+        {
+            "checklist": [
+                {"key": "rr", "label": "손익비", "status": "fail"},
+                {"key": "htf", "label": "상위 TF 정렬", "status": "pass"},
+            ],
+            "checklist_passed": 1,
+            "checklist_total": 2,
+            "invalidation_too_close": True,
+        }
+    )
+
+    result = run_paper_engine(
+        repo,
+        _settings(),
+        analysis_loader=lambda _symbol, _timeframe: payload,
+        simulation_loader=lambda _symbol, _timeframe, _direction, _entry: simulation,
+        now=BASE_TIME,
+    )
+
+    assert result["opened"] == 0
+    logs = repo.list_entry_block_logs(symbol="TESTUSDT")
+    assert {item["failed_gate"] for item in logs} >= {"checklist", "invalidation_hygiene", "signature_gate"}
+    assert "체크리스트 1/2" in next(item["detail"] for item in logs if item["failed_gate"] == "checklist")
+    assert "candidate" in next(item["detail"] for item in logs if item["failed_gate"] == "signature_gate")
+    funnel = paper_gate_funnel(repo, now=BASE_TIME + timedelta(hours=1))
+    checklist_stage = next(item for item in funnel["stages"] if item["id"] == "checklist")
+    assert checklist_stage["rejection_top3"][0]["count"] == 1
+    rates = {item["key"]: item for item in funnel["checklist_pass_rates"]}
+    assert rates["rr"]["pass_rate_pct"] == 0.0
+    assert rates["htf"]["pass_rate_pct"] == 100.0
 
 
 @pytest.mark.parametrize(
@@ -733,18 +824,16 @@ def test_benchmark_bootstrap_opens_current_stance_once_without_flip() -> None:
     repo.upsert_watchlist_item(WatchlistItem(symbol="TESTUSDT", asset_class="crypto"))
     start_paper_benchmark(repo, now=BASE_TIME - timedelta(minutes=1))
     analysis = {
-            "symbol": "TESTUSDT",
-            "timeframe": "4h",
-            "asset_class": "crypto",
-            "candles": [{"time": int(BASE_TIME.timestamp()), "open": 100, "high": 101, "low": 99, "close": 100, "volume": 1_000}],
-            "liquidity": {"sweeps": [{"confirmed": True, "side": "sell_side", "type": "sweep", "grade": "Strong"}]},
-        }
+        "symbol": "TESTUSDT",
+        "timeframe": "4h",
+        "asset_class": "crypto",
+        "candles": [{"time": int(BASE_TIME.timestamp()), "open": 100, "high": 101, "low": 99, "close": 100, "volume": 1_000}],
+        "liquidity": {"sweeps": [{"confirmed": True, "side": "sell_side", "type": "sweep", "grade": "Strong"}]},
+    }
     signature = signatures_from_analysis(analysis)[0]
     payload = {
         "analysis": analysis,
-        "historical_backtest": {
-            "stats": [{"signature_key": signature["key"], "signature": signature, "sample_size": 40, "win_1r_ci": [55.0, 70.0]}]
-        },
+        "historical_backtest": {"stats": [{"signature_key": signature["key"], "signature": signature, "sample_size": 40, "win_1r_ci": [55.0, 70.0]}]},
         "analyst_briefing": {
             "confluence": {
                 "stance": "long_leaning",
@@ -888,6 +977,13 @@ def _settings() -> SimpleNamespace:
         paper_min_evidence=4,
         paper_min_checklist_passed=5,
         paper_min_rr=1.5,
+        paper_candidate_bootstrap_enabled=True,
+        paper_candidate_bootstrap_min_sample=15,
+        paper_candidate_bootstrap_min_win_1r_pct=50.0,
+        paper_candidate_bootstrap_relaxed_days=14,
+        paper_candidate_bootstrap_relaxed_min_sample=8,
+        paper_candidate_bootstrap_relaxed_min_win_1r_pct=45.0,
+        paper_candidate_bootstrap_disable_validated_count=3,
         paper_max_holding_bars=30,
         paper_poor_mdd_pct=10.0,
         backtest_taker_fee_pct=0.06,
@@ -897,3 +993,36 @@ def _settings() -> SimpleNamespace:
         universe_backtest_min_ci_low_pct=50.0,
         signature_validated_min_sample=30,
     )
+
+
+def _candidate_entry_payload() -> dict:
+    return {
+        "analysis": {
+            "symbol": "TESTUSDT",
+            "timeframe": "4h",
+            "asset_class": "crypto",
+            "candles": [{"time": int(BASE_TIME.timestamp()), "open": 100, "high": 101, "low": 99, "close": 100, "volume": 1_000}],
+        },
+        "historical_backtest": {"stats": [], "event_stats": []},
+        "analyst_briefing": {
+            "confluence": {
+                "stance": "long_leaning",
+                "stance_state": {"stance": "long_leaning", "flipped": True, "transitioning": False, "last_bar_at": BASE_TIME.isoformat()},
+                "long_evidence": [{"claim": str(index)} for index in range(4)],
+                "short_evidence": [],
+            }
+        },
+        "gauges": {"bar_state": {"provisional": False}},
+    }
+
+
+def _candidate_entry_simulation() -> dict:
+    return {
+        "rr_ratio": 2.0,
+        "survives_to_invalidation": True,
+        "invalidation_too_close": False,
+        "checklist": [{"key": f"check-{index}", "label": f"체크 {index}", "status": "pass"} for index in range(6)],
+        "checklist_passed": 6,
+        "checklist_total": 6,
+        "action_plan": {"invalidation": {"price": 99}, "take_profit": [{"price": 110}]},
+    }

@@ -8,7 +8,7 @@ from app.analyst.confluence import build_confluence
 from app.analyst.signature_registry import record_transition
 from app.api.deps import configure_runtime
 from app.core.config import Settings
-from app.db.models import BacktestStat, WhaleEvent, WhaleWallet, utc_now
+from app.db.models import WhaleEvent, WhaleWallet, utc_now
 from app.db.repository import MemoryRepository, create_repository
 from app.onchain.hyperliquid.collector import collect_whale_positions, event_from_fill, whale_signature_key
 from app.onchain.service import add_whale_wallet, chart_onchain_context
@@ -131,13 +131,35 @@ def test_only_validated_wallet_enters_confluence() -> None:
     repo = MemoryRepository()
     wallet = WhaleWallet(address=ADDRESS, label="테스트 고래")
     repo.upsert_whale_wallet(wallet)
-    repo.upsert_whale_position_state(ADDRESS, "BTC", {"wallet_address": ADDRESS, "wallet_label": wallet.label, "coin": "BTC", "symbol": "BTCUSDT", "side": "long", "size_usd": 5_000_000, "entry_px": 60000, "as_of": utc_now().isoformat()})
+    repo.upsert_whale_position_state(
+        ADDRESS,
+        "BTC",
+        {
+            "wallet_address": ADDRESS,
+            "wallet_label": wallet.label,
+            "coin": "BTC",
+            "symbol": "BTCUSDT",
+            "side": "long",
+            "size_usd": 5_000_000,
+            "entry_px": 60000,
+            "as_of": utc_now().isoformat(),
+        },
+    )
     candles = [{"time": int((utc_now() - timedelta(hours=8)).timestamp())}]
     candidate = chart_onchain_context(repo, "BTCUSDT", "4h", candles)
     assert candidate["validated_evidence"] == []
 
     key = whale_signature_key(ADDRESS)
-    record_transition(repo, signature_key=key, previous="candidate", new="validated", transition="validate", reason="test approval", evidence={"sample_size": 30, "win_1r_ci": [55, 80]}, autonomous=False)
+    record_transition(
+        repo,
+        signature_key=key,
+        previous="candidate",
+        new="validated",
+        transition="validate",
+        reason="test approval",
+        evidence={"sample_size": 30, "win_1r_ci": [55, 80]},
+        autonomous=False,
+    )
     validated = chart_onchain_context(repo, "BTCUSDT", "4h", candles)
     analysis = {"validated_onchain_evidence": validated["validated_evidence"], "candles": candles, "data_quality": {}}
     confluence = build_confluence(symbol="BTCUSDT", timeframe="4h", analysis=analysis)
@@ -150,7 +172,18 @@ def test_sqlite_repository_persists_whale_data(tmp_path) -> None:
     repo = create_repository(f"sqlite:///{tmp_path / 'whales.db'}")
     wallet = WhaleWallet(address=ADDRESS, label="테스트 고래")
     repo.upsert_whale_wallet(wallet)
-    event = WhaleEvent(wallet_address=ADDRESS, wallet_label=wallet.label, coin="BTC", symbol="BTCUSDT", side="short", event="open", size=1, size_usd=100_000, entry_px=60_000, event_at=utc_now())
+    event = WhaleEvent(
+        wallet_address=ADDRESS,
+        wallet_label=wallet.label,
+        coin="BTC",
+        symbol="BTCUSDT",
+        side="short",
+        event="open",
+        size=1,
+        size_usd=100_000,
+        entry_px=60_000,
+        event_at=utc_now(),
+    )
     assert repo.add_whale_event(event) is True
 
     reopened = create_repository(f"sqlite:///{tmp_path / 'whales.db'}")
@@ -164,7 +197,18 @@ async def test_whale_alert_uses_existing_state_machine_and_candidate_tone() -> N
     configure_runtime(repo=repo, provider=MockMarketDataProvider())
     sender = FakeSender()
     engine = AlertEngine(Settings(database_url="memory://", telegram_bot_token="token", telegram_chat_id="123"), sender, NotificationState())
-    event = WhaleEvent(wallet_address=ADDRESS, wallet_label="테스트 고래", coin="BTC", symbol="BTCUSDT", side="long", event="open", size=2, size_usd=2_000_000, entry_px=63_000, event_at=utc_now()).model_dump(mode="json")
+    event = WhaleEvent(
+        wallet_address=ADDRESS,
+        wallet_label="테스트 고래",
+        coin="BTC",
+        symbol="BTCUSDT",
+        side="long",
+        event="open",
+        size=2,
+        size_usd=2_000_000,
+        entry_px=63_000,
+        event_at=utc_now(),
+    ).model_dump(mode="json")
     dashboard = {"wallets": [{"address": ADDRESS, "review": {"state": "candidate", "sample_size": 4, "win_1r_pct": None}}]}
 
     assert await engine.evaluate_whale_events([event], dashboard) == 1

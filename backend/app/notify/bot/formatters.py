@@ -744,12 +744,8 @@ def format_engine_scoreboard(payload: dict[str, Any]) -> str:
         f"표본 판정 N={scored} / 전체 {total}{f' · 시간종료 중립 {neutral}' if neutral else ''}",
     ]
     if recent:
-        recent_scored = int(
-            recent.get("scored_trade_count") if recent.get("scored_trade_count") is not None else recent.get("trade_count") or 0
-        )
-        lines.append(
-            f"최근 28일: {_signed_pct(recent.get('net_return_pct'))} · 승률 {_nullable_pct(recent.get('win_rate_pct'))} · 판정 N={recent_scored}"
-        )
+        recent_scored = int(recent.get("scored_trade_count") if recent.get("scored_trade_count") is not None else recent.get("trade_count") or 0)
+        lines.append(f"최근 28일: {_signed_pct(recent.get('net_return_pct'))} · 승률 {_nullable_pct(recent.get('win_rate_pct'))} · 판정 N={recent_scored}")
     if scored < 10:
         lines.append("⚠️ 종료 표본 10건 미만 · 승률 판정 유보")
     lines.extend(["", "<b>현재 포지션</b>"])

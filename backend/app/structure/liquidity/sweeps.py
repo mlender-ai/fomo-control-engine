@@ -175,7 +175,9 @@ def _return_offset(candles: list[MarketCandle], index: int, pool: LiquidityPool,
     return None
 
 
-def _confidence_components(depth: float, candle_atr: float, volume_ratio: float, return_offset: int, pool_score: int, delta_aligned: bool | None) -> dict[str, int]:
+def _confidence_components(
+    depth: float, candle_atr: float, volume_ratio: float, return_offset: int, pool_score: int, delta_aligned: bool | None
+) -> dict[str, int]:
     volume_score = _volume_score(volume_ratio)
     if delta_aligned is True:
         volume_score = min(35, volume_score + 5)

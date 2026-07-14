@@ -51,6 +51,7 @@ def _full_analysis() -> dict:
 
 # ── 수용: 7모듈 전부 1줄 판정 + 고정 어휘 검증 ─────────────────────
 
+
 def test_all_seven_modules_emit_fixed_vocabulary_lines() -> None:
     result = build_one_liners(_full_analysis())
     lines = result["lines"]
@@ -76,6 +77,7 @@ def test_stances_match_states() -> None:
 
 
 # ── 수용: 충돌 그대로 노출 + 종합 카운트 ───────────────────────────
+
 
 def test_conflicts_exposed_with_summary_counts() -> None:
     analysis = _full_analysis()
@@ -106,6 +108,7 @@ def test_overall_stance_majority_without_confluence() -> None:
 
 # ── 수용: 자유 문장 생성 경로 0 ────────────────────────────────────
 
+
 def test_free_text_phrase_build_fails() -> None:
     with pytest.raises(OneLinerVocabularyError):
         _line("wyckoff", "상승 각도가 매우 가파릅니다", "강", "x")
@@ -118,6 +121,7 @@ def test_free_text_phrase_build_fails() -> None:
 
 
 # ── 판정 보류·데이터 부족 경로 ─────────────────────────────────────
+
 
 def test_undetermined_wyckoff_reports_hold() -> None:
     analysis = _full_analysis()
@@ -166,6 +170,7 @@ def test_vocabulary_phrases_within_length_budget() -> None:
 
 
 # ── E2E: 차트 분석 파이프라인이 one_liners를 발행 ──────────────────
+
 
 def test_chart_analysis_pipeline_emits_one_liners() -> None:
     from datetime import datetime, timedelta, timezone

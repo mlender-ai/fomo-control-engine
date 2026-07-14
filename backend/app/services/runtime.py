@@ -231,7 +231,6 @@ def _report_analysis_as_of(report: Any | None) -> datetime | None:
     return value if isinstance(value, datetime) else None
 
 
-
 def refresh_derivative_data() -> dict[str, Any]:
     if not runtime.settings.derivative_tracking_enabled:
         return {"enabled": False, "symbols": [], "snapshots": [], "errors": []}

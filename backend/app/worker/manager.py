@@ -201,11 +201,7 @@ class WorkerManager:
         }
 
     async def _send_paper_events(self, result: dict[str, Any]) -> int:
-        if (
-            not getattr(self.settings, "paper_telegram_alerts_enabled", True)
-            or not self.settings.telegram_alerts_enabled
-            or self.state.is_muted()
-        ):
+        if not getattr(self.settings, "paper_telegram_alerts_enabled", True) or not self.settings.telegram_alerts_enabled or self.state.is_muted():
             return 0
         sent = 0
         for event in result.get("events", []) or []:

@@ -21,7 +21,7 @@ jobs:
     env:
       FCE_ENV: ci
       FCE_MARKET_DATA_PROVIDER: mock
-      FCE_DATABASE_URL: sqlite:///:memory:
+      FCE_DATABASE_URL: "sqlite:///:memory:"
       FCE_RUN_LIVE_BITGET_TESTS: "false"
       FCE_WORKER_ENABLED: "false"
       FCE_TELEGRAM_BOT_ENABLED: "false"

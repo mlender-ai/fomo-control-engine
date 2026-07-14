@@ -100,6 +100,31 @@ class MemoryPaperRepositoryMixin:
             rows = [row for row in rows if str(row.get("symbol") or "").upper() == symbol.upper()]
         return sorted(rows, key=lambda row: str(row.get("bar_at") or ""), reverse=True)[:limit]
 
+    def upsert_entry_block_log(self, record: dict) -> bool:
+        record_id = str(record.get("id") or "")
+        if not record_id:
+            raise ValueError("entry block log id is required")
+        if record_id in self.entry_block_logs:
+            return False
+        self.entry_block_logs[record_id] = dict(record)
+        return True
+
+    def list_entry_block_logs(
+        self,
+        since: datetime | None = None,
+        symbol: str | None = None,
+        failed_gate: str | None = None,
+        limit: int = 10000,
+    ) -> list[dict]:
+        rows = list(self.entry_block_logs.values())
+        if since is not None:
+            rows = [row for row in rows if _timestamp_or_min(row.get("bar_at")) >= since]
+        if symbol is not None:
+            rows = [row for row in rows if str(row.get("symbol") or "").upper() == symbol.upper()]
+        if failed_gate is not None:
+            rows = [row for row in rows if str(row.get("failed_gate") or "") == failed_gate]
+        return sorted(rows, key=lambda row: str(row.get("bar_at") or ""), reverse=True)[:limit]
+
 
 class SQLitePaperRepositoryMixin:
     def add_trade(self, trade: Trade) -> Trade:
@@ -193,9 +218,13 @@ class SQLitePaperRepositoryMixin:
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    str(normalized.id), normalized.symbol, normalized.direction.value,
-                    normalized.entry_at.isoformat(), normalized.exit_at.isoformat(),
-                    normalized.updated_at.isoformat(), _dump_model(normalized),
+                    str(normalized.id),
+                    normalized.symbol,
+                    normalized.direction.value,
+                    normalized.entry_at.isoformat(),
+                    normalized.exit_at.isoformat(),
+                    normalized.updated_at.isoformat(),
+                    _dump_model(normalized),
                 ),
             )
         return normalized
@@ -306,6 +335,59 @@ class SQLitePaperRepositoryMixin:
         if symbol is not None:
             clauses.append("symbol = ?")
             params.append(symbol.upper())
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY bar_at DESC LIMIT ?"
+        params.append(limit)
+        with self._connect() as connection:
+            rows = connection.execute(query, tuple(params)).fetchall()
+        return [json.loads(row["payload"]) for row in rows]
+
+    def upsert_entry_block_log(self, record: dict) -> bool:
+        record_id = str(record.get("id") or "")
+        if not record_id:
+            raise ValueError("entry block log id is required")
+        encoded = json.dumps(record, ensure_ascii=False, sort_keys=True, default=_json_cache_default)
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                INSERT OR IGNORE INTO entry_block_log
+                    (id, symbol, timeframe, bar_at, direction, failed_gate, detail, payload, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record_id,
+                    str(record.get("symbol") or "").upper(),
+                    str(record.get("timeframe") or "4h"),
+                    str(record.get("bar_at") or ""),
+                    str(record.get("direction") or "unknown"),
+                    str(record.get("failed_gate") or "unknown"),
+                    str(record.get("detail") or ""),
+                    encoded,
+                    str(record.get("created_at") or utc_now().isoformat()),
+                ),
+            )
+        return cursor.rowcount > 0
+
+    def list_entry_block_logs(
+        self,
+        since: datetime | None = None,
+        symbol: str | None = None,
+        failed_gate: str | None = None,
+        limit: int = 10000,
+    ) -> list[dict]:
+        query = "SELECT payload FROM entry_block_log"
+        clauses: list[str] = []
+        params: list[str | int] = []
+        if since is not None:
+            clauses.append("bar_at >= ?")
+            params.append(_aware_dt(since).isoformat())
+        if symbol is not None:
+            clauses.append("symbol = ?")
+            params.append(symbol.upper())
+        if failed_gate is not None:
+            clauses.append("failed_gate = ?")
+            params.append(failed_gate)
         if clauses:
             query += " WHERE " + " AND ".join(clauses)
         query += " ORDER BY bar_at DESC LIMIT ?"
