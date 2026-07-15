@@ -28,8 +28,7 @@ test.describe("chart visual regression", () => {
         animations: "disabled",
         // Lightweight Charts may omit two off-range price-axis ticks under CI
         // raster timing; keep the allowance below any structural UI change.
-        // 0.02: CI 러너 재실행 간 변동 실측 0.01(1,161px) 상회 여유 — 구조적 UI 변화(수 % 이상)는 여전히 잡힘.
-        maxDiffPixelRatio: 0.02
+        maxDiffPixelRatio: 0.002
       });
     });
   }
