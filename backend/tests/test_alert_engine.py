@@ -28,10 +28,13 @@ class FakeTelegramSender:
 
 
 def _settings(**overrides) -> Settings:
+    # CI 는 안전을 위해 FCE_TELEGRAM_ALERTS_ENABLED=false 를 주입한다 —
+    # 알림 엔진 테스트는 환경과 무관하게 명시적으로 켠다(환경 의존 플레이키 방지).
     return Settings(
         database_url="memory://",
         telegram_bot_token="token",
         telegram_chat_id="123",
+        telegram_alerts_enabled=True,
         alert_default_cooldown_minutes=1,
         **overrides,
     )

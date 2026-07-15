@@ -196,7 +196,12 @@ async def test_whale_alert_uses_existing_state_machine_and_candidate_tone() -> N
     repo = MemoryRepository()
     configure_runtime(repo=repo, provider=MockMarketDataProvider())
     sender = FakeSender()
-    engine = AlertEngine(Settings(database_url="memory://", telegram_bot_token="token", telegram_chat_id="123"), sender, NotificationState())
+    # CI 는 FCE_TELEGRAM_ALERTS_ENABLED=false 를 주입 — 테스트는 명시적으로 켠다.
+    engine = AlertEngine(
+        Settings(database_url="memory://", telegram_bot_token="token", telegram_chat_id="123", telegram_alerts_enabled=True),
+        sender,
+        NotificationState(),
+    )
     event = WhaleEvent(
         wallet_address=ADDRESS,
         wallet_label="테스트 고래",
