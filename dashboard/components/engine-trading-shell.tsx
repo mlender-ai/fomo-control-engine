@@ -134,11 +134,11 @@ function BattleView({ data, whales, starting, onStart }: { data: PaperDashboard;
 }
 
 function WhaleBenchmarkReference({ data }: { data: OnchainWhaleDashboard | null }) {
-  const validated = (data?.wallets ?? []).filter((wallet) => wallet.review.state === "validated");
+  const validated = (data?.wallets ?? []).filter((wallet) => wallet.review.trust_status === "trusted");
   return (
     <section className="whaleBattleReference" data-testid="whale-battle-reference">
       <div><Waves size={17} /><span>고래 참고군</span><strong>{validated.length ? `검증 ${validated.length}지갑` : "검증 표본 대기"}</strong></div>
-      <p>{validated.length ? validated.slice(0, 3).map((wallet) => `${wallet.label} 1R ${wallet.review.win_1r_pct}% (N=${wallet.review.sample_size})`).join(" · ") : "candidate 고래는 엔진 vs 나 판정에 포함하지 않습니다. N≥30·CI 하한 55% 승격 후에만 3자 참고군으로 표시됩니다."}</p>
+      <p>{validated.length ? validated.slice(0, 3).map((wallet) => `${wallet.label} 1R ${wallet.review.win_1r_pct}% · ${signedR(wallet.review.cumulative_return_r)} (N=${wallet.review.sample_size})`).join(" · ") : "28일·N≥30·1R CI 하한 55%를 모두 통과한 고래만 3자 참고군으로 표시됩니다."}</p>
     </section>
   );
 }
@@ -148,6 +148,12 @@ function OnchainView({ data, onReload }: { data: OnchainWhaleDashboard | null; o
   const [label, setLabel] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [filter, setFilter] = useState<"all" | "validating" | "trusted" | "excluded">("all");
+  const wallets = data?.wallets ?? [];
+  const filteredWallets = useMemo(
+    () => wallets.filter((wallet) => filter === "all" || wallet.review.trust_status === filter || (filter === "validating" && wallet.review.trust_status === "review_ready")),
+    [filter, wallets]
+  );
 
   async function addWallet(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -192,6 +198,7 @@ function OnchainView({ data, onReload }: { data: OnchainWhaleDashboard | null; o
       {message ? <TerminalWarning tone={message.startsWith("리더보드") ? "warning" : "error"}>{message}</TerminalWarning> : null}
       <WhaleFlowOverview data={data} />
       <p className="onchainPolicy">{data.policy}</p>
+      <WhaleValidationBoard wallets={wallets} filter={filter} onFilter={setFilter} />
       <details className="onchainManualPanel">
         <summary>특정 공개 계정 추가</summary>
         <form className="onchainAddForm" onSubmit={addWallet}>
@@ -200,11 +207,12 @@ function OnchainView({ data, onReload }: { data: OnchainWhaleDashboard | null; o
           <button className="button" disabled={busy || !address.trim()} type="submit"><Plus size={15} />추가</button>
         </form>
       </details>
-      {!data.wallets.length ? <EngineEmpty title="자동 추적군 준비 중" body="리더보드 스캔이 끝나면 활동 고래의 공개 포지션과 체결을 자동 관측합니다." /> : (
+      {!data.wallets.length ? <EngineEmpty title="자동 추적군 준비 중" body="리더보드 스캔이 끝나면 활동 고래의 공개 포지션과 체결을 자동 관측합니다." /> : !filteredWallets.length ? <EngineEmpty title="해당 검증군 없음" body="현재 조건을 충족한 고래가 없습니다. 검증 표본은 백그라운드에서 계속 축적됩니다." /> : (
         <div className="onchainWalletList">
-          {data.wallets.map((wallet) => (
-            <section className={`onchainWalletRow ${wallet.review.state}`} key={wallet.address}>
-              <header><div><strong>{wallet.label}</strong><code>{wallet.address_short}</code><small>{wallet.leaderboard ? `30일 PnL ${signedCompactMoney(wallet.leaderboard.month_pnl_usd)} · ROI ${(wallet.leaderboard.month_roi * 100).toFixed(1)}% · 계정 ${compactMoney(wallet.leaderboard.account_value_usd)}` : wallet.alias_disclaimer}</small></div><div><span>{whaleState(wallet.review.state)}</span><b>{wallet.review.sample_size >= 30 && wallet.review.win_1r_pct !== null ? `1R ${wallet.review.win_1r_pct}% · N=${wallet.review.sample_size}` : `축적 N=${wallet.review.sample_size} · 잔여 ${wallet.review.remaining_samples}`}</b>{wallet.source === "discovery" ? <i className="onchainAutoTag">AUTO</i> : <button aria-label={`${wallet.label} 삭제`} disabled={busy} onClick={() => void removeWallet(wallet.address)} title="워치리스트에서 삭제" type="button"><Trash2 size={15} /></button>}</div></header>
+          {filteredWallets.map((wallet) => (
+            <section className={`onchainWalletRow ${wallet.review.state} trust-${wallet.review.trust_status}`} key={wallet.address}>
+              <header><div><strong>{wallet.label}</strong><code>{wallet.address_short}</code><small>{wallet.leaderboard ? `리더보드 30일 PnL ${signedCompactMoney(wallet.leaderboard.month_pnl_usd)} · ROI ${(wallet.leaderboard.month_roi * 100).toFixed(1)}% · 계정 ${compactMoney(wallet.leaderboard.account_value_usd)}` : wallet.alias_disclaimer}</small></div><div><span>{whaleTrustState(wallet.review.trust_status)}</span><b>{wallet.review.win_1r_pct === null ? `추종 승률 대기 · N=${wallet.review.sample_size}` : `추종 승률 ${wallet.review.win_1r_pct}% · N=${wallet.review.sample_size}`}</b>{wallet.source === "discovery" ? <i className="onchainAutoTag">AUTO</i> : <button aria-label={`${wallet.label} 삭제`} disabled={busy} onClick={() => void removeWallet(wallet.address)} title="워치리스트에서 삭제" type="button"><Trash2 size={15} /></button>}</div></header>
+              <WhaleReviewMetrics review={wallet.review} />
               <div className="onchainPositions">
                 {wallet.positions.length ? wallet.positions.map((position) => <div key={position.coin}><strong>{position.coin} {position.side === "long" ? "롱" : "숏"}</strong><span>{compactMoney(position.size_usd)} · 진입 {price(position.entry_px)}</span><b className={(position.unrealized_pnl ?? 0) >= 0 ? "positive" : "negative"}>{money(position.unrealized_pnl ?? 0)} USDT</b></div>) : <p>현재 공개 포지션 없음</p>}
               </div>
@@ -212,6 +220,47 @@ function OnchainView({ data, onReload }: { data: OnchainWhaleDashboard | null; o
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+function WhaleValidationBoard({
+  wallets,
+  filter,
+  onFilter
+}: {
+  wallets: OnchainWhaleDashboard["wallets"];
+  filter: "all" | "validating" | "trusted" | "excluded";
+  onFilter: (value: "all" | "validating" | "trusted" | "excluded") => void;
+}) {
+  const trusted = wallets.filter((wallet) => wallet.review.trust_status === "trusted").length;
+  const validating = wallets.filter((wallet) => ["validating", "review_ready"].includes(wallet.review.trust_status)).length;
+  const excluded = wallets.filter((wallet) => wallet.review.trust_status === "excluded").length;
+  const options = [
+    { id: "all" as const, label: `전체 ${wallets.length}` },
+    { id: "validating" as const, label: `검증중 ${validating}` },
+    { id: "trusted" as const, label: `엄선 ${trusted}` },
+    { id: "excluded" as const, label: `제외 ${excluded}` }
+  ];
+  return (
+    <section className="whaleValidationBoard" data-testid="whale-validation-board">
+      <div><span>4주 고래 검증</span><strong>28일 + N≥30 + CI 하한 55%</strong><small>리더보드 ROI는 선별 입력, 추종 승률과 R 성과는 검증 결과</small></div>
+      <div className="whaleValidationFilters" role="group" aria-label="고래 검증 필터">
+        {options.map((option) => <button aria-pressed={filter === option.id} key={option.id} onClick={() => onFilter(option.id)} type="button">{option.label}</button>)}
+      </div>
+    </section>
+  );
+}
+
+function WhaleReviewMetrics({ review }: { review: OnchainWhaleDashboard["wallets"][number]["review"] }) {
+  const ciLow = review.win_1r_ci?.[0] ?? null;
+  const progress = Math.max(0, Math.min(100, review.validation_progress_pct));
+  return (
+    <div className="whaleReviewMetrics" data-testid="whale-review-metrics">
+      <div><span>추종 승률</span><strong>{review.win_1r_pct === null ? "대기" : `${review.win_1r_pct}%`}</strong><small>{ciLow === null ? `채점 N=${review.sample_size}` : `CI 하한 ${ciLow}% · N=${review.sample_size}`}</small></div>
+      <div><span>추종 수익</span><strong className={review.cumulative_return_r >= 0 ? "positive" : "negative"}>{signedR(review.cumulative_return_r)}</strong><small>평균 {review.average_return_r === null ? "-" : signedR(review.average_return_r)} · PF {review.profit_factor_r === null ? "-" : ratio(review.profit_factor_r)}</small></div>
+      <div><span>관측 표본</span><strong>{review.observed_count}건</strong><small>결과 확정 {review.sample_size}건 · 잔여 {review.remaining_samples}</small></div>
+      <div className="whaleValidationProgress"><span>검증 기간</span><strong>{review.validation_days}/28일</strong><small>{review.validation_remaining_days ? `${review.validation_remaining_days}일 남음` : review.validation_calendar_complete ? "기간 충족" : "체결 관측 대기"}</small><i><b style={{ width: `${progress}%` }} /></i></div>
     </div>
   );
 }
@@ -413,7 +462,8 @@ function money(value: number): string { return `${value > 0 ? "+" : ""}${Number(
 function compactMoney(value: number): string { return value >= 1_000_000 ? `${(value / 1_000_000).toFixed(1)}M` : value >= 1_000 ? `${Math.round(value / 1_000)}K` : value.toFixed(0); }
 function signedCompactMoney(value: number): string { return `${value >= 0 ? "+" : "-"}${compactMoney(Math.abs(value))}`; }
 function whaleEventLabel(value: string): string { return ({ open: "신규 진입", increase: "증액", reduce: "감액", close: "청산", flip: "방향 전환" } as Record<string,string>)[value] ?? value; }
-function whaleState(value: string): string { return ({ validated: "검증됨", degraded: "성적 저하", candidate: "표본 축적", quarantined: "격리" } as Record<string,string>)[value] ?? "표본 축적"; }
+function whaleTrustState(value: string): string { return ({ trusted: "엄선 고래", review_ready: "승격 심사", validating: "4주 검증 중", excluded: "검증 제외" } as Record<string,string>)[value] ?? "4주 검증 중"; }
+function signedR(value: number): string { return `${value >= 0 ? "+" : ""}${value.toFixed(2)}R`; }
 function metricTone(value: string, inverse: boolean): string { const number = Number(value.replace(/[+%,]/g, "")); if (!Number.isFinite(number) || number === 0) return "neutral"; const positive = inverse ? number < 0 : number > 0; return positive ? "positive" : "negative"; }
 function shortDate(value: string | null): string { return value ? new Date(value).toLocaleDateString("ko-KR", { month: "numeric", day: "numeric" }) : "-"; }
 function shortDateTime(value: string): string { return new Date(value).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }); }

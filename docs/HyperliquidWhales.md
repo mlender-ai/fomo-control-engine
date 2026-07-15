@@ -31,7 +31,9 @@ The relevant settings are `FCE_HYPERLIQUID_WHALE_TRACKING_ENABLED`, `FCE_HYPERLI
 - Coins that cannot map to a plain FCE `*USDT` symbol are stored but not rendered on an FCE chart.
 - Every wallet starts as a candidate. Its events are observation data, not a follow signal.
 - Only a promotion approved through the existing veto-window flow can make a wallet `validated`.
-- Whale promotion requires `N >= 30` and a net 1R confidence-interval lower bound of at least 55%.
+- Whale promotion requires all three gates: at least 28 elapsed validation days, `N >= 30`, and a net 1R confidence-interval lower bound of at least 55%.
+- Leaderboard 30-day ROI/PnL is a discovery input, not validation evidence. FCE separately publishes follow-trade win rate, confidence interval, cumulative realized R, average R, and the 28-day progress for each wallet.
+- The dashboard filters wallets into validating, review-ready, trusted, and excluded groups. A high leaderboard rank alone never enters the trusted group.
 - Only validated wallets may contribute a low-weight onchain item to confluence, use an emphasized chart marker, or emit a validated warning alert.
 - Labels are user-provided aliases and never claim verified ownership or identity.
 

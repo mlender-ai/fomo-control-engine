@@ -199,13 +199,20 @@ class AlertEngine:
             address = str(event.get("wallet_address") or "")
             wallet = next((item for item in wallets if item.get("address") == address), {})
             review = wallet.get("review") if isinstance(wallet.get("review"), dict) else {}
-            validated = review.get("state") == "validated"
+            validated = review.get("trust_status") == "trusted" or review.get("state") == "validated"
             side = "롱" if event.get("side") == "long" else "숏"
             size = _compact_usd(float(event.get("size_usd") or 0.0))
             entry = float(event.get("entry_px") or 0.0)
             sample_size = int(review.get("sample_size") or 0)
-            accuracy = f"과거 적중 {review.get('win_1r_pct')}% (N={sample_size})" if sample_size >= 30 else f"적중률 축적 중 (N={sample_size})"
-            level = "검증 고래" if validated else "미검증 관측"
+            win_rate = review.get("win_1r_pct")
+            accuracy = f"추종 승률 {win_rate}% (N={sample_size})" if win_rate is not None else f"추종 승률 축적 중 (N={sample_size})"
+            cumulative_r = float(review.get("cumulative_return_r") or 0.0)
+            elapsed_days = int(review.get("validation_days") or 0)
+            remaining_days = int(review.get("validation_remaining_days") or max(0, 28 - elapsed_days))
+            performance = f"누적 {cumulative_r:+.2f}R · 4주 검증 {elapsed_days}/28일"
+            if remaining_days:
+                performance += f" ({remaining_days}일 남음)"
+            level = "엄선 고래" if validated else "미검증 관측"
             candidate = AlertCandidate(
                 rule_id="whale_entry",
                 severity="warn" if validated else "info",
@@ -216,6 +223,7 @@ class AlertEngine:
                 message=(
                     f"🐋 <b>{event.get('wallet_label')} {event.get('coin')} {side} {size}</b> @ {entry:,.2f}\n"
                     f"{level} · {accuracy}\n"
+                    f"{performance}\n"
                     "관측 정보이며 따라가기 신호가 아닙니다. 별칭은 사용자 지정 추정입니다."
                 ),
                 payload={**event, "validation_state": review.get("state"), "summary": f"{side} {size} · {accuracy}"},

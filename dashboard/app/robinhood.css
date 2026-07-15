@@ -3008,6 +3008,60 @@ textarea:focus {
   border-top: 1px solid var(--terminal-line);
 }
 
+.whaleValidationBoard {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 14px 18px;
+  border: 1px solid var(--terminal-line);
+  background: #090c11;
+}
+
+.whaleValidationBoard > div:first-child {
+  display: grid;
+  gap: 3px;
+}
+
+.whaleValidationBoard span,
+.whaleReviewMetrics span {
+  color: var(--terminal-muted);
+  font-size: 10px;
+}
+
+.whaleValidationBoard small,
+.whaleReviewMetrics small {
+  color: var(--terminal-muted);
+  font-size: 10px;
+}
+
+.whaleValidationFilters {
+  display: flex;
+  flex: 0 0 auto;
+  border: 1px solid var(--terminal-line);
+}
+
+.whaleValidationFilters button {
+  min-height: 34px;
+  padding: 0 12px;
+  border: 0;
+  border-right: 1px solid var(--terminal-line);
+  background: transparent;
+  color: var(--terminal-muted);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.whaleValidationFilters button:last-child {
+  border-right: 0;
+}
+
+.whaleValidationFilters button[aria-pressed="true"] {
+  background: rgba(46, 211, 142, 0.12);
+  color: var(--terminal-positive);
+}
+
 .onchainWalletRow {
   border-top: 0;
   padding: 0;
@@ -3015,6 +3069,14 @@ textarea:focus {
 
 .onchainWalletRow.validated {
   border-left: 3px solid var(--terminal-positive);
+}
+
+.onchainWalletRow.trust-review_ready {
+  border-left: 3px solid var(--terminal-warning);
+}
+
+.onchainWalletRow.trust-excluded {
+  opacity: 0.62;
 }
 
 .onchainWalletRow.degraded {
@@ -3062,6 +3124,42 @@ textarea:focus {
   color: var(--terminal-negative);
 }
 
+.whaleReviewMetrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-top: 1px solid var(--terminal-line);
+}
+
+.whaleReviewMetrics > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 11px 18px;
+}
+
+.whaleReviewMetrics > div + div {
+  border-left: 1px solid var(--terminal-line);
+}
+
+.whaleReviewMetrics strong {
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.whaleValidationProgress i {
+  display: block;
+  width: 100%;
+  height: 3px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.whaleValidationProgress i b {
+  display: block;
+  height: 100%;
+  background: var(--terminal-positive);
+}
+
 .onchainPositions {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -3092,9 +3190,32 @@ textarea:focus {
   }
 
   .onchainToolbar,
-  .onchainWalletRow header {
+  .onchainWalletRow header,
+  .whaleValidationBoard {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .whaleValidationFilters {
+    width: 100%;
+    overflow-x: auto;
+  }
+
+  .whaleValidationFilters button {
+    flex: 1 0 auto;
+  }
+
+  .whaleReviewMetrics {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .whaleReviewMetrics > div:nth-child(3) {
+    border-left: 0;
+    border-top: 1px solid var(--terminal-line);
+  }
+
+  .whaleReviewMetrics > div:nth-child(4) {
+    border-top: 1px solid var(--terminal-line);
   }
 
   .onchainToolbar .onchainToolbarActions,

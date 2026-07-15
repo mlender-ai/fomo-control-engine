@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid5
 
@@ -28,6 +28,7 @@ LOOKAHEAD_AUDIT = {
     "money_flow": "non-provisional derivative interval snapshot; no future price bars",
     "whale": "Hyperliquid fill time is the observation anchor; only later closed candles are scored",
 }
+WHALE_VALIDATION_DAYS = 28
 
 
 def score_candidates(
@@ -221,7 +222,7 @@ def _review_signature(
     settings: Any,
     signature_key: str,
     stats: list[BacktestStat],
-    live: dict[str, dict[str, int]],
+    live: dict[str, dict[str, Any]],
     audit: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     first = stats[0]
@@ -257,7 +258,17 @@ def _review_signature(
     ]
     blocked_regimes = sorted(set(sampled_regimes) - set(qualifying_regimes))
     regime_gate_passed = not regimes or (bool(qualifying_regimes) and not blocked_regimes)
-    promotion_eligible = bool(state == "candidate" and total_n >= minimum_n and ci_low is not None and ci_low >= minimum_ci and regime_gate_passed)
+    validation_started_at = live_bucket.get("first_observed_at")
+    validation_elapsed_days = _elapsed_days(validation_started_at)
+    validation_calendar_complete = first.engine != "whale" or validation_elapsed_days >= WHALE_VALIDATION_DAYS
+    promotion_eligible = bool(
+        state == "candidate"
+        and total_n >= minimum_n
+        and ci_low is not None
+        and ci_low >= minimum_ci
+        and regime_gate_passed
+        and validation_calendar_complete
+    )
     warning = _prediction_warning(first.engine, total_n, win_pct, ci_low, minimum_n, minimum_ci)
     return {
         "candidate_review": True,
@@ -284,6 +295,13 @@ def _review_signature(
             },
         },
         "remaining_samples": max(0, minimum_n - total_n),
+        "validation_window": {
+            "started_at": validation_started_at,
+            "required_days": WHALE_VALIDATION_DAYS if first.engine == "whale" else 0,
+            "elapsed_days": validation_elapsed_days,
+            "remaining_days": max(0, WHALE_VALIDATION_DAYS - validation_elapsed_days) if first.engine == "whale" else 0,
+            "calendar_complete": validation_calendar_complete,
+        },
         "promotion_eligible": promotion_eligible,
         "prediction_warning": warning,
         "thresholds": {"min_sample_size": minimum_n, "min_ci_low_pct": minimum_ci},
@@ -298,7 +316,7 @@ def _empty_review(
     engine: str,
     event_type: str,
     label: str,
-    live: dict[str, dict[str, int]],
+    live: dict[str, dict[str, Any]],
     audit: dict[str, dict[str, Any]],
 ) -> dict[str, Any]:
     minimum_n = int(getattr(settings, "signature_validated_min_sample", 30))
@@ -399,10 +417,12 @@ def _degrade_if_needed(repo: Any, review: dict[str, Any]) -> Any | None:
     )
 
 
-def _live_evidence(repo: Any) -> dict[str, dict[str, int]]:
+def _live_evidence(repo: Any) -> dict[str, dict[str, Any]]:
     scores: list[JudgmentScore] = repo.list_judgment_scores(position_id=CANDIDATE_SENTINEL_POSITION_ID, limit=10000)
     score_by_judgment = {score.judgment_id: score for score in scores if score.judgment_type == "candidate_signature"}
-    buckets: dict[str, dict[str, int]] = defaultdict(lambda: {"observed": 0, "scored": 0, "wins": 0, "wins_2r": 0})
+    buckets: dict[str, dict[str, Any]] = defaultdict(
+        lambda: {"observed": 0, "scored": 0, "wins": 0, "wins_2r": 0, "first_observed_at": None}
+    )
     for judgment in repo.list_judgments(CANDIDATE_SENTINEL_POSITION_ID, limit=10000):
         if judgment.type != "candidate_signature":
             continue
@@ -412,12 +432,27 @@ def _live_evidence(repo: Any) -> dict[str, dict[str, int]]:
         signature_key = str(judgment.claim.get("signature_key") or engine)
         bucket = buckets[signature_key]
         bucket["observed"] += 1
+        observed_at = judgment.as_of.isoformat()
+        if bucket["first_observed_at"] is None or observed_at < bucket["first_observed_at"]:
+            bucket["first_observed_at"] = observed_at
         score = score_by_judgment.get(judgment.judgment_id)
         if score is not None and score.outcome != "untested":
             bucket["scored"] += 1
             bucket["wins"] += 1 if score.outcome == "correct" else 0
             bucket["wins_2r"] += 1 if bool(score.metrics.get("win_2r")) else 0
     return dict(buckets)
+
+
+def _elapsed_days(value: Any) -> int:
+    if not value:
+        return 0
+    try:
+        started_at = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if started_at.tzinfo is None:
+            started_at = started_at.replace(tzinfo=timezone.utc)
+        return max(0, int((utc_now() - started_at).total_seconds() // 86400))
+    except (TypeError, ValueError):
+        return 0
 
 
 def _merge_regimes(stats: list[BacktestStat]) -> dict[str, dict[str, Any]]:

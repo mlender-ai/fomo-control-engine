@@ -1395,10 +1395,22 @@ export type PositionChartAnalysis = {
 export type OnchainWhaleReview = {
   signature_key: string;
   state: string;
+  trust_status: "validating" | "review_ready" | "trusted" | "excluded";
   sample_size: number;
+  observed_count: number;
   win_1r_pct: number | null;
   win_1r_ci: [number, number] | null;
   remaining_samples: number;
+  cumulative_return_r: number;
+  average_return_r: number | null;
+  profit_factor_r: number | null;
+  validation_started_at: string | null;
+  validation_days: number;
+  validation_required_days: number;
+  validation_remaining_days: number;
+  validation_progress_pct: number;
+  validation_calendar_complete: boolean;
+  promotion_eligible: boolean;
   warning?: string | null;
 };
 

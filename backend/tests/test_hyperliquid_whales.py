@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from uuid import NAMESPACE_URL, uuid5
 
 import pytest
 
 from app.analyst.confluence import build_confluence
 from app.analyst.signature_registry import record_transition
 from app.api.deps import configure_runtime
+from app.backtest.candidate_scoring import CANDIDATE_SENTINEL_POSITION_ID, score_candidates
 from app.core.config import Settings
-from app.db.models import WhaleEvent, WhaleWallet, utc_now
+from app.db.models import BacktestStat, JudgmentLedgerEntry, JudgmentScore, WhaleEvent, WhaleWallet, utc_now
 from app.db.repository import MemoryRepository, create_repository
 from app.onchain.hyperliquid.collector import collect_whale_positions, event_from_fill, whale_signature_key
 from app.onchain.hyperliquid.leaderboard import discover_leaderboard_wallets, select_candidates
@@ -240,6 +242,97 @@ def test_whale_dashboard_reports_current_exposure_and_signed_flow() -> None:
     assert dashboard["symbol_activity"]["ETHUSDT"]["recent_events"][0]["event"] == "open"
 
 
+def test_whale_dashboard_exposes_four_week_follow_performance() -> None:
+    repo = MemoryRepository()
+    repo.upsert_whale_wallet(WhaleWallet(address=ADDRESS, label="테스트 고래"))
+    judgment = JudgmentLedgerEntry(
+        judgment_id="whale:test-score",
+        position_id=CANDIDATE_SENTINEL_POSITION_ID,
+        source_type="hyperliquid_fill",
+        as_of=utc_now() - timedelta(days=14),
+        type="candidate_signature",
+        claim={"signature_key": whale_signature_key(ADDRESS), "engine": "whale", "direction": "long"},
+    )
+    repo.add_judgment(judgment)
+    repo.add_judgment_score(
+        JudgmentScore(
+            judgment_id=judgment.judgment_id,
+            position_id=CANDIDATE_SENTINEL_POSITION_ID,
+            judgment_type="candidate_signature",
+            outcome="correct",
+            detail="1R",
+            metrics={"realized_rr": 1.25},
+        )
+    )
+
+    review = whale_dashboard(repo, Settings())["wallets"][0]["review"]
+
+    assert review["trust_status"] == "validating"
+    assert review["sample_size"] == 1
+    assert review["win_1r_pct"] == 100.0
+    assert review["cumulative_return_r"] == 1.25
+    assert review["average_return_r"] == 1.25
+    assert review["validation_days"] == 14
+    assert review["validation_remaining_days"] == 14
+
+
+def test_whale_promotion_requires_full_four_week_calendar() -> None:
+    repo = MemoryRepository()
+    key = whale_signature_key(ADDRESS)
+    repo.upsert_backtest_stat(
+        BacktestStat(
+            signature_key=key,
+            symbol="__WHALE__",
+            timeframe="4h",
+            asset_class="crypto",
+            scope="all",
+            engine="whale",
+            event_type="whale_entry",
+            strength_class="candidate",
+            direction="neutral",
+            payload={"label": "테스트 고래", "signature": {"wallet_address": ADDRESS}},
+        )
+    )
+    for index in range(30):
+        judgment_id = f"whale:calendar:{index}"
+        repo.add_judgment(
+            JudgmentLedgerEntry(
+                id=uuid5(NAMESPACE_URL, judgment_id),
+                judgment_id=judgment_id,
+                position_id=CANDIDATE_SENTINEL_POSITION_ID,
+                source_type="hyperliquid_fill",
+                as_of=utc_now() - timedelta(days=7),
+                type="candidate_signature",
+                claim={"signature_key": key, "engine": "whale", "direction": "long"},
+            )
+        )
+        repo.add_judgment_score(
+            JudgmentScore(
+                id=uuid5(NAMESPACE_URL, f"score:{judgment_id}"),
+                judgment_id=judgment_id,
+                position_id=CANDIDATE_SENTINEL_POSITION_ID,
+                judgment_type="candidate_signature",
+                outcome="correct",
+                detail="1R",
+                metrics={"win_1r": True, "realized_rr": 1.0},
+            )
+        )
+
+    review = score_candidates(repo, Settings(), engines={"whale"})["signatures"][0]
+
+    assert review["sample_size"] == 30
+    assert review["validation_window"]["elapsed_days"] == 7
+    assert review["validation_window"]["calendar_complete"] is False
+    assert review["promotion_eligible"] is False
+
+    for judgment in repo.list_judgments(CANDIDATE_SENTINEL_POSITION_ID, limit=100):
+        repo.add_judgment(judgment.model_copy(update={"as_of": utc_now() - timedelta(days=29)}))
+    matured = score_candidates(repo, Settings(), engines={"whale"})["signatures"][0]
+
+    assert matured["validation_window"]["calendar_complete"] is True
+    assert matured["promotion_eligible"] is True
+
+
 def test_historical_short_exit_does_not_become_current_short_exposure() -> None:
     repo = MemoryRepository()
     repo.upsert_whale_wallet(WhaleWallet(address=ADDRESS, label="테스트 고래"))
@@ -352,7 +445,7 @@ async def test_whale_alert_uses_existing_state_machine_and_candidate_tone() -> N
     sender = FakeSender()
     # CI 는 FCE_TELEGRAM_ALERTS_ENABLED=false 를 주입 — 테스트는 명시적으로 켠다.
     engine = AlertEngine(
-        Settings(database_url="memory://", telegram_bot_token="token", telegram_chat_id="123", telegram_alerts_enabled=True),
+        Settings(database_url="memory://", telegram_bot_token="token", telegram_chat_id="123", telegram_alerts_enabled=True, telegram_quiet_hours_enabled=False),
         sender,
         NotificationState(),
     )
@@ -368,11 +461,13 @@ async def test_whale_alert_uses_existing_state_machine_and_candidate_tone() -> N
         entry_px=63_000,
         event_at=utc_now(),
     ).model_dump(mode="json")
-    dashboard = {"wallets": [{"address": ADDRESS, "review": {"state": "candidate", "sample_size": 4, "win_1r_pct": None}}]}
+    dashboard = {"wallets": [{"address": ADDRESS, "review": {"state": "candidate", "trust_status": "validating", "sample_size": 4, "win_1r_pct": 50.0, "cumulative_return_r": 0.5, "validation_days": 9, "validation_remaining_days": 19}}]}
 
     assert await engine.evaluate_whale_events([event], dashboard) == 1
     assert await engine.evaluate_whale_events([event], dashboard) == 0
     assert "미검증 관측" in sender.messages[0]
+    assert "추종 승률 50.0%" in sender.messages[0]
+    assert "누적 +0.50R" in sender.messages[0]
     assert "따라가기 신호가 아닙니다" in sender.messages[0]
     alert = repo.list_alerts()[0]
     assert alert.rule_id == "whale_entry"

@@ -5,7 +5,9 @@ from collections import defaultdict
 from datetime import timedelta
 from typing import Any
 
-from app.analyst.signature_registry import current_state
+from app.analyst.signature_registry import state_map
+from app.backtest.candidate_scoring import CANDIDATE_SENTINEL_POSITION_ID, WHALE_VALIDATION_DAYS
+from app.backtest.statistics import bootstrap_ci_from_counts
 from app.db.models import WhaleEvent, WhaleWallet, utc_now
 from app.onchain.hyperliquid.client import HyperliquidInfoClient
 from app.onchain.hyperliquid.collector import collect_whale_positions, whale_signature_key
@@ -63,12 +65,13 @@ def discover(repo: Any, settings: Any, *, client: Any | None = None) -> dict[str
 def whale_dashboard(repo: Any, settings: Any) -> dict[str, Any]:
     wallets = repo.list_whale_wallets(active=True, limit=max(1, int(settings.hyperliquid_whale_max_wallets)))
     states = repo.list_whale_position_states(limit=1000)
+    review_context = _wallet_review_context(repo)
     by_wallet: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for state in states:
         by_wallet[str(state.get("wallet_address") or "").lower()].append(state)
     rows = []
     for wallet in wallets:
-        review = _wallet_review(repo, wallet.address)
+        review = _wallet_review(wallet.address, review_context)
         rows.append(
             {
                 **wallet.model_dump(mode="json"),
@@ -77,8 +80,8 @@ def whale_dashboard(repo: Any, settings: Any) -> dict[str, Any]:
                 "leaderboard": wallet.payload.get("discovery") if isinstance(wallet.payload.get("discovery"), dict) else None,
                 "positions": sorted(by_wallet.get(wallet.address.lower(), []), key=lambda item: float(item.get("size_usd") or 0), reverse=True),
                 "review": review,
-                "marker_emphasis": review["state"] == "validated",
-                "direction_eligible": review["state"] == "validated",
+                "marker_emphasis": review["trust_status"] == "trusted",
+                "direction_eligible": review["trust_status"] == "trusted",
             }
         )
     return {
@@ -87,10 +90,10 @@ def whale_dashboard(repo: Any, settings: Any) -> dict[str, Any]:
         "max_wallets": int(settings.hyperliquid_whale_max_wallets),
         "minimum_event_size_usd": float(settings.hyperliquid_whale_min_size_usd),
         "wallets": rows,
-        "recent_events": [_event_payload(repo, event) for event in repo.list_whale_events(limit=100)],
+        "recent_events": [_event_payload(event, review_context) for event in repo.list_whale_events(limit=100)],
         "discovery": cached_discovery(repo),
         "flow": _flow_dashboard(repo, wallets, states),
-        "symbol_activity": _symbol_activity(repo, wallets, states),
+        "symbol_activity": _symbol_activity(repo, wallets, states, review_context),
         "rate_budget": {
             "poll_interval_seconds": int(settings.hyperliquid_whale_poll_interval_seconds),
             "position_weight_per_wallet": 2,
@@ -102,7 +105,12 @@ def whale_dashboard(repo: Any, settings: Any) -> dict[str, Any]:
     }
 
 
-def _symbol_activity(repo: Any, wallets: list[WhaleWallet], states: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+def _symbol_activity(
+    repo: Any,
+    wallets: list[WhaleWallet],
+    states: list[dict[str, Any]],
+    review_context: dict[str, Any],
+) -> dict[str, dict[str, Any]]:
     active = {wallet.address.lower(): wallet for wallet in wallets}
     positions: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for state in states:
@@ -150,7 +158,7 @@ def _symbol_activity(repo: Any, wallets: list[WhaleWallet], states: list[dict[st
             "short_wallet_count": len({item["wallet_address"] for item in short_rows}),
             "wallet_count": len({item["wallet_address"] for item in rows}),
             "positions": rows[:8],
-            "recent_events": [_event_payload(repo, event) for event in events.get(symbol, [])],
+            "recent_events": [_event_payload(event, review_context) for event in events.get(symbol, [])],
             "as_of": max(as_of_values, default=None),
         }
     return result
@@ -250,6 +258,7 @@ def chart_onchain_context(repo: Any, symbol: str, timeframe: str, candles: list[
     observed_symbols.update(event.symbol.upper() for event in events)
     supported = normalized in catalog if catalog else normalized in observed_symbols
     duration = _timeframe_seconds(timeframe)
+    review_context = _wallet_review_context(repo)
     now_s = int(utc_now().timestamp())
     candle_times = sorted(int(candle.get("time") or 0) for candle in candles if int(candle.get("time") or 0) > 0)
     groups: dict[tuple[int, str, str], list[WhaleEvent]] = defaultdict(list)
@@ -263,7 +272,7 @@ def chart_onchain_context(repo: Any, symbol: str, timeframe: str, candles: list[
     markers = []
     for (anchor, kind, side), grouped in groups.items():
         ranked = sorted(grouped, key=lambda item: item.size_usd, reverse=True)
-        items = [_event_payload(repo, item) for item in ranked]
+        items = [_event_payload(item, review_context) for item in ranked]
         size_usd = sum(item.size_usd for item in ranked)
         emphasized = any(item["validation_state"] == "validated" for item in items)
         markers.append(
@@ -281,7 +290,7 @@ def chart_onchain_context(repo: Any, symbol: str, timeframe: str, candles: list[
             }
         )
     markers = sorted(markers, key=lambda item: (item["size_usd"], item["time"]), reverse=True)[:8]
-    validated_evidence = _validated_consensus(repo, normalized)
+    validated_evidence = _validated_consensus(repo, normalized, review_context)
     return {
         "supported": supported,
         "unsupported_reason": None if supported else "Hyperliquid perp 메타에 없는 심볼",
@@ -292,12 +301,12 @@ def chart_onchain_context(repo: Any, symbol: str, timeframe: str, candles: list[
     }
 
 
-def _validated_consensus(repo: Any, symbol: str) -> list[dict[str, Any]]:
+def _validated_consensus(repo: Any, symbol: str, review_context: dict[str, Any]) -> list[dict[str, Any]]:
     states = [state for state in repo.list_whale_position_states(limit=1000) if str(state.get("symbol") or "").upper() == symbol]
     rows = []
     for state in states:
-        review = _wallet_review(repo, str(state.get("wallet_address") or ""))
-        if review["state"] != "validated":
+        review = _wallet_review(str(state.get("wallet_address") or ""), review_context)
+        if review["trust_status"] != "trusted":
             continue
         ci = review.get("win_1r_ci") or []
         rows.append(
@@ -316,8 +325,8 @@ def _validated_consensus(repo: Any, symbol: str) -> list[dict[str, Any]]:
     return rows
 
 
-def _event_payload(repo: Any, event: WhaleEvent) -> dict[str, Any]:
-    review = _wallet_review(repo, event.wallet_address)
+def _event_payload(event: WhaleEvent, review_context: dict[str, Any]) -> dict[str, Any]:
+    review = _wallet_review(event.wallet_address, review_context)
     return {
         **event.model_dump(mode="json"),
         "validation_state": review["state"],
@@ -331,18 +340,82 @@ def _event_payload(repo: Any, event: WhaleEvent) -> dict[str, Any]:
     }
 
 
-def _wallet_review(repo: Any, address: str) -> dict[str, Any]:
+def _wallet_review_context(repo: Any) -> dict[str, Any]:
+    judgments_by_key: dict[str, list[Any]] = defaultdict(list)
+    for judgment in repo.list_judgments(CANDIDATE_SENTINEL_POSITION_ID, limit=10000):
+        if judgment.type != "candidate_signature":
+            continue
+        signature_key = str(judgment.claim.get("signature_key") or "")
+        if signature_key.startswith("whale_entry_"):
+            judgments_by_key[signature_key].append(judgment)
+    scores_by_judgment = {
+        score.judgment_id: score
+        for score in repo.list_judgment_scores(position_id=CANDIDATE_SENTINEL_POSITION_ID, limit=10000)
+        if score.judgment_type == "candidate_signature" and score.outcome != "untested"
+    }
+    review_payloads = {
+        stat.signature_key: stat.payload
+        for stat in repo.list_backtest_stats(limit=5000)
+        if stat.payload.get("candidate_review") and stat.signature_key.startswith("whale_entry_")
+    }
+    return {
+        "judgments_by_key": judgments_by_key,
+        "scores_by_judgment": scores_by_judgment,
+        "review_payloads": review_payloads,
+        "states": state_map(repo),
+    }
+
+
+def _wallet_review(address: str, context: dict[str, Any]) -> dict[str, Any]:
     key = whale_signature_key(address)
-    reviews = [stat for stat in repo.list_backtest_stats(signature_key=key, limit=20) if stat.payload.get("candidate_review")]
-    payload = reviews[0].payload if reviews else {}
-    state = current_state(repo, key, stat=payload)
+    payload = context["review_payloads"].get(key, {})
+    judgments = context["judgments_by_key"].get(key, [])
+    scores = [
+        context["scores_by_judgment"][judgment.judgment_id]
+        for judgment in judgments
+        if judgment.judgment_id in context["scores_by_judgment"]
+    ]
+    sample_size = len(scores)
+    wins = sum(1 for score in scores if score.outcome == "correct")
+    win_1r_pct = round(wins / sample_size * 100, 1) if sample_size else None
+    win_1r_ci = list(bootstrap_ci_from_counts(wins, sample_size)) if sample_size else None
+    rr_values = [float(score.metrics.get("realized_rr") or 0.0) for score in scores]
+    positive_r = sum(value for value in rr_values if value > 0)
+    negative_r = abs(sum(value for value in rr_values if value < 0))
+    started_at = min((judgment.as_of for judgment in judgments), default=None)
+    elapsed_days = max(0, int((utc_now() - started_at).total_seconds() // 86400)) if started_at else 0
+    calendar_complete = elapsed_days >= WHALE_VALIDATION_DAYS
+    state = context["states"].get(key, "candidate")
+    ci_low = float(win_1r_ci[0]) if win_1r_ci else None
+    if state == "validated":
+        trust_status = "trusted"
+    elif state in {"degraded", "quarantined"}:
+        trust_status = "excluded"
+    elif calendar_complete and (sample_size < 30 or ci_low is None or ci_low < 55.0):
+        trust_status = "excluded"
+    elif calendar_complete and sample_size >= 30 and ci_low is not None and ci_low >= 55.0:
+        trust_status = "review_ready"
+    else:
+        trust_status = "validating"
     return {
         "signature_key": key,
         "state": state,
-        "sample_size": int(payload.get("sample_size") or 0),
-        "win_1r_pct": payload.get("win_1r_pct"),
-        "win_1r_ci": payload.get("win_1r_ci"),
-        "remaining_samples": int(payload.get("remaining_samples") or max(0, 30 - int(payload.get("sample_size") or 0))),
+        "trust_status": trust_status,
+        "sample_size": sample_size,
+        "observed_count": len(judgments),
+        "win_1r_pct": win_1r_pct,
+        "win_1r_ci": win_1r_ci,
+        "remaining_samples": max(0, 30 - sample_size),
+        "cumulative_return_r": round(sum(rr_values), 2),
+        "average_return_r": round(sum(rr_values) / sample_size, 2) if sample_size else None,
+        "profit_factor_r": round(positive_r / negative_r, 2) if negative_r > 0 else (None if positive_r <= 0 else 99.0),
+        "validation_started_at": started_at.isoformat() if started_at else None,
+        "validation_days": elapsed_days,
+        "validation_required_days": WHALE_VALIDATION_DAYS,
+        "validation_remaining_days": max(0, WHALE_VALIDATION_DAYS - elapsed_days),
+        "validation_progress_pct": min(100.0, round(elapsed_days / WHALE_VALIDATION_DAYS * 100, 1)),
+        "validation_calendar_complete": calendar_complete,
+        "promotion_eligible": trust_status == "review_ready" or bool(payload.get("promotion_eligible")),
         "warning": payload.get("prediction_warning") or ("예측력 미검증" if state != "validated" else None),
     }
 
