@@ -54,6 +54,7 @@ from app.memory.engine import (
     memory_from_trade,
     memory_from_validation,
 )
+from app.marketdata.occ_options import occ_options_for_analysis
 from app.monitoring.engine import build_monitoring_log, calculate_pnl
 from app.performance.metrics import PerformanceConfig, build_performance_report
 from app.positions.action_plan import build_action_plan
@@ -1514,6 +1515,11 @@ def _chart_analysis_bundle_for_position(
             None,
             _trade_flow_for_snapshot(position.symbol, timeframe, snapshot.candles) if include_trade_flow else None,
             derivatives=_derivative_context(position.symbol),
+        )
+        market_analysis["options"] = occ_options_for_analysis(
+            position.symbol,
+            str(market_analysis.get("asset_class") or "unknown"),
+            settings,
         )
         onchain = chart_onchain_context(repository, position.symbol, timeframe, list(market_analysis.get("candles") or []))
         market_analysis["onchain"] = onchain

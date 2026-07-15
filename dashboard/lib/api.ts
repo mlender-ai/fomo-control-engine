@@ -1268,6 +1268,27 @@ export type OneLinerSummary = {
   policy: string;
 };
 
+export type OccOptionsSummary = {
+  available: boolean;
+  status: string;
+  source: "occ_public" | string;
+  source_label: string;
+  underlying: string;
+  as_of?: string;
+  open_interest_basis?: "previous_settlement" | string;
+  call_open_interest?: number;
+  put_open_interest?: number;
+  put_call_oi_ratio?: number | null;
+  call_volume?: number | null;
+  put_volume?: number | null;
+  put_call_volume_ratio?: number | null;
+  volume_date?: string | null;
+  contract_count?: number;
+  top_call_contracts?: Array<{ expiry: string; strike: number; open_interest: number }>;
+  top_put_contracts?: Array<{ expiry: string; strike: number; open_interest: number }>;
+  notes?: string[];
+};
+
 export type PositionChartAnalysis = {
   detail_level?: "compact" | "full";
   position_id: string;
@@ -1340,6 +1361,7 @@ export type PositionChartAnalysis = {
   };
   liquidity: LiquidityContext;
   derivatives?: DerivativesContext;
+  options?: OccOptionsSummary | null;
   onchain?: OnchainChartContext;
   wyckoff: Record<string, unknown>;
   wyckoff_range: WyckoffRange | null;

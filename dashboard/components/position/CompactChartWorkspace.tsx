@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowDown, ArrowUp, Minus, ShieldCheck, TriangleAlert, Waves } from "lucide-react";
-import type { CompactChartGauges, DerivativesContext, PositionActionPlan, PositionChartAnalysis } from "@/lib/api";
+import type { CompactChartGauges, DerivativesContext, OccOptionsSummary, PositionActionPlan, PositionChartAnalysis } from "@/lib/api";
 import { MINIMAL_FIXED_LAYER_STATE } from "@/lib/chartLayers";
 import { formatPrice } from "@/lib/format";
 import { PositionChart, type PositionChartOverlay } from "./PositionChart";
@@ -55,7 +55,7 @@ export function CompactChartWorkspace({
           compressed
           gauges={gauges}
         />
-        <MoneyFlowCard derivatives={analysis?.derivatives} gauges={gauges} />
+        <MoneyFlowCard derivatives={analysis?.derivatives} gauges={gauges} options={analysis?.options} />
       </div>
       <CompactGaugePanel
         gauges={gauges}
@@ -138,14 +138,16 @@ export function CompactGaugePanel({
 
 export function MoneyFlowCard({
   derivatives,
-  gauges = null
+  gauges = null,
+  options: occOptions = null
 }: {
   derivatives: DerivativesContext | null | undefined;
   gauges?: CompactChartGauges | null;
+  options?: OccOptionsSummary | null;
 }) {
   const flow = derivatives?.signals?.money_flow;
   const coinglassRaw = derivatives?.coinglass?.raw_json;
-  const options = coinglassRaw && typeof coinglassRaw.options_summary === "object"
+  const cryptoOptions = coinglassRaw && typeof coinglassRaw.options_summary === "object"
     ? coinglassRaw.options_summary as Record<string, unknown>
     : null;
   const coinglassLocked = derivatives?.coinglass?.source_status === "locked";
@@ -223,8 +225,13 @@ export function MoneyFlowCard({
       <footer className="moneyFlowIndicatorFooter">
         <span>{flow?.source_label || "출처 확인 중"}</span>
         <small>CVD = 실제 입금액이 아닌 시장가 매수−매도 체결 우위</small>
-        {options?.available === true ? (
-          <small>옵션 풋/콜 {formatCompactNumber(options.put_call_ratio)} · OI {formatCompactNumber(options.options_open_interest)}</small>
+        {occOptions?.available === true ? (
+          <>
+            <small>OCC {occOptions.underlying} 옵션 OI(전일) · 콜 {formatCompactNumber(occOptions.call_open_interest)} · 풋 {formatCompactNumber(occOptions.put_open_interest)} · P/C {formatCompactNumber(occOptions.put_call_oi_ratio)}</small>
+            <small>{occOptions.volume_date ?? "최근 완료일"} 계약량 · 콜 {formatCompactNumber(occOptions.call_volume)} · 풋 {formatCompactNumber(occOptions.put_volume)} · P/C {formatCompactNumber(occOptions.put_call_volume_ratio)} · 관측 전용</small>
+          </>
+        ) : cryptoOptions?.available === true ? (
+          <small>옵션 풋/콜 {formatCompactNumber(cryptoOptions.put_call_ratio)} · OI {formatCompactNumber(cryptoOptions.options_open_interest)}</small>
         ) : coinglassLocked ? (
           <small>Coinglass 집계·BTC/ETH 옵션 연결 대기</small>
         ) : null}

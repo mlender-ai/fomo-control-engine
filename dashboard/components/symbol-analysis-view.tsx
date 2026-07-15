@@ -203,7 +203,7 @@ export function SymbolAnalysisView({
             density={workspace.density}
             intentZoneSelector={intentZoneSelector}
           />
-          <MoneyFlowCard derivatives={chartAnalysis?.derivatives} />
+          <MoneyFlowCard derivatives={chartAnalysis?.derivatives} options={chartAnalysis?.options} />
           {chartAnalysis && (!chartAnalysis.asset_class || chartAnalysis.asset_class === "crypto") ? (
             <LiquidationHeatmapPanel symbol={chartAnalysis.symbol} currentPrice={chartAnalysis.mark_price} />
           ) : null}

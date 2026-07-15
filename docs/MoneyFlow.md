@@ -20,6 +20,17 @@ When `FCE_COINGLASS_API_KEY` is configured, optional feature probes request aggr
 
 An authentication, plan, or endpoint error locks only that feature. It does not disable Tier 1 collection.
 
+### RWA options: OCC public data
+
+WO-FCE-79 adds official, keyless OCC observations for supported US stock/index underlyings such as `SOXLUSDT` → `SOXL`:
+
+- Series Search: call/put open interest by expiry and strike. OCC publishes this on a previous-settlement basis, not as an intraday live figure.
+- Volume Query: call/put reported contract quantity for the latest completed business day.
+- Exact underlying matching excludes adjusted corporate-action symbols such as `2SOXL`.
+- Results are cached for 30 minutes by default. `FCE_OCC_OPTIONS_ENABLED`, `FCE_OCC_OPTIONS_CACHE_TTL_SECONDS`, and `FCE_OCC_OPTIONS_TIMEOUT_SECONDS` control the collector.
+
+The UI and Telegram `/scout` show call OI, put OI, put/call OI ratio, call volume, put volume, and put/call volume ratio. These are **observation-only positioning data**. A high ratio is not treated as an automatic bearish signal: hedging, covered positions, expiry concentration, and dealer inventory are not inferable from aggregate contracts alone. The values never enter one-line TA counts, confluence, setup scoring, or automated entry logic.
+
 ## Window And Direction
 
 The current observation uses up to the most recent 24 confirmed 4-hour candle buckets (96 hours). Missing historical fills remain missing and are never synthesized. Direction thresholds are not fixed constants. For each input, the engine calculates the 40th percentile of the absolute values observed during the latest 30 days:
@@ -60,4 +71,4 @@ Only confirmed observations are promoted to alerts and evidence. `futures_led` d
 
 ## Rate Budget
 
-The six core Coinglass requests plus up to four optional money-flow/options probes require a worst-case budget of 10 requests per symbol. Optional unsupported probes do not consume the local request counter.
+The six core Coinglass requests plus up to four optional money-flow/options probes require a worst-case budget of 10 requests per symbol. Optional unsupported probes do not consume the local request counter. OCC uses a separate keyless path: one Series Search request plus up to five previous-business-day Volume Query attempts on a cold cache, then zero requests until the symbol cache expires.

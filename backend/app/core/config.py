@@ -180,6 +180,20 @@ class Settings(BaseSettings):
         10,
         validation_alias=AliasChoices("FCE_COINGLASS_REQUESTS_PER_SYMBOL", "COINGLASS_REQUESTS_PER_SYMBOL"),
     )
+    occ_options_enabled: bool = Field(
+        True,
+        validation_alias=AliasChoices("FCE_OCC_OPTIONS_ENABLED", "OCC_OPTIONS_ENABLED"),
+    )
+    occ_options_cache_ttl_seconds: int = Field(
+        1800,
+        ge=60,
+        validation_alias=AliasChoices("FCE_OCC_OPTIONS_CACHE_TTL_SECONDS", "OCC_OPTIONS_CACHE_TTL_SECONDS"),
+    )
+    occ_options_timeout_seconds: float = Field(
+        10.0,
+        gt=0,
+        validation_alias=AliasChoices("FCE_OCC_OPTIONS_TIMEOUT_SECONDS", "OCC_OPTIONS_TIMEOUT_SECONDS"),
+    )
     db_backup_enabled: bool = Field(
         True,
         validation_alias=AliasChoices("FCE_DB_BACKUP_ENABLED", "DB_BACKUP_ENABLED"),

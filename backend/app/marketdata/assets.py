@@ -37,6 +37,7 @@ STOCK_TICKERS = {
     "PLTR",
     "POPMART",
     "SMCI",
+    "SOXL",
     "SKHY",
     "TSLA",
     "TSLL",

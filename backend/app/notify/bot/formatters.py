@@ -454,6 +454,18 @@ def format_scout_quick_answer(payload: dict[str, Any]) -> str:
     else:
         reasons = _scout_reason_line(summary)
         lines.append(f"근거: {escape(reasons or '모듈별 판정 데이터가 아직 없습니다.')}")
+    options = _dump(_dump(payload.get("analysis")).get("options"))
+    if options.get("available") is True:
+        volume_date = str(options.get("volume_date") or "최근 완료일")
+        lines.extend(
+            [
+                "",
+                f"<b>옵션 계약 · {escape(str(options.get('underlying') or symbol))} · OCC</b>",
+                f"OI(전일 결제) · 콜 {_number(options.get('call_open_interest'))} · 풋 {_number(options.get('put_open_interest'))} · P/C {_ratio(options.get('put_call_oi_ratio'))}",
+                f"계약량({escape(volume_date)}) · 콜 {_number(options.get('call_volume'))} · 풋 {_number(options.get('put_volume'))} · P/C {_ratio(options.get('put_call_volume_ratio'))}",
+                "관측 전용 · 종합 방향 판정에는 미반영",
+            ]
+        )
     trigger = _scout_trigger(summary)
     if trigger:
         lines.extend(["", f"트리거까지: {escape(trigger)}"])

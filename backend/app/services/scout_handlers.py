@@ -41,6 +41,7 @@ from app.derivatives.context import derivative_context_for_chart
 from app.exchange.bitget.provider import BitgetMarketDataProvider
 from app.indicators.engine import calculate_indicators
 from app.marketdata.assets import classify_asset_class
+from app.marketdata.occ_options import occ_options_for_analysis
 from app.performance.metrics import attach_kelly_to_simulation
 from app.positions.chart_analysis import build_chart_analysis
 from app.positions.engine import direction_aware_score
@@ -553,6 +554,7 @@ def _compute_analysis_entry(
     try:
         derivatives = _derivative_context(symbol)
         analysis = build_chart_analysis(snapshot, None, trade_flow, derivatives=derivatives)
+        analysis["options"] = occ_options_for_analysis(snapshot.symbol, str(analysis.get("asset_class") or "unknown"), runtime.settings)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     market_regime = None

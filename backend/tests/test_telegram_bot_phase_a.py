@@ -227,6 +227,35 @@ def test_scout_quick_answer_uses_one_liner_strip() -> None:
     assert "매도하세요" not in text
 
 
+def test_scout_quick_answer_shows_occ_put_call_contracts_as_observation() -> None:
+    text = format_scout_quick_answer(
+        {
+            "symbol": "SOXLUSDT",
+            "timeframe": "4h",
+            "as_of": "2026-07-15T15:24:00+00:00",
+            "analysis": {
+                "options": {
+                    "available": True,
+                    "underlying": "SOXL",
+                    "call_open_interest": 434745,
+                    "put_open_interest": 800996,
+                    "put_call_oi_ratio": 1.8425,
+                    "call_volume": 123628,
+                    "put_volume": 257380,
+                    "put_call_volume_ratio": 2.0819,
+                    "volume_date": "2026-07-14",
+                }
+            },
+            "summary": {"long_score": 50, "short_score": 50},
+        }
+    )
+
+    assert "옵션 계약 · SOXL · OCC" in text
+    assert "OI(전일 결제) · 콜 434.75K · 풋 801.00K · P/C 1.84" in text
+    assert "계약량(2026-07-14) · 콜 123.63K · 풋 257.38K · P/C 2.08" in text
+    assert "관측 전용 · 종합 방향 판정에는 미반영" in text
+
+
 def test_scout_quick_answer_uses_weighted_confluence_over_module_majority() -> None:
     one_liners = {
         "lines": [],
