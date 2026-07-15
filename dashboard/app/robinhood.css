@@ -1018,6 +1018,49 @@ textarea:focus {
   background: var(--rh-black);
 }
 
+.emaRibbonHud {
+  position: absolute;
+  z-index: 4;
+  top: 12px;
+  left: 14px;
+  display: grid;
+  grid-template-columns: auto auto auto;
+  align-items: baseline;
+  gap: 3px 9px;
+  padding: 7px 9px;
+  border-left: 2px solid var(--rh-muted);
+  background: color-mix(in srgb, var(--rh-black) 88%, transparent);
+  color: var(--rh-muted);
+  font-family: var(--rh-font-mono);
+  pointer-events: none;
+  backdrop-filter: blur(8px);
+}
+
+.emaRibbonHud span,
+.emaRibbonHud em,
+.emaRibbonHud small {
+  font-size: 9px;
+  font-style: normal;
+  letter-spacing: 0;
+}
+
+.emaRibbonHud strong {
+  color: var(--rh-white);
+  font-size: 11px;
+}
+
+.emaRibbonHud small {
+  grid-column: 1 / -1;
+}
+
+.emaRibbonHud.bullish { border-color: var(--rh-green); }
+.emaRibbonHud.bearish { border-color: var(--rh-red); }
+.emaRibbonHud.compressed { border-color: var(--rh-amber); }
+
+.emaRibbonHud.bullish strong { color: var(--rh-green-bright); }
+.emaRibbonHud.bearish strong { color: var(--rh-red); }
+.emaRibbonHud.compressed strong { color: var(--rh-amber); }
+
 .minimalChartVerdict,
 .harmonicNav,
 .chartVolumeSummary {
@@ -3424,6 +3467,13 @@ textarea:focus {
   .positionChartCanvasFrame,
   .compactChartMain .positionChartCanvasFrame {
     min-height: 430px;
+  }
+
+  .emaRibbonHud {
+    top: 8px;
+    left: 8px;
+    gap: 2px 6px;
+    padding: 6px 7px;
   }
 
   .engineBattleHero,

@@ -21,6 +21,7 @@ import {
   type TaFocusLayer
 } from "@/lib/chartLayers";
 import { confidenceLabel, DEFAULT_DENSITY, eventDisplayLimit, loadDensity, type Density } from "@/lib/density";
+import { buildEmaRibbon } from "@/lib/emaRibbon";
 import { formatPrice, signedPercent } from "@/lib/format";
 import { plainifyTaText, splitWyckoffEvents, taPlainTooltip, taShortLabel } from "@/lib/labels/taGlossary";
 import {
@@ -304,7 +305,7 @@ function signatureMatchesLayer(signature: Record<string, unknown> | undefined, l
   const source = `${signature?.engine ?? ""} ${signature?.event_type ?? ""}`.toLowerCase();
   const aliases: Record<ChartLayerId, string[]> = {
     plan: ["plan"], levels: ["level"], liquidity: ["liquidity", "sweep"], volume_profile: ["volume", "poc"],
-    wyckoff: ["wyckoff", "spring", "utad"], harmonic: ["harmonic", "prz"], flow: ["flow", "funding", "oi"], indicators: ["indicator", "technical"], onchain: ["onchain", "whale", "hyperliquid"]
+    wyckoff: ["wyckoff", "spring", "utad"], harmonic: ["harmonic", "prz"], flow: ["flow", "funding", "oi"], indicators: ["indicator", "technical"], ema: ["ema", "ribbon"], onchain: ["onchain", "whale", "hyperliquid"]
   };
   return aliases[layer].some((alias) => source.includes(alias));
 }
@@ -338,6 +339,10 @@ function focusedEvidenceClaim(analysis: PositionChartAnalysis | null, layer: Cha
   if (layer === "harmonic") return analysis.harmonic_patterns.length ? `하모닉 패턴 ${analysis.harmonic_patterns.length}개를 검증 중입니다.` : "확정 하모닉 패턴이 없습니다.";
   if (layer === "flow") return `거래량 상태는 ${volumeStateLabel(analysis.volume_xray.volume_state)}입니다.`;
   if (layer === "indicators") return "기술 지표의 방향 정합을 검증합니다.";
+  if (layer === "ema") {
+    const ribbon = buildEmaRibbon(analysis.candles);
+    return ribbon ? `EMA 20–55 ${ribbon.label} · 리본 폭 ${ribbon.spreadPct.toFixed(2)}%입니다.` : "EMA 리본 계산에 필요한 캔들이 부족합니다.";
+  }
   return "액션 플랜의 가격과 조건을 검증합니다.";
 }
 

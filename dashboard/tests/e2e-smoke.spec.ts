@@ -79,7 +79,12 @@ test("live position cockpit smoke path", async ({ page }) => {
   expect(proPanelBox!.height - proFrameBox!.height).toBeLessThan(220);
   await expect(page.getByTestId("chart-layer-flow")).toHaveCount(0);
   await expect(page.getByTestId("chart-layer-indicators")).toHaveCount(0);
+  await page.getByTestId("chart-layer-ema").click();
+  await expect(page.getByTestId("chart-layer-ema")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("ema-ribbon-hud")).toBeVisible();
+  await expect(page.getByTestId("ema-ribbon-hud")).toContainText("EMA 20–55");
   await page.getByTestId("chart-layer-wyckoff").click();
+  await expect(page.getByTestId("ema-ribbon-hud")).toHaveCount(0);
   await expect(page.getByTestId("chart-overlay")).toBeVisible();
   await page.getByTestId("chart-layer-liquidity").click();
   await expect(page.getByTestId("chart-layer-wyckoff")).toHaveAttribute("aria-pressed", "false");

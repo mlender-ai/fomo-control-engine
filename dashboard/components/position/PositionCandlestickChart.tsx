@@ -39,6 +39,7 @@ import {
 } from "@/lib/chartLayers";
 import { chartTheme, createChartPalette, type ResolvedChartPalette } from "@/lib/chartTheme";
 import type { Density } from "@/lib/density";
+import { buildEmaRibbon, type EmaRibbonResult, type EmaRibbonState } from "@/lib/emaRibbon";
 import { formatPrice } from "@/lib/format";
 import { localizeMarketCodes, phaseHintLabel, sourceLabel, timeframeLabel } from "@/lib/labels/marketStateLabels";
 import { splitWyckoffEvents, taGlossaryEntry, taShortLabel } from "@/lib/labels/taGlossary";
@@ -108,7 +109,8 @@ export function PositionCandlestickChart({
   const seriesLayerState = useMemo(
     () => ({
       flow: effectiveLayers.flow,
-      indicators: effectiveLayers.ta.includes("indicators")
+      indicators: effectiveLayers.ta.includes("indicators"),
+      ema: effectiveLayers.ta.includes("ema")
     }),
     [effectiveLayers.flow, effectiveLayers.ta]
   );
@@ -118,6 +120,7 @@ export function PositionCandlestickChart({
   );
   const lastCandle = validation.candles.at(-1);
   const averageVolume = validation.valid ? average(visibleCandles.map((candle) => candle.volume)) : 0;
+  const emaRibbon = useMemo(() => buildEmaRibbon(visibleCandles), [visibleCandles]);
   const harmonicFocused = layerMode === "pro" && effectiveLayers.ta.includes("harmonic");
   const harmonicPatterns = useMemo(
     () => [...analysis.harmonic_patterns].sort((left, right) => right.confidence - left.confidence),
@@ -371,6 +374,25 @@ export function PositionCandlestickChart({
       }
     }
 
+    if (seriesLayerState.ema && emaRibbon) {
+      for (const [index, ribbon] of emaRibbon.series.entries()) {
+        const emaSeries = chart.addSeries(LineSeries, {
+          color: emaRibbonColor(emaRibbon.state, index, palette),
+          lineWidth: index === 0 ? 2 : 1,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: false
+        });
+        emaSeries.setData(
+          ribbon.points.map((point) => ({
+            time: point.time as Time,
+            value: point.value,
+            color: emaRibbonColor(point.state, index, palette)
+          }))
+        );
+      }
+    }
+
     const labeled = mergeLineLabels(priceLines, container.clientHeight, visibleCandles);
     labeled.forEach((line) => {
       candleSeries.createPriceLine({
@@ -484,7 +506,7 @@ export function PositionCandlestickChart({
       if (overlayDrawRef.current === drawOverlay) overlayDrawRef.current = null;
       chart.remove();
     };
-  }, [analysis, averageVolume, priceLines, seriesLayerState, validation, visibleCandles, layerMode, viewportKey]);
+  }, [analysis, averageVolume, emaRibbon, priceLines, seriesLayerState, validation, visibleCandles, layerMode, viewportKey]);
 
   function pointerY(event: PointerEvent<HTMLDivElement>): number {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -611,6 +633,7 @@ export function PositionCandlestickChart({
       <div className={`positionChartCanvasFrame ${guideOpen ? "showOverlayGuides" : ""}`} data-testid="chart-canvas-frame">
         <div className="positionChartCanvas" data-testid="chart-canvas" ref={containerRef} />
         <svg className="volumeProfileOverlay" data-testid="chart-overlay" ref={overlayRef} />
+        {seriesLayerState.ema && emaRibbon ? <EmaRibbonHud ribbon={emaRibbon} /> : null}
         {zoneBand ? (
           <div
             className="chartIntentZoneBand"
@@ -666,6 +689,26 @@ function ChartLayerControls({
       <small>레이어 하나씩 검증 · shift-클릭 비교(최대 2)</small>
     </div>
   );
+}
+
+function EmaRibbonHud({ ribbon }: { ribbon: EmaRibbonResult }) {
+  const relation = ribbon.priceRelation === "above" ? "가격 리본 위" : ribbon.priceRelation === "below" ? "가격 리본 아래" : "가격 리본 내부";
+  return (
+    <div className={`emaRibbonHud ${ribbon.state}`} data-state={ribbon.state} data-testid="ema-ribbon-hud">
+      <span>EMA 20–55</span>
+      <strong>{ribbon.label}</strong>
+      <em>폭 {ribbon.spreadPct.toFixed(2)}%</em>
+      <small>{relation}</small>
+    </div>
+  );
+}
+
+function emaRibbonColor(state: EmaRibbonState, index: number, palette: ResolvedChartPalette): string {
+  const alpha = Math.max(0.42, 0.9 - index * 0.065);
+  if (state === "bullish") return palette.color("green", alpha);
+  if (state === "bearish") return palette.color("red", alpha);
+  if (state === "compressed") return palette.color("amber", alpha * 0.88);
+  return palette.color("neutral", alpha * 0.8);
 }
 
 type LabeledPriceLine = ChartPriceLine & { title: string };
