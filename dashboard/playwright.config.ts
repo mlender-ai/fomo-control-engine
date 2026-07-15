@@ -7,7 +7,7 @@ const webBaseUrl = process.env.PLAYWRIGHT_BASE_URL ?? `http://127.0.0.1:${webPor
 
 export default defineConfig({
   testDir: "./tests",
-  snapshotPathTemplate: "{testDir}/__screenshots__/{testFilePath}/{arg}{ext}",
+  snapshotPathTemplate: "{testDir}/__screenshots__/{testFilePath}/{platform}/{arg}{ext}",
   timeout: 30_000,
   fullyParallel: false,
   reporter: [["list"]],
