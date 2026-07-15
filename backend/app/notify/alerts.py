@@ -188,17 +188,20 @@ class AlertEngine:
     async def evaluate_whale_events(self, events: list[dict[str, Any]], dashboard: dict[str, Any]) -> int:
         if not self.settings.telegram_alerts_enabled or self.state.is_muted() or "whale_entry" not in self.settings.alert_enabled_rule_set:
             return 0
-        wallets = dashboard.get("wallets") if isinstance(dashboard.get("wallets"), list) else []
+        wallets_value = dashboard.get("wallets")
+        wallets: list[dict[str, Any]] = [item for item in wallets_value if isinstance(item, dict)] if isinstance(wallets_value, list) else []
         sent = 0
         for event in events:
             if not isinstance(event, dict) or event.get("event") not in {"open", "flip"}:
                 continue
-            raw = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+            raw_value = event.get("payload")
+            raw: dict[str, Any] = raw_value if isinstance(raw_value, dict) else {}
             if raw.get("baseline"):
                 continue
             address = str(event.get("wallet_address") or "")
-            wallet = next((item for item in wallets if item.get("address") == address), {})
-            review = wallet.get("review") if isinstance(wallet.get("review"), dict) else {}
+            wallet: dict[str, Any] = next((item for item in wallets if item.get("address") == address), {})
+            review_value = wallet.get("review")
+            review: dict[str, Any] = review_value if isinstance(review_value, dict) else {}
             validated = review.get("trust_status") == "trusted" or review.get("state") == "validated"
             side = "롱" if event.get("side") == "long" else "숏"
             size = _compact_usd(float(event.get("size_usd") or 0.0))

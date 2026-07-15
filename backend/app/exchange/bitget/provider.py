@@ -22,6 +22,7 @@ from app.exchange.bitget.trades import (
     BitgetTradeFill,
     aggregate_trade_buckets,
     cvd_series_from_buckets,
+    event_cvd_series_from_fills,
     parse_account_fill,
     parse_trade_fill,
     timeframe_seconds,
@@ -549,6 +550,7 @@ class BitgetMarketDataProvider(MarketDataProvider):
                 key_lock.release()
 
         buckets = aggregate_trade_buckets(fills, ordered, timeframe)
+        event_cvd = event_cvd_series_from_fills(fills)
         notes = []
         if not fills:
             notes.append("조회 범위 내 Bitget 실체결 데이터가 없습니다.")
@@ -566,10 +568,13 @@ class BitgetMarketDataProvider(MarketDataProvider):
                 "lookback_hours": self.trade_fill_lookback_hours,
                 "fills": len(fills),
                 "buckets": len(buckets),
+                "cvd_points": len(event_cvd),
+                "cvd_method": "event_time_fills" if event_cvd else None,
             },
             "fills": [fill.model_dump() for fill in fills],
             "buckets": [bucket.model_dump(mode="json") for bucket in buckets],
             "cvd": cvd_series_from_buckets(buckets),
+            "event_cvd": event_cvd,
             "notes": notes,
         }
 

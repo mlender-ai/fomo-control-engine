@@ -262,12 +262,7 @@ def _review_signature(
     validation_elapsed_days = _elapsed_days(validation_started_at)
     validation_calendar_complete = first.engine != "whale" or validation_elapsed_days >= WHALE_VALIDATION_DAYS
     promotion_eligible = bool(
-        state == "candidate"
-        and total_n >= minimum_n
-        and ci_low is not None
-        and ci_low >= minimum_ci
-        and regime_gate_passed
-        and validation_calendar_complete
+        state == "candidate" and total_n >= minimum_n and ci_low is not None and ci_low >= minimum_ci and regime_gate_passed and validation_calendar_complete
     )
     warning = _prediction_warning(first.engine, total_n, win_pct, ci_low, minimum_n, minimum_ci)
     return {
@@ -420,9 +415,7 @@ def _degrade_if_needed(repo: Any, review: dict[str, Any]) -> Any | None:
 def _live_evidence(repo: Any) -> dict[str, dict[str, Any]]:
     scores: list[JudgmentScore] = repo.list_judgment_scores(position_id=CANDIDATE_SENTINEL_POSITION_ID, limit=10000)
     score_by_judgment = {score.judgment_id: score for score in scores if score.judgment_type == "candidate_signature"}
-    buckets: dict[str, dict[str, Any]] = defaultdict(
-        lambda: {"observed": 0, "scored": 0, "wins": 0, "wins_2r": 0, "first_observed_at": None}
-    )
+    buckets: dict[str, dict[str, Any]] = defaultdict(lambda: {"observed": 0, "scored": 0, "wins": 0, "wins_2r": 0, "first_observed_at": None})
     for judgment in repo.list_judgments(CANDIDATE_SENTINEL_POSITION_ID, limit=10000):
         if judgment.type != "candidate_signature":
             continue

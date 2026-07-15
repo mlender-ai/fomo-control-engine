@@ -139,6 +139,34 @@ def test_flow_observation_uses_real_buy_sell_bucket_delta() -> None:
     assert observation["source"] == "bitget_spot"
 
 
+def test_flow_observation_prefers_event_cvd_for_coarse_timeframes() -> None:
+    flow = {
+        "data_available": True,
+        "source": "bitget_futures",
+        "buckets": [{"buy_volume": 8, "sell_volume": 2, "delta": 6}],
+        "cvd": [{"time": 1, "value": 6}],
+        "event_cvd": [
+            {"time": 1, "value": 2, "method": "event_time_fills"},
+            {"time": 2, "value": 1, "method": "event_time_fills"},
+            {"time": 3, "value": 6, "method": "event_time_fills"},
+        ],
+    }
+
+    observation = flow_observation(
+        price_change_pct=2,
+        spot_flow=None,
+        futures_flow=flow,
+        oi_change_pct=3,
+    )
+
+    assert observation["futures_cvd"] == [
+        {"time": 1, "value": 2},
+        {"time": 2, "value": 1},
+        {"time": 3, "value": 6},
+    ]
+    assert observation["coverage"]["futures_cvd_method"] == "event_time_fills"
+
+
 def test_coinglass_aggregate_replaces_cvd_but_keeps_bitget_market_context() -> None:
     now = datetime.now(timezone.utc)
     metrics: list[DerivativeMetric] = []

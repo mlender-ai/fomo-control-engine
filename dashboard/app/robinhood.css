@@ -1529,6 +1529,42 @@ textarea:focus {
   min-width: 0;
 }
 
+.optionsPositioningSummary {
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--rh-muted-bright) 45%, var(--rh-border));
+  border-left: 3px solid var(--rh-muted-bright);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--rh-surface) 86%, transparent);
+}
+
+.optionsPositioningSummary > header,
+.optionsPositioningSummary > header > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.optionsPositioningSummary > header > div { justify-content: flex-start; }
+.optionsPositioningSummary > header span,
+.optionsPositioningSummary article > span { color: var(--rh-muted); font-size: 9px; text-transform: uppercase; }
+.optionsPositioningSummary > header strong { color: var(--rh-white); font-size: 12px; }
+.optionsPositioningSummary > header em { color: var(--rh-muted); font-size: 9px; font-style: normal; }
+.optionsPositioningSummary > div { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.optionsPositioningSummary article {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--rh-border);
+  background: var(--rh-black);
+}
+.optionsPositioningSummary article > strong { grid-row: 1 / 3; grid-column: 2; align-self: center; color: var(--rh-white); font-size: 22px; font-variant-numeric: tabular-nums; }
+.optionsPositioningSummary article > small { color: var(--rh-muted-bright); font-size: 10px; }
+.optionsPositioningSummary > p { margin: 0; color: var(--rh-muted); font-size: 9px; }
+
 .moneyFlowIndicator .moneyFlowPressure { align-content: center; gap: 7px; }
 .moneyFlowIndicator .flowPressureRow { gap: 3px; }
 .moneyFlowIndicator .flowPressureRow > div:first-child {
@@ -1553,6 +1589,7 @@ textarea:focus {
 .moneyFlowIndicator .flowHistogram { padding: 6px; }
 .moneyFlowIndicator .flowHistogramPlot,
 .moneyFlowIndicator .flowHistogramEmpty { height: 24px; }
+.flowHistogramEmpty.unavailable { color: var(--rh-orange); }
 
 .moneyFlowIndicator .moneyFlowReadout {
   align-content: center;
@@ -3643,6 +3680,9 @@ textarea:focus {
   .moneyFlowIndicatorGrid {
     grid-template-columns: minmax(0, 1fr);
   }
+
+  .optionsPositioningSummary > header { align-items: flex-start; flex-direction: column; }
+  .optionsPositioningSummary > div { grid-template-columns: minmax(0, 1fr); }
 
   .moneyFlowIndicator .moneyFlowPressure,
   .moneyFlowIndicator .moneyFlowReadout {

@@ -4,6 +4,7 @@ from app.db.models import Direction, MarketCandle, MarketSnapshot, Position
 from app.exchange.bitget.trades import (
     aggregate_trade_buckets,
     cvd_series_from_buckets,
+    event_cvd_series_from_fills,
     parse_trade_fill,
 )
 from app.positions.chart_analysis import PositionContext, build_chart_analysis
@@ -82,6 +83,32 @@ def test_trade_buckets_and_cvd_are_aggregated_by_candle() -> None:
         {"time": buckets[0].time, "value": 2.0, "delta": 2.0, "method": "trade_fills"},
         {"time": buckets[1].time, "value": 0.0, "delta": -2.0, "method": "trade_fills"},
     ]
+
+
+def test_event_cvd_splits_real_fills_when_one_candle_bucket_would_hide_history() -> None:
+    candle = _candle(0)
+    fills = [
+        parse_trade_fill(
+            {
+                "tradeId": str(index),
+                "price": "100",
+                "size": "2" if index % 2 == 0 else "1",
+                "side": "Buy" if index % 2 == 0 else "Sell",
+                "ts": _ms(candle.timestamp + timedelta(minutes=index)),
+                "symbol": "SOXLUSDT",
+            },
+            "SOXLUSDT",
+        )
+        for index in range(12)
+    ]
+
+    series = event_cvd_series_from_fills(fills, max_points=4)
+
+    assert len(series) == 4
+    assert [item["trades"] for item in series] == [3, 3, 3, 3]
+    assert [item["delta"] for item in series] == [3.0, 0.0, 3.0, 0.0]
+    assert [item["value"] for item in series] == [3.0, 3.0, 6.0, 6.0]
+    assert all(item["method"] == "event_time_fills" for item in series)
 
 
 def test_uncovered_volume_profile_bins_do_not_expose_fake_buy_sell() -> None:

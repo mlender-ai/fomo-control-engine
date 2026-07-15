@@ -370,11 +370,7 @@ def _wallet_review(address: str, context: dict[str, Any]) -> dict[str, Any]:
     key = whale_signature_key(address)
     payload = context["review_payloads"].get(key, {})
     judgments = context["judgments_by_key"].get(key, [])
-    scores = [
-        context["scores_by_judgment"][judgment.judgment_id]
-        for judgment in judgments
-        if judgment.judgment_id in context["scores_by_judgment"]
-    ]
+    scores = [context["scores_by_judgment"][judgment.judgment_id] for judgment in judgments if judgment.judgment_id in context["scores_by_judgment"]]
     sample_size = len(scores)
     wins = sum(1 for score in scores if score.outcome == "correct")
     win_1r_pct = round(wins / sample_size * 100, 1) if sample_size else None

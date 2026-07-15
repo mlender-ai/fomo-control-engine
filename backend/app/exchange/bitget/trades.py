@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from bisect import bisect_right
 from datetime import datetime, timedelta, timezone
+from math import ceil
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -174,6 +175,34 @@ def cvd_series_from_buckets(buckets: list[TradeFlowBucket]) -> list[dict]:
                 "value": round(cumulative, 8),
                 "delta": bucket.delta,
                 "method": bucket.method,
+            }
+        )
+    return series
+
+
+def event_cvd_series_from_fills(fills: list[BitgetTradeFill], max_points: int = 24) -> list[dict]:
+    """Return an event-time CVD series when coarse candles collapse fills into one bucket.
+
+    The groups contain consecutive real fills and never affect candle-confirmed scoring.
+    They exist only to make the observed trade flow inspectable in the UI.
+    """
+    ordered = sorted(fills, key=lambda item: (item.timestamp, item.trade_id))
+    if not ordered or max_points <= 0:
+        return []
+    chunk_size = max(1, ceil(len(ordered) / max_points))
+    cumulative = 0.0
+    series: list[dict] = []
+    for offset in range(0, len(ordered), chunk_size):
+        chunk = ordered[offset : offset + chunk_size]
+        delta = sum(fill.size if fill.side == "buy" else -fill.size for fill in chunk)
+        cumulative += delta
+        series.append(
+            {
+                "time": int(chunk[-1].timestamp.timestamp()),
+                "value": round(cumulative, 8),
+                "delta": round(delta, 8),
+                "trades": len(chunk),
+                "method": "event_time_fills",
             }
         )
     return series

@@ -445,7 +445,9 @@ async def test_whale_alert_uses_existing_state_machine_and_candidate_tone() -> N
     sender = FakeSender()
     # CI 는 FCE_TELEGRAM_ALERTS_ENABLED=false 를 주입 — 테스트는 명시적으로 켠다.
     engine = AlertEngine(
-        Settings(database_url="memory://", telegram_bot_token="token", telegram_chat_id="123", telegram_alerts_enabled=True, telegram_quiet_hours_enabled=False),
+        Settings(
+            database_url="memory://", telegram_bot_token="token", telegram_chat_id="123", telegram_alerts_enabled=True, telegram_quiet_hours_enabled=False
+        ),
         sender,
         NotificationState(),
     )
@@ -461,7 +463,22 @@ async def test_whale_alert_uses_existing_state_machine_and_candidate_tone() -> N
         entry_px=63_000,
         event_at=utc_now(),
     ).model_dump(mode="json")
-    dashboard = {"wallets": [{"address": ADDRESS, "review": {"state": "candidate", "trust_status": "validating", "sample_size": 4, "win_1r_pct": 50.0, "cumulative_return_r": 0.5, "validation_days": 9, "validation_remaining_days": 19}}]}
+    dashboard = {
+        "wallets": [
+            {
+                "address": ADDRESS,
+                "review": {
+                    "state": "candidate",
+                    "trust_status": "validating",
+                    "sample_size": 4,
+                    "win_1r_pct": 50.0,
+                    "cumulative_return_r": 0.5,
+                    "validation_days": 9,
+                    "validation_remaining_days": 19,
+                },
+            }
+        ]
+    }
 
     assert await engine.evaluate_whale_events([event], dashboard) == 1
     assert await engine.evaluate_whale_events([event], dashboard) == 0

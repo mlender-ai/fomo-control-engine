@@ -12,6 +12,8 @@ WO-FCE-69 compares spot and futures taker flow on the same confirmed-candle time
 
 Buy and sell volume use the public fill `side` field. CVD is the cumulative sum of `buy_volume - sell_volume` in candle buckets. A perpetual symbol is mapped to the same Bitget spot symbol. Symbols without a spot market are returned as unavailable; no synthetic spot flow is generated.
 
+For display, a coarse candle can contain thousands of recent fills but still produce only one candle CVD point. The collector therefore also groups consecutive real fills into at most 24 event-time segments and exposes their cumulative delta as `event_time_fills`. This is an observation-only microstructure view; confirmed-candle price/OI classification and scoring remain unchanged. If a mapped spot market does not exist (for example SOXL on Bitget), the UI says `현물 마켓 미지원` instead of implying that waiting will create the missing data.
+
 Every Tier 1 result is labeled **Bitget single-exchange proxy**. It is not an all-market aggregate.
 
 ### Tier 2: Coinglass
@@ -30,6 +32,8 @@ WO-FCE-79 adds official, keyless OCC observations for supported US stock/index u
 - Results are cached for 30 minutes by default. `FCE_OCC_OPTIONS_ENABLED`, `FCE_OCC_OPTIONS_CACHE_TTL_SECONDS`, and `FCE_OCC_OPTIONS_TIMEOUT_SECONDS` control the collector.
 
 The UI and Telegram `/scout` show call OI, put OI, put/call OI ratio, call volume, put volume, and put/call volume ratio. These are **observation-only positioning data**. A high ratio is not treated as an automatic bearish signal: hedging, covered positions, expiry concentration, and dealer inventory are not inferable from aggregate contracts alone. The values never enter one-line TA counts, confluence, setup scoring, or automated entry logic.
+
+The compact Money Flow surface renders these OCC ratios in a dedicated `풋/콜 비율` block above the flow grid. They are not relegated to a small footer, so a supported RWA symbol shows both the previous-settlement OI P/C and completed-day contract-volume P/C without scrolling through metadata.
 
 ## Window And Direction
 

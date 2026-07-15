@@ -151,6 +151,15 @@ export function MoneyFlowCard({
     ? coinglassRaw.options_summary as Record<string, unknown>
     : null;
   const coinglassLocked = derivatives?.coinglass?.source_status === "locked";
+  const spotAvailable = flow?.coverage?.spot_available === true;
+  const futuresAvailable = flow?.coverage?.futures_available === true;
+  const spotUnavailableReason = flow && !spotAvailable
+    ? flow.coverage?.spot_mapping === "mapping_unavailable"
+      ? "현물 마켓 미지원"
+      : "현물 체결 없음"
+    : null;
+  const futuresUnavailableReason = flow && !futuresAvailable ? "선물 체결 없음" : null;
+  const hasObservableFlow = Boolean(flow?.available || spotAvailable || futuresAvailable);
   const tone = flow?.state === "spot_led" || flow?.state === "spot_absorb"
     ? "positive"
     : flow?.state === "futures_led"
@@ -165,9 +174,11 @@ export function MoneyFlowCard({
       ? `판정 신뢰 ${Math.round(flow?.confidence ?? 0)}%`
       : flow?.available
         ? "확정봉 판정"
+        : futuresAvailable
+          ? "선물 체결 관측"
         : "데이터 대기";
   return (
-    <section className={`moneyFlowIndicator ${tone} ${flow?.available ? "" : "inactive"}`} data-testid="money-flow-card">
+    <section className={`moneyFlowIndicator ${tone} ${hasObservableFlow ? "" : "inactive"}`} data-testid="money-flow-card">
       <header className="moneyFlowIndicatorHeader">
         <div className="moneyFlowTitle">
           <FlowStateIcon state={flow?.state} />
@@ -175,7 +186,7 @@ export function MoneyFlowCard({
           <strong>{presentation.headline}</strong>
         </div>
         <div className="moneyFlowMeta">
-          <i className={flow?.available ? "live" : ""} />
+          <i className={hasObservableFlow ? "live" : ""} />
           <span>{confidenceLabel}</span>
           <time>{flow?.as_of ? new Date(flow.as_of).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "관측 대기"}</time>
         </div>
@@ -183,10 +194,12 @@ export function MoneyFlowCard({
 
       {gauges?.stance_history?.length ? <StanceHistoryStrip gauges={gauges} /> : null}
 
+      {occOptions?.available === true ? <OptionsPositioningSummary options={occOptions} /> : null}
+
       <div className="moneyFlowIndicatorGrid">
         <div className="moneyFlowPressure" aria-label="현물과 선물 매수 매도 압력">
-          <FlowPressure label="현물 체결" ratio={spotRatio} />
-          <FlowPressure label="선물 체결" ratio={futuresRatio} />
+          <FlowPressure label="현물 체결" ratio={spotRatio} unavailableReason={spotUnavailableReason} />
+          <FlowPressure label="선물 체결" ratio={futuresRatio} unavailableReason={futuresUnavailableReason} />
         </div>
 
         <div className="moneyFlowMetrics" aria-label="가격과 미결제약정 판정">
@@ -211,8 +224,18 @@ export function MoneyFlowCard({
         </div>
 
         <div className="moneyFlowHistory" aria-label="최근 구간 CVD 변화">
-          <FlowHistogram label="현물 CVD" values={flow?.spot_cvd ?? []} />
-          <FlowHistogram label="선물 CVD" values={flow?.futures_cvd ?? []} />
+          <FlowHistogram
+            label="현물 CVD"
+            values={flow?.spot_cvd ?? []}
+            method={String(flow?.coverage?.spot_cvd_method ?? "")}
+            unavailableReason={spotUnavailableReason}
+          />
+          <FlowHistogram
+            label="선물 CVD"
+            values={flow?.futures_cvd ?? []}
+            method={String(flow?.coverage?.futures_cvd_method ?? "")}
+            unavailableReason={futuresUnavailableReason}
+          />
         </div>
 
         <div className="moneyFlowReadout">
@@ -225,17 +248,36 @@ export function MoneyFlowCard({
       <footer className="moneyFlowIndicatorFooter">
         <span>{flow?.source_label || "출처 확인 중"}</span>
         <small>CVD = 실제 입금액이 아닌 시장가 매수−매도 체결 우위</small>
-        {occOptions?.available === true ? (
-          <>
-            <small>OCC {occOptions.underlying} 옵션 OI(전일) · 콜 {formatCompactNumber(occOptions.call_open_interest)} · 풋 {formatCompactNumber(occOptions.put_open_interest)} · P/C {formatCompactNumber(occOptions.put_call_oi_ratio)}</small>
-            <small>{occOptions.volume_date ?? "최근 완료일"} 계약량 · 콜 {formatCompactNumber(occOptions.call_volume)} · 풋 {formatCompactNumber(occOptions.put_volume)} · P/C {formatCompactNumber(occOptions.put_call_volume_ratio)} · 관측 전용</small>
-          </>
-        ) : cryptoOptions?.available === true ? (
+        {cryptoOptions?.available === true ? (
           <small>옵션 풋/콜 {formatCompactNumber(cryptoOptions.put_call_ratio)} · OI {formatCompactNumber(cryptoOptions.options_open_interest)}</small>
         ) : coinglassLocked ? (
           <small>Coinglass 집계·BTC/ETH 옵션 연결 대기</small>
         ) : null}
       </footer>
+    </section>
+  );
+}
+
+function OptionsPositioningSummary({ options }: { options: OccOptionsSummary }) {
+  return (
+    <section className="optionsPositioningSummary" data-testid="options-put-call-summary">
+      <header>
+        <div><span>OCC {options.underlying}</span><strong>풋/콜 비율</strong></div>
+        <em>전일 결제 · 관측 전용</em>
+      </header>
+      <div>
+        <article>
+          <span>미결제약정 P/C</span>
+          <strong>{formatRatio(options.put_call_oi_ratio)}</strong>
+          <small>풋 {formatCompactNumber(options.put_open_interest)} / 콜 {formatCompactNumber(options.call_open_interest)}</small>
+        </article>
+        <article>
+          <span>{options.volume_date ?? "최근 완료일"} 계약량 P/C</span>
+          <strong>{formatRatio(options.put_call_volume_ratio)}</strong>
+          <small>풋 {formatCompactNumber(options.put_volume)} / 콜 {formatCompactNumber(options.call_volume)}</small>
+        </article>
+      </div>
+      <p>P/C 1 초과는 풋 계약 수 우세입니다. 헤지 수요가 섞이므로 방향 점수에는 반영하지 않습니다.</p>
     </section>
   );
 }
@@ -314,28 +356,43 @@ function FlowMetric({
   );
 }
 
-function FlowPressure({ label, ratio }: { label: string; ratio: number | null }) {
+function FlowPressure({ label, ratio, unavailableReason = null }: { label: string; ratio: number | null; unavailableReason?: string | null }) {
   const percent = ratio === null ? null : ratio * 100;
   const width = percent === null ? 0 : clamp(Math.abs(percent) * 2, 1.5, 50);
   const left = percent === null || percent >= 0 ? 50 : 50 - width;
   const direction = percent === null ? "unknown" : percent > 0.5 ? "buy" : percent < -0.5 ? "sell" : "flat";
   return (
     <div className={`flowPressureRow ${direction}`}>
-      <div><span>{label}</span><strong>{percent === null ? "시계열 대기" : percent > 0.5 ? "매수 체결 우위" : percent < -0.5 ? "매도 체결 우위" : "매수·매도 균형"}</strong><em>{percent === null ? "-" : `${signed(percent)}%`}</em></div>
+      <div><span>{label}</span><strong>{unavailableReason || (percent === null ? "체결 표본 없음" : percent > 0.5 ? "매수 체결 우위" : percent < -0.5 ? "매도 체결 우위" : "매수·매도 균형")}</strong><em>{percent === null ? "-" : `${signed(percent)}%`}</em></div>
       <div className="flowPressureAxis"><i /><b style={{ left: `${left}%`, width: `${width}%` }} /></div>
       <footer><span>매도 우위</span><span>0</span><span>매수 우위</span></footer>
     </div>
   );
 }
 
-function FlowHistogram({ label, values }: { label: string; values: Array<{ value: number }> }) {
+function FlowHistogram({
+  label,
+  values,
+  method = "",
+  unavailableReason = null
+}: {
+  label: string;
+  values: Array<{ value: number }>;
+  method?: string;
+  unavailableReason?: string | null;
+}) {
   const cumulative = values.map((item) => Number(item.value)).filter(Number.isFinite);
-  const deltas = cumulative.slice(1).map((value, index) => value - cumulative[index]).slice(-18);
+  const deltas = (cumulative.length === 1
+    ? cumulative
+    : cumulative.slice(1).map((value, index) => value - cumulative[index])).slice(-18);
   const max = Math.max(...deltas.map((value) => Math.abs(value)), 0);
+  const methodLabel = method === "event_time_fills" ? "최근 실제 체결 24구간" : cumulative.length === 1 ? "현재 확정 구간" : "구간별 체결 델타";
   return (
     <div className="flowHistogram">
-      <header><span>{label}</span><em>구간별 체결 델타</em></header>
-      {deltas.length >= 2 && max > 0 ? (
+      <header><span>{label}</span><em>{methodLabel}</em></header>
+      {unavailableReason ? (
+        <div className="flowHistogramEmpty unavailable">{unavailableReason}</div>
+      ) : deltas.length >= 1 && max > 0 ? (
         <div className="flowHistogramPlot">
           <i />
           {deltas.map((value, index) => {
@@ -349,14 +406,22 @@ function FlowHistogram({ label, values }: { label: string; values: Array<{ value
             );
           })}
         </div>
+      ) : cumulative.length ? (
+        <div className="flowHistogramEmpty">현재 구간 매수·매도 균형</div>
       ) : (
-        <div className="flowHistogramEmpty">구간 시계열 축적 중</div>
+        <div className="flowHistogramEmpty">체결 표본 없음</div>
       )}
     </div>
   );
 }
 
 function moneyFlowPresentation(flow: DerivativesContext["signals"]["money_flow"] | undefined) {
+  if (flow?.coverage?.spot_available !== true && flow?.coverage?.futures_available === true) return {
+    headline: "선물 체결만 제공",
+    driver: "현물 마켓 미지원 · 선물 CVD 관측 중",
+    summary: flow.reason,
+    readout: "SOXL 현물 CVD는 만들 수 없습니다. 선물 체결 우위만 관측하고 현물·선물 비교 판정은 보류합니다."
+  };
   if (!flow?.available) return {
     headline: "판정 준비 중",
     driver: "현물·선물 체결 데이터 대기",
@@ -427,6 +492,11 @@ function formatCompactNumber(value: unknown): string {
   const number = Number(value);
   if (!Number.isFinite(number)) return "-";
   return new Intl.NumberFormat("ko-KR", { notation: "compact", maximumFractionDigits: 2 }).format(number);
+}
+
+function formatRatio(value: unknown): string {
+  const number = Number(value);
+  return Number.isFinite(number) ? number.toFixed(2) : "-";
 }
 
 

@@ -129,6 +129,19 @@ test("money flow exposes the driver, magnitude, and execution history", async ({
         reason: "최근 30일 관측 분포의 40백분위로 방향을 구분했습니다."
       };
     }
+    body.options = {
+      available: true,
+      source: "occ_public",
+      source_label: "OCC 공식 무키 데이터",
+      underlying: "SOXL",
+      call_open_interest: 434745,
+      put_open_interest: 800996,
+      put_call_oi_ratio: 1.8425,
+      call_volume: 123628,
+      put_volume: 257380,
+      put_call_volume_ratio: 2.0819,
+      volume_date: "2026-07-14"
+    };
     await route.fulfill({ response, json: body });
   });
 
@@ -142,11 +155,58 @@ test("money flow exposes the driver, magnitude, and execution history", async ({
   await expect(moneyFlow).toContainText("+8.00%");
   await expect(moneyFlow.locator(".flowHistogramPlot")).toHaveCount(2);
   await expect(moneyFlow.locator("polyline")).toHaveCount(0);
+  const putCall = page.getByTestId("options-put-call-summary");
+  await expect(putCall).toBeVisible();
+  await expect(putCall).toContainText("풋/콜 비율");
+  await expect(putCall).toContainText("1.84");
+  await expect(putCall).toContainText("2.08");
 
   await page.setViewportSize({ width: 390, height: 1200 });
   await expect(moneyFlow).toBeVisible();
   const horizontalOverflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   expect(horizontalOverflow).toBeLessThanOrEqual(0);
+});
+
+test("RWA money flow distinguishes unsupported spot CVD from live futures CVD", async ({ page }) => {
+  await page.route("**/api/live/positions/*/chart-analysis*", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    if (body.derivatives?.signals) {
+      body.derivatives.signals.money_flow = {
+        as_of: "2026-07-15T20:00:00Z",
+        source: "bitget_spot",
+        source_label: "Bitget 단일 거래소 프록시",
+        spot_cvd_delta_ratio: null,
+        futures_cvd_delta_ratio: -0.022,
+        price_change_pct: -15.8,
+        oi_change_pct: -4.62,
+        spot_cvd: [],
+        futures_cvd: Array.from({ length: 24 }, (_, index) => ({ time: index, value: index % 3 === 0 ? -index * 2 : index })),
+        coverage: {
+          spot_available: false,
+          futures_available: true,
+          spot_mapping: "mapping_unavailable",
+          futures_cvd_method: "event_time_fills"
+        },
+        notes: ["Bitget 현물 마켓 매핑 또는 체결 데이터를 확인할 수 없습니다."],
+        state: "mixed",
+        label: "자금 흐름 판정 불가",
+        available: false,
+        provisional: false,
+        sample_size: 0,
+        reason: "Bitget 현물 마켓 매핑 또는 체결 데이터를 확인할 수 없습니다."
+      };
+    }
+    await route.fulfill({ response, json: body });
+  });
+
+  await page.goto("/");
+  const moneyFlow = page.getByTestId("money-flow-card");
+  await expect(moneyFlow).toContainText("선물 체결만 제공", { timeout: 30_000 });
+  await expect(moneyFlow).toContainText("현물 마켓 미지원");
+  await expect(moneyFlow).toContainText("최근 실제 체결 24구간");
+  await expect(moneyFlow.getByText("구간 시계열 축적 중")).toHaveCount(0);
+  await expect(moneyFlow.locator(".flowHistogramPlot")).toHaveCount(1);
 });
 
 test("minimal evidence deep-links into a reproducible evidence room", async ({ page }) => {

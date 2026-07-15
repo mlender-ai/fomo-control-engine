@@ -43,6 +43,8 @@ def flow_observation(
             "futures_available": futures_available,
             "spot_mapping": mapping_status,
             "window_buckets": 24,
+            "spot_cvd_method": _cvd_method(spot_flow),
+            "futures_cvd_method": _cvd_method(futures_flow),
         },
         "spot_cvd": _compact_cvd(spot_flow),
         "futures_cvd": _compact_cvd(futures_flow),
@@ -69,7 +71,8 @@ def classify_money_flow(
             "sample_size": 0,
             "reason": "현재 캔들이 마감될 때까지 자금 흐름 판정을 보류합니다.",
         }
-    coverage = current.get("coverage") if isinstance(current.get("coverage"), dict) else {}
+    coverage_value = current.get("coverage")
+    coverage: dict[str, Any] = coverage_value if isinstance(coverage_value, dict) else {}
     if not coverage.get("spot_available"):
         reason = next(iter(current.get("notes") or []), "Bitget 현물 마켓 매핑 또는 체결 데이터가 없습니다.")
         return _unavailable(str(reason), current=current)
@@ -212,8 +215,19 @@ def _window_delta_ratio(flow: dict[str, Any] | None) -> float | None:
 
 
 def _compact_cvd(flow: dict[str, Any] | None) -> list[dict[str, Any]]:
-    rows = [item for item in (flow or {}).get("cvd", []) if isinstance(item, dict)][-24:]
+    payload = flow or {}
+    event_rows = [item for item in payload.get("event_cvd", []) if isinstance(item, dict)]
+    rows = (event_rows or [item for item in payload.get("cvd", []) if isinstance(item, dict)])[-24:]
     return [{"time": item.get("time"), "value": item.get("value")} for item in rows]
+
+
+def _cvd_method(flow: dict[str, Any] | None) -> str | None:
+    payload = flow or {}
+    if any(isinstance(item, dict) for item in payload.get("event_cvd", [])):
+        return "event_time_fills"
+    if any(isinstance(item, dict) for item in payload.get("cvd", [])):
+        return "candle_buckets"
+    return None
 
 
 def _complete(item: dict[str, Any]) -> bool:
