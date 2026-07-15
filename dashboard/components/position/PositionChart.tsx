@@ -1,6 +1,6 @@
 "use client";
 
-import type { CompactChartGauges, PositionActionPlan, PositionChartAnalysis } from "@/lib/api";
+import type { CompactChartGauges, OnchainChartMarker, PositionActionPlan, PositionChartAnalysis } from "@/lib/api";
 import type { ChartLayerId, ChartLayerState, MinimalChartEvidence } from "@/lib/chartLayers";
 import type { Density } from "@/lib/density";
 import { PositionCandlestickChart } from "./PositionCandlestickChart";
@@ -99,8 +99,146 @@ export function PositionChart({
         compressed={compressed}
         gauges={gauges}
       />
+      {shouldShowOnchainTimeline(analysis, layers, layerMode) ? (
+        <OnchainFlowTimeline analysis={analysis} compact={compressed || layerMode === "minimal"} />
+      ) : null}
     </section>
   );
+}
+
+function shouldShowOnchainTimeline(
+  analysis: PositionChartAnalysis,
+  layers: ChartLayerState,
+  layerMode: "minimal" | "pro"
+): boolean {
+  return Boolean(
+    analysis.onchain?.supported
+    && analysis.onchain.markers.length
+    && (layerMode === "minimal" || layers.ta.includes("onchain"))
+  );
+}
+
+function OnchainFlowTimeline({
+  analysis,
+  compact
+}: {
+  analysis: PositionChartAnalysis;
+  compact: boolean;
+}) {
+  const candles = compact ? analysis.candles.slice(-72) : analysis.candles;
+  const start = candles.at(0)?.time ?? analysis.candles.at(0)?.time ?? 0;
+  const end = candles.at(-1)?.time ?? analysis.candles.at(-1)?.time ?? start + 1;
+  const rawMarkers = (analysis.onchain?.markers ?? [])
+    .filter((marker) => marker.time >= start && marker.time <= end)
+    .slice(-12);
+  const markers = groupTimelineMarkers(rawMarkers, start, end);
+  const visibleEvents = markers.reduce((sum, marker) => sum + marker.count, 0);
+  const latest = markers.at(-1);
+
+  return (
+    <section className={`onchainFlowTimeline ${compact ? "compact" : ""}`} data-testid="onchain-flow-timeline" aria-label="상위 고래 확정 체결 흐름">
+      <header>
+        <div>
+          <span>WHALE FLOW</span>
+          <strong>상위 고래 확정 체결</strong>
+        </div>
+        <p>
+          {visibleEvents ? `${visibleEvents}건 · ` : ""}
+          {latest ? `${markerActionText(latest)} ${formatCompactUsd(latest.size_usd)}` : "최근 체결 없음"}
+        </p>
+      </header>
+      <div className="onchainFlowLanes">
+        {(["long", "short"] as const).map((side) => (
+          <div className={`onchainFlowLane ${side}`} key={side}>
+            <strong>{side === "long" ? "LONG" : "SHORT"}</strong>
+            <div className="onchainFlowTrack">
+              <i className="onchainFlowAxis" />
+              {markers.filter((marker) => marker.side === side).map((marker, index) => (
+                <TimelineMarker
+                  key={`${marker.time}-${marker.side}-${marker.kind}-${index}`}
+                  marker={marker}
+                  position={timelinePosition(marker.time, start, end)}
+                  slot={index % 2}
+                />
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+      <footer>
+        <span>{formatTimelineTime(start)}</span>
+        <span>진입·증액은 채움 / 감액·청산은 빈 원</span>
+        <span>{formatTimelineTime(end)}</span>
+      </footer>
+    </section>
+  );
+}
+
+function TimelineMarker({ marker, position, slot }: { marker: OnchainChartMarker; position: number; slot: number }) {
+  const action = marker.kind === "entry" ? "+" : "−";
+  const title = [
+    markerActionText(marker),
+    `체결 ${marker.count}건 · ${formatCompactUsd(marker.size_usd)}`,
+    ...marker.items.slice(0, 3).map((item) => `${item.wallet_label} · ${formatCompactUsd(item.size_usd)}`)
+  ].join("\n");
+  return (
+    <span
+      className={`onchainFlowEvent slot${slot} ${marker.kind} tier${marker.size_tier} ${marker.emphasized ? "validated" : "candidate"}`}
+      style={{ left: `${position}%` }}
+      title={title}
+      aria-label={title.replaceAll("\n", ", ")}
+    >
+      <i />
+      <em>{action}{marker.count > 1 ? `×${marker.count}` : ""}</em>
+    </span>
+  );
+}
+
+function timelinePosition(time: number, start: number, end: number): number {
+  if (end <= start) return 50;
+  return Math.max(2, Math.min(96, ((time - start) / (end - start)) * 100));
+}
+
+function groupTimelineMarkers(markers: OnchainChartMarker[], start: number, end: number): OnchainChartMarker[] {
+  const groups: OnchainChartMarker[] = [];
+  for (const marker of markers) {
+    const position = timelinePosition(marker.time, start, end);
+    const existing = groups.find((item) => (
+      item.side === marker.side
+      && item.kind === marker.kind
+      && Math.abs(timelinePosition(item.time, start, end) - position) <= 2
+    ));
+    if (!existing) {
+      groups.push({ ...marker, items: [...marker.items] });
+      continue;
+    }
+    existing.time = Math.max(existing.time, marker.time);
+    existing.count += marker.count;
+    existing.size_usd += marker.size_usd;
+    existing.size_tier = Math.max(existing.size_tier, marker.size_tier) as 1 | 2 | 3;
+    existing.emphasized = existing.emphasized || marker.emphasized;
+    existing.items.push(...marker.items);
+  }
+  return groups.sort((left, right) => left.time - right.time);
+}
+
+function markerActionText(marker: OnchainChartMarker): string {
+  const side = marker.side === "long" ? "롱" : "숏";
+  if (marker.event === "flip") return `${side} 전환`;
+  return `${side} ${marker.kind === "entry" ? "진입" : "정리"}`;
+}
+
+function formatCompactUsd(value: number): string {
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(1)}B`;
+  if (abs >= 1_000_000) return `$${(value / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `$${(value / 1_000).toFixed(0)}K`;
+  return `$${value.toFixed(0)}`;
+}
+
+function formatTimelineTime(time: number): string {
+  if (!time) return "-";
+  return new Intl.DateTimeFormat("ko-KR", { month: "numeric", day: "numeric" }).format(new Date(time * 1000));
 }
 
 export type PositionChartOverlay = {
