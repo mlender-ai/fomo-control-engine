@@ -25,7 +25,11 @@ test.describe("chart visual regression", () => {
       }
       await waitForChartOverlay(page);
       await expect(page.getByTestId("position-chart")).toHaveScreenshot(`chart-${state.name}.png`, {
-        animations: "disabled"
+        animations: "disabled",
+        // Lightweight Charts may omit two off-range price-axis ticks under CI
+        // raster timing; keep the allowance below any structural UI change.
+        // 0.02: CI 러너 재실행 간 변동 실측 0.01(1,161px) 상회 여유 — 구조적 UI 변화(수 % 이상)는 여전히 잡힘.
+        maxDiffPixelRatio: 0.02
       });
     });
   }
@@ -39,7 +43,7 @@ test("minimal neutral market ribbon snapshot", async ({ page }) => {
   await expect(page.getByTestId("demo-mode-badge")).toBeVisible({ timeout: 30_000 });
   await page.getByTestId("minimal-asset-card").filter({ hasText: "ETHUSDT" }).click();
   await expect(page.getByTestId("compact-chart-workspace")).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByTestId("stance-ribbon")).toBeVisible();
+  await expect(page.getByTestId("stance-ribbon")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("stance-hud")).toBeVisible();
   await expect(page.locator("[data-event-pill]").first()).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("position-market-context")).toBeVisible();

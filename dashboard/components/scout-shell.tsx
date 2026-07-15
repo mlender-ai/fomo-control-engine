@@ -276,6 +276,10 @@ export function ScoutShell() {
     try {
       const response = await api.createEntryIntent(symbol, { kind: "watch", timeframe: "4h" });
       setEntryIntents((items) => [response.intent, ...items.filter((item) => item.id !== response.intent.id)]);
+      setTrackedItems((items) => [
+        manualTrackedItem(response.intent),
+        ...items.filter((item) => !(item.symbol === response.intent.symbol && item.tracking_source === "manual"))
+      ]);
       setNotice(`${symbol} 수동 추적을 시작했습니다.`);
       // The cached scan predates the intent we just created, so it cannot
       // contain the new manual tracking card.
@@ -287,8 +291,9 @@ export function ScoutShell() {
 
   async function promoteTracking(item: TrackedScoutItem) {
     try {
-      await api.createEntryIntent(item.symbol, { kind: "watch", timeframe: item.timeframe });
+      const response = await api.createEntryIntent(item.symbol, { kind: "watch", timeframe: item.timeframe });
       await Promise.all(item.setup_ids.map((id) => api.disarmScoutSetup(id)));
+      setTrackedItems((items) => [manualTrackedItem(response.intent), ...items.filter((candidate) => candidate.symbol !== item.symbol)]);
       setNotice(`${item.symbol}을 내 추적으로 전환했습니다.`);
       await runScan(true);
     } catch (err) {
@@ -726,6 +731,23 @@ function trackingSourceLabel(item: TrackedScoutItem): string {
   if (item.intent_zone) return `존 ${formatPrice(item.intent_zone.lower)}–${formatPrice(item.intent_zone.upper)}`;
   if (item.armed_condition) return item.armed_condition;
   return item.tracking_source === "manual" ? "수동 선택" : "자동 감지 조건";
+}
+
+function manualTrackedItem(intent: EntryIntent): TrackedScoutItem {
+  return {
+    symbol: intent.symbol,
+    tracking_source: "manual",
+    timeframe: intent.timeframe,
+    stance: null,
+    stance_label: "판정 갱신 중",
+    one_line: "수동 선택",
+    trigger_distance_pct: null,
+    intent_zone: null,
+    armed_condition: null,
+    expires_in_days: null,
+    intent_ids: [intent.id],
+    setup_ids: []
+  };
 }
 
 function alignmentEngineLabel(engine: string): string {
