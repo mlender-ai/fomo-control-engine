@@ -1375,6 +1375,14 @@ export type OnchainWhaleWallet = {
   alias_disclaimer: string;
   marker_emphasis: boolean;
   direction_eligible: boolean;
+  leaderboard: {
+    selection_rank: number;
+    account_value_usd: number;
+    month_pnl_usd: number;
+    month_roi: number;
+    month_volume_usd: number;
+    turnover: number;
+  } | null;
   review: OnchainWhaleReview;
   positions: Array<{
     coin: string;
@@ -1396,6 +1404,42 @@ export type OnchainWhaleDashboard = {
   minimum_event_size_usd: number;
   wallets: OnchainWhaleWallet[];
   recent_events: OnchainWhaleEvent[];
+  discovery: {
+    enabled: boolean;
+    status: string;
+    as_of?: string | null;
+    rows_scanned?: number;
+    eligible_count?: number;
+    selected_count: number;
+    manual_count?: number;
+    criteria?: Record<string, number>;
+  };
+  flow: {
+    window_hours: number;
+    bucket_hours: number;
+    current_long_usd: number;
+    current_short_usd: number;
+    current_net_usd: number;
+    flow_24h_usd: number;
+    event_count_24h: number;
+    timeline: Array<{
+      time: number;
+      long_in_usd: number;
+      short_in_usd: number;
+      long_out_usd: number;
+      short_out_usd: number;
+      net_usd: number;
+      event_count: number;
+    }>;
+    symbols: Array<{
+      symbol: string;
+      long_usd: number;
+      short_usd: number;
+      net_usd: number;
+      wallet_count: number;
+      event_count_24h: number;
+    }>;
+  };
   rate_budget: Record<string, unknown>;
   policy: string;
 };
@@ -2088,6 +2132,7 @@ export const api = {
   }),
   removeOnchainWhale: (address: string) => request<{ removed: string }>(`/api/onchain/whales/${encodeURIComponent(address)}`, { method: "DELETE" }),
   collectOnchainWhales: () => request<Record<string, unknown>>("/api/onchain/collect", { method: "POST" }),
+  discoverOnchainWhales: () => request<Record<string, unknown>>("/api/onchain/discover", { method: "POST" }),
   startPaperBenchmark: (reset = false) => request<{ started: boolean; started_at: string; ends_at: string; target_count: number; created: boolean }>("/api/paper/benchmark/start", {
     method: "POST",
     body: JSON.stringify({ reset })

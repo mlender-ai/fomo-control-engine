@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Bot, Plus, RefreshCw, Trash2, Waves } from "lucide-react";
+import { Activity, Bot, Plus, Radar, RefreshCw, Trash2, Waves } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { TerminalWarning } from "@/components/terminal";
 import { api, type OnchainWhaleDashboard, type PaperDashboard, type PaperGateFunnel, type PaperTrade } from "@/lib/api";
@@ -42,6 +42,11 @@ export function EngineTradingShell() {
   }, []);
 
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    if (active !== "onchain") return;
+    const timer = window.setInterval(() => { void api.onchainWhales().then(setWhales).catch(() => undefined); }, 30_000);
+    return () => window.clearInterval(timer);
+  }, [active]);
 
   async function startBenchmark(reset = false) {
     if (reset && !window.confirm("기존 거래 기록은 보존하고 4주 비교 창만 오늘부터 다시 시작합니다.")) return;
@@ -170,25 +175,36 @@ function OnchainView({ data, onReload }: { data: OnchainWhaleDashboard | null; o
     finally { setBusy(false); }
   }
 
+  async function discoverNow() {
+    setBusy(true); setMessage("리더보드 전체를 스캔하고 추적군을 갱신하고 있습니다.");
+    try { await api.discoverOnchainWhales(); await api.collectOnchainWhales(); setMessage(""); await onReload(); }
+    catch (reason) { setMessage(reason instanceof Error ? reason.message : "리더보드 자동 스캔에 실패했습니다."); }
+    finally { setBusy(false); }
+  }
+
   if (!data) return <EngineLoading />;
   return (
     <div className="engineView onchainView" data-testid="engine-onchain-tab">
       <section className="onchainToolbar">
-        <div><span className="engineSectionLabel">Hyperliquid · read only</span><strong>등록 {data.wallet_count}/{data.max_wallets}</strong><small>최소 관측 규모 {compactMoney(data.minimum_event_size_usd)} USDT · 별칭은 사용자 추정</small></div>
-        <button className="button secondary" disabled={busy || !data.wallet_count} onClick={collectNow} type="button"><RefreshCw size={15} />지금 수집</button>
+        <div><span className="engineSectionLabel">Hyperliquid leaderboard · 자동 관측</span><strong>추적 {data.wallet_count}/{data.max_wallets}지갑</strong><small>{Number(data.discovery.rows_scanned ?? 0).toLocaleString("ko-KR")}계정 스캔 · 후보 {data.discovery.eligible_count ?? 0} · 마지막 {data.discovery.as_of ? shortDateTime(data.discovery.as_of) : "대기"}</small></div>
+        <div className="onchainToolbarActions"><button className="button secondary" disabled={busy} onClick={collectNow} type="button"><RefreshCw size={15} />포지션 갱신</button><button className="button" disabled={busy} onClick={discoverNow} type="button"><Radar size={15} />리더보드 재스캔</button></div>
       </section>
-      <form className="onchainAddForm" onSubmit={addWallet}>
-        <label><span>지갑 주소</span><input aria-label="Hyperliquid 지갑 주소" onChange={(event) => setAddress(event.target.value)} placeholder="0x…" required value={address} /></label>
-        <label><span>추정 별칭</span><input aria-label="고래 별칭" onChange={(event) => setLabel(event.target.value)} placeholder="예: BTC 스윙 A" value={label} /></label>
-        <button className="button" disabled={busy || !address.trim()} type="submit"><Plus size={15} />등록</button>
-      </form>
-      {message ? <TerminalWarning tone="error">{message}</TerminalWarning> : null}
+      {message ? <TerminalWarning tone={message.startsWith("리더보드") ? "warning" : "error"}>{message}</TerminalWarning> : null}
+      <WhaleFlowOverview data={data} />
       <p className="onchainPolicy">{data.policy}</p>
-      {!data.wallets.length ? <EngineEmpty title="등록된 고래 지갑 없음" body="지갑을 수동 등록하면 확정 체결 이후부터 관측과 candidate 채점이 시작됩니다." /> : (
+      <details className="onchainManualPanel">
+        <summary>특정 공개 계정 추가</summary>
+        <form className="onchainAddForm" onSubmit={addWallet}>
+          <label><span>공개 계정 주소</span><input aria-label="Hyperliquid 지갑 주소" onChange={(event) => setAddress(event.target.value)} placeholder="0x…" required value={address} /></label>
+          <label><span>추정 별칭</span><input aria-label="고래 별칭" onChange={(event) => setLabel(event.target.value)} placeholder="예: BTC 스윙 A" value={label} /></label>
+          <button className="button" disabled={busy || !address.trim()} type="submit"><Plus size={15} />추가</button>
+        </form>
+      </details>
+      {!data.wallets.length ? <EngineEmpty title="자동 추적군 준비 중" body="리더보드 스캔이 끝나면 활동 고래의 공개 포지션과 체결을 자동 관측합니다." /> : (
         <div className="onchainWalletList">
           {data.wallets.map((wallet) => (
             <section className={`onchainWalletRow ${wallet.review.state}`} key={wallet.address}>
-              <header><div><strong>{wallet.label}</strong><code>{wallet.address_short}</code><small>{wallet.alias_disclaimer}</small></div><div><span>{whaleState(wallet.review.state)}</span><b>{wallet.review.sample_size >= 30 && wallet.review.win_1r_pct !== null ? `1R ${wallet.review.win_1r_pct}% · N=${wallet.review.sample_size}` : `축적 N=${wallet.review.sample_size} · 잔여 ${wallet.review.remaining_samples}`}</b><button aria-label={`${wallet.label} 삭제`} disabled={busy} onClick={() => void removeWallet(wallet.address)} title="워치리스트에서 삭제" type="button"><Trash2 size={15} /></button></div></header>
+              <header><div><strong>{wallet.label}</strong><code>{wallet.address_short}</code><small>{wallet.leaderboard ? `30일 PnL ${signedCompactMoney(wallet.leaderboard.month_pnl_usd)} · ROI ${(wallet.leaderboard.month_roi * 100).toFixed(1)}% · 계정 ${compactMoney(wallet.leaderboard.account_value_usd)}` : wallet.alias_disclaimer}</small></div><div><span>{whaleState(wallet.review.state)}</span><b>{wallet.review.sample_size >= 30 && wallet.review.win_1r_pct !== null ? `1R ${wallet.review.win_1r_pct}% · N=${wallet.review.sample_size}` : `축적 N=${wallet.review.sample_size} · 잔여 ${wallet.review.remaining_samples}`}</b>{wallet.source === "discovery" ? <i className="onchainAutoTag">AUTO</i> : <button aria-label={`${wallet.label} 삭제`} disabled={busy} onClick={() => void removeWallet(wallet.address)} title="워치리스트에서 삭제" type="button"><Trash2 size={15} /></button>}</div></header>
               <div className="onchainPositions">
                 {wallet.positions.length ? wallet.positions.map((position) => <div key={position.coin}><strong>{position.coin} {position.side === "long" ? "롱" : "숏"}</strong><span>{compactMoney(position.size_usd)} · 진입 {price(position.entry_px)}</span><b className={(position.unrealized_pnl ?? 0) >= 0 ? "positive" : "negative"}>{money(position.unrealized_pnl ?? 0)} USDT</b></div>) : <p>현재 공개 포지션 없음</p>}
               </div>
@@ -198,6 +214,45 @@ function OnchainView({ data, onReload }: { data: OnchainWhaleDashboard | null; o
       )}
     </div>
   );
+}
+
+function WhaleFlowOverview({ data }: { data: OnchainWhaleDashboard }) {
+  const flow = data.flow;
+  return (
+    <div className="whaleFlowOverview">
+      <section className="whaleFlowMetrics" aria-label="고래 현재 노출">
+        <div><span>현재 롱 노출</span><strong className="positive">{compactMoney(flow.current_long_usd)}</strong></div>
+        <div><span>현재 숏 노출</span><strong className="negative">{compactMoney(flow.current_short_usd)}</strong></div>
+        <div><span>순포지션</span><strong className={flow.current_net_usd >= 0 ? "positive" : "negative"}>{signedCompactMoney(flow.current_net_usd)}</strong></div>
+        <div><span>24시간 순체결</span><strong className={flow.flow_24h_usd >= 0 ? "positive" : "negative"}>{signedCompactMoney(flow.flow_24h_usd)}</strong><small>{flow.event_count_24h}건</small></div>
+      </section>
+      <section className="whaleFlowChartSection">
+        <header><div><Activity size={16} /><strong>고래 순체결 흐름</strong><span>2시간 단위 · 최근 {flow.window_hours}시간</span></div><div className="whaleLegend"><span><i className="long" />롱 유입·숏 청산</span><span><i className="short" />숏 유입·롱 청산</span></div></header>
+        <WhaleFlowChart points={flow.timeline} />
+      </section>
+      <div className="whaleFlowLower">
+        <section className="whaleSymbolExposure">
+          <header><strong>종목별 현재 쏠림</strong><span>공개 포지션 명목가</span></header>
+          {flow.symbols.length ? flow.symbols.slice(0, 8).map((item) => {
+            const total = Math.max(1, item.long_usd + item.short_usd);
+            return <div className="whaleSymbolRow" key={item.symbol}><div><strong>{item.symbol.replace("USDT", "")}</strong><span>{item.wallet_count}지갑 · 24h {item.event_count_24h}건</span><b className={item.net_usd >= 0 ? "positive" : "negative"}>{signedCompactMoney(item.net_usd)}</b></div><div className="whaleExposureTrack"><i className="long" style={{ width: `${item.long_usd / total * 100}%` }} /><i className="short" style={{ width: `${item.short_usd / total * 100}%` }} /></div><small><span>롱 {compactMoney(item.long_usd)}</span><span>숏 {compactMoney(item.short_usd)}</span></small></div>;
+          }) : <p className="onchainEmptyInline">자동 추적군의 공개 포지션을 수집 중입니다.</p>}
+        </section>
+        <section className="whaleEventTape">
+          <header><strong>최근 체결 이벤트</strong><span>10만 USDT 이상</span></header>
+          {data.recent_events.length ? data.recent_events.slice(0, 10).map((event) => <div key={event.id}><i className={event.side} /><strong>{event.coin}</strong><span>{whaleEventLabel(event.event)} · {event.side === "long" ? "롱" : "숏"}</span><b>{compactMoney(event.size_usd)}</b><time>{shortDateTime(event.event_at)}</time></div>) : <p className="onchainEmptyInline">새 추적군의 확정 체결을 기다리고 있습니다.</p>}
+        </section>
+      </div>
+    </div>
+  );
+}
+
+function WhaleFlowChart({ points }: { points: OnchainWhaleDashboard["flow"]["timeline"] }) {
+  const width = 1000; const height = 230; const mid = 110; const plotHeight = 88;
+  const max = Math.max(1, ...points.map((point) => Math.abs(point.net_usd)));
+  const step = width / Math.max(1, points.length); const barWidth = Math.max(3, step * 0.64);
+  const labels = points.length ? [points[0], points[Math.floor(points.length / 2)], points[points.length - 1]] : [];
+  return <div className="whaleFlowChart"><svg aria-label="고래 순체결 흐름 차트" preserveAspectRatio="none" role="img" viewBox={`0 0 ${width} ${height}`}><line className="whaleChartGrid" x1="0" x2={width} y1={mid - 44} y2={mid - 44} /><line className="whaleChartZero" x1="0" x2={width} y1={mid} y2={mid} /><line className="whaleChartGrid" x1="0" x2={width} y1={mid + 44} y2={mid + 44} />{points.map((point, index) => { const value = point.net_usd; const h = Math.max(value === 0 ? 0 : 2, Math.abs(value) / max * plotHeight); return <rect className={value >= 0 ? "long" : "short"} height={h} key={point.time} rx="1" width={barWidth} x={index * step + (step - barWidth) / 2} y={value >= 0 ? mid - h : mid} />; })}{labels.map((point, index) => <text key={point.time} textAnchor={index === 0 ? "start" : index === 2 ? "end" : "middle"} x={index === 0 ? 2 : index === 2 ? width - 2 : width / 2} y="220">{new Date(point.time * 1000).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit" })}</text>)}</svg><div className="whaleChartScale"><span>+{compactMoney(max)}</span><span>0</span><span>-{compactMoney(max)}</span></div></div>;
 }
 
 function PositionsView({ trades, funnel }: { trades: PaperTrade[]; funnel: PaperGateFunnel }) {
@@ -356,6 +411,8 @@ function isNeutralExit(value: string | null): boolean { return value === "time_s
 function price(value: number | null): string { if (value === null || !Number.isFinite(value)) return "-"; return value >= 100 ? value.toLocaleString(undefined, { maximumFractionDigits: 2 }) : value.toFixed(value >= 1 ? 4 : 6); }
 function money(value: number): string { return `${value > 0 ? "+" : ""}${Number(value).toFixed(2)}`; }
 function compactMoney(value: number): string { return value >= 1_000_000 ? `${(value / 1_000_000).toFixed(1)}M` : value >= 1_000 ? `${Math.round(value / 1_000)}K` : value.toFixed(0); }
+function signedCompactMoney(value: number): string { return `${value >= 0 ? "+" : "-"}${compactMoney(Math.abs(value))}`; }
+function whaleEventLabel(value: string): string { return ({ open: "신규 진입", increase: "증액", reduce: "감액", close: "청산", flip: "방향 전환" } as Record<string,string>)[value] ?? value; }
 function whaleState(value: string): string { return ({ validated: "검증됨", degraded: "성적 저하", candidate: "표본 축적", quarantined: "격리" } as Record<string,string>)[value] ?? "표본 축적"; }
 function metricTone(value: string, inverse: boolean): string { const number = Number(value.replace(/[+%,]/g, "")); if (!Number.isFinite(number) || number === 0) return "neutral"; const positive = inverse ? number < 0 : number > 0; return positive ? "positive" : "negative"; }
 function shortDate(value: string | null): string { return value ? new Date(value).toLocaleDateString("ko-KR", { month: "numeric", day: "numeric" }) : "-"; }

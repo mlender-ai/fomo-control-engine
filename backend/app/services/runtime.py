@@ -49,6 +49,7 @@ from app.paper.service import run_paper_engine as _run_paper_engine
 from app.onchain.service import (
     add_whale_wallet as _add_whale_wallet,
     collect as _collect_whales,
+    discover as _discover_whales,
     remove_whale_wallet as _remove_whale_wallet,
     whale_dashboard as _whale_dashboard,
 )
@@ -97,6 +98,10 @@ def whale_dashboard() -> dict[str, Any]:
 
 def collect_whales() -> dict[str, Any]:
     return _collect_whales(runtime.repository, runtime.settings)
+
+
+def discover_whales() -> dict[str, Any]:
+    return _discover_whales(runtime.repository, runtime.settings)
 
 
 def sync_and_analyze_positions() -> dict[str, Any]:

@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import re
 from collections import defaultdict
+from datetime import timedelta
 from typing import Any
 
 from app.analyst.signature_registry import current_state
 from app.db.models import WhaleEvent, WhaleWallet, utc_now
 from app.onchain.hyperliquid.client import HyperliquidInfoClient
 from app.onchain.hyperliquid.collector import collect_whale_positions, whale_signature_key
+from app.onchain.hyperliquid.leaderboard import cached_discovery, discover_leaderboard_wallets
 
 ADDRESS_RE = re.compile(r"^0x[a-fA-F0-9]{40}$")
 
@@ -54,8 +56,12 @@ def collect(repo: Any, settings: Any, *, client: Any | None = None) -> dict[str,
     return {"enabled": True, **collect_whale_positions(repo, settings, info_client)}
 
 
+def discover(repo: Any, settings: Any, *, client: Any | None = None) -> dict[str, Any]:
+    return discover_leaderboard_wallets(repo, settings, client)
+
+
 def whale_dashboard(repo: Any, settings: Any) -> dict[str, Any]:
-    wallets = repo.list_whale_wallets(limit=max(1, int(settings.hyperliquid_whale_max_wallets)))
+    wallets = repo.list_whale_wallets(active=True, limit=max(1, int(settings.hyperliquid_whale_max_wallets)))
     states = repo.list_whale_position_states(limit=1000)
     by_wallet: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for state in states:
@@ -67,7 +73,8 @@ def whale_dashboard(repo: Any, settings: Any) -> dict[str, Any]:
             {
                 **wallet.model_dump(mode="json"),
                 "address_short": f"{wallet.address[:6]}…{wallet.address[-4:]}",
-                "alias_disclaimer": "사용자 지정 추정 별칭 · 신원 확정 아님",
+                "alias_disclaimer": "공식 리더보드 공개 계정 · 신원 확정 아님" if wallet.source == "discovery" else "사용자 지정 추정 별칭 · 신원 확정 아님",
+                "leaderboard": wallet.payload.get("discovery") if isinstance(wallet.payload.get("discovery"), dict) else None,
                 "positions": sorted(by_wallet.get(wallet.address.lower(), []), key=lambda item: float(item.get("size_usd") or 0), reverse=True),
                 "review": review,
                 "marker_emphasis": review["state"] == "validated",
@@ -81,6 +88,8 @@ def whale_dashboard(repo: Any, settings: Any) -> dict[str, Any]:
         "minimum_event_size_usd": float(settings.hyperliquid_whale_min_size_usd),
         "wallets": rows,
         "recent_events": [_event_payload(repo, event) for event in repo.list_whale_events(limit=100)],
+        "discovery": cached_discovery(repo),
+        "flow": _flow_dashboard(repo, wallets, states),
         "rate_budget": {
             "poll_interval_seconds": int(settings.hyperliquid_whale_poll_interval_seconds),
             "position_weight_per_wallet": 2,
@@ -90,6 +99,93 @@ def whale_dashboard(repo: Any, settings: Any) -> dict[str, Any]:
         },
         "policy": "미검증 고래는 관측·실측만 표시하며 방향 판정과 자동 진입에 사용하지 않습니다.",
     }
+
+
+def _flow_dashboard(repo: Any, wallets: list[WhaleWallet], states: list[dict[str, Any]]) -> dict[str, Any]:
+    now = utc_now()
+    window_hours = 72
+    bucket_hours = 2
+    start = now - timedelta(hours=window_hours)
+    active_addresses = {wallet.address.lower() for wallet in wallets}
+    events = [event for event in repo.list_whale_events(limit=2000) if event.wallet_address.lower() in active_addresses and event.event_at >= start]
+
+    bucket_seconds = bucket_hours * 3600
+    start_epoch = int(start.timestamp()) // bucket_seconds * bucket_seconds
+    end_epoch = int(now.timestamp()) // bucket_seconds * bucket_seconds
+    buckets: dict[int, dict[str, Any]] = {}
+    for value in range(start_epoch, end_epoch + bucket_seconds, bucket_seconds):
+        buckets[value] = {
+            "time": value,
+            "long_in_usd": 0.0,
+            "short_in_usd": 0.0,
+            "long_out_usd": 0.0,
+            "short_out_usd": 0.0,
+            "net_usd": 0.0,
+            "event_count": 0,
+        }
+    for event in events:
+        bucket = int(event.event_at.timestamp()) // bucket_seconds * bucket_seconds
+        point = buckets.get(bucket)
+        if point is None:
+            continue
+        entering = event.event in {"open", "increase", "flip"}
+        key = f"{event.side}_{'in' if entering else 'out'}_usd"
+        point[key] += event.size_usd
+        signed = event.size_usd if (entering and event.side == "long") or (not entering and event.side == "short") else -event.size_usd
+        point["net_usd"] += signed
+        point["event_count"] += 1
+
+    active_states = [state for state in states if str(state.get("wallet_address") or "").lower() in active_addresses]
+    symbol_rows: dict[str, dict[str, Any]] = defaultdict(lambda: {"long_usd": 0.0, "short_usd": 0.0, "wallets": set()})
+    for state in active_states:
+        symbol = str(state.get("symbol") or state.get("coin") or "").upper()
+        if not symbol:
+            continue
+        side = "long" if state.get("side") == "long" else "short"
+        symbol_rows[symbol][f"{side}_usd"] += float(state.get("size_usd") or 0)
+        symbol_rows[symbol]["wallets"].add(str(state.get("wallet_address") or "").lower())
+    event_cutoff = now - timedelta(hours=24)
+    event_counts: dict[str, int] = defaultdict(int)
+    for event in events:
+        if event.event_at >= event_cutoff:
+            event_counts[event.symbol.upper()] += 1
+    symbols = []
+    for symbol, values in symbol_rows.items():
+        long_usd = float(values["long_usd"])
+        short_usd = float(values["short_usd"])
+        symbols.append(
+            {
+                "symbol": symbol,
+                "long_usd": round(long_usd, 2),
+                "short_usd": round(short_usd, 2),
+                "net_usd": round(long_usd - short_usd, 2),
+                "wallet_count": len(values["wallets"]),
+                "event_count_24h": event_counts.get(symbol, 0),
+            }
+        )
+    symbols.sort(key=lambda item: float(item["long_usd"]) + float(item["short_usd"]), reverse=True)
+    current_long = sum(float(item.get("size_usd") or 0) for item in active_states if item.get("side") == "long")
+    current_short = sum(float(item.get("size_usd") or 0) for item in active_states if item.get("side") == "short")
+    flow_24h = sum(_event_signed_flow(event) for event in events if event.event_at >= event_cutoff)
+    return {
+        "window_hours": window_hours,
+        "bucket_hours": bucket_hours,
+        "current_long_usd": round(current_long, 2),
+        "current_short_usd": round(current_short, 2),
+        "current_net_usd": round(current_long - current_short, 2),
+        "flow_24h_usd": round(flow_24h, 2),
+        "event_count_24h": sum(1 for event in events if event.event_at >= event_cutoff),
+        "timeline": [
+            {**point, **{key: round(float(value), 2) for key, value in point.items() if key.endswith("_usd")}}
+            for point in buckets.values()
+        ],
+        "symbols": symbols[:12],
+    }
+
+
+def _event_signed_flow(event: WhaleEvent) -> float:
+    entering = event.event in {"open", "increase", "flip"}
+    return event.size_usd if (entering and event.side == "long") or (not entering and event.side == "short") else -event.size_usd
 
 
 def chart_onchain_context(repo: Any, symbol: str, timeframe: str, candles: list[dict[str, Any]]) -> dict[str, Any]:

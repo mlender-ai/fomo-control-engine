@@ -34,3 +34,11 @@ def remove_whale(address: str) -> dict:
 @router.post("/collect")
 def collect_once() -> dict:
     return service.collect_whales()
+
+
+@router.post("/discover")
+def discover_once() -> dict:
+    try:
+        return service.discover_whales()
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc

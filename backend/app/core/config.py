@@ -72,6 +72,41 @@ class Settings(BaseSettings):
         "https://api.hyperliquid.xyz/info",
         validation_alias=AliasChoices("FCE_HYPERLIQUID_INFO_URL", "HYPERLIQUID_INFO_URL"),
     )
+    hyperliquid_leaderboard_url: str = Field(
+        "https://stats-data.hyperliquid.xyz/Mainnet/leaderboard",
+        validation_alias=AliasChoices("FCE_HYPERLIQUID_LEADERBOARD_URL", "HYPERLIQUID_LEADERBOARD_URL"),
+    )
+    hyperliquid_whale_discovery_enabled: bool = Field(
+        True,
+        validation_alias=AliasChoices("FCE_HYPERLIQUID_WHALE_DISCOVERY_ENABLED", "HYPERLIQUID_WHALE_DISCOVERY_ENABLED"),
+    )
+    hyperliquid_whale_discovery_interval_seconds: int = Field(
+        3600,
+        validation_alias=AliasChoices(
+            "FCE_HYPERLIQUID_WHALE_DISCOVERY_INTERVAL_SECONDS",
+            "HYPERLIQUID_WHALE_DISCOVERY_INTERVAL_SECONDS",
+        ),
+    )
+    hyperliquid_whale_discovery_min_account_usd: float = Field(
+        1_000_000.0,
+        validation_alias=AliasChoices("FCE_HYPERLIQUID_WHALE_DISCOVERY_MIN_ACCOUNT_USD", "HYPERLIQUID_WHALE_DISCOVERY_MIN_ACCOUNT_USD"),
+    )
+    hyperliquid_whale_discovery_min_month_pnl_usd: float = Field(
+        100_000.0,
+        validation_alias=AliasChoices("FCE_HYPERLIQUID_WHALE_DISCOVERY_MIN_MONTH_PNL_USD", "HYPERLIQUID_WHALE_DISCOVERY_MIN_MONTH_PNL_USD"),
+    )
+    hyperliquid_whale_discovery_min_month_roi: float = Field(
+        0.02,
+        validation_alias=AliasChoices("FCE_HYPERLIQUID_WHALE_DISCOVERY_MIN_MONTH_ROI", "HYPERLIQUID_WHALE_DISCOVERY_MIN_MONTH_ROI"),
+    )
+    hyperliquid_whale_discovery_min_month_volume_usd: float = Field(
+        10_000_000.0,
+        validation_alias=AliasChoices("FCE_HYPERLIQUID_WHALE_DISCOVERY_MIN_MONTH_VOLUME_USD", "HYPERLIQUID_WHALE_DISCOVERY_MIN_MONTH_VOLUME_USD"),
+    )
+    hyperliquid_whale_discovery_max_turnover: float = Field(
+        250.0,
+        validation_alias=AliasChoices("FCE_HYPERLIQUID_WHALE_DISCOVERY_MAX_TURNOVER", "HYPERLIQUID_WHALE_DISCOVERY_MAX_TURNOVER"),
+    )
     hyperliquid_whale_poll_interval_seconds: int = Field(
         120,
         validation_alias=AliasChoices("FCE_HYPERLIQUID_WHALE_POLL_INTERVAL_SECONDS", "HYPERLIQUID_WHALE_POLL_INTERVAL_SECONDS"),

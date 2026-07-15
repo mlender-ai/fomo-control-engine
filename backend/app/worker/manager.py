@@ -301,6 +301,12 @@ class WorkerManager:
                 self._collect_derivatives,
                 enabled=self.settings.derivative_tracking_enabled,
             ),
+            "discover_whale_leaderboard": WorkerJob(
+                "discover_whale_leaderboard",
+                self.settings.hyperliquid_whale_discovery_interval_seconds,
+                lambda: asyncio.to_thread(service.discover_whales),
+                enabled=self.settings.hyperliquid_whale_discovery_enabled,
+            ),
             "collect_whale_positions": WorkerJob(
                 "collect_whale_positions",
                 self.settings.hyperliquid_whale_poll_interval_seconds,
@@ -473,6 +479,7 @@ class WorkerManager:
             "refresh_symbol_catalog": 8,
             "daily_summary": 12,
             "weekly_calibration_report": 18,
+            "discover_whale_leaderboard": 24,
             "regen_stale_insights": 28,
             "collect_derivatives": 40,
             "collect_whale_positions": 46,

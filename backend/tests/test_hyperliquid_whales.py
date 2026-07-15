@@ -11,7 +11,8 @@ from app.core.config import Settings
 from app.db.models import WhaleEvent, WhaleWallet, utc_now
 from app.db.repository import MemoryRepository, create_repository
 from app.onchain.hyperliquid.collector import collect_whale_positions, event_from_fill, whale_signature_key
-from app.onchain.service import add_whale_wallet, chart_onchain_context
+from app.onchain.hyperliquid.leaderboard import discover_leaderboard_wallets, select_candidates
+from app.onchain.service import add_whale_wallet, chart_onchain_context, whale_dashboard
 from app.notify.alerts import AlertEngine
 from app.notify.state import NotificationState
 from app.exchange.mock import MockMarketDataProvider
@@ -56,6 +57,31 @@ class FakeHyperliquidClient:
         ]
 
 
+class FakeLeaderboardClient:
+    def leaderboard(self) -> dict:
+        return {
+            "leaderboardRows": [
+                {
+                    "ethAddress": ADDRESS,
+                    "accountValue": "5000000",
+                    "displayName": "Directional One",
+                    "windowPerformances": [["month", {"pnl": "900000", "roi": "0.18", "vlm": "80000000"}]],
+                },
+                {
+                    "ethAddress": "0x2222222222222222222222222222222222222222",
+                    "accountValue": "3000000",
+                    "displayName": None,
+                    "windowPerformances": [["month", {"pnl": "500000", "roi": "0.12", "vlm": "60000000"}]],
+                },
+                {
+                    "ethAddress": "0x3333333333333333333333333333333333333333",
+                    "accountValue": "4000000",
+                    "windowPerformances": [["month", {"pnl": "-1", "roi": "-0.1", "vlm": "50000000"}]],
+                },
+            ]
+        }
+
+
 def test_fill_classification_open_close_and_flip() -> None:
     wallet = WhaleWallet(address=ADDRESS, label="테스트 고래")
     now_ms = int(utc_now().timestamp() * 1000)
@@ -98,6 +124,47 @@ def test_wallet_limit_is_enforced_without_auto_registration() -> None:
         raise AssertionError("wallet cap must reject the second address")
 
 
+def test_leaderboard_discovery_selects_profitable_active_whales_and_preserves_manual_wallets() -> None:
+    repo = MemoryRepository()
+    manual = "0x9999999999999999999999999999999999999999"
+    repo.upsert_whale_wallet(WhaleWallet(address=manual, label="내 지정", source="manual"))
+    settings = Settings(hyperliquid_whale_max_wallets=2)
+
+    result = discover_leaderboard_wallets(repo, settings, FakeLeaderboardClient())
+
+    active = repo.list_whale_wallets(active=True, limit=10)
+    assert result["rows_scanned"] == 3
+    assert result["eligible_count"] == 2
+    assert result["selected_count"] == 1
+    assert {wallet.address for wallet in active} == {manual, ADDRESS}
+    discovered = repo.get_whale_wallet(ADDRESS)
+    assert discovered is not None
+    assert discovered.source == "discovery"
+    assert discovered.label == "Directional One"
+    assert discovered.payload["discovery"]["month_roi"] == pytest.approx(0.18)
+
+
+def test_leaderboard_filter_rejects_hft_turnover_and_loss_rows() -> None:
+    rows = FakeLeaderboardClient().leaderboard()["leaderboardRows"] + [
+        {
+            "ethAddress": "0x4444444444444444444444444444444444444444",
+            "accountValue": "1000000",
+            "windowPerformances": [["month", {"pnl": "1000000", "roi": "1", "vlm": "500000000"}]],
+        }
+    ]
+    selected = select_candidates(
+        rows,
+        {
+            "min_account_usd": 1_000_000,
+            "min_month_pnl_usd": 100_000,
+            "min_month_roi": 0.02,
+            "min_month_volume_usd": 10_000_000,
+            "max_turnover": 250,
+        },
+    )
+    assert [item["address"] for item in selected] == [ADDRESS, "0x2222222222222222222222222222222222222222"]
+
+
 def test_chart_markers_anchor_only_to_closed_candles_and_aggregate() -> None:
     repo = MemoryRepository()
     start = utc_now().replace(minute=0, second=0, microsecond=0) - timedelta(hours=12)
@@ -125,6 +192,47 @@ def test_chart_markers_anchor_only_to_closed_candles_and_aggregate() -> None:
     assert context["markers"][0]["time"] == candles[0]["time"]
     assert context["markers"][0]["emphasized"] is False
     assert context["validated_evidence"] == []
+
+
+def test_whale_dashboard_reports_current_exposure_and_signed_flow() -> None:
+    repo = MemoryRepository()
+    repo.upsert_whale_wallet(WhaleWallet(address=ADDRESS, label="테스트 고래"))
+    repo.upsert_whale_position_state(
+        ADDRESS,
+        "BTC",
+        {
+            "wallet_address": ADDRESS,
+            "wallet_label": "테스트 고래",
+            "coin": "BTC",
+            "symbol": "BTCUSDT",
+            "side": "long",
+            "size_usd": 2_000_000,
+            "entry_px": 60_000,
+            "as_of": utc_now().isoformat(),
+        },
+    )
+    repo.add_whale_event(
+        WhaleEvent(
+            wallet_address=ADDRESS,
+            wallet_label="테스트 고래",
+            coin="ETH",
+            symbol="ETHUSDT",
+            side="short",
+            event="open",
+            size=200,
+            size_usd=500_000,
+            entry_px=2_500,
+            event_at=utc_now(),
+        )
+    )
+
+    dashboard = whale_dashboard(repo, Settings())
+
+    assert dashboard["flow"]["current_long_usd"] == 2_000_000
+    assert dashboard["flow"]["current_short_usd"] == 0
+    assert dashboard["flow"]["flow_24h_usd"] == -500_000
+    assert dashboard["flow"]["event_count_24h"] == 1
+    assert dashboard["flow"]["symbols"][0]["symbol"] == "BTCUSDT"
 
 
 def test_only_validated_wallet_enters_confluence() -> None:
