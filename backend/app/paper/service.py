@@ -1541,7 +1541,9 @@ def _paper_target_plan(
         "thesis_invalidation": invalidation_price,
         "structural_risk_distance": round(structural_risk, 8) if structural_risk is not None else None,
         "execution_invalidation": round(execution_invalidation, 8) if execution_invalidation is not None else None,
-        "execution_invalidation_source": "atr_risk_cap" if execution_risk is not None and structural_risk is not None and execution_risk < structural_risk else "structural",
+        "execution_invalidation_source": "atr_risk_cap"
+        if execution_risk is not None and structural_risk is not None and execution_risk < structural_risk
+        else "structural",
         "execution_invalidation_distance_pct": round(execution_distance_pct, 4) if execution_distance_pct is not None else None,
         "execution_invalidation_too_close": bool(execution_distance_pct is not None and execution_distance_pct < 0.8),
         "risk_distance": round(execution_risk, 8) if execution_risk is not None else None,
@@ -1565,11 +1567,7 @@ def _paper_simulation_contract(simulation: dict[str, Any], target_plan: dict[str
             item.update(
                 {
                     "status": "pass" if passed else "fail",
-                    "reason": (
-                        f"단계 익절 기대 R:R {rr_ratio:.2f} — TP1 50%·TP2 50%"
-                        if rr_ratio is not None
-                        else "단계 익절 R:R 산출 불가"
-                    ),
+                    "reason": (f"단계 익절 기대 R:R {rr_ratio:.2f} — TP1 50%·TP2 50%" if rr_ratio is not None else "단계 익절 R:R 산출 불가"),
                 }
             )
         checklist.append(item)

@@ -230,10 +230,7 @@ def _flow_dashboard(repo: Any, wallets: list[WhaleWallet], states: list[dict[str
         "current_net_usd": round(current_long - current_short, 2),
         "flow_24h_usd": round(flow_24h, 2),
         "event_count_24h": sum(1 for event in events if event.event_at >= event_cutoff),
-        "timeline": [
-            {**point, **{key: round(float(value), 2) for key, value in point.items() if key.endswith("_usd")}}
-            for point in buckets.values()
-        ],
+        "timeline": [{**point, **{key: round(float(value), 2) for key, value in point.items() if key.endswith("_usd")}} for point in buckets.values()],
         "symbols": symbols[:12],
     }
 
