@@ -569,12 +569,12 @@ function PositionWhaleBanner({
   return (
     <section className={`positionWhaleBanner ${dominant}`} data-testid="position-whale-banner">
       <header>
-        <div><Waves size={17} /><span>상위 고래 실시간</span><strong>{summary.symbol}</strong></div>
+        <div><Waves size={17} /><span>상위 고래 · 현재 미결제</span><strong>{summary.symbol}</strong></div>
         <small><i />30초 자동 갱신 · {summary.as_of ? shortWhaleTime(summary.as_of) : "공개 포지션 없음"}</small>
       </header>
       <div className="positionWhaleSummary">
-        <div><span>롱</span><strong className="long">{compactWhaleMoney(summary.long_usd)}</strong><small>{summary.long_wallet_count}지갑</small></div>
-        <div><span>숏</span><strong className="short">{compactWhaleMoney(summary.short_usd)}</strong><small>{summary.short_wallet_count}지갑</small></div>
+        <div><span>현재 롱</span><strong className="long">{compactWhaleMoney(summary.long_usd)}</strong><small>{summary.long_wallet_count}지갑</small></div>
+        <div><span>현재 숏</span><strong className="short">{compactWhaleMoney(summary.short_usd)}</strong><small>{summary.short_wallet_count}지갑</small></div>
         <div><span>분포</span><strong>{totalUsd > 0 ? `롱 ${Math.round(longPct)}%` : "관측 없음"}</strong><small>{summary.wallet_count}/{summary.tracked_wallet_count}지갑 보유</small></div>
         <div><span>내 포지션 대비</span><strong className={dominant === direction ? "aligned" : dominant === "neutral" ? "neutral" : "opposed"}>{alignment}</strong><small>관측 정보 · 방향 판정 아님</small></div>
       </div>
@@ -603,7 +603,7 @@ function PositionWhaleBanner({
           ))}
         </div>
       ) : null}
-      <footer>Hyperliquid 공개 계정 기준 · 별칭은 추정 · 검증 전 자동 진입 근거로 사용하지 않음</footer>
+      <footer>배너 = 현재 미결제 · 차트 별 = 과거 확정 체결 · Hyperliquid 공개 계정 기준 · 검증 전 자동 진입 근거로 사용하지 않음</footer>
     </section>
   );
 }
@@ -630,7 +630,7 @@ function whalePositionSummary(data: OnchainWhaleDashboard | null, symbol: string
 
 function whaleMicroLabel(summary: PositionWhaleSummary | null): string {
   if (!summary || summary.wallet_count === 0) return "";
-  return `고래 L${summary.long_wallet_count}/S${summary.short_wallet_count}`;
+  return `고래 현재 L${summary.long_wallet_count}/S${summary.short_wallet_count}`;
 }
 
 function compactWhaleMoney(value: number): string {

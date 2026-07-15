@@ -1649,7 +1649,7 @@ function onchainMarkerNodes(context: OverlayContext, marker: OnchainChartMarker)
       `<g class="onchainMarker ${marker.emphasized ? "validated" : "candidate"}" data-testid="onchain-marker"><polygon points="${points}" fill="${fill}" stroke="${color}" stroke-width="${strokeWidth}" /><title>${escapeSvgText(title)}</title></g>`
     );
   }
-  const label = marker.count > 1 ? `${marker.side === "long" ? "▲" : "▼"}×${marker.count}` : marker.label;
+  const label = onchainOperationLabel(marker);
   const labelX = clamp(x + 12, 8, context.right - 130);
   const labelY = clamp(y + (above ? -17 : 9), 8, context.height - 25);
   const badges = [
@@ -1672,9 +1672,8 @@ function passiveOnchainMarkerNodes(context: OverlayContext): string[] {
     const tone = marker.side === "long" ? "green" : "red";
     const color = context.palette.color(tone, marker.emphasized ? 0.98 : 0.82);
     const fill = marker.kind === "exit" ? context.palette.color("panel", 0.92) : color;
-    const count = marker.count > 1
-      ? `<text x="${x + outer + 2}" y="${y + 3}" fill="${context.palette.color("text", 0.78)}" font-size="9" font-family="SF Mono, Monaco, Consolas, monospace">×${marker.count}</text>`
-      : "";
+    const operationLabel = onchainOperationLabel(marker);
+    const count = `<text x="${x + outer + 2}" y="${y + 3}" fill="${context.palette.color("text", 0.82)}" font-size="9" font-weight="700" font-family="SF Mono, Monaco, Consolas, monospace">${operationLabel}</text>`;
     return [
       `<g class="onchainPassiveMarker ${marker.emphasized ? "validated" : "candidate"}" data-testid="onchain-passive-marker"><polygon points="${starPoints(x, y, outer, outer * 0.45)}" fill="${fill}" stroke="${color}" stroke-width="${marker.emphasized ? 1.8 : 1.2}" /><title>${escapeSvgText(onchainMarkerTitle(marker))}</title>${count}</g>`
     ];
@@ -1685,6 +1684,12 @@ function onchainMarkerTitle(marker: OnchainChartMarker): string {
   return marker.items.map((item) => (
     `${item.wallet_label} (${item.wallet_address.slice(0, 6)}…${item.wallet_address.slice(-4)}) · ${item.side === "long" ? "롱" : "숏"} ${formatCompactNumber(item.size_usd)} · ${item.event === "open" ? "진입" : item.event === "increase" ? "증액" : item.event === "reduce" ? "감액" : item.event === "close" ? "청산" : "전환"} · 가격 ${item.entry_px ? formatPrice(item.entry_px) : "-"} · 미실현 ${item.unrealized_pnl === null ? "-" : formatCompactNumber(item.unrealized_pnl)} · ${item.accuracy_label} · 별칭은 추정`
   )).join("\n");
+}
+
+function onchainOperationLabel(marker: OnchainChartMarker): string {
+  const side = marker.side === "long" ? "L" : "S";
+  const operation = marker.kind === "entry" ? "+" : "−";
+  return `${side}${operation}${marker.count > 1 ? `×${marker.count}` : ""}`;
 }
 
 function starPoints(cx: number, cy: number, outer: number, inner: number): string {

@@ -240,6 +240,47 @@ def test_whale_dashboard_reports_current_exposure_and_signed_flow() -> None:
     assert dashboard["symbol_activity"]["ETHUSDT"]["recent_events"][0]["event"] == "open"
 
 
+def test_historical_short_exit_does_not_become_current_short_exposure() -> None:
+    repo = MemoryRepository()
+    repo.upsert_whale_wallet(WhaleWallet(address=ADDRESS, label="테스트 고래"))
+    repo.upsert_whale_position_state(
+        ADDRESS,
+        "ETH",
+        {
+            "wallet_address": ADDRESS,
+            "wallet_label": "테스트 고래",
+            "coin": "ETH",
+            "symbol": "ETHUSDT",
+            "side": "long",
+            "size_usd": 2_000_000,
+            "entry_px": 1_800,
+            "as_of": utc_now().isoformat(),
+        },
+    )
+    repo.add_whale_event(
+        WhaleEvent(
+            wallet_address=ADDRESS,
+            wallet_label="테스트 고래",
+            coin="ETH",
+            symbol="ETHUSDT",
+            side="short",
+            event="close",
+            size=1_000,
+            size_usd=1_900_000,
+            entry_px=1_900,
+            event_at=utc_now(),
+        )
+    )
+
+    activity = whale_dashboard(repo, Settings())["symbol_activity"]["ETHUSDT"]
+
+    assert activity["long_usd"] == 2_000_000
+    assert activity["short_usd"] == 0
+    assert activity["short_wallet_count"] == 0
+    assert activity["recent_events"][0]["side"] == "short"
+    assert activity["recent_events"][0]["event"] == "close"
+
+
 def test_only_validated_wallet_enters_confluence() -> None:
     repo = MemoryRepository()
     wallet = WhaleWallet(address=ADDRESS, label="테스트 고래")
