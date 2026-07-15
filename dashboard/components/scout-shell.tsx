@@ -277,7 +277,9 @@ export function ScoutShell() {
       const response = await api.createEntryIntent(symbol, { kind: "watch", timeframe: "4h" });
       setEntryIntents((items) => [response.intent, ...items.filter((item) => item.id !== response.intent.id)]);
       setNotice(`${symbol} 수동 추적을 시작했습니다.`);
-      await runScan(false);
+      // The cached scan predates the intent we just created, so it cannot
+      // contain the new manual tracking card.
+      await runScan(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "추적을 시작하지 못했습니다.");
     }
@@ -288,7 +290,7 @@ export function ScoutShell() {
       await api.createEntryIntent(item.symbol, { kind: "watch", timeframe: item.timeframe });
       await Promise.all(item.setup_ids.map((id) => api.disarmScoutSetup(id)));
       setNotice(`${item.symbol}을 내 추적으로 전환했습니다.`);
-      await runScan(false);
+      await runScan(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "내 추적으로 전환하지 못했습니다.");
     }

@@ -137,9 +137,11 @@ jobs:
         working-directory: dashboard
         run: npx playwright install --with-deps chromium
 
-      - name: Playwright demo-mode smoke and visual tests
+      # 비주얼 회귀(chart-visual-regression)는 로컬 게이트(HARNESS Gate 3) — 골든이 darwin 렌더링이라
+      # linux CI 픽셀 비교(0.1% 허용)와 구조적으로 불일치. CI 비주얼은 linux 골든 부트스트랩 WO에서.
+      - name: Playwright demo-mode smoke tests
         working-directory: dashboard
-        run: npm run test:e2e
+        run: npx playwright test tests/e2e-smoke.spec.ts
 
       - name: Upload Playwright artifacts
         uses: actions/upload-artifact@v4
