@@ -352,6 +352,8 @@ def _engine_invalidation(
     action = "이탈 시 손절 검토" if direction == "long" else "돌파 시 손절 검토"
     return {
         "price": source["price"],
+        "score": source.get("score"),
+        "source": "engine",
         "basis": _basis(source, "현행 차트 레벨 기반 무효화 가격"),
         "distance_pct": _distance_pct(source["price"], mark_price, direction),
         "action": action,

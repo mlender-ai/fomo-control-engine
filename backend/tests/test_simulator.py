@@ -121,6 +121,9 @@ def test_rr_ratio_and_usdt_amounts():
     assert result["profit_usdt"] == 80.0
     rr_item = next(item for item in result["checklist"] if item["key"] == "rr")
     assert rr_item["status"] == "pass"
+    assert result["action_plan"]["invalidation"]["score"] == 70
+    level_item = next(item for item in result["checklist"] if item["key"] == "level_score")
+    assert level_item["status"] == "pass"
 
 
 def test_rr_fail_below_threshold():

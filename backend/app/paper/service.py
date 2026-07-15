@@ -174,8 +174,10 @@ def run_paper_engine(
                         action_plan=action_plan,
                         policy=policy_from_settings(settings, str(analysis.get("asset_class") or "unknown")),
                     )
+                    invalidation = _float(target_plan.get("execution_invalidation"))
                     take_profit = _float(target_plan.get("take_profit_1"))
                     evidence = _direction_evidence(confluence, direction)
+                    simulation = _paper_simulation_contract(simulation, target_plan)
                     entry_decision = evaluate_entry(
                         stance_state=_stance_state(confluence),
                         direction=direction,
@@ -183,7 +185,8 @@ def run_paper_engine(
                         checklist_passed=int(simulation.get("checklist_passed") or 0),
                         checklist_total=int(simulation.get("checklist_total") or 0),
                         rr_ratio=_float(target_plan.get("rr_ratio")),
-                        invalidation_hygiene=simulation.get("invalidation_too_close") is not True,
+                        invalidation_hygiene=simulation.get("invalidation_too_close") is not True
+                        and target_plan.get("execution_invalidation_too_close") is not True,
                         survives_to_invalidation=simulation.get("survives_to_invalidation") is True,
                         validated_signature=bool(signature_gates["signature_gate"]),
                         signature_ci_low_pct=(float(settings.universe_backtest_min_ci_low_pct) if signature_gates["regime_gate"] else None),
@@ -359,7 +362,9 @@ def _bootstrap_validation_positions(
                 action_plan=action_plan,
                 policy=policy_from_settings(settings, str(analysis.get("asset_class") or "unknown")),
             )
+            invalidation = _float(target_plan.get("execution_invalidation"))
             take_profit = _float(target_plan.get("take_profit_1"))
+            simulation = _paper_simulation_contract(simulation, target_plan)
             checklist_passed = int(simulation.get("checklist_passed") or 0)
             checklist_total = int(simulation.get("checklist_total") or 0)
             rr_ratio = _float(target_plan.get("rr_ratio"))
@@ -369,7 +374,8 @@ def _bootstrap_validation_positions(
                 "not_transitioning": True,
                 "evidence": len(evidence) >= VALIDATION_BOOTSTRAP_MIN_EVIDENCE,
                 "checklist": checklist_total > 0 and checklist_passed >= VALIDATION_BOOTSTRAP_MIN_CHECKLIST_PASSED,
-                "invalidation_hygiene": simulation.get("invalidation_too_close") is not True,
+                "invalidation_hygiene": simulation.get("invalidation_too_close") is not True
+                and target_plan.get("execution_invalidation_too_close") is not True,
                 "risk_reward": rr_ratio is not None and rr_ratio >= VALIDATION_BOOTSTRAP_MIN_RR,
                 "liquidation_safety": simulation.get("survives_to_invalidation") is True,
                 "action_levels": invalidation is not None and take_profit is not None,
@@ -1512,12 +1518,16 @@ def _paper_target_plan(
     if structural_distance is not None and tp1_distance < structural_distance < tp2_distance:
         tp2_distance = structural_distance
         tp2_source = "action_plan_nearer"
-    risk = abs(bar.close - invalidation_price) if invalidation_price is not None else None
+    structural_risk = abs(bar.close - invalidation_price) if invalidation_price is not None else None
     invalidation_directional = bool(
         invalidation_price is not None
         and ((direction == Direction.long and invalidation_price < bar.close) or (direction == Direction.short and invalidation_price > bar.close))
     )
-    rr_ratio = tp1_distance / risk if risk and risk > 0 and invalidation_directional else None
+    execution_risk = min(structural_risk, atr_value) if structural_risk and structural_risk > 0 and invalidation_directional else None
+    execution_invalidation = bar.close - sign * execution_risk if execution_risk is not None else None
+    staged_reward = tp1_distance * 0.5 + tp2_distance * 0.5
+    rr_ratio = staged_reward / execution_risk if execution_risk and execution_risk > 0 else None
+    execution_distance_pct = abs(execution_risk / bar.close * 100.0) if execution_risk is not None and bar.close else None
     return {
         "method": "atr_multistage",
         "atr": round(atr_value, 8),
@@ -1528,10 +1538,49 @@ def _paper_target_plan(
         "take_profit_2": round(bar.close + sign * tp2_distance, 8),
         "take_profit_2_source": tp2_source,
         "action_plan_take_profit_1": structural,
-        "risk_distance": round(risk, 8) if risk is not None else None,
+        "thesis_invalidation": invalidation_price,
+        "structural_risk_distance": round(structural_risk, 8) if structural_risk is not None else None,
+        "execution_invalidation": round(execution_invalidation, 8) if execution_invalidation is not None else None,
+        "execution_invalidation_source": "atr_risk_cap" if execution_risk is not None and structural_risk is not None and execution_risk < structural_risk else "structural",
+        "execution_invalidation_distance_pct": round(execution_distance_pct, 4) if execution_distance_pct is not None else None,
+        "execution_invalidation_too_close": bool(execution_distance_pct is not None and execution_distance_pct < 0.8),
+        "risk_distance": round(execution_risk, 8) if execution_risk is not None else None,
+        "staged_reward_distance": round(staged_reward, 8),
+        "reward_weighting": {"take_profit_1": 0.5, "take_profit_2": 0.5},
         "rr_ratio": round(rr_ratio, 4) if rr_ratio is not None else None,
         "minimum_rr": policy.min_rr,
         "rr_eligible": bool(rr_ratio is not None and rr_ratio >= policy.min_rr),
+    }
+
+
+def _paper_simulation_contract(simulation: dict[str, Any], target_plan: dict[str, Any]) -> dict[str, Any]:
+    """Align the paper checklist with its ATR execution targets without changing the shared simulator."""
+    rr_ratio = _float(target_plan.get("rr_ratio"))
+    minimum_rr = _float(target_plan.get("minimum_rr")) or 1.5
+    checklist = []
+    for raw in _list(simulation.get("checklist")):
+        item = dict(raw)
+        if item.get("key") == "rr":
+            passed = rr_ratio is not None and rr_ratio >= minimum_rr
+            item.update(
+                {
+                    "status": "pass" if passed else "fail",
+                    "reason": (
+                        f"단계 익절 기대 R:R {rr_ratio:.2f} — TP1 50%·TP2 50%"
+                        if rr_ratio is not None
+                        else "단계 익절 R:R 산출 불가"
+                    ),
+                }
+            )
+        checklist.append(item)
+    evaluated = [item for item in checklist if item.get("status") in {"pass", "fail"}]
+    return {
+        **simulation,
+        "checklist": checklist,
+        "checklist_passed": sum(1 for item in evaluated if item.get("status") == "pass"),
+        "checklist_total": len(evaluated),
+        "rr_ratio": rr_ratio,
+        "paper_target_plan": target_plan,
     }
 
 

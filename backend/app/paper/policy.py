@@ -25,7 +25,7 @@ class PaperPolicy:
     max_open_positions: int = 5
     min_evidence: int = 4
     min_checklist_passed: int = 5
-    min_checklist_total: int = 6
+    min_checklist_total: int = 5
     min_rr: float = 1.5
     min_signature_ci_low_pct: float = 50.0
     max_holding_bars: int = 30

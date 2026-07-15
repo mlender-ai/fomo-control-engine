@@ -59,6 +59,23 @@ def test_entry_requires_every_gate() -> None:
     )
     assert accepted.enter is True
 
+    accepted_with_one_na_item = evaluate_entry(
+        stance_state={"stance": "long_leaning", "flipped": True, "transitioning": False},
+        direction=Direction.long,
+        evidence_count=4,
+        checklist_passed=5,
+        checklist_total=5,
+        rr_ratio=1.5,
+        survives_to_invalidation=True,
+        validated_signature=True,
+        signature_ci_low_pct=50,
+        earnings_clear=True,
+        data_fresh=True,
+        confirmed_bar=True,
+        policy=policy,
+    )
+    assert accepted_with_one_na_item.enter is True
+
     rejected = evaluate_entry(
         stance_state={"stance": "long_leaning", "flipped": True, "transitioning": False},
         direction=Direction.long,
@@ -192,7 +209,7 @@ def test_paper_exit_monitor_reports_live_mark_to_market_and_target_distances() -
     assert monitor["take_profit_2_distance_pct"] > monitor["take_profit_distance_pct"]
 
 
-def test_atr_targets_use_nearer_structural_level_for_tp2_and_real_tp1_rr() -> None:
+def test_atr_targets_use_nearer_structural_level_and_staged_execution_rr() -> None:
     rows = [
         {
             "time": int(candle(index, close=100, high=102, low=98).timestamp.timestamp()),
@@ -218,7 +235,38 @@ def test_atr_targets_use_nearer_structural_level_for_tp2_and_real_tp1_rr() -> No
     assert plan["take_profit_1"] == pytest.approx(104.0)
     assert plan["take_profit_2"] == pytest.approx(106.0)
     assert plan["take_profit_2_source"] == "action_plan_nearer"
-    assert plan["rr_ratio"] == pytest.approx(4.0)
+    assert plan["execution_invalidation"] == pytest.approx(99.0)
+    assert plan["staged_reward_distance"] == pytest.approx(5.0)
+    assert plan["rr_ratio"] == pytest.approx(5.0)
+    assert plan["rr_eligible"] is True
+
+
+def test_far_structural_invalidation_is_capped_at_one_atr_for_paper_execution() -> None:
+    rows = [
+        {
+            "time": int(candle(index, close=100, high=102, low=98).timestamp.timestamp()),
+            "open": 100,
+            "high": 102,
+            "low": 98,
+            "close": 100,
+            "volume": 1_000,
+        }
+        for index in range(16)
+    ]
+    plan = _paper_target_plan(
+        {"candles": rows},
+        {"bar_state": {"provisional": False}},
+        bar=candle(15, close=100, high=102, low=98),
+        direction=Direction.long,
+        invalidation_price=80,
+        action_plan={"take_profit": [{"price": 120}]},
+        policy=PaperPolicy(take_profit_atr_k1=1.0, take_profit_atr_k2=2.0),
+    )
+
+    assert plan["thesis_invalidation"] == 80
+    assert plan["execution_invalidation"] == pytest.approx(96.0)
+    assert plan["execution_invalidation_source"] == "atr_risk_cap"
+    assert plan["rr_ratio"] == pytest.approx(1.5)
     assert plan["rr_eligible"] is True
 
 
@@ -605,6 +653,7 @@ def test_flip_block_logs_explain_each_failed_gate_and_checklist_rates() -> None:
             "checklist_passed": 1,
             "checklist_total": 2,
             "invalidation_too_close": True,
+            "action_plan": {"invalidation": {"price": 90}, "take_profit": [{"price": 102.5}]},
         }
     )
 
