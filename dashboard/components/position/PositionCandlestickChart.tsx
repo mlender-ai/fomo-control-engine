@@ -925,6 +925,9 @@ function renderTaOverlay(
       badges.push(...onchain.badges);
     }
   }
+  if (!layers.ta.includes("onchain") && analysis.onchain?.supported && analysis.onchain.markers.length) {
+    shapes.push(...passiveOnchainMarkerNodes(context));
+  }
   if (!compressed && layers.plan) {
     zones.push(...riskRewardBoxNodes(context));
     badges.push(...priceFlagNodes(context));
@@ -1630,9 +1633,7 @@ function onchainMarkerNodes(context: OverlayContext, marker: OnchainChartMarker)
   const green = context.palette.color("green", marker.emphasized ? 0.98 : 0.54);
   const red = context.palette.color("red", marker.emphasized ? 0.98 : 0.54);
   const strokeWidth = marker.emphasized ? 2 : 1.2;
-  const title = marker.items.map((item) => (
-    `${item.wallet_label} (${item.wallet_address.slice(0, 6)}…${item.wallet_address.slice(-4)}) · ${item.side === "long" ? "롱" : "숏"} ${formatCompactNumber(item.size_usd)} · 진입 ${item.entry_px ? formatPrice(item.entry_px) : "-"} · 미실현 ${item.unrealized_pnl === null ? "-" : formatCompactNumber(item.unrealized_pnl)} · ${item.accuracy_label} · 별칭은 추정`
-  )).join("\n");
+  const title = onchainMarkerTitle(marker);
   const shapes: string[] = [];
   if (marker.event === "flip") {
     shapes.push(
@@ -1655,6 +1656,43 @@ function onchainMarkerNodes(context: OverlayContext, marker: OnchainChartMarker)
     `<g class="onchainMarkerLabel ${marker.emphasized ? "validated" : "candidate"}"><title>${escapeSvgText(title)}</title>${labelBadge(labelX, labelY, truncateSvgLabel(label, 20), context.palette.color("panel", marker.emphasized ? 0.92 : 0.74), marker.side === "long" ? green : red, context.palette.color("text", marker.emphasized ? 0.96 : 0.68), 128)}</g>`
   ];
   return { shapes, badges };
+}
+
+function passiveOnchainMarkerNodes(context: OverlayContext): string[] {
+  const markers = context.analysis.onchain?.markers ?? [];
+  return markers.slice(0, 8).flatMap((marker) => {
+    const candle = context.analysis.candles.find((item) => item.time === marker.time);
+    const x = context.chart.timeScale().timeToCoordinate(marker.time as Time);
+    if (!candle || x === null) return [];
+    const above = marker.kind === "entry" ? marker.side === "short" : marker.side === "long";
+    const priceY = context.series.priceToCoordinate(above ? candle.high : candle.low);
+    if (priceY === null) return [];
+    const outer = marker.size_tier === 3 ? 8 : marker.size_tier === 2 ? 7 : 6;
+    const y = clamp(priceY + (above ? -(outer + 9) : outer + 9), 14, context.height - 18);
+    const tone = marker.side === "long" ? "green" : "red";
+    const color = context.palette.color(tone, marker.emphasized ? 0.98 : 0.82);
+    const fill = marker.kind === "exit" ? context.palette.color("panel", 0.92) : color;
+    const count = marker.count > 1
+      ? `<text x="${x + outer + 2}" y="${y + 3}" fill="${context.palette.color("text", 0.78)}" font-size="9" font-family="SF Mono, Monaco, Consolas, monospace">×${marker.count}</text>`
+      : "";
+    return [
+      `<g class="onchainPassiveMarker ${marker.emphasized ? "validated" : "candidate"}" data-testid="onchain-passive-marker"><polygon points="${starPoints(x, y, outer, outer * 0.45)}" fill="${fill}" stroke="${color}" stroke-width="${marker.emphasized ? 1.8 : 1.2}" /><title>${escapeSvgText(onchainMarkerTitle(marker))}</title>${count}</g>`
+    ];
+  });
+}
+
+function onchainMarkerTitle(marker: OnchainChartMarker): string {
+  return marker.items.map((item) => (
+    `${item.wallet_label} (${item.wallet_address.slice(0, 6)}…${item.wallet_address.slice(-4)}) · ${item.side === "long" ? "롱" : "숏"} ${formatCompactNumber(item.size_usd)} · ${item.event === "open" ? "진입" : item.event === "increase" ? "증액" : item.event === "reduce" ? "감액" : item.event === "close" ? "청산" : "전환"} · 가격 ${item.entry_px ? formatPrice(item.entry_px) : "-"} · 미실현 ${item.unrealized_pnl === null ? "-" : formatCompactNumber(item.unrealized_pnl)} · ${item.accuracy_label} · 별칭은 추정`
+  )).join("\n");
+}
+
+function starPoints(cx: number, cy: number, outer: number, inner: number): string {
+  return Array.from({ length: 10 }, (_, index) => {
+    const radius = index % 2 === 0 ? outer : inner;
+    const angle = -Math.PI / 2 + index * Math.PI / 5;
+    return `${(cx + Math.cos(angle) * radius).toFixed(2)},${(cy + Math.sin(angle) * radius).toFixed(2)}`;
+  }).join(" ");
 }
 
 function wyckoffEventMarker(context: OverlayContext, marker: WyckoffMarker): string[] {

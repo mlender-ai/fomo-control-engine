@@ -233,6 +233,11 @@ def test_whale_dashboard_reports_current_exposure_and_signed_flow() -> None:
     assert dashboard["flow"]["flow_24h_usd"] == -500_000
     assert dashboard["flow"]["event_count_24h"] == 1
     assert dashboard["flow"]["symbols"][0]["symbol"] == "BTCUSDT"
+    assert dashboard["symbol_activity"]["BTCUSDT"]["long_usd"] == 2_000_000
+    assert dashboard["symbol_activity"]["BTCUSDT"]["long_wallet_count"] == 1
+    assert dashboard["symbol_activity"]["BTCUSDT"]["positions"][0]["wallet_address"] == ADDRESS
+    assert dashboard["symbol_activity"]["ETHUSDT"]["recent_events"][0]["side"] == "short"
+    assert dashboard["symbol_activity"]["ETHUSDT"]["recent_events"][0]["event"] == "open"
 
 
 def test_only_validated_wallet_enters_confluence() -> None:

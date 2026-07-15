@@ -1440,6 +1440,29 @@ export type OnchainWhaleDashboard = {
       event_count_24h: number;
     }>;
   };
+  symbol_activity: Record<string, {
+    symbol: string;
+    long_usd: number;
+    short_usd: number;
+    net_usd: number;
+    long_wallet_count: number;
+    short_wallet_count: number;
+    wallet_count: number;
+    positions: Array<{
+      wallet_address: string;
+      address_short: string;
+      wallet_label: string;
+      leaderboard_rank: number | null;
+      side: "long" | "short";
+      size_usd: number;
+      entry_px: number | null;
+      mark_px: number | null;
+      unrealized_pnl: number | null;
+      as_of: string | null;
+    }>;
+    recent_events: OnchainWhaleEvent[];
+    as_of: string | null;
+  }>;
   rate_budget: Record<string, unknown>;
   policy: string;
 };

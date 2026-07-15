@@ -90,6 +90,7 @@ def whale_dashboard(repo: Any, settings: Any) -> dict[str, Any]:
         "recent_events": [_event_payload(repo, event) for event in repo.list_whale_events(limit=100)],
         "discovery": cached_discovery(repo),
         "flow": _flow_dashboard(repo, wallets, states),
+        "symbol_activity": _symbol_activity(repo, wallets, states),
         "rate_budget": {
             "poll_interval_seconds": int(settings.hyperliquid_whale_poll_interval_seconds),
             "position_weight_per_wallet": 2,
@@ -99,6 +100,60 @@ def whale_dashboard(repo: Any, settings: Any) -> dict[str, Any]:
         },
         "policy": "미검증 고래는 관측·실측만 표시하며 방향 판정과 자동 진입에 사용하지 않습니다.",
     }
+
+
+def _symbol_activity(repo: Any, wallets: list[WhaleWallet], states: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    active = {wallet.address.lower(): wallet for wallet in wallets}
+    positions: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for state in states:
+        address = str(state.get("wallet_address") or "").lower()
+        symbol = str(state.get("symbol") or "").upper()
+        wallet = active.get(address)
+        if wallet is None or not symbol:
+            continue
+        leaderboard = wallet.payload.get("discovery") if isinstance(wallet.payload.get("discovery"), dict) else {}
+        positions[symbol].append(
+            {
+                "wallet_address": wallet.address,
+                "address_short": f"{wallet.address[:6]}…{wallet.address[-4:]}",
+                "wallet_label": wallet.label,
+                "leaderboard_rank": leaderboard.get("selection_rank"),
+                "side": "long" if state.get("side") == "long" else "short",
+                "size_usd": round(float(state.get("size_usd") or 0), 2),
+                "entry_px": state.get("entry_px"),
+                "mark_px": state.get("mark_px"),
+                "unrealized_pnl": state.get("unrealized_pnl"),
+                "as_of": state.get("as_of"),
+            }
+        )
+
+    events: dict[str, list[WhaleEvent]] = defaultdict(list)
+    for event in repo.list_whale_events(limit=2000):
+        symbol = event.symbol.upper()
+        if event.wallet_address.lower() in active and symbol and len(events[symbol]) < 8:
+            events[symbol].append(event)
+
+    result: dict[str, dict[str, Any]] = {}
+    for symbol in sorted(set(positions) | set(events)):
+        rows = sorted(positions.get(symbol, []), key=lambda item: float(item["size_usd"]), reverse=True)
+        long_rows = [item for item in rows if item["side"] == "long"]
+        short_rows = [item for item in rows if item["side"] == "short"]
+        long_usd = sum(float(item["size_usd"]) for item in long_rows)
+        short_usd = sum(float(item["size_usd"]) for item in short_rows)
+        as_of_values = [str(item.get("as_of") or "") for item in rows if item.get("as_of")]
+        result[symbol] = {
+            "symbol": symbol,
+            "long_usd": round(long_usd, 2),
+            "short_usd": round(short_usd, 2),
+            "net_usd": round(long_usd - short_usd, 2),
+            "long_wallet_count": len({item["wallet_address"] for item in long_rows}),
+            "short_wallet_count": len({item["wallet_address"] for item in short_rows}),
+            "wallet_count": len({item["wallet_address"] for item in rows}),
+            "positions": rows[:8],
+            "recent_events": [_event_payload(repo, event) for event in events.get(symbol, [])],
+            "as_of": max(as_of_values, default=None),
+        }
+    return result
 
 
 def _flow_dashboard(repo: Any, wallets: list[WhaleWallet], states: list[dict[str, Any]]) -> dict[str, Any]:

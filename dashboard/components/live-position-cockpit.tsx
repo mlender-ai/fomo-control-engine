@@ -13,7 +13,8 @@ import {
   RefreshCw,
   ShieldCheck,
   TestTube2,
-  UploadCloud
+  UploadCloud,
+  Waves
 } from "lucide-react";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import { CompactChartWorkspace, type CompactNextPrice } from "@/components/position/CompactChartWorkspace";
@@ -35,6 +36,8 @@ import {
   type OneLinerLine,
   type OneLinerStance,
   type OneLinerSummary,
+  type OnchainWhaleDashboard,
+  type OnchainWhaleEvent,
   type PositionActionPlan,
   type PositionChartAnalysis,
   type ScenarioMatchResponse
@@ -71,6 +74,8 @@ export function LivePositionCockpit() {
   const [selectedChartLoading, setSelectedChartLoading] = useState(false);
   const [selectedChartError, setSelectedChartError] = useState("");
   const [stripChartAnalysis, setStripChartAnalysis] = useState<Record<string, PositionChartAnalysis>>({});
+  const [whales, setWhales] = useState<OnchainWhaleDashboard | null>(null);
+  const [whaleError, setWhaleError] = useState("");
   const [viewMode, setViewMode] = useState<FceViewMode>("minimal");
   const selectedChartRequestRef = useRef(0);
   const selectedDetailRequestRef = useRef(0);
@@ -129,6 +134,27 @@ export function LivePositionCockpit() {
       void load(false);
     }, LIVE_POSITION_SYNC_INTERVAL_SECONDS * 1000);
     return () => window.clearInterval(interval);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function loadWhales() {
+      try {
+        const next = await api.onchainWhales();
+        if (cancelled) return;
+        setWhales(next);
+        setWhaleError("");
+      } catch (reason) {
+        if (cancelled) return;
+        setWhaleError(reason instanceof Error ? reason.message : "상위 고래 데이터를 불러오지 못했습니다.");
+      }
+    }
+    void loadWhales();
+    const interval = window.setInterval(() => void loadWhales(), 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
   }, []);
 
   useEffect(() => {
@@ -211,6 +237,7 @@ export function LivePositionCockpit() {
   const selected = positions.find((item) => item.position.id === selectedId) ?? positions[0];
   const selectedPayload = selectedDetail?.position.id === selected?.position.id ? selectedDetail : selected;
   const selectedChartForPayload = selectedChartAnalysis?.position_id === selectedPayload?.position.id ? selectedChartAnalysis : null;
+  const selectedWhaleSummary = selectedPayload ? whalePositionSummary(whales, selectedPayload.position.symbol) : null;
   const stripChartKey = positions.map((item) => item.position.id).join("|");
 
   function selectPosition(positionId: string) {
@@ -357,6 +384,7 @@ export function LivePositionCockpit() {
         <>
           <PositionStrip
             chartAnalysisById={stripChartAnalysis}
+            whales={whales}
             positions={positions}
             referenceTime={data?.timestamp ?? null}
             selectedId={selected?.position.id ?? ""}
@@ -365,6 +393,12 @@ export function LivePositionCockpit() {
           />
           {selectedPayload ? (
             <>
+              <PositionWhaleBanner
+                direction={selectedPayload.position.direction}
+                error={whaleError}
+                loading={!whales && !whaleError}
+                summary={selectedWhaleSummary}
+              />
               {viewMode === "minimal" ? (
                 <MinimalPositionWorkspace
                   payload={selectedPayload}
@@ -425,7 +459,8 @@ function PositionStrip({
   positions,
   referenceTime,
   selectedId,
-  onSelect
+  onSelect,
+  whales
 }: {
   chartAnalysisById: Record<string, PositionChartAnalysis>;
   compact: boolean;
@@ -433,6 +468,7 @@ function PositionStrip({
   referenceTime: string | null;
   selectedId: string;
   onSelect: (positionId: string) => void;
+  whales: OnchainWhaleDashboard | null;
 }) {
   const sortedPositions = [...positions].sort((left, right) => right.state.severity_rank - left.state.severity_rank);
   return (
@@ -440,12 +476,14 @@ function PositionStrip({
       {sortedPositions.map((item) => {
         const trigger = nearestActionTrigger(item);
         const freshness = analysisFreshness(item, referenceTime);
+        const whaleSummary = whalePositionSummary(whales, item.position.symbol);
+        const whaleMeta = whaleMicroLabel(whaleSummary);
         const selected = item.position.id === selectedId;
         if (compact) {
           return (
             <MinimalAssetCard
               key={item.position.id}
-              meta={`${directionLabel(item.position.direction)} · ${item.position.leverage}x`}
+              meta={`${directionLabel(item.position.direction)} · ${item.position.leverage}x${whaleMeta ? ` · ${whaleMeta}` : ""}`}
               onClick={() => onSelect(item.position.id)}
               selected={selected}
               stale={freshness.stale}
@@ -488,12 +526,143 @@ function PositionStrip({
               {plainifyTaText(headlineForPayload(item))}
               {trigger ? <b>{formatDistance(trigger.distance_pct)}</b> : null}
             </span>
+            {whaleMeta ? <span className="stripWhaleMeta"><Waves size={11} />{whaleMeta}</span> : null}
             <span className={`analysisAsOfChip ${freshness.stale ? "stale" : ""}`}>{freshness.label}</span>
           </button>
         );
       })}
     </section>
   );
+}
+
+type PositionWhaleSummary = OnchainWhaleDashboard["symbol_activity"][string] & {
+  tracked_wallet_count: number;
+};
+
+function PositionWhaleBanner({
+  direction,
+  error,
+  loading,
+  summary
+}: {
+  direction: "long" | "short";
+  error: string;
+  loading: boolean;
+  summary: PositionWhaleSummary | null;
+}) {
+  if (loading) {
+    return <section className="positionWhaleBanner loading"><Waves size={16} /><span>상위 고래 공개 포지션과 체결을 동기화 중입니다.</span></section>;
+  }
+  if (error) {
+    return <section className="positionWhaleBanner error"><AlertTriangle size={16} /><span>고래 관측 갱신 실패 · {error}</span></section>;
+  }
+  if (!summary) return null;
+
+  const totalUsd = summary.long_usd + summary.short_usd;
+  const longPct = totalUsd > 0 ? summary.long_usd / totalUsd * 100 : 50;
+  const dominant = totalUsd <= 0 || Math.abs(summary.long_usd - summary.short_usd) / totalUsd < 0.05
+    ? "neutral"
+    : summary.long_usd > summary.short_usd ? "long" : "short";
+  const alignment = dominant === "neutral" ? "중립" : dominant === direction ? "내 포지션과 정렬" : "내 포지션과 반대";
+  const latest = summary.recent_events[0] ?? null;
+  const topPositions = summary.positions.slice(0, 4);
+  return (
+    <section className={`positionWhaleBanner ${dominant}`} data-testid="position-whale-banner">
+      <header>
+        <div><Waves size={17} /><span>상위 고래 실시간</span><strong>{summary.symbol}</strong></div>
+        <small><i />30초 자동 갱신 · {summary.as_of ? shortWhaleTime(summary.as_of) : "공개 포지션 없음"}</small>
+      </header>
+      <div className="positionWhaleSummary">
+        <div><span>롱</span><strong className="long">{compactWhaleMoney(summary.long_usd)}</strong><small>{summary.long_wallet_count}지갑</small></div>
+        <div><span>숏</span><strong className="short">{compactWhaleMoney(summary.short_usd)}</strong><small>{summary.short_wallet_count}지갑</small></div>
+        <div><span>분포</span><strong>{totalUsd > 0 ? `롱 ${Math.round(longPct)}%` : "관측 없음"}</strong><small>{summary.wallet_count}/{summary.tracked_wallet_count}지갑 보유</small></div>
+        <div><span>내 포지션 대비</span><strong className={dominant === direction ? "aligned" : dominant === "neutral" ? "neutral" : "opposed"}>{alignment}</strong><small>관측 정보 · 방향 판정 아님</small></div>
+      </div>
+      <div className="positionWhaleTrack" aria-label={`고래 롱 ${Math.round(longPct)}%, 숏 ${Math.round(100 - longPct)}%`}>
+        <i className="long" style={{ width: `${longPct}%` }} />
+        <i className="short" style={{ width: `${100 - longPct}%` }} />
+      </div>
+      {latest ? (
+        <div className={`positionWhaleLatest ${latest.side}`}>
+          <b>{latest.wallet_label}</b>
+          <code title={latest.wallet_address}>{shortWallet(latest.wallet_address)}</code>
+          <strong>{latest.side === "long" ? "롱" : "숏"} {whaleEventText(latest.event)} {compactWhaleMoney(latest.size_usd)}</strong>
+          <span>{latest.entry_px ? `@ ${formatPrice(latest.entry_px)}` : "가격 미수신"}</span>
+          <time>{relativeWhaleTime(latest.event_at)}</time>
+        </div>
+      ) : <p className="positionWhaleNoEvent">현재 공개 포지션 분포는 확인됐고, 이 심볼의 신규 체결 이벤트는 아직 없습니다.</p>}
+      {topPositions.length ? (
+        <div className="positionWhaleWallets" aria-label="상위 보유 지갑">
+          {topPositions.map((position) => (
+            <span key={`${position.wallet_address}-${position.side}`} title={position.wallet_address}>
+              <b>{position.leaderboard_rank ? `#${position.leaderboard_rank}` : "직접"}</b>
+              <code>{position.address_short}</code>
+              <em className={position.side}>{position.side === "long" ? "롱" : "숏"}</em>
+              <strong>{compactWhaleMoney(position.size_usd)}</strong>
+            </span>
+          ))}
+        </div>
+      ) : null}
+      <footer>Hyperliquid 공개 계정 기준 · 별칭은 추정 · 검증 전 자동 진입 근거로 사용하지 않음</footer>
+    </section>
+  );
+}
+
+function whalePositionSummary(data: OnchainWhaleDashboard | null, symbol: string): PositionWhaleSummary | null {
+  if (!data) return null;
+  const normalized = symbol.toUpperCase();
+  const activity = data.symbol_activity?.[normalized];
+  if (activity) return { ...activity, tracked_wallet_count: data.wallet_count };
+  return {
+    symbol: normalized,
+    long_usd: 0,
+    short_usd: 0,
+    net_usd: 0,
+    long_wallet_count: 0,
+    short_wallet_count: 0,
+    wallet_count: 0,
+    positions: [],
+    recent_events: [],
+    as_of: null,
+    tracked_wallet_count: data.wallet_count
+  };
+}
+
+function whaleMicroLabel(summary: PositionWhaleSummary | null): string {
+  if (!summary || summary.wallet_count === 0) return "";
+  return `고래 L${summary.long_wallet_count}/S${summary.short_wallet_count}`;
+}
+
+function compactWhaleMoney(value: number): string {
+  const absolute = Math.abs(value);
+  const sign = value < 0 ? "-" : "";
+  if (absolute >= 1_000_000_000) return `${sign}$${(absolute / 1_000_000_000).toFixed(1)}B`;
+  if (absolute >= 1_000_000) return `${sign}$${(absolute / 1_000_000).toFixed(1)}M`;
+  if (absolute >= 1_000) return `${sign}$${(absolute / 1_000).toFixed(0)}K`;
+  return `${sign}$${absolute.toFixed(0)}`;
+}
+
+function whaleEventText(event: OnchainWhaleEvent["event"]): string {
+  return ({ open: "진입", increase: "증액", reduce: "감액", close: "청산", flip: "전환" } as const)[event];
+}
+
+function shortWallet(address: string): string {
+  return address.length > 12 ? `${address.slice(0, 6)}…${address.slice(-4)}` : address;
+}
+
+function shortWhaleTime(value: string): string {
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "시각 확인 중";
+}
+
+function relativeWhaleTime(value: string): string {
+  const date = new Date(value);
+  if (!Number.isFinite(date.getTime())) return "시각 확인 중";
+  const seconds = Math.max(0, Math.round((Date.now() - date.getTime()) / 1000));
+  if (seconds < 60) return `${seconds}초 전`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}분 전`;
+  if (seconds < 86_400) return `${Math.floor(seconds / 3600)}시간 전`;
+  return date.toLocaleDateString("ko-KR", { month: "numeric", day: "numeric" });
 }
 
 function analysisFreshness(payload: LivePositionPayload, referenceTime: string | null): { label: string; title: string; stale: boolean } {
