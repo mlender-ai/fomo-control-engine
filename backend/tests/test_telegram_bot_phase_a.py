@@ -423,6 +423,9 @@ def test_bot_service_matches_live_position_api(client) -> None:
     assert service_payload["state"]["pnl_percent"] == api_payload["state"]["pnl_percent"]
     assert service_payload["state"]["health_score"] == api_payload["state"]["health_score"]
     assert service_payload["action_plan"]["invalidation"]["price"] == api_payload["action_plan"]["invalidation"]["price"]
+    cached_payload = service.cached_live_position_detail(UUID(position["id"]))
+    assert cached_payload["position"].symbol == "ETHUSDT"
+    assert cached_payload["state"]["analysis"]
     assert {item["symbol"] for item in service.list_open_position_refs()} == {"ETHUSDT"}
 
 
@@ -468,6 +471,62 @@ async def test_all_position_details_sends_each_open_position_once(monkeypatch) -
     assert "BTCUSDT" in sent[0][0]
     assert "ETHUSDT" in sent[1][0]
     assert sent[0][1][0][0]["callback_data"] == "v1:plan:BTCUSDT"
+
+
+@pytest.mark.asyncio
+async def test_position_button_shows_progress_before_cached_detail(monkeypatch) -> None:
+    bot = TelegramBotSupervisor(Settings(database_url="memory://"), NotificationState())
+    edits: list[str] = []
+    payload = {
+        "position": {"symbol": "BTCUSDT", "direction": "short", "leverage": 10},
+        "state": {
+            "status_label": "리스크 상승",
+            "health_score": 64,
+            "severity_rank": 2,
+            "pnl_percent": -4.2,
+            "pnl_source": "exchange",
+            "as_of": "2026-07-15T00:00:00+00:00",
+        },
+        "action_plan": {"headline_action": "저항 유지 여부를 확인합니다."},
+        "insight_status": {"has_insight": False},
+    }
+
+    async def fake_cached(_symbol):
+        return payload
+
+    async def fake_edit(_query, text, *, reply_markup=None):
+        edits.append(text)
+
+    monkeypatch.setattr(bot, "_cached_detail_payload", fake_cached)
+    monkeypatch.setattr(bot, "_edit", fake_edit)
+    monkeypatch.setattr(bot_module, "_markup", lambda rows, _context: rows)
+
+    await bot._edit_detail(object(), object(), "BTCUSDT")
+
+    assert "상세 관제 불러오는 중" in edits[0]
+    assert "BTCUSDT" in edits[1]
+
+
+@pytest.mark.asyncio
+async def test_position_button_leaves_visible_timeout_feedback(monkeypatch) -> None:
+    bot = TelegramBotSupervisor(Settings(database_url="memory://"), NotificationState())
+    edits: list[str] = []
+
+    async def delayed(_symbol):
+        raise RuntimeError("10초 안에 조회가 완료되지 않았습니다.")
+
+    async def fake_edit(_query, text, *, reply_markup=None):
+        edits.append(text)
+
+    monkeypatch.setattr(bot, "_cached_detail_payload", delayed)
+    monkeypatch.setattr(bot, "_edit", fake_edit)
+    monkeypatch.setattr(bot_module, "_markup", lambda rows, _context: rows)
+
+    await bot._edit_detail(object(), object(), "ETHUSDT")
+
+    assert "상세 관제 불러오는 중" in edits[0]
+    assert "상세 조회 지연" in edits[1]
+    assert "10초" in edits[1]
 
 
 def test_symbol_partial_matching_and_ambiguity(client) -> None:
@@ -585,5 +644,5 @@ async def test_bot_command_timeout_returns_runtime_error() -> None:
         NotificationState(),
     )
 
-    with pytest.raises(RuntimeError, match="계산 중"):
+    with pytest.raises(RuntimeError, match="조회가 완료되지 않았습니다"):
         await bot._run(time.sleep, 0.05)

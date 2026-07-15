@@ -600,6 +600,13 @@ def list_open_position_refs() -> list[dict[str, Any]]:
     return [{"id": position.id, "symbol": position.symbol} for position in runtime.repository.list_positions(PositionStatus.open)]
 
 
+def cached_live_position_detail(position_id: UUID) -> dict[str, Any]:
+    position = runtime.repository.get_position(position_id)
+    if position is None:
+        raise LookupError("Position not found")
+    return runtime._cached_live_position_payload(position)
+
+
 def live_position_detail(position_id: UUID) -> dict[str, Any]:
     position = runtime.repository.get_position(position_id)
     if position is None:

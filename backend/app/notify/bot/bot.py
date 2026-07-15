@@ -186,7 +186,7 @@ class TelegramBotSupervisor:
 
         app = Application.builder().token(self.settings.telegram_bot_token).build()
         app.add_handler(CommandHandler(["start", "help"], start))
-        app.add_handler(CommandHandler(["positions", "p"], positions))
+        app.add_handler(CommandHandler(["positions", "position", "p"], positions))
         app.add_handler(CommandHandler(["positions_full", "pf"], positions_full))
         app.add_handler(CommandHandler("plan", plan))
         app.add_handler(CommandHandler("insight", insight))
@@ -427,10 +427,12 @@ class TelegramBotSupervisor:
     async def _callback(self, update: Any, context: Any) -> None:
         query = update.callback_query
         parsed = parse_callback(query.data if query else None)
-        if query:
-            await query.answer()
         if parsed is None:
+            if query:
+                await query.answer()
             return
+        if query:
+            await query.answer(_callback_feedback(parsed.action, parsed.symbol))
         if parsed.action == "list":
             payload = await self._run(service.list_live_positions)
             await self._edit(
@@ -511,8 +513,17 @@ class TelegramBotSupervisor:
         elif parsed.action == "regen_insight":
             await self._edit_regenerated_insight(query, context, parsed.symbol)
         elif parsed.action == "refresh":
-            await self._run(service.sync_and_analyze_positions)
-            await self._edit_detail(query, context, parsed.symbol)
+            await self._edit(query, _loading_text(parsed.symbol, "포지션 동기화·재분석 중"))
+            try:
+                await self._run(service.sync_and_analyze_positions)
+            except RuntimeError as exc:
+                await self._edit(
+                    query,
+                    _delayed_text(parsed.symbol, str(exc)),
+                    reply_markup=_markup(detail_keyboard(parsed.symbol), context),
+                )
+                return
+            await self._edit_detail(query, context, parsed.symbol, show_progress=False)
 
     async def _reply_scout_tracking(self, message: Any, context: Any, symbol: str) -> None:
         try:
@@ -530,7 +541,7 @@ class TelegramBotSupervisor:
         )
 
     async def _send_detail(self, update: Any, context: Any, symbol: str) -> None:
-        payload = await self._detail_payload(symbol)
+        payload = await self._cached_detail_payload(symbol)
         if "candidates" in payload:
             await self._reply(
                 update.effective_message,
@@ -552,7 +563,7 @@ class TelegramBotSupervisor:
         for item in refs:
             symbol = str(item.get("symbol") or "-").upper()
             try:
-                payload = await self._run(service.live_position_detail, item["id"])
+                payload = await self._run(service.cached_live_position_detail, item["id"])
             except (LookupError, RuntimeError) as exc:
                 logger.warning("telegram position detail unavailable symbol=%s: %s", symbol, exc)
                 await self._reply(message, f"<b>{escape(symbol)}</b> 상세 조회 지연 · 잠시 후 /p {escape(symbol)} 재시도")
@@ -623,8 +634,18 @@ class TelegramBotSupervisor:
             reply_markup=_markup(detail_keyboard(payload["symbol"]), context),
         )
 
-    async def _edit_detail(self, query: Any, context: Any, symbol: str) -> None:
-        payload = await self._detail_payload(symbol)
+    async def _edit_detail(self, query: Any, context: Any, symbol: str, *, show_progress: bool = True) -> None:
+        if show_progress:
+            await self._edit(query, _loading_text(symbol, "상세 관제 불러오는 중"))
+        try:
+            payload = await self._cached_detail_payload(symbol)
+        except RuntimeError as exc:
+            await self._edit(
+                query,
+                _delayed_text(symbol, str(exc)),
+                reply_markup=_markup([[{"text": "◀ 목록", "callback_data": encode_callback("list")}]], context),
+            )
+            return
         if "candidates" in payload:
             await self._edit(
                 query,
@@ -758,6 +779,12 @@ class TelegramBotSupervisor:
             return {"candidates": [position.model_dump(mode="json") for position in match.candidates]}
         return await self._run(service.live_position_detail, match.position.id)
 
+    async def _cached_detail_payload(self, symbol: str) -> dict[str, Any]:
+        match = service.match_position_symbol(symbol)
+        if match.position is None:
+            return {"candidates": [position.model_dump(mode="json") for position in match.candidates]}
+        return await self._run(service.cached_live_position_detail, match.position.id)
+
     async def _flow_payload(self, symbol: str) -> dict[str, Any]:
         match = service.match_position_symbol(symbol)
         if match.position is None:
@@ -780,7 +807,8 @@ class TelegramBotSupervisor:
                 timeout=self.settings.telegram_command_timeout_seconds,
             )
         except asyncio.TimeoutError:
-            raise RuntimeError("계산 중입니다. 잠시 후 다시 시도해주세요.")
+            timeout = self.settings.telegram_command_timeout_seconds
+            raise RuntimeError(f"{timeout:g}초 안에 조회가 완료되지 않았습니다. 최신 캐시를 확인한 뒤 다시 시도해주세요.")
 
     async def _reply(self, message: Any, text: str, *, reply_markup: Any | None = None) -> None:
         chunks = split_telegram_text(text)
@@ -819,6 +847,26 @@ def parse_duration_seconds(value: str) -> int:
 
 def _first_arg(args: list[str] | tuple[str, ...] | None) -> str | None:
     return args[0] if args else None
+
+
+def _callback_feedback(action: str, symbol: str) -> str | None:
+    if action == "detail":
+        return f"{symbol or '포지션'} 상세 조회를 시작했습니다."
+    if action == "all_details":
+        return "전체 포지션 상세 조회를 시작했습니다."
+    if action == "refresh":
+        return f"{symbol or '포지션'} 갱신을 시작했습니다."
+    return None
+
+
+def _loading_text(symbol: str, label: str) -> str:
+    normalized = escape(str(symbol or "포지션").upper())
+    return f"⏳ <b>{normalized}</b> · {escape(label)}\n완료되거나 지연되면 이 메시지에서 바로 알려드립니다."
+
+
+def _delayed_text(symbol: str, reason: str) -> str:
+    normalized = escape(str(symbol or "포지션").upper())
+    return f"⚠️ <b>{normalized}</b> · 상세 조회 지연\n{escape(reason)}\n/p {normalized} 또는 아래 목록에서 다시 조회할 수 있습니다."
 
 
 def _format_whales(payload: dict[str, Any]) -> str:
