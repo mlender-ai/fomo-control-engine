@@ -112,6 +112,9 @@ class TelegramBotSupervisor:
         async def positions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await guarded(update, self._positions, context)
 
+        async def positions_full(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+            await guarded(update, self._positions_full, context)
+
         async def plan(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await guarded(update, self._plan, context)
 
@@ -184,6 +187,7 @@ class TelegramBotSupervisor:
         app = Application.builder().token(self.settings.telegram_bot_token).build()
         app.add_handler(CommandHandler(["start", "help"], start))
         app.add_handler(CommandHandler(["positions", "p"], positions))
+        app.add_handler(CommandHandler(["positions_full", "pf"], positions_full))
         app.add_handler(CommandHandler("plan", plan))
         app.add_handler(CommandHandler("insight", insight))
         app.add_handler(CommandHandler("flow", flow))
@@ -238,6 +242,9 @@ class TelegramBotSupervisor:
             format_positions_summary(payload),
             reply_markup=_markup(positions_keyboard(payload), context),
         )
+
+    async def _positions_full(self, update: Any, context: Any) -> None:
+        await self._send_all_position_details(update.effective_message, context)
 
     async def _plan(self, update: Any, context: Any) -> None:
         symbol = _first_arg(context.args)
@@ -431,6 +438,9 @@ class TelegramBotSupervisor:
                 format_positions_summary(payload),
                 reply_markup=_markup(positions_keyboard(payload), context),
             )
+        elif parsed.action == "all_details":
+            if query and query.message:
+                await self._send_all_position_details(query.message, context)
         elif parsed.action == "scout":
             if parsed.symbol:
                 payload = await self._run(service.start_scout_tracking, parsed.symbol)
@@ -533,6 +543,25 @@ class TelegramBotSupervisor:
             format_position_verdict(payload),
             reply_markup=_markup(detail_keyboard(payload["position"]["symbol"]), context),
         )
+
+    async def _send_all_position_details(self, message: Any, context: Any) -> None:
+        refs = await self._run(service.list_open_position_refs)
+        if not refs:
+            await self._reply(message, "열린 포지션이 없습니다.")
+            return
+        for item in refs:
+            symbol = str(item.get("symbol") or "-").upper()
+            try:
+                payload = await self._run(service.live_position_detail, item["id"])
+            except (LookupError, RuntimeError) as exc:
+                logger.warning("telegram position detail unavailable symbol=%s: %s", symbol, exc)
+                await self._reply(message, f"<b>{escape(symbol)}</b> 상세 조회 지연 · 잠시 후 /p {escape(symbol)} 재시도")
+                continue
+            await self._reply(
+                message,
+                format_position_verdict(payload),
+                reply_markup=_markup(detail_keyboard(payload["position"]["symbol"]), context),
+            )
 
     async def _send_plan(self, update: Any, context: Any, symbol: str) -> None:
         payload = await self._detail_payload(symbol)

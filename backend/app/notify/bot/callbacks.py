@@ -12,6 +12,7 @@ ALLOWED_CALLBACK_ACTIONS = {
     "regen_insight",
     "refresh",
     "list",
+    "all_details",
     "one_liners",
     "review",
     "scout",

@@ -5,6 +5,7 @@ from uuid import UUID
 
 import pytest
 
+from app.notify.bot import bot as bot_module
 from app.core.config import Settings
 from app.notify.bot.callbacks import encode_callback, parse_callback
 from app.notify.bot.bot import TelegramBotSupervisor
@@ -28,6 +29,7 @@ from app.notify.bot.formatters import (
     format_simulation,
     insight_keyboard,
     main_menu_keyboard,
+    positions_keyboard,
     scout_tracking_keyboard,
     split_telegram_text,
 )
@@ -87,6 +89,45 @@ def test_bot_formatters_render_verdict_plan_and_positions(client) -> None:
     assert "BASEDUSDT" in scout
     assert "매수하세요" not in verdict
     assert "매도하세요" not in verdict
+    assert positions_keyboard(summary)[-1][0]["callback_data"] == "v1:all_details:"
+
+
+def test_position_verdict_explains_current_money_flow() -> None:
+    payload = {
+        "position": {"symbol": "ETHUSDT", "direction": "short", "leverage": 10},
+        "state": {
+            "status_label": "리스크 상승",
+            "health_score": 25,
+            "severity_rank": 4,
+            "pnl_percent": -12.3,
+            "pnl_source": "exchange",
+            "as_of": "2026-07-15T00:00:00+00:00",
+            "analysis": {
+                "derivatives": {
+                    "latest": {"open_interest_change_pct": 2.4},
+                    "signals": {
+                        "money_flow": {
+                            "state": "futures_led",
+                            "label": "선물 단독 견인 - 레버리지 상승 경계",
+                            "available": True,
+                            "provisional": False,
+                            "source_label": "Bitget 단일 거래소 프록시",
+                            "as_of": "2026-07-15T00:00:00+00:00",
+                        }
+                    },
+                }
+            },
+        },
+        "action_plan": {"headline_action": "1710 지지 반응을 확인합니다."},
+        "insight_status": {"has_insight": False},
+    }
+
+    text = format_position_verdict(payload)
+
+    assert "자금 흐름" in text
+    assert "선물 단독 견인" in text
+    assert "현물 CVD 유입은 확인되지 않았습니다" in text
+    assert "방향 확정 신호는 아닙니다" in text
 
 
 def test_one_liner_strip_formatter_is_shared_with_position_verdict() -> None:
@@ -382,6 +423,51 @@ def test_bot_service_matches_live_position_api(client) -> None:
     assert service_payload["state"]["pnl_percent"] == api_payload["state"]["pnl_percent"]
     assert service_payload["state"]["health_score"] == api_payload["state"]["health_score"]
     assert service_payload["action_plan"]["invalidation"]["price"] == api_payload["action_plan"]["invalidation"]["price"]
+    assert {item["symbol"] for item in service.list_open_position_refs()} == {"ETHUSDT"}
+
+
+@pytest.mark.asyncio
+async def test_all_position_details_sends_each_open_position_once(monkeypatch) -> None:
+    bot = TelegramBotSupervisor(Settings(database_url="memory://"), NotificationState())
+    refs = [{"id": "one", "symbol": "BTCUSDT"}, {"id": "two", "symbol": "ETHUSDT"}]
+
+    def detail(symbol: str) -> dict:
+        return {
+            "position": {"symbol": symbol, "direction": "long", "leverage": 3},
+            "state": {
+                "status_label": "관찰 유지",
+                "health_score": 70,
+                "severity_rank": 1,
+                "pnl_percent": 1.2,
+                "pnl_source": "exchange",
+                "as_of": "2026-07-15T00:00:00+00:00",
+            },
+            "action_plan": {"headline_action": "구조 유지 여부를 확인합니다."},
+            "insight_status": {"has_insight": False},
+        }
+
+    details = {"one": detail("BTCUSDT"), "two": detail("ETHUSDT")}
+
+    async def fake_run(func, *args):
+        if func is service.list_open_position_refs:
+            return refs
+        return details[args[0]]
+
+    sent: list[tuple[str, object | None]] = []
+
+    async def fake_reply(_message, text, *, reply_markup=None):
+        sent.append((text, reply_markup))
+
+    monkeypatch.setattr(bot, "_run", fake_run)
+    monkeypatch.setattr(bot, "_reply", fake_reply)
+    monkeypatch.setattr(bot_module, "_markup", lambda rows, _context: rows)
+
+    await bot._send_all_position_details(object(), object())
+
+    assert len(sent) == 2
+    assert "BTCUSDT" in sent[0][0]
+    assert "ETHUSDT" in sent[1][0]
+    assert sent[0][1][0][0]["callback_data"] == "v1:plan:BTCUSDT"
 
 
 def test_symbol_partial_matching_and_ambiguity(client) -> None:
@@ -408,6 +494,7 @@ def test_callback_parser_and_chat_guard() -> None:
 
     assert parsed is not None
     assert parsed.action == "detail"
+    assert parse_callback("v1:all_details:").action == "all_details"
     assert parsed.symbol == "BASEDUSDT"
     assert regen_parsed is not None
     assert regen_parsed.action == "regen_insight"

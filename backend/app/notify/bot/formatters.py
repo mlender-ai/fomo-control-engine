@@ -49,7 +49,10 @@ def positions_keyboard(payload: dict[str, Any]) -> list[list[dict[str, str]]]:
                 "callback_data": encode_callback("detail", position.get("symbol", "")),
             }
         )
-    return _rows(buttons, 2)
+    rows = _rows(buttons, 2)
+    if buttons:
+        rows.append([{"text": "전체 상세", "callback_data": encode_callback("all_details")}])
+    return rows
 
 
 def main_menu_keyboard() -> list[list[dict[str, str]]]:
@@ -175,6 +178,7 @@ def format_help() -> str:
             "읽기 전용 포지션 관제 명령입니다.",
             "",
             "/positions 또는 /p — 전 포지션 요약",
+            "/positions_full 또는 /pf — 보유 포지션별 상세 관제",
             "/p BASED — 단일 포지션 상세",
             "/plan BASED — 액션 플랜",
             "/insight BASED — 최신 인사이트",
@@ -257,6 +261,9 @@ def format_position_verdict(payload: dict[str, Any]) -> str:
     flow_line = _flow_line_from_position_payload(payload)
     if flow_line:
         lines.append(flow_line)
+    money_flow_block = _money_flow_block_from_position_payload(payload)
+    if money_flow_block:
+        lines.extend(["", money_flow_block])
     liquidity_line = _liquidity_line_from_payload(payload)
     if liquidity_line:
         lines.append(liquidity_line)
@@ -953,6 +960,42 @@ def _flow_line_from_position_payload(payload: dict[str, Any]) -> str:
         f"수급: OI 변화 {_nullable_pct(latest.get('open_interest_change_pct'))} · "
         f"펀딩 {escape(str(funding.get('label') or '표본 부족'))} · "
         f"쏠림 {_number(crowding.get('score'))}"
+    )
+
+
+def _money_flow_block_from_position_payload(payload: dict[str, Any]) -> str:
+    state = _state(payload)
+    analysis = _dump(state.get("analysis"))
+    derivatives = _dump(analysis.get("derivatives"))
+    signals = _dump(derivatives.get("signals"))
+    money_flow = _dump(signals.get("money_flow"))
+    if not money_flow:
+        return ""
+
+    flow_state = str(money_flow.get("state") or "mixed")
+    narratives = {
+        "spot_led": "가격 움직임에 현물 CVD 유입이 동반됐습니다. 선물만의 움직임보다 현물 참여가 확인된 구간입니다.",
+        "futures_led": "가격 상승에 선물 매수와 OI 증가가 동반됐지만 현물 CVD 유입은 확인되지 않았습니다. 레버리지 주도 상승 여부를 확인할 구간이며 방향 확정 신호는 아닙니다.",
+        "spot_absorb": "가격이 약세 또는 횡보인 동안 현물 CVD 유입이 관찰됐습니다. 매집 가능성을 감시하되 반전 확정으로 해석하지 않습니다.",
+        "delever": "가격 하락과 OI 감소가 함께 나타났습니다. 신규 방향 베팅보다 기존 레버리지 정리가 진행되는 구간으로 봅니다.",
+        "mixed": "현물·선물 체결 방향이 섞여 있어 자금 흐름만으로 방향을 확정할 수 없습니다.",
+    }
+    reason = str(money_flow.get("reason") or "").strip()
+    if not money_flow.get("available") and reason:
+        narrative = reason
+    elif money_flow.get("provisional") and reason:
+        narrative = reason
+    else:
+        narrative = narratives.get(flow_state, narratives["mixed"])
+    source = escape(str(money_flow.get("source_label") or "Bitget 단일 거래소 프록시"))
+    as_of = _time(money_flow.get("as_of"))
+    label = escape(str(money_flow.get("label") or "자금 흐름 판정 유보"))
+    return "\n".join(
+        [
+            f"<b>자금 흐름</b> · {label}",
+            escape(narrative),
+            f"출처 {source} · 기준 {as_of}",
+        ]
     )
 
 
