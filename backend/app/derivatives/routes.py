@@ -12,6 +12,16 @@ def derivative_flow(symbol: str) -> dict:
     return service.latest_flow(symbol)
 
 
+@router.get("/api/derivatives/{symbol}/liquidation-heatmap")
+def realized_liquidation_heatmap(symbol: str, window_hours: int = 72) -> dict:
+    return service.liquidation_heatmap(symbol, window_hours)
+
+
+@router.post("/api/derivatives/{symbol}/liquidation-heatmap/refresh")
+def refresh_realized_liquidation_heatmap(symbol: str, window_hours: int = 72) -> dict:
+    return service.refresh_liquidation_heatmap(symbol, window_hours)
+
+
 @router.post("/api/derivatives/refresh")
 def refresh_derivatives() -> dict:
     return service.refresh_derivative_data()

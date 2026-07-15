@@ -37,6 +37,15 @@ The liquidation result is not added directly into Entry Opportunity Score in v0.
 ## Limits
 
 - No real order-book depth
-- No exchange liquidation stream
+- No continuously connected exchange liquidation WebSocket
 - No on-chain or cross-venue aggregation
 - No trade execution trigger
+
+## WO-FCE-78 Realized History
+
+The separate realized-liquidation panel reads Bitget's public three-day liquidation REST history. It observes price, side, amount, and event time after liquidation has occurred. It does not change this module's forward-looking proxy and is not added to Entry Score or direction scoring.
+
+The two surfaces must stay distinct:
+
+- `Liquidation Intelligence`: possible future cluster proxy / optional Coinglass model, always labeled estimated.
+- `Realized Liquidation Heatmap`: historical Bitget liquidation events, always labeled realized and not predictive.

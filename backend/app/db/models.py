@@ -671,7 +671,7 @@ class DerivativeMetric(BaseModel):
 class LiquidationEvent(BaseModel):
     id: UUID = Field(default_factory=uuid4)
     symbol: str
-    source: Literal["coinglass"]
+    source: Literal["bitget", "coinglass"]
     interval: str
     bucket_start: datetime
     long_liquidation_usd: float = 0.0

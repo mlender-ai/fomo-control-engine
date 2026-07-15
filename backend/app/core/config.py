@@ -53,6 +53,22 @@ class Settings(BaseSettings):
             "BITGET_TRADE_FILL_CACHE_TTL_SECONDS",
         ),
     )
+    bitget_liquidation_history_enabled: bool = Field(
+        True,
+        validation_alias=AliasChoices(
+            "FCE_BITGET_LIQUIDATION_HISTORY_ENABLED",
+            "BITGET_LIQUIDATION_HISTORY_ENABLED",
+        ),
+    )
+    bitget_liquidation_history_pages: int = Field(
+        3,
+        ge=1,
+        le=10,
+        validation_alias=AliasChoices(
+            "FCE_BITGET_LIQUIDATION_HISTORY_PAGES",
+            "BITGET_LIQUIDATION_HISTORY_PAGES",
+        ),
+    )
     derivative_tracking_enabled: bool = Field(
         True,
         validation_alias=AliasChoices("FCE_DERIVATIVE_TRACKING_ENABLED", "DERIVATIVE_TRACKING_ENABLED"),

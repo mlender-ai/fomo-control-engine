@@ -99,6 +99,9 @@ class BitgetMarketDataProvider(MarketDataProvider):
     def get_derivative_snapshot(self, symbol: str, ratio_period: str = "5m") -> dict:
         return _run(self.get_derivative_snapshot_async(symbol, ratio_period))
 
+    def get_liquidation_history(self, symbol: str, max_pages: int = 3) -> list[dict[str, Any]]:
+        return _run(self.get_liquidation_history_async(symbol, max_pages=max_pages))
+
     def list_contracts(self) -> list[dict]:
         return _run(self.get_contracts())
 
@@ -342,6 +345,43 @@ class BitgetMarketDataProvider(MarketDataProvider):
             "notes": notes,
             "raw_json": raw,
         }
+
+    async def get_liquidation_history_async(self, symbol: str, max_pages: int = 3) -> list[dict[str, Any]]:
+        normalized = normalize_symbol(symbol)
+        rows: list[dict[str, Any]] = []
+        seen: set[tuple[str, str, str, str]] = set()
+        cursor: str | None = None
+        for page in range(max(1, min(max_pages, 10))):
+            payload = await self.client.public_get(
+                "/api/v3/market/liquidations",
+                {
+                    "category": self.product_type,
+                    "symbol": normalized,
+                    "limit": "100",
+                    "cursor": cursor,
+                },
+            )
+            data = payload.get("data")
+            page_rows = data.get("list") if isinstance(data, dict) else None
+            if not isinstance(page_rows, list):
+                raise BitgetAPIError("invalid_response", "Bitget liquidation response is missing data.list.")
+            added = 0
+            for row in page_rows:
+                if not isinstance(row, dict):
+                    continue
+                fingerprint = tuple(str(row.get(key, "")) for key in ("ts", "side", "price", "amount"))
+                if fingerprint in seen:
+                    continue
+                seen.add(fingerprint)
+                rows.append(row)
+                added += 1
+            next_cursor = str(data.get("cursor") or "") if isinstance(data, dict) else ""
+            if len(page_rows) < 100 or not next_cursor or next_cursor == cursor or added == 0:
+                break
+            cursor = next_cursor
+            if page < max_pages - 1:
+                await asyncio.sleep(0.21)
+        return rows
 
     async def get_trade_fills(
         self,

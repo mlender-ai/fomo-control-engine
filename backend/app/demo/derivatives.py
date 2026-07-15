@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from uuid import NAMESPACE_URL, uuid5
 
 from app.db.models import DerivativeDataSnapshot, DerivativeMetric, LiquidationEvent, utc_now
 from app.marketdata.base import DerivativeCollection
@@ -65,22 +66,36 @@ class FakeDerivativesProvider:
             data_quality={"source": "demo_derivatives", "demo": True},
             raw_json={"demo": True},
         )
-        events = [
-            LiquidationEvent(
-                symbol=normalized,
-                source="coinglass",
-                interval="1h",
-                bucket_start=now - timedelta(hours=index),
-                long_liquidation_usd=25_000 * (index + 1),
-                short_liquidation_usd=18_000 * (index + 1),
-                source_status="ok",
-                data_quality={"source": "demo_liquidations", "demo": True},
-            )
-            for index in range(4)
-        ]
+        events = [_demo_liquidation_event(normalized, now, index) for index in range(24)]
         return DerivativeCollection(provider="demo", symbol=normalized, metrics=[metric], liquidation_events=events, snapshot=snapshot)
 
 
 def _cluster_price(symbol: str, multiplier: float) -> float:
     base = {"BTCUSDT": 110_400.0, "ETHUSDT": 3_706.0, "BASEDUSDT": 0.1007}.get(symbol, 100.0)
     return round(base * multiplier, 5 if symbol == "BASEDUSDT" else 2)
+
+
+def _demo_liquidation_event(symbol: str, now, index: int) -> LiquidationEvent:
+    timestamp = now - timedelta(hours=index)
+    side = "long" if index % 2 == 0 else "short"
+    price = _cluster_price(symbol, 1 + (index - 1.5) * 0.006)
+    amount = 0.4 + index * 0.2
+    notional = price * amount
+    return LiquidationEvent(
+        id=uuid5(NAMESPACE_URL, f"fce:demo:liquidation:{symbol}:{index}"),
+        symbol=symbol,
+        source="bitget",
+        interval="event",
+        bucket_start=timestamp,
+        long_liquidation_usd=notional if side == "long" else 0,
+        short_liquidation_usd=notional if side == "short" else 0,
+        source_status="ok",
+        data_quality={"source": "demo_liquidations", "demo": True},
+        raw_json={
+            "price": price,
+            "amount": amount,
+            "position_side": side,
+            "notional_usd_estimated": notional,
+            "demo": True,
+        },
+    )

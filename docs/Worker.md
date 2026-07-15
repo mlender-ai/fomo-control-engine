@@ -24,7 +24,7 @@ Each job uses a shared wrapper:
 |---|---:|---|
 | `sync_positions` | 90s | Bitget read-only position sync, snapshot storage, health/status recalculation |
 | `refresh_market_data` | 300s | Refresh candles and report cache for currently held symbols |
-| `collect_derivatives` | 300s | Collect Bitget public OI, funding, taker long/short ratio, and optional Coinglass Tier 2 data for held/watchlist symbols |
+| `collect_derivatives` | 300s | Collect Bitget public OI, funding, taker long/short ratio, realized liquidation history, and optional Coinglass Tier 2 data for held/watchlist symbols |
 | `regen_stale_insights` | 120s | Regenerate stale insights when existing staleness rules fire and min interval allows |
 | `database_retention` | 04:00 daily in `FCE_DB_MAINTENANCE_TIMEZONE` | Retention cleanup and closed-position snapshot downsampling |
 | `database_backup` | 04:30 daily in `FCE_DB_MAINTENANCE_TIMEZONE` | Online SQLite gzip backup and restore smoke check |
@@ -66,9 +66,12 @@ Tier 1 is Bitget public data and needs no API key:
 - Open interest: `/api/v2/mix/market/open-interest`
 - Funding: `/api/v2/mix/market/current-fund-rate`
 - Account long/short ratio: `/api/v2/mix/market/account-long-short`
+- Realized liquidation history: `/api/v3/market/liquidations` (up to 3 pages per tracked symbol by default)
 
 Tier 2 Coinglass is represented as a locked provider unless `FCE_COINGLASS_API_KEY` is configured. No liquidation cluster values are fabricated when the key is missing.
 See `docs/Derivatives.md` for signal formulas, storage tables, and Coinglass rate-budget math.
+
+`FCE_BITGET_LIQUIDATION_HISTORY_ENABLED=true` and `FCE_BITGET_LIQUIDATION_HISTORY_PAGES=3` control the public liquidation backfill. These calls are read-only and require no credentials. They populate the realized heatmap only and do not feed scoring.
 
 Read current flow with:
 

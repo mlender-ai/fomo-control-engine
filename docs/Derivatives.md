@@ -9,6 +9,7 @@ Tier 1 is always available when the Bitget market provider is active:
 - Open interest: Bitget `/api/v2/mix/market/open-interest`
 - Current funding: Bitget `/api/v2/mix/market/current-fund-rate`
 - Account long/short ratio: Bitget `/api/v2/mix/market/account-long-short`
+- Realized liquidation history: Bitget `/api/v3/market/liquidations` (public, latest 3 days)
 
 Tier 2 is locked unless `FCE_COINGLASS_API_KEY` is configured:
 
@@ -85,6 +86,25 @@ The score is `null` when funding sample coverage is insufficient.
 
 Price-level clusters are emitted only from Coinglass heatmap/model data. The engine does not reconstruct a liquidation heatmap from aggregated liquidation history because that history has time and amount but no price level.
 
+### Realized Liquidation Heatmap (WO-FCE-78)
+
+Bitget's public liquidation history includes observed `price`, `side`, `amount`, and `ts`, so the engine can render a time × price heatmap without a Coinglass key. This is a historical heatmap of liquidations that already happened, not a map of positions expected to liquidate in the future.
+
+- `buy` means a long position was liquidated; `sell` means a short position was liquidated, following Bitget's endpoint contract.
+- Event identity is deterministic across refreshes, so pagination does not duplicate stored observations.
+- Color intensity uses `price × amount` on a log scale. Bitget's REST page does not specify the amount unit, so every such value is labeled `estimated`; event price, side, amount, and timestamp remain direct observations.
+- The UI supports 24-hour and 72-hour windows, shows sample `N`, and labels the source as `Bitget public REST`.
+- This observation is excluded from Entry Score, directional confluence, automatic entry, and signature promotion.
+
+API:
+
+```text
+GET  /api/derivatives/{symbol}/liquidation-heatmap?window_hours=72
+POST /api/derivatives/{symbol}/liquidation-heatmap/refresh?window_hours=72
+```
+
+The forward-looking Coinglass `aggregated-heatmap/model2` remains a separate optional model. A realized Bitget hotspot must never be relabeled as an expected liquidation cluster.
+
 ## WO-FCE-21 Integration
 
 Derivative data is injected into existing product surfaces instead of creating a separate dashboard.
@@ -116,7 +136,7 @@ Coinglass liquidation clusters may be added as take-profit candidates only as `�
 - Telegram `/flow SYMBOL` uses the same service payload as the dashboard.
 - Alerts added in WO-FCE-21 are `funding_extreme`, `oi_divergence`, and `liq_cluster_near`. They inherit the existing cooldown and quiet-hour state machine, and none of them are `critical`.
 
-Every derivative number exposed by API/UI must include source and basis time. Liquidation cluster labels must include `추정`.
+Every derivative number exposed by API/UI must include source and basis time. Liquidation cluster labels must include `추정`; Bitget history labels must include `실현 청산`.
 
 ## Coinglass Rate Budget
 

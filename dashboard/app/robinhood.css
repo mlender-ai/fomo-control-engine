@@ -1534,6 +1534,179 @@ textarea:focus {
 }
 .moneyFlowIndicatorFooter small { color: inherit; font-size: inherit; }
 
+.liquidationHeatmapPanel {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px;
+  overflow: hidden;
+  border: 1px solid var(--rh-border);
+  border-radius: var(--rh-radius-lg);
+  background: var(--rh-black);
+}
+
+.liquidationHeatmapHeader,
+.liquidationHeatmapPanel > footer,
+.liquidationHeatmapActions,
+.liquidationWindowToggle {
+  display: flex;
+  align-items: center;
+}
+
+.liquidationHeatmapHeader,
+.liquidationHeatmapPanel > footer {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.liquidationHeatmapHeader > div:first-child {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.liquidationHeatmapHeader span,
+.liquidationHeatmapZones > span {
+  color: var(--rh-muted);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.liquidationHeatmapHeader strong {
+  color: var(--rh-white);
+  font-size: 15px;
+}
+
+.liquidationHeatmapHeader small,
+.liquidationHeatmapPanel > footer,
+.liquidationHeatmapZones small {
+  color: var(--rh-muted);
+  font-size: 10px;
+}
+
+.liquidationHeatmapActions { gap: 6px; }
+
+.liquidationWindowToggle {
+  padding: 2px;
+  border: 1px solid var(--rh-border);
+  border-radius: 6px;
+  background: var(--rh-canvas);
+}
+
+.liquidationWindowToggle button,
+.liquidationRefresh {
+  min-height: 26px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--rh-muted);
+  cursor: pointer;
+  font-family: var(--rh-font-mono);
+  font-size: 10px;
+}
+
+.liquidationWindowToggle button { padding: 0 8px; }
+.liquidationRefresh { display: grid; width: 28px; place-items: center; border: 1px solid var(--rh-border); }
+.liquidationWindowToggle button.active { background: var(--rh-green-soft); color: var(--rh-green-bright); }
+.liquidationRefresh:hover { color: var(--rh-white); }
+.liquidationRefresh:disabled { cursor: wait; opacity: 0.55; }
+
+.liquidationHeatmapCanvas {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--rh-border);
+  border-radius: var(--rh-radius-md);
+  background: rgb(1, 4, 18);
+}
+
+.liquidationHeatmapCanvas svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  min-height: 250px;
+}
+
+.heatmapBackdrop { fill: rgb(2, 6, 24); }
+.heatmapGridLine { stroke: color-mix(in srgb, var(--rh-border) 66%, transparent); stroke-width: 1; }
+.heatmapCurrentLine { stroke: var(--rh-white); stroke-width: 1.2; stroke-dasharray: 5 4; }
+.heatmapAxisLabel,
+.heatmapTimeLabel,
+.heatmapCurrentLabel { fill: var(--rh-muted); font: 10px var(--rh-font-mono); }
+.heatmapCurrentLabel { fill: var(--rh-white); font-weight: 700; }
+
+.liquidationHeatmapStats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-top: 1px solid var(--rh-border);
+  border-left: 1px solid var(--rh-border);
+}
+
+.liquidationHeatmapStats > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 8px;
+  border-right: 1px solid var(--rh-border);
+  border-bottom: 1px solid var(--rh-border);
+  background: var(--rh-canvas);
+}
+
+.liquidationHeatmapStats span { color: var(--rh-muted); font-size: 9px; }
+.liquidationHeatmapStats strong { color: var(--rh-white); font: 600 11px var(--rh-font-mono); }
+.liquidationHeatmapStats strong.positive { color: var(--rh-green); }
+.liquidationHeatmapStats strong.negative { color: var(--rh-orange); }
+
+.liquidationHeatmapZones {
+  display: grid;
+  grid-template-columns: auto repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  align-items: stretch;
+}
+
+.liquidationHeatmapZones > span { align-self: center; }
+.liquidationHeatmapZones > div { display: grid; gap: 2px; padding: 7px 8px; border: 1px solid var(--rh-border); border-radius: 5px; background: var(--rh-canvas); }
+.liquidationHeatmapZones strong { color: var(--rh-white); font: 600 11px var(--rh-font-mono); }
+
+.liquidationHeatmapPanel > footer > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.heatLegend { width: 15px; height: 8px; border-radius: 2px; }
+.heatLegend.low { background: rgb(20, 30, 218); }
+.heatLegend.medium { background: rgb(0, 190, 242); }
+.heatLegend.high { background: rgb(255, 207, 45); }
+
+.liquidationHeatmapEmpty {
+  display: grid;
+  min-height: 210px;
+  place-items: center;
+  border: 1px dashed var(--rh-border);
+  border-radius: var(--rh-radius-md);
+  color: var(--rh-muted);
+  padding: 18px;
+  text-align: center;
+}
+
+.liquidationHeatmapEmpty.error { color: var(--rh-orange); }
+
+@media (max-width: 760px) {
+  .liquidationHeatmapHeader,
+  .liquidationHeatmapPanel > footer {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .liquidationHeatmapActions { width: 100%; justify-content: space-between; }
+  .liquidationHeatmapStats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .liquidationHeatmapZones { grid-template-columns: 1fr; }
+  .liquidationHeatmapCanvas svg { min-height: 210px; }
+}
+
 .directionGaugeTrack i,
 .pressureGaugeTrack i {
   height: 5px;

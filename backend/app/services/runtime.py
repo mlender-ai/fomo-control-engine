@@ -31,9 +31,11 @@ from app.db.models import (
 )
 from app.derivatives.context import derivative_context_for_symbol
 from app.derivatives.engine import coinglass_status_snapshot
+from app.derivatives.liquidation_heatmap import build_realized_liquidation_heatmap
 from app.demo.derivatives import FakeDerivativesProvider
 from app.demo.seed import seed_demo_data as _seed_demo_data
 from app.marketdata.bitget_derivatives import BitgetDerivProvider
+from app.marketdata.bitget_liquidations import collect_bitget_liquidations
 from app.marketdata.coinglass import CoinglassProvider
 from app.marketdata.money_flow import flow_observation
 from app.marketdata.signals import build_derivative_signals
@@ -274,6 +276,9 @@ def refresh_derivative_data() -> dict[str, Any]:
                 bitget_metric = bitget_metric.model_copy(update={"raw_json": {**bitget_metric.raw_json, "money_flow_observation": observation}})
             runtime.repository.add_derivative_metric(bitget_metric)
             _record_money_flow_candidate(bitget_metric, reference_price=reference_price)
+            for event in bitget_collection.liquidation_events:
+                runtime.repository.add_liquidation_event(event)
+                liquidation_events.append(event.model_dump(mode="json"))
             if bitget_collection.snapshot is not None:
                 bitget_snapshot = bitget_collection.snapshot.model_copy(update={"open_interest_change_pct": bitget_metric.oi_change_pct})
                 runtime.repository.add_derivative_snapshot(bitget_snapshot)
@@ -355,6 +360,59 @@ def latest_flow(symbol: str) -> dict[str, Any]:
         "history": [item.model_dump(mode="json") for item in runtime.repository.list_derivative_snapshots(symbol=normalized, provider="bitget", limit=50)],
         "rate_budget": _coinglass_budget(runtime.settings, len(tracked_symbols())),
     }
+
+
+def liquidation_heatmap(symbol: str, window_hours: int = 72) -> dict[str, Any]:
+    normalized = symbol.upper()
+    report = runtime.repository.latest_report(normalized)
+    current_price = float(report.price) if report is not None else None
+    events = runtime.repository.list_liquidation_events(
+        symbol=normalized,
+        source="bitget",
+        limit=2000,
+    )
+    return build_realized_liquidation_heatmap(
+        events,
+        normalized,
+        current_price=current_price,
+        window_hours=window_hours,
+    )
+
+
+def refresh_liquidation_heatmap(symbol: str, window_hours: int = 72) -> dict[str, Any]:
+    normalized = symbol.upper()
+    if runtime.settings.demo_mode:
+        events = FakeDerivativesProvider().collect(normalized).liquidation_events
+    elif not runtime.settings.bitget_liquidation_history_enabled:
+        payload = liquidation_heatmap(normalized, window_hours)
+        payload.update(
+            {
+                "source_status": "locked",
+                "notes": ["Bitget 공개 청산 이력 수집이 설정에서 비활성화되어 있습니다."],
+            }
+        )
+        return payload
+    else:
+        events = collect_bitget_liquidations(
+            runtime.market_provider,
+            normalized,
+            max_pages=runtime.settings.bitget_liquidation_history_pages,
+        )
+        if not events:
+            payload = liquidation_heatmap(normalized, window_hours)
+            if runtime.settings.market_data_provider.lower() != "bitget":
+                payload.update(
+                    {
+                        "source_status": "locked",
+                        "notes": ["Bitget market data provider가 활성화되어야 공개 청산 이력을 수집합니다."],
+                    }
+                )
+            return payload
+    for event in events:
+        runtime.repository.add_liquidation_event(event)
+    payload = liquidation_heatmap(normalized, window_hours)
+    payload["refresh"] = {"stored": len(events), "pages": runtime.settings.bitget_liquidation_history_pages}
+    return payload
 
 
 def _record_money_flow_candidate(metric: DerivativeMetric, *, reference_price: float | None = None) -> None:

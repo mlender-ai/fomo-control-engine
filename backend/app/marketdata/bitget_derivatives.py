@@ -7,6 +7,7 @@ from app.db.models import DerivativeDataSnapshot, DerivativeMetric, utc_now
 from app.derivatives.engine import _snapshot_from_payload
 from app.exchange.bitget.provider import BitgetMarketDataProvider
 from app.marketdata.base import DerivativeCollection
+from app.marketdata.bitget_liquidations import collect_bitget_liquidations
 
 
 class BitgetDerivProvider:
@@ -46,12 +47,29 @@ class BitgetDerivProvider:
         payload = self.market_provider.get_derivative_snapshot(normalized, self.settings.derivative_ratio_period)
         snapshot = _snapshot_from_payload(payload)
         metric = metric_from_bitget_payload(payload)
+        liquidation_events = []
+        feature_status = {"liquidation_history": "locked"}
+        errors: list[str] = []
+        if self.settings.bitget_liquidation_history_enabled:
+            try:
+                liquidation_events = collect_bitget_liquidations(
+                    self.market_provider,
+                    normalized,
+                    max_pages=self.settings.bitget_liquidation_history_pages,
+                )
+                feature_status["liquidation_history"] = "ok"
+            except Exception as exc:
+                feature_status["liquidation_history"] = "error"
+                errors.append(f"Bitget liquidation history unavailable: {type(exc).__name__}: {exc}")
         return DerivativeCollection(
             provider="bitget",
             symbol=normalized,
             metrics=[metric],
+            liquidation_events=liquidation_events,
             snapshot=snapshot,
-            requests_used=4,
+            feature_status=feature_status,
+            requests_used=4 + self.settings.bitget_liquidation_history_pages,
+            errors=errors,
         )
 
 
