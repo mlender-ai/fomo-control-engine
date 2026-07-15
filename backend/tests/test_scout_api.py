@@ -129,6 +129,14 @@ def test_scout_analysis_returns_scenarios_without_position(client: TestClient) -
     assert payload["summary"]["short_score"] >= 0
     assert payload["historical_backtest"]["disclaimer"].startswith("과거 통계")
     assert analysis["historical_backtest"]["source"] in {"cache", "replay", "insufficient_candles", "disabled"}
+    stance = payload["analyst_briefing"]["confluence"]["stance"]
+    expected = {
+        "long_leaning": "상방",
+        "short_leaning": "하방",
+        "conflicted": "판단불가",
+        "insufficient": "판단불가",
+    }[stance]
+    assert analysis["one_liners"]["overall_stance"] == expected
 
 
 def test_scout_backtest_endpoint_returns_descriptive_stats(client: TestClient) -> None:

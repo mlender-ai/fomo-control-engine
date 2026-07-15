@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from html import escape
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from app.notify.bot.callbacks import encode_callback
 
 TELEGRAM_LIMIT = 4096
+DISPLAY_TIMEZONE = ZoneInfo("Asia/Seoul")
 ONE_LINER_STANCES = ("상방", "하방", "횡보", "판단불가")
 ONE_LINER_MODULES = ("wyckoff", "liquidity", "volume", "harmonic", "levels", "derivatives", "indicators")
 ONE_LINER_LABELS = {
@@ -439,12 +441,14 @@ def format_scout_quick_answer(payload: dict[str, Any]) -> str:
     one_liners = _one_liners_from_payload(payload)
     strip = format_one_liner_strip(one_liners) if one_liners else ""
     summary = _dump(payload.get("summary"))
-    tilt = _scout_tilt_label(summary, one_liners)
+    confluence = _scout_confluence(payload)
+    tilt = _scout_tilt_label(summary, one_liners, confluence)
     as_of = _time(payload.get("as_of"))
     lines = [
-        f"<b>{escape(symbol)}</b> · 현재 종합 판정 · 기준 {as_of} · {escape(timeframe)}",
+        f"<b>{escape(symbol)}</b> · 현재 종합 판정 · 기준 {as_of} KST · {escape(timeframe)}",
         tilt,
     ]
+    lines.extend(_scout_decision_context(confluence))
     if strip:
         lines.extend(["", strip])
     else:
@@ -1041,14 +1045,33 @@ def _one_liners_from_payload(payload_or_one_liners: dict[str, Any]) -> dict[str,
     return one_liners if isinstance(one_liners, dict) else {}
 
 
-def _scout_tilt_label(summary: dict[str, Any], one_liners: dict[str, Any]) -> str:
-    stance = str(one_liners.get("overall_stance") or "")
+def _scout_confluence(payload: dict[str, Any]) -> dict[str, Any]:
+    briefing = payload.get("analyst_briefing")
+    if not isinstance(briefing, dict):
+        return {}
+    confluence = briefing.get("confluence")
+    return confluence if isinstance(confluence, dict) else {}
+
+
+def _scout_tilt_label(summary: dict[str, Any], one_liners: dict[str, Any], confluence: dict[str, Any]) -> str:
+    confluence_stance = str(confluence.get("stance") or "")
+    stance = {
+        "long_leaning": "상방",
+        "short_leaning": "하방",
+        "conflicted": "충돌",
+        "insufficient": "판단불가",
+    }.get(confluence_stance, str(one_liners.get("overall_stance") or ""))
+    stance_state = _dump(confluence.get("stance_state"))
+    candles = int(stance_state.get("candles_in_state") or 0)
+    held = f" 유지 · {candles}캔들째" if candles > 0 else ""
     if stance == "상방":
-        return "숏 ◀━━━●▶ 롱 (상방 근거 우세)"
+        return f"숏 ◀━━━●▶ 롱 (상방 우세{held})"
     if stance == "하방":
-        return "숏 ◀●━━━▶ 롱 (하방 근거 우세)"
+        return f"숏 ◀●━━━▶ 롱 (하방 우세{held})"
     if stance == "횡보":
         return "숏 ◀━━●━━▶ 롱 (중립)"
+    if stance == "충돌":
+        return "숏 ◀━━●━━▶ 롱 (가중 근거 충돌)"
     if stance == "판단불가":
         return "숏 ◀━━○━━▶ 롱 (근거 부족)"
     try:
@@ -1063,6 +1086,39 @@ def _scout_tilt_label(summary: dict[str, Any], one_liners: dict[str, Any]) -> st
     if abs(diff) < 10:
         return "숏 ◀━━●━━▶ 롱 (충돌)"
     return "숏 ◀━━━●▶ 롱 (상방 근거 우세)" if diff > 0 else "숏 ◀●━━━▶ 롱 (하방 근거 우세)"
+
+
+def _scout_decision_context(confluence: dict[str, Any]) -> list[str]:
+    if not confluence:
+        return []
+    lines: list[str] = []
+    long_score = confluence.get("long_score")
+    short_score = confluence.get("short_score")
+    if long_score is not None and short_score is not None:
+        htf = _dump(confluence.get("htf_context"))
+        htf_label = {
+            "bearish": "하락",
+            "bearish_to_neutral": "하락→중립",
+            "neutral": "중립",
+            "neutral_to_bullish": "중립→상승",
+            "bullish": "상승",
+        }.get(str(htf.get("htf_trend") or ""), "확인 불가")
+        lines.append(f"가중 판정: 롱 {_number(long_score)} · 숏 {_number(short_score)} · 상위 추세 {escape(htf_label)}")
+    state = _dump(confluence.get("stance_state"))
+    if state.get("transitioning"):
+        target = str(state.get("target") or state.get("pending_stance") or "")
+        target_label = {
+            "long_leaning": "상방",
+            "short_leaning": "하방",
+            "conflicted": "균형",
+            "insufficient": "판단 유보",
+        }.get(target, "방향 전환")
+        try:
+            progress = round(float(state.get("flip_threshold_progress") or 0) * 100)
+        except (TypeError, ValueError):
+            progress = 0
+        lines.append(f"전환 관찰: 순간 {escape(target_label)} 시도 · 전환 문턱 {progress}%")
+    return lines
 
 
 def _scout_reason_line(summary: dict[str, Any]) -> str:
@@ -1230,11 +1286,15 @@ def _time(value: Any) -> str:
     if not value:
         return "-"
     if isinstance(value, datetime):
-        return value.strftime("%H:%M")
-    try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).strftime("%H:%M")
-    except ValueError:
-        return escape(str(value))
+        parsed = value
+    else:
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except ValueError:
+            return escape(str(value))
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(DISPLAY_TIMEZONE).strftime("%H:%M")
 
 
 def _compact(text: str, limit: int) -> str:

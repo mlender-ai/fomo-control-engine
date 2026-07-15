@@ -218,12 +218,51 @@ def test_scout_quick_answer_uses_one_liner_strip() -> None:
 
     assert "SOLUSDT" in text
     assert "현재 종합 판정" in text
-    assert "하방 근거 우세" in text
+    assert "기준 10:00 KST" in text
+    assert "하방 우세" in text
     assert "와이코프 ● 분산 우세" in text
     assert "종합: 상방 0 · 하방 2 · 중립 1 · 판단불가 1" in text
     assert "셋업 트리거는 개별 조건 알림" in text
     assert "매수하세요" not in text
     assert "매도하세요" not in text
+
+
+def test_scout_quick_answer_uses_weighted_confluence_over_module_majority() -> None:
+    one_liners = {
+        "lines": [],
+        "counts": {"상방": 3, "하방": 2, "횡보": 0, "판단불가": 2},
+        "overall_stance": "상방",
+    }
+    text = format_scout_quick_answer(
+        {
+            "symbol": "SOXLUSDT",
+            "timeframe": "4h",
+            "as_of": "2026-07-15T15:24:00+00:00",
+            "analysis": {"one_liners": one_liners},
+            "summary": {},
+            "analyst_briefing": {
+                "confluence": {
+                    "stance": "short_leaning",
+                    "long_score": 10.22,
+                    "short_score": 41.31,
+                    "htf_context": {"htf_trend": "bearish"},
+                    "stance_state": {
+                        "stance": "short_leaning",
+                        "candles_in_state": 31,
+                        "transitioning": True,
+                        "target": "conflicted",
+                        "flip_threshold_progress": 0.5,
+                    },
+                }
+            },
+        }
+    )
+
+    assert "기준 00:24 KST" in text
+    assert "하방 우세 유지 · 31캔들째" in text
+    assert "가중 판정: 롱 10.22 · 숏 41.31 · 상위 추세 하락" in text
+    assert "전환 관찰: 순간 균형 시도 · 전환 문턱 50%" in text
+    assert "상방 우세" not in text
 
 
 def test_scout_tracking_formatter_and_callbacks() -> None:

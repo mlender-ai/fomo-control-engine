@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from app.analyst.briefing import build_analyst_briefing, hysteresis_params_from_settings, load_directional_prior, persist_directional_state
 from app.analyst.alignment import build_full_alignment
 from app.analyst.gauges import build_gauges
+from app.analyst.oneliner import build_one_liners
 from app.backtest.regimes import label_regime
 from app.backtest.service import _regime_params, backtest_line, historical_context_for_analysis, validated_event_stats_for_symbol
 from app.validation.candidates import candidate_review_status
@@ -1162,6 +1163,10 @@ def _briefing_for_entry(
         prior_state=load_directional_prior(_repo(), symbol, timeframe),
         hysteresis_params=hysteresis_params_from_settings(runtime.settings),
     )
+    confluence = briefing.get("confluence") if isinstance(briefing.get("confluence"), dict) else {}
+    # Direction labels must share the weighted, hysteretic confluence stance.
+    # Per-module lines remain independent evidence and may still disagree.
+    entry["analysis"]["one_liners"] = build_one_liners(entry["analysis"], confluence=confluence)
     persist_directional_state(_repo(), symbol, timeframe, briefing)
     return briefing
 
