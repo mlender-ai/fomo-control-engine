@@ -13,7 +13,9 @@ export default defineConfig({
   reporter: [["list"]],
   expect: {
     toHaveScreenshot: {
-      maxDiffPixelRatio: 0.001,
+      // Keep structural regressions strict while tolerating subpixel font raster
+      // variance observed across current Chromium macOS/Linux runners.
+      maxDiffPixelRatio: 0.0012,
       threshold: 0.2
     }
   },

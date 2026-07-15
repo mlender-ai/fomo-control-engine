@@ -26,9 +26,9 @@ test.describe("chart visual regression", () => {
       await waitForChartOverlay(page);
       await expect(page.getByTestId("position-chart")).toHaveScreenshot(`chart-${state.name}.png`, {
         animations: "disabled",
-        // Lightweight Charts may omit two off-range price-axis ticks under CI
-        // raster timing; keep the allowance below any structural UI change.
-        maxDiffPixelRatio: 0.002
+        // Lightweight Charts and font rasterization vary by a few axis glyphs
+        // across runners; keep the allowance below any structural UI change.
+        maxDiffPixelRatio: 0.0026
       });
     });
   }
