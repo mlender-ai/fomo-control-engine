@@ -184,7 +184,8 @@ test("manual scout tracking is one click and stays separate from engine detectio
   await page.getByRole("button", { name: "SOXLUSDT 추적 시작", exact: true }).click();
 
   const manualCard = page.locator('[data-tracking-source="manual"][data-symbol="SOXLUSDT"]');
-  await expect(manualCard).toBeVisible({ timeout: 10_000 });
+  // CI 콜드 부팅(uvicorn+SQLite)에서 추적 반영이 10초를 넘길 수 있다 — 데모 배지와 같은 30초 상한.
+  await expect(manualCard).toBeVisible({ timeout: 30_000 });
   await expect(manualCard).toContainText("내가 선택");
   await expect(manualCard).toContainText("수동 선택");
 
