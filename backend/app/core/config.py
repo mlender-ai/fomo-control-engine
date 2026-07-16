@@ -123,6 +123,18 @@ class Settings(BaseSettings):
         250.0,
         validation_alias=AliasChoices("FCE_HYPERLIQUID_WHALE_DISCOVERY_MAX_TURNOVER", "HYPERLIQUID_WHALE_DISCOVERY_MAX_TURNOVER"),
     )
+    hyperliquid_whale_discovery_scan_limit: int = Field(
+        120,
+        validation_alias=AliasChoices("FCE_HYPERLIQUID_WHALE_DISCOVERY_SCAN_LIMIT", "HYPERLIQUID_WHALE_DISCOVERY_SCAN_LIMIT"),
+    )
+    hyperliquid_whale_directional_slots: int = Field(
+        8,
+        validation_alias=AliasChoices("FCE_HYPERLIQUID_WHALE_DIRECTIONAL_SLOTS", "HYPERLIQUID_WHALE_DIRECTIONAL_SLOTS"),
+    )
+    hyperliquid_whale_focus_symbols: str = Field(
+        "BTC,ETH",
+        validation_alias=AliasChoices("FCE_HYPERLIQUID_WHALE_FOCUS_SYMBOLS", "HYPERLIQUID_WHALE_FOCUS_SYMBOLS"),
+    )
     hyperliquid_whale_poll_interval_seconds: int = Field(
         120,
         validation_alias=AliasChoices("FCE_HYPERLIQUID_WHALE_POLL_INTERVAL_SECONDS", "HYPERLIQUID_WHALE_POLL_INTERVAL_SECONDS"),

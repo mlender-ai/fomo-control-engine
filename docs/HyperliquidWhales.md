@@ -30,6 +30,8 @@ The relevant settings are `FCE_HYPERLIQUID_WHALE_TRACKING_ENABLED`, `FCE_HYPERLI
 - Chart markers are anchored to a closed FCE candle and never moved to a later candle.
 - Coins that cannot map to a plain FCE `*USDT` symbol are stored but not rendered on an FCE chart.
 - Every wallet starts as a candidate. Its events are observation data, not a follow signal.
+- Discovery first filters the public leaderboard by account size, 30-day PnL/ROI, volume, and turnover. It then inspects current BTC/ETH positions for the top scan cohort and reserves directional slots across BTC/ETH long and short before filling the remaining slots by quality.
+- The discovery audit surface publishes rows scanned, eligible candidates, position-inspected candidates, selected direction coverage, and the reason each wallet entered the validation cohort. This prevents a profitable-long-only leaderboard slice from being presented as the whole whale market.
 - Only a promotion approved through the existing veto-window flow can make a wallet `validated`.
 - Whale promotion requires all three gates: at least 28 elapsed validation days, `N >= 30`, and a net 1R confidence-interval lower bound of at least 55%.
 - Leaderboard 30-day ROI/PnL is a discovery input, not validation evidence. FCE separately publishes follow-trade win rate, confidence interval, cumulative realized R, average R, and the 28-day progress for each wallet.

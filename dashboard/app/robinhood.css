@@ -3047,6 +3047,104 @@ textarea:focus {
   border-top: 1px solid var(--terminal-line);
 }
 
+.whaleDiscoveryAudit {
+  display: grid;
+  gap: 0;
+  border: 1px solid var(--terminal-line);
+  background: #090c11;
+}
+
+.whaleDiscoveryAudit > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--terminal-line);
+}
+
+.whaleDiscoveryAudit > header > div {
+  display: grid;
+  gap: 3px;
+}
+
+.whaleDiscoveryAudit > header span,
+.whaleDiscoveryAudit > header small,
+.whaleDiscoveryStages span,
+.whaleDiscoveryStages small,
+.whaleCoverageGrid span,
+.whaleLeaderboardPerformance span,
+.whaleLeaderboardPerformance small {
+  color: var(--terminal-muted);
+  font-size: 10px;
+}
+
+.whaleDiscoveryStages {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-bottom: 1px solid var(--terminal-line);
+}
+
+.whaleDiscoveryStages > div {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  padding: 14px 18px 14px 48px;
+}
+
+.whaleDiscoveryStages > div + div,
+.whaleCoverageGrid > div + div,
+.whaleLeaderboardPerformance > div + div {
+  border-left: 1px solid var(--terminal-line);
+}
+
+.whaleDiscoveryStages i {
+  position: absolute;
+  top: 17px;
+  left: 18px;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--terminal-line-strong);
+  color: var(--terminal-cyan);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-style: normal;
+}
+
+.whaleDiscoveryStages strong {
+  font-family: var(--font-mono);
+  font-size: 19px;
+}
+
+.whaleCoverageGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.whaleCoverageGrid > div {
+  display: grid;
+  grid-template-columns: minmax(150px, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 18px;
+}
+
+.whaleCoverageGrid .long {
+  color: var(--terminal-positive);
+}
+
+.whaleCoverageGrid .short {
+  color: var(--terminal-negative);
+}
+
+.whaleDiscoveryAudit > small {
+  padding: 10px 18px;
+  border-top: 1px solid var(--terminal-line);
+}
+
 .whaleValidationBoard {
   display: flex;
   align-items: center;
@@ -3169,6 +3267,27 @@ textarea:focus {
   border-top: 1px solid var(--terminal-line);
 }
 
+.whaleLeaderboardPerformance {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-top: 1px solid var(--terminal-line);
+  background: rgba(255, 255, 255, 0.012);
+}
+
+.whaleLeaderboardPerformance > div {
+  display: grid;
+  grid-template-columns: minmax(78px, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  padding: 9px 18px;
+}
+
+.whaleLeaderboardPerformance strong,
+.whaleLeaderboardPerformance small {
+  font-family: var(--font-mono);
+}
+
 .whaleReviewMetrics > div {
   display: grid;
   gap: 4px;
@@ -3223,6 +3342,15 @@ textarea:focus {
 }
 
 @media (max-width: 780px) {
+  .engineTabs {
+    overflow-x: auto;
+  }
+
+  .engineTabs a {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+
   .whaleBattleReference,
   .onchainAddForm {
     grid-template-columns: 1fr;
@@ -3230,7 +3358,8 @@ textarea:focus {
 
   .onchainToolbar,
   .onchainWalletRow header,
-  .whaleValidationBoard {
+  .whaleValidationBoard,
+  .whaleDiscoveryAudit > header {
     align-items: flex-start;
     flex-direction: column;
   }
@@ -3246,6 +3375,35 @@ textarea:focus {
 
   .whaleReviewMetrics {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .whaleDiscoveryStages,
+  .whaleCoverageGrid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .whaleDiscoveryStages > div:nth-child(3),
+  .whaleDiscoveryStages > div:nth-child(4) {
+    border-top: 1px solid var(--terminal-line);
+  }
+
+  .whaleDiscoveryStages > div:nth-child(3),
+  .whaleCoverageGrid > div:nth-child(odd) {
+    border-left: 0;
+  }
+
+  .whaleCoverageGrid > div {
+    grid-template-columns: 1fr;
+    align-items: start;
+  }
+
+  .whaleLeaderboardPerformance {
+    grid-template-columns: 1fr;
+  }
+
+  .whaleLeaderboardPerformance > div + div {
+    border-top: 1px solid var(--terminal-line);
+    border-left: 0;
   }
 
   .whaleReviewMetrics > div:nth-child(3) {

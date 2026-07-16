@@ -58,8 +58,20 @@ def collect(repo: Any, settings: Any, *, client: Any | None = None) -> dict[str,
     return {"enabled": True, **collect_whale_positions(repo, settings, info_client)}
 
 
-def discover(repo: Any, settings: Any, *, client: Any | None = None) -> dict[str, Any]:
-    return discover_leaderboard_wallets(repo, settings, client)
+def discover(
+    repo: Any,
+    settings: Any,
+    *,
+    client: Any | None = None,
+    position_client: Any | None = None,
+) -> dict[str, Any]:
+    info_client = position_client
+    if info_client is None and client is None:
+        info_client = HyperliquidInfoClient(
+            settings.hyperliquid_info_url,
+            timeout_seconds=float(settings.hyperliquid_request_timeout_seconds),
+        )
+    return discover_leaderboard_wallets(repo, settings, client, info_client)
 
 
 def whale_dashboard(repo: Any, settings: Any) -> dict[str, Any]:
@@ -125,7 +137,8 @@ def _symbol_activity(
                 "wallet_address": wallet.address,
                 "address_short": f"{wallet.address[:6]}…{wallet.address[-4:]}",
                 "wallet_label": wallet.label,
-                "leaderboard_rank": leaderboard.get("selection_rank"),
+                "leaderboard_rank": leaderboard.get("leaderboard_rank"),
+                "selection_rank": leaderboard.get("selection_rank"),
                 "side": "long" if state.get("side") == "long" else "short",
                 "size_usd": round(float(state.get("size_usd") or 0), 2),
                 "entry_px": state.get("entry_px"),

@@ -1473,11 +1473,23 @@ export type OnchainWhaleWallet = {
   direction_eligible: boolean;
   leaderboard: {
     selection_rank: number;
+    leaderboard_rank: number;
+    selection_reason: string;
     account_value_usd: number;
+    week_pnl_usd: number;
+    week_roi: number;
     month_pnl_usd: number;
     month_roi: number;
     month_volume_usd: number;
+    all_time_pnl_usd: number;
+    all_time_roi: number;
     turnover: number;
+    focus_positions: Array<{
+      coin: string;
+      side: "long" | "short";
+      size_usd: number;
+      entry_px: number | null;
+    }>;
   } | null;
   review: OnchainWhaleReview;
   positions: Array<{
@@ -1509,6 +1521,20 @@ export type OnchainWhaleDashboard = {
     selected_count: number;
     manual_count?: number;
     criteria?: Record<string, number>;
+    position_scan?: {
+      scanned_count: number;
+      active_focus_count: number;
+      errors: number;
+      coverage: Record<string, OnchainWhaleCoverage>;
+    };
+    selection_policy?: {
+      focus_symbols: string[];
+      scan_limit: number;
+      directional_slots: number;
+      quality_slots: number;
+      minimum_position_usd: number;
+    };
+    selected_coverage?: Record<string, OnchainWhaleCoverage>;
   };
   flow: {
     window_hours: number;
@@ -1549,6 +1575,7 @@ export type OnchainWhaleDashboard = {
       address_short: string;
       wallet_label: string;
       leaderboard_rank: number | null;
+      selection_rank: number | null;
       side: "long" | "short";
       size_usd: number;
       entry_px: number | null;
@@ -1561,6 +1588,13 @@ export type OnchainWhaleDashboard = {
   }>;
   rate_budget: Record<string, unknown>;
   policy: string;
+};
+
+export type OnchainWhaleCoverage = {
+  long_wallets: number;
+  short_wallets: number;
+  long_usd: number;
+  short_usd: number;
 };
 
 export type Trade = {

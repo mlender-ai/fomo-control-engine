@@ -13,7 +13,11 @@ from app.core.config import Settings
 from app.db.models import BacktestStat, JudgmentLedgerEntry, JudgmentScore, WhaleEvent, WhaleWallet, utc_now
 from app.db.repository import MemoryRepository, create_repository
 from app.onchain.hyperliquid.collector import collect_whale_positions, event_from_fill, whale_signature_key
-from app.onchain.hyperliquid.leaderboard import discover_leaderboard_wallets, select_candidates
+from app.onchain.hyperliquid.leaderboard import (
+    discover_leaderboard_wallets,
+    select_candidates,
+    select_directional_cohort,
+)
 from app.onchain.service import add_whale_wallet, chart_onchain_context, whale_dashboard
 from app.notify.alerts import AlertEngine
 from app.notify.state import NotificationState
@@ -80,6 +84,26 @@ class FakeLeaderboardClient:
                     "accountValue": "4000000",
                     "windowPerformances": [["month", {"pnl": "-1", "roi": "-0.1", "vlm": "50000000"}]],
                 },
+            ]
+        }
+
+
+class FakeDirectionalPositionClient:
+    positions = {
+        ADDRESS: ("ETH", "2", "600000"),
+        "0x2222222222222222222222222222222222222222": ("BTC", "3", "500000"),
+        "0x3333333333333333333333333333333333333333": ("ETH", "-4", "800000"),
+        "0x4444444444444444444444444444444444444444": ("BTC", "-5", "900000"),
+    }
+
+    def clearinghouse_state(self, address: str) -> dict:
+        row = self.positions.get(address)
+        if row is None:
+            return {"assetPositions": []}
+        coin, size, value = row
+        return {
+            "assetPositions": [
+                {"position": {"coin": coin, "szi": size, "positionValue": value, "entryPx": "100"}}
             ]
         }
 
@@ -167,6 +191,81 @@ def test_leaderboard_filter_rejects_hft_turnover_and_loss_rows() -> None:
     assert [item["address"] for item in selected] == [ADDRESS, "0x2222222222222222222222222222222222222222"]
 
 
+def test_directional_discovery_reserves_btc_and_eth_long_short_coverage() -> None:
+    rows = []
+    for index, address in enumerate(FakeDirectionalPositionClient.positions, start=1):
+        rows.append(
+            {
+                "ethAddress": address,
+                "accountValue": "5000000",
+                "windowPerformances": [
+                    ["week", {"pnl": str(100_000 + index), "roi": "0.04", "vlm": "20000000"}],
+                    ["month", {"pnl": str(900_000 - index), "roi": "0.18", "vlm": "80000000"}],
+                    ["allTime", {"pnl": str(2_000_000 + index), "roi": "0.8", "vlm": "200000000"}],
+                ],
+            }
+        )
+
+    class Leaderboard:
+        def leaderboard(self) -> dict:
+            return {"leaderboardRows": rows}
+
+    repo = MemoryRepository()
+    settings = Settings(
+        hyperliquid_whale_max_wallets=4,
+        hyperliquid_whale_directional_slots=4,
+        hyperliquid_whale_discovery_scan_limit=10,
+    )
+
+    result = discover_leaderboard_wallets(repo, settings, Leaderboard(), FakeDirectionalPositionClient())
+
+    assert result["position_scan"]["scanned_count"] == 4
+    assert result["position_scan"]["active_focus_count"] == 4
+    assert result["selected_count"] == 4
+    assert result["selected_coverage"]["BTC"]["long_wallets"] == 1
+    assert result["selected_coverage"]["BTC"]["short_wallets"] == 1
+    assert result["selected_coverage"]["ETH"]["long_wallets"] == 1
+    assert result["selected_coverage"]["ETH"]["short_wallets"] == 1
+    assert {item["selection_reason"] for item in result["selected"]} == {
+        "coverage:BTC:long",
+        "coverage:BTC:short",
+        "coverage:ETH:long",
+        "coverage:ETH:short",
+    }
+    assert result["selected"][0]["week_pnl_usd"] > 0
+    assert result["selected"][0]["all_time_pnl_usd"] > 0
+
+
+def test_directional_cohort_falls_back_to_quality_when_positions_are_unavailable() -> None:
+    candidates = [
+        {"address": ADDRESS, "quality_score": 2, "month_pnl_usd": 2, "focus_positions": []},
+        {"address": "0x2222222222222222222222222222222222222222", "quality_score": 1, "month_pnl_usd": 1, "focus_positions": []},
+    ]
+
+    selected = select_directional_cohort(candidates, 2, directional_slots=2, focus_symbols=["BTC", "ETH"])
+
+    assert [item["address"] for item in selected] == [item["address"] for item in candidates]
+    assert all(item["selection_reason"] == "quality" for item in selected)
+
+
+def test_directional_cohort_prefers_material_exposure_within_eligible_pool() -> None:
+    smaller = {
+        "address": ADDRESS,
+        "quality_score": 99,
+        "focus_positions": [{"coin": "ETH", "side": "short", "size_usd": 200_000}],
+    }
+    material = {
+        "address": "0x2222222222222222222222222222222222222222",
+        "quality_score": 80,
+        "focus_positions": [{"coin": "ETH", "side": "short", "size_usd": 20_000_000}],
+    }
+
+    selected = select_directional_cohort([smaller, material], 1, directional_slots=1, focus_symbols=["ETH"])
+
+    assert selected[0]["address"] == material["address"]
+    assert selected[0]["selection_reason"] == "coverage:ETH:short"
+
+
 def test_chart_markers_anchor_only_to_closed_candles_and_aggregate() -> None:
     repo = MemoryRepository()
     start = utc_now().replace(minute=0, second=0, microsecond=0) - timedelta(hours=12)
@@ -198,7 +297,14 @@ def test_chart_markers_anchor_only_to_closed_candles_and_aggregate() -> None:
 
 def test_whale_dashboard_reports_current_exposure_and_signed_flow() -> None:
     repo = MemoryRepository()
-    repo.upsert_whale_wallet(WhaleWallet(address=ADDRESS, label="테스트 고래"))
+    repo.upsert_whale_wallet(
+        WhaleWallet(
+            address=ADDRESS,
+            label="테스트 고래",
+            source="discovery",
+            payload={"discovery": {"leaderboard_rank": 250, "selection_rank": 1}},
+        )
+    )
     repo.upsert_whale_position_state(
         ADDRESS,
         "BTC",
@@ -238,6 +344,8 @@ def test_whale_dashboard_reports_current_exposure_and_signed_flow() -> None:
     assert dashboard["symbol_activity"]["BTCUSDT"]["long_usd"] == 2_000_000
     assert dashboard["symbol_activity"]["BTCUSDT"]["long_wallet_count"] == 1
     assert dashboard["symbol_activity"]["BTCUSDT"]["positions"][0]["wallet_address"] == ADDRESS
+    assert dashboard["symbol_activity"]["BTCUSDT"]["positions"][0]["leaderboard_rank"] == 250
+    assert dashboard["symbol_activity"]["BTCUSDT"]["positions"][0]["selection_rank"] == 1
     assert dashboard["symbol_activity"]["ETHUSDT"]["recent_events"][0]["side"] == "short"
     assert dashboard["symbol_activity"]["ETHUSDT"]["recent_events"][0]["event"] == "open"
 

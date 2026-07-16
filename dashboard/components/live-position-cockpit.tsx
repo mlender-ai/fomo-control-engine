@@ -595,7 +595,7 @@ function PositionWhaleBanner({
         <div className="positionWhaleWallets" aria-label="상위 보유 지갑">
           {topPositions.map((position) => (
             <span key={`${position.wallet_address}-${position.side}`} title={position.wallet_address}>
-              <b>{position.leaderboard_rank ? `#${position.leaderboard_rank}` : "직접"}</b>
+              <b>{position.leaderboard_rank ? `LB #${position.leaderboard_rank}` : "직접"}{position.selection_rank ? ` · 검증군 #${position.selection_rank}` : ""}</b>
               <code>{position.address_short}</code>
               <em className={position.side}>{position.side === "long" ? "롱" : "숏"}</em>
               <strong>{compactWhaleMoney(position.size_usd)}</strong>

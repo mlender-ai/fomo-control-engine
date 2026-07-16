@@ -12,7 +12,7 @@ const tabs = [
   { id: "positions", label: "엔진 포지션" },
   { id: "journal", label: "거래 일지" },
   { id: "status", label: "엔진 상태" },
-  { id: "onchain", label: "온체인" }
+  { id: "onchain", label: "고래 검증" }
 ] as const;
 
 type TabId = (typeof tabs)[number]["id"];
@@ -149,7 +149,7 @@ function OnchainView({ data, onReload }: { data: OnchainWhaleDashboard | null; o
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [filter, setFilter] = useState<"all" | "validating" | "trusted" | "excluded">("all");
-  const wallets = data?.wallets ?? [];
+  const wallets = useMemo(() => data?.wallets ?? [], [data?.wallets]);
   const filteredWallets = useMemo(
     () => wallets.filter((wallet) => filter === "all" || wallet.review.trust_status === filter || (filter === "validating" && wallet.review.trust_status === "review_ready")),
     [filter, wallets]
@@ -192,10 +192,11 @@ function OnchainView({ data, onReload }: { data: OnchainWhaleDashboard | null; o
   return (
     <div className="engineView onchainView" data-testid="engine-onchain-tab">
       <section className="onchainToolbar">
-        <div><span className="engineSectionLabel">Hyperliquid leaderboard · 자동 관측</span><strong>추적 {data.wallet_count}/{data.max_wallets}지갑</strong><small>{Number(data.discovery.rows_scanned ?? 0).toLocaleString("ko-KR")}계정 스캔 · 후보 {data.discovery.eligible_count ?? 0} · 마지막 {data.discovery.as_of ? shortDateTime(data.discovery.as_of) : "대기"}</small></div>
+        <div><span className="engineSectionLabel">Hyperliquid leaderboard · 발굴부터 엄선까지</span><strong>고래 검증 센터</strong><small>{Number(data.discovery.rows_scanned ?? 0).toLocaleString("ko-KR")}계정 발굴 · 추적 {data.wallet_count}/{data.max_wallets} · 마지막 {data.discovery.as_of ? shortDateTime(data.discovery.as_of) : "대기"}</small></div>
         <div className="onchainToolbarActions"><button className="button secondary" disabled={busy} onClick={collectNow} type="button"><RefreshCw size={15} />포지션 갱신</button><button className="button" disabled={busy} onClick={discoverNow} type="button"><Radar size={15} />리더보드 재스캔</button></div>
       </section>
       {message ? <TerminalWarning tone={message.startsWith("리더보드") ? "warning" : "error"}>{message}</TerminalWarning> : null}
+      <WhaleDiscoveryAudit data={data} />
       <WhaleFlowOverview data={data} />
       <p className="onchainPolicy">{data.policy}</p>
       <WhaleValidationBoard wallets={wallets} filter={filter} onFilter={setFilter} />
@@ -211,7 +212,8 @@ function OnchainView({ data, onReload }: { data: OnchainWhaleDashboard | null; o
         <div className="onchainWalletList">
           {filteredWallets.map((wallet) => (
             <section className={`onchainWalletRow ${wallet.review.state} trust-${wallet.review.trust_status}`} key={wallet.address}>
-              <header><div><strong>{wallet.label}</strong><code>{wallet.address_short}</code><small>{wallet.leaderboard ? `리더보드 30일 PnL ${signedCompactMoney(wallet.leaderboard.month_pnl_usd)} · ROI ${(wallet.leaderboard.month_roi * 100).toFixed(1)}% · 계정 ${compactMoney(wallet.leaderboard.account_value_usd)}` : wallet.alias_disclaimer}</small></div><div><span>{whaleTrustState(wallet.review.trust_status)}</span><b>{wallet.review.win_1r_pct === null ? `추종 승률 대기 · N=${wallet.review.sample_size}` : `추종 승률 ${wallet.review.win_1r_pct}% · N=${wallet.review.sample_size}`}</b>{wallet.source === "discovery" ? <i className="onchainAutoTag">AUTO</i> : <button aria-label={`${wallet.label} 삭제`} disabled={busy} onClick={() => void removeWallet(wallet.address)} title="워치리스트에서 삭제" type="button"><Trash2 size={15} /></button>}</div></header>
+              <header><div><strong>{wallet.label}</strong><code>{wallet.address_short}</code><small>{wallet.leaderboard ? `리더보드 #${wallet.leaderboard.leaderboard_rank} · 계정 ${compactMoney(wallet.leaderboard.account_value_usd)} · ${selectionReason(wallet.leaderboard.selection_reason)}` : wallet.alias_disclaimer}</small></div><div><span>{whaleTrustState(wallet.review.trust_status)}</span><b>{wallet.review.win_1r_pct === null ? `추종 승률 대기 · N=${wallet.review.sample_size}` : `추종 승률 ${wallet.review.win_1r_pct}% · N=${wallet.review.sample_size}`}</b>{wallet.source === "discovery" ? <i className="onchainAutoTag">AUTO</i> : <button aria-label={`${wallet.label} 삭제`} disabled={busy} onClick={() => void removeWallet(wallet.address)} title="워치리스트에서 삭제" type="button"><Trash2 size={15} /></button>}</div></header>
+              {wallet.leaderboard ? <WhaleLeaderboardPerformance leaderboard={wallet.leaderboard} /> : null}
               <WhaleReviewMetrics review={wallet.review} />
               <div className="onchainPositions">
                 {wallet.positions.length ? wallet.positions.map((position) => <div key={position.coin}><strong>{position.coin} {position.side === "long" ? "롱" : "숏"}</strong><span>{compactMoney(position.size_usd)} · 진입 {price(position.entry_px)}</span><b className={(position.unrealized_pnl ?? 0) >= 0 ? "positive" : "negative"}>{money(position.unrealized_pnl ?? 0)} USDT</b></div>) : <p>현재 공개 포지션 없음</p>}
@@ -222,6 +224,41 @@ function OnchainView({ data, onReload }: { data: OnchainWhaleDashboard | null; o
       )}
     </div>
   );
+}
+
+function WhaleDiscoveryAudit({ data }: { data: OnchainWhaleDashboard }) {
+  const discovery = data.discovery;
+  const scan = discovery.position_scan;
+  const policy = discovery.selection_policy;
+  const coverage = discovery.selected_coverage ?? {};
+  const stages = [
+    { label: "리더보드 원본", value: Number(discovery.rows_scanned ?? 0), detail: "공개 계정" },
+    { label: "성과 조건 통과", value: Number(discovery.eligible_count ?? 0), detail: "ROI·PnL·회전율" },
+    { label: "포지션 실사", value: Number(scan?.scanned_count ?? 0), detail: `BTC·ETH 보유 ${scan?.active_focus_count ?? 0}` },
+    { label: "검증 추적군", value: Number(discovery.selected_count ?? 0), detail: `방향 슬롯 ${policy?.directional_slots ?? 0}` }
+  ];
+  return (
+    <section className="whaleDiscoveryAudit" data-testid="whale-discovery-audit">
+      <header><div><span>자동 발굴 감사</span><strong>성과 상위 + 방향 균형 선발</strong></div><small>상위 수익자만 고르지 않고 현재 BTC·ETH 롱/숏 포지션을 실사해 검증군을 구성합니다.</small></header>
+      <div className="whaleDiscoveryStages">{stages.map((stage, index) => <div key={stage.label}><i>{index + 1}</i><span>{stage.label}</span><strong>{stage.value.toLocaleString("ko-KR")}</strong><small>{stage.detail}</small></div>)}</div>
+      <div className="whaleCoverageGrid">
+        {(policy?.focus_symbols ?? ["BTC", "ETH"]).map((symbol) => {
+          const item = coverage[symbol] ?? { long_wallets: 0, short_wallets: 0, long_usd: 0, short_usd: 0 };
+          return <div key={symbol}><strong>{symbol} 방향 커버리지</strong><span className="long">롱 {item.long_wallets}지갑 · {compactMoney(item.long_usd)}</span><span className="short">숏 {item.short_wallets}지갑 · {compactMoney(item.short_usd)}</span></div>;
+        })}
+      </div>
+      {scan?.errors ? <small className="negative">포지션 실사 실패 {scan.errors}건 · 다음 스캔에서 재시도</small> : null}
+    </section>
+  );
+}
+
+function WhaleLeaderboardPerformance({ leaderboard }: { leaderboard: NonNullable<OnchainWhaleDashboard["wallets"][number]["leaderboard"]> }) {
+  const metrics = [
+    { label: "7일", pnl: leaderboard.week_pnl_usd, roi: leaderboard.week_roi },
+    { label: "30일", pnl: leaderboard.month_pnl_usd, roi: leaderboard.month_roi },
+    { label: "전체", pnl: leaderboard.all_time_pnl_usd, roi: leaderboard.all_time_roi }
+  ];
+  return <div className="whaleLeaderboardPerformance" aria-label="리더보드 성과">{metrics.map((metric) => <div key={metric.label}><span>{metric.label} 수익률</span><strong className={metric.roi >= 0 ? "positive" : "negative"}>{signedPercent(metric.roi * 100)}</strong><small>{signedCompactMoney(metric.pnl)}</small></div>)}</div>;
 }
 
 function WhaleValidationBoard({
@@ -464,6 +501,8 @@ function signedCompactMoney(value: number): string { return `${value >= 0 ? "+" 
 function whaleEventLabel(value: string): string { return ({ open: "신규 진입", increase: "증액", reduce: "감액", close: "청산", flip: "방향 전환" } as Record<string,string>)[value] ?? value; }
 function whaleTrustState(value: string): string { return ({ trusted: "엄선 고래", review_ready: "승격 심사", validating: "4주 검증 중", excluded: "검증 제외" } as Record<string,string>)[value] ?? "4주 검증 중"; }
 function signedR(value: number): string { return `${value >= 0 ? "+" : ""}${value.toFixed(2)}R`; }
+function signedPercent(value: number): string { return `${value >= 0 ? "+" : ""}${value.toFixed(1)}%`; }
+function selectionReason(value: string): string { const [kind, coin, side] = value.split(":"); return kind === "coverage" ? `${coin} ${side === "short" ? "숏" : "롱"} 커버리지 선발` : "성과 품질 선발"; }
 function metricTone(value: string, inverse: boolean): string { const number = Number(value.replace(/[+%,]/g, "")); if (!Number.isFinite(number) || number === 0) return "neutral"; const positive = inverse ? number < 0 : number > 0; return positive ? "positive" : "negative"; }
 function shortDate(value: string | null): string { return value ? new Date(value).toLocaleDateString("ko-KR", { month: "numeric", day: "numeric" }) : "-"; }
 function shortDateTime(value: string): string { return new Date(value).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }); }
