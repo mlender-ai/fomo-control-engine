@@ -1283,6 +1283,10 @@ export type OccOptionsSummary = {
   put_volume?: number | null;
   put_call_volume_ratio?: number | null;
   volume_date?: string | null;
+  max_pain_price?: number | null;
+  max_pain_expiry?: string | null;
+  days_to_expiry?: number | null;
+  max_pain_basis?: "nearest_expiry_open_interest" | string;
   contract_count?: number;
   top_call_contracts?: Array<{ expiry: string; strike: number; open_interest: number }>;
   top_put_contracts?: Array<{ expiry: string; strike: number; open_interest: number }>;

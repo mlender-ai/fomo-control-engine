@@ -463,7 +463,8 @@ def format_scout_quick_answer(payload: dict[str, Any]) -> str:
                 f"<b>옵션 계약 · {escape(str(options.get('underlying') or symbol))} · OCC</b>",
                 f"OI(전일 결제) · 콜 {_number(options.get('call_open_interest'))} · 풋 {_number(options.get('put_open_interest'))} · P/C {_ratio(options.get('put_call_oi_ratio'))}",
                 f"계약량({escape(volume_date)}) · 콜 {_number(options.get('call_volume'))} · 풋 {_number(options.get('put_volume'))} · P/C {_ratio(options.get('put_call_volume_ratio'))}",
-                "관측 전용 · 종합 방향 판정에는 미반영",
+                f"맥스페인(최근접 만기) · ${_option_price(options.get('max_pain_price'))} · {_option_expiry(options)}",
+                "관측 전용 · 가격 목표와 종합 방향 판정에는 미반영",
             ]
         )
     trigger = _scout_trigger(summary)
@@ -472,6 +473,22 @@ def format_scout_quick_answer(payload: dict[str, Any]) -> str:
     lines.append("셋업 트리거는 개별 조건 알림입니다. 종합과 충돌하면 양측 근거와 상위 추세를 함께 확인하세요.")
     lines.append("과거 통계와 현재 판정은 판단 보조입니다.")
     return "\n".join(lines)
+
+
+def _option_expiry(options: dict[str, Any]) -> str:
+    expiry = escape(str(options.get("max_pain_expiry") or "만기 데이터 없음"))
+    days = options.get("days_to_expiry")
+    if not isinstance(days, int):
+        return expiry
+    return f"{expiry} ({'D-DAY' if days == 0 else f'D-{days}'})"
+
+
+def _option_price(value: Any) -> str:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return "-"
+    return f"{number:,.3f}" if round(number, 3) != round(number, 2) else f"{number:,.2f}"
 
 
 def format_scout_tracking(payload: dict[str, Any]) -> str:

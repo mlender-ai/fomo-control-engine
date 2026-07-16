@@ -3,7 +3,12 @@ from datetime import datetime, timezone
 import httpx
 
 from app.marketdata.assets import classify_asset_class
-from app.marketdata.occ_options import fetch_occ_options_summary, parse_series_search, parse_volume_query
+from app.marketdata.occ_options import (
+    calculate_nearest_expiry_max_pain,
+    fetch_occ_options_summary,
+    parse_series_search,
+    parse_volume_query,
+)
 
 
 SERIES_SAMPLE = """Series Search Results for SOXL
@@ -42,6 +47,17 @@ def test_volume_parser_sums_exact_symbol_and_keeps_basis_date() -> None:
     }
 
 
+def test_max_pain_uses_nearest_expiry_and_minimum_contract_payout() -> None:
+    rows = parse_series_search(SERIES_SAMPLE, "SOXL", as_of=datetime(2026, 7, 15, tzinfo=timezone.utc).date())
+
+    assert calculate_nearest_expiry_max_pain(rows, as_of=datetime(2026, 7, 15, tzinfo=timezone.utc).date()) == {
+        "max_pain_price": 30.5,
+        "max_pain_expiry": "2026-07-17",
+        "days_to_expiry": 2,
+        "max_pain_basis": "nearest_expiry_open_interest",
+    }
+
+
 def test_fetch_summary_combines_oi_and_volume_without_api_key() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/series-search":
@@ -65,4 +81,7 @@ def test_fetch_summary_combines_oi_and_volume_without_api_key() -> None:
     assert summary["put_volume"] == 250
     assert summary["put_call_volume_ratio"] == 2.5
     assert summary["volume_date"] == "2026-07-14"
+    assert summary["max_pain_price"] == 30.5
+    assert summary["max_pain_expiry"] == "2026-07-17"
+    assert summary["days_to_expiry"] == 2
     assert "관측 전용" in summary["notes"][1]

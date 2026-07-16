@@ -140,7 +140,11 @@ test("money flow exposes the driver, magnitude, and execution history", async ({
       call_volume: 123628,
       put_volume: 257380,
       put_call_volume_ratio: 2.0819,
-      volume_date: "2026-07-14"
+      volume_date: "2026-07-14",
+      max_pain_price: 31.5,
+      max_pain_expiry: "2026-07-17",
+      days_to_expiry: 2,
+      max_pain_basis: "nearest_expiry_open_interest"
     };
     await route.fulfill({ response, json: body });
   });
@@ -160,6 +164,9 @@ test("money flow exposes the driver, magnitude, and execution history", async ({
   await expect(putCall).toContainText("풋/콜 비율");
   await expect(putCall).toContainText("1.84");
   await expect(putCall).toContainText("2.08");
+  await expect(putCall).toContainText("최근접 만기 맥스페인");
+  await expect(putCall).toContainText("$31.50");
+  await expect(putCall).toContainText("2026-07-17 · D-2");
 
   await page.setViewportSize({ width: 390, height: 1200 });
   await expect(moneyFlow).toBeVisible();

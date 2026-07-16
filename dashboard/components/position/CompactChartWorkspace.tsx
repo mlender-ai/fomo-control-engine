@@ -276,10 +276,26 @@ function OptionsPositioningSummary({ options }: { options: OccOptionsSummary }) 
           <strong>{formatRatio(options.put_call_volume_ratio)}</strong>
           <small>풋 {formatCompactNumber(options.put_volume)} / 콜 {formatCompactNumber(options.call_volume)}</small>
         </article>
+        <article className="maxPainMetric">
+          <span>최근접 만기 맥스페인</span>
+          <strong>{formatOptionPrice(options.max_pain_price)}</strong>
+          <small>{formatExpiry(options.max_pain_expiry, options.days_to_expiry)}</small>
+        </article>
       </div>
-      <p>P/C 1 초과는 풋 계약 수 우세입니다. 헤지 수요가 섞이므로 방향 점수에는 반영하지 않습니다.</p>
+      <p>맥스페인은 해당 만기 OI의 이론상 결제비용 최소 가격입니다. 가격 목표·방향 점수에는 반영하지 않습니다.</p>
     </section>
   );
+}
+
+function formatOptionPrice(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "-";
+  return `$${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 3 })}`;
+}
+
+function formatExpiry(expiry: string | null | undefined, days: number | null | undefined): string {
+  if (!expiry) return "만기 데이터 없음";
+  const dDay = days == null ? "" : days === 0 ? " · D-DAY" : ` · D-${days}`;
+  return `${expiry}${dDay}`;
 }
 
 function StanceHistoryStrip({ gauges }: { gauges: CompactChartGauges }) {

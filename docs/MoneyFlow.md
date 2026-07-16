@@ -33,6 +33,8 @@ WO-FCE-79 adds official, keyless OCC observations for supported US stock/index u
 
 The UI and Telegram `/scout` show call OI, put OI, put/call OI ratio, call volume, put volume, and put/call volume ratio. These are **observation-only positioning data**. A high ratio is not treated as an automatic bearish signal: hedging, covered positions, expiry concentration, and dealer inventory are not inferable from aggregate contracts alone. The values never enter one-line TA counts, confluence, setup scoring, or automated entry logic.
 
+For the nearest non-expired OCC expiry, the engine also calculates max pain from the published strike-level call and put OI. Each listed strike is tested as a settlement candidate, and the strike with the lowest aggregate option-holder intrinsic value is shown with its expiry date and calendar D-day. This is a mechanical, previous-settlement OI estimate—not a price target—and remains excluded from direction scoring and automated entry logic.
+
 The compact Money Flow surface renders these OCC ratios in a dedicated `풋/콜 비율` block above the flow grid. They are not relegated to a small footer, so a supported RWA symbol shows both the previous-settlement OI P/C and completed-day contract-volume P/C without scrolling through metadata.
 
 ## Window And Direction

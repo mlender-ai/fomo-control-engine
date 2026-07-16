@@ -244,6 +244,9 @@ def test_scout_quick_answer_shows_occ_put_call_contracts_as_observation() -> Non
                     "put_volume": 257380,
                     "put_call_volume_ratio": 2.0819,
                     "volume_date": "2026-07-14",
+                    "max_pain_price": 31.5,
+                    "max_pain_expiry": "2026-07-17",
+                    "days_to_expiry": 2,
                 }
             },
             "summary": {"long_score": 50, "short_score": 50},
@@ -253,7 +256,8 @@ def test_scout_quick_answer_shows_occ_put_call_contracts_as_observation() -> Non
     assert "옵션 계약 · SOXL · OCC" in text
     assert "OI(전일 결제) · 콜 434.75K · 풋 801.00K · P/C 1.84" in text
     assert "계약량(2026-07-14) · 콜 123.63K · 풋 257.38K · P/C 2.08" in text
-    assert "관측 전용 · 종합 방향 판정에는 미반영" in text
+    assert "맥스페인(최근접 만기) · $31.50 · 2026-07-17 (D-2)" in text
+    assert "관측 전용 · 가격 목표와 종합 방향 판정에는 미반영" in text
 
 
 def test_scout_quick_answer_uses_weighted_confluence_over_module_majority() -> None:

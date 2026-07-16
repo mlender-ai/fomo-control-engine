@@ -96,6 +96,7 @@ def fetch_occ_options_summary(
 
     call_oi = sum(item["call_open_interest"] for item in series)
     put_oi = sum(item["put_open_interest"] for item in series)
+    max_pain = calculate_nearest_expiry_max_pain(series, as_of=eastern_today)
     top_calls = _top_contracts(series, "call_open_interest")
     top_puts = _top_contracts(series, "put_open_interest")
     call_volume = volume["call_volume"] if volume else None
@@ -121,10 +122,55 @@ def fetch_occ_options_summary(
         "put_volume": put_volume,
         "put_call_volume_ratio": _ratio(put_volume, call_volume),
         "volume_date": volume["volume_date"] if volume else None,
+        **max_pain,
         "contract_count": len(series),
         "top_call_contracts": top_calls,
         "top_put_contracts": top_puts,
         "notes": notes,
+    }
+
+
+def calculate_nearest_expiry_max_pain(
+    series: list[dict[str, Any]],
+    *,
+    as_of: date,
+) -> dict[str, Any]:
+    """Calculate observation-only max pain for the nearest OCC expiry."""
+    expiries = sorted({str(item["expiry"]) for item in series if str(item.get("expiry") or "") >= as_of.isoformat()})
+    if not expiries:
+        return {
+            "max_pain_price": None,
+            "max_pain_expiry": None,
+            "days_to_expiry": None,
+            "max_pain_basis": "nearest_expiry_open_interest",
+        }
+
+    expiry = expiries[0]
+    by_strike: dict[float, dict[str, int]] = {}
+    for item in series:
+        if item.get("expiry") != expiry:
+            continue
+        strike = float(item["strike"])
+        bucket = by_strike.setdefault(strike, {"call": 0, "put": 0})
+        bucket["call"] += int(item["call_open_interest"])
+        bucket["put"] += int(item["put_open_interest"])
+
+    total_oi = sum(values["call"] + values["put"] for values in by_strike.values())
+    weighted_center = sum(strike * (values["call"] + values["put"]) for strike, values in by_strike.items()) / total_oi if total_oi else 0.0
+
+    def settlement_cost(settlement: float) -> float:
+        return sum(values["call"] * max(settlement - strike, 0.0) + values["put"] * max(strike - settlement, 0.0) for strike, values in by_strike.items())
+
+    max_pain_price = min(
+        by_strike,
+        key=lambda strike: (round(settlement_cost(strike), 8), abs(strike - weighted_center), strike),
+    )
+    expiry_date = date.fromisoformat(expiry)
+    return {
+        "max_pain_price": max_pain_price,
+        "max_pain_expiry": expiry,
+        "days_to_expiry": (expiry_date - as_of).days,
+        "max_pain_basis": "nearest_expiry_open_interest",
     }
 
 
