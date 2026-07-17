@@ -34,6 +34,22 @@
 
 > 교훈(2026-07-14): ci.yml YAML 오타 하나로 CI가 5일간 0초 실패했고, 아무도 몰랐다. 그 사이 mypy 부채 44→174. **"CI가 있다"와 "CI가 살아있다"는 다르다.**
 
+## 🔴 불변 규칙 4 — 실행 중인 Next 산출물 덮어쓰기 금지
+
+**`next start`가 `.next`를 서비스하는 동안 같은 `.next`에 빌드하지 않는다.** 이전
+서버가 메모리에 보관한 HTML과 새 CSS/JS 청크가 갈리면 전체 프론트가 무스타일로
+깨진다. 2026-07-17 전 화면 장애의 직접 원인이며 재발 금지다.
+
+프론트 프로덕션 갱신은 아래 순서만 허용한다:
+1. 실행 중인 8876 프론트 서버를 종료한다.
+2. `cd dashboard && npm run build`를 실행한다. `next build` 직접 호출로 `prebuild`를 우회하지 않는다.
+3. `npm run start:local`로 새 빌드를 시작한다.
+4. `npm run check:local-assets`가 전체 제품 라우트의 CSS/JS를 모두 2xx로 확인해야 완료다.
+
+Playwright는 반드시 `npm run test:e2e`/`build:e2e`를 사용해 `.next-e2e`에 빌드한다.
+`.next` 공유, 빌드 가드 비활성화, 자산 검사 실패 무시는 금지한다. 상세 원인·복구
+절차는 [`docs/FrontendBuildSafety.md`](docs/FrontendBuildSafety.md)를 따른다.
+
 ---
 
 ## 도메인 불변 (트레이딩 엔진 안전 규정 — 코드보다 우선)

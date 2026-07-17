@@ -36,6 +36,9 @@ Playwright는 `dashboard/.next-e2e`를 별도 사용한다. E2E 실행이 로컬
 서버의 `.next`를 덮어쓰지 않도록 이 경로 분리를 유지한다. `build:e2e`는 Next가
 자동 변경하는 타입 설정 파일도 빌드 직후 원복한다.
 
+사건 원인, 금지 절차, 정상 갱신 및 장애 복구는
+[`docs/FrontendBuildSafety.md`](docs/FrontendBuildSafety.md)를 정본으로 따른다.
+
 ## Gate 3: E2E (플로우/화면 구조 변경 시 — 선택, CI는 항상)
 
 ```bash
