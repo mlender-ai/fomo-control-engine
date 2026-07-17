@@ -27,6 +27,7 @@ test.describe("chart visual regression", () => {
         await toggleLayer(page, layer);
       }
       await waitForChartOverlay(page);
+      await expect(page.locator('[data-price-flag-kind="mark"]')).toHaveCount(1);
       if (state.name === "wyckoff") {
         await expect(page.getByTestId("wyckoff-layer-status")).toBeVisible();
         await expect(page.locator('[data-overlay-role="phase-label"]')).toHaveCount(0);

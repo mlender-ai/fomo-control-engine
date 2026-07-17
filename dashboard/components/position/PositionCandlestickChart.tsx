@@ -1837,8 +1837,10 @@ function priceFlagNodes(context: OverlayContext): string[] {
     const stroke = context.palette.color("text", highlighted ? 0.8 : 0.24);
     const text = flag.kind === "mark" ? context.palette.color("panel") : context.palette.color("panel");
     return [
+      `<g data-price-flag-kind="${flag.kind}">`,
       `<rect x="${x}" y="${flag.y - 10}" width="${width}" height="20" rx="4" fill="${fill}" stroke="${stroke}" stroke-width="${highlighted ? 1.6 : 1}" />`,
-      `<text x="${x + 7}" y="${flag.y + 3.5}" fill="${text}" font-size="${highlighted ? 10.5 : 9.5}" font-weight="${highlighted ? 750 : 650}" font-family="SF Mono, Monaco, Consolas, monospace">${escapeSvgText(displayLabel)}</text>`
+      `<text x="${x + 7}" y="${flag.y + 3.5}" fill="${text}" font-size="${highlighted ? 10.5 : 9.5}" font-weight="${highlighted ? 750 : 650}" font-family="SF Mono, Monaco, Consolas, monospace">${escapeSvgText(displayLabel)}</text>`,
+      "</g>"
     ].join("");
   });
 }
