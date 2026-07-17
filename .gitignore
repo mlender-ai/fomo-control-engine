@@ -15,6 +15,7 @@ htmlcov/
 *.sqlite3
 node_modules/
 .next/
+dashboard/.next-e2e/
 dist/
 build/
 *.pyc

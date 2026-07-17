@@ -52,11 +52,12 @@ export default defineConfig({
       }
     },
     {
-      command: `npm run build && npm run start -- -H 127.0.0.1 -p ${webPort}`,
+      command: `npm run build:e2e && npm run start -- -H 127.0.0.1 -p ${webPort}`,
       url: webBaseUrl,
       timeout: 120_000,
       reuseExistingServer: !process.env.CI,
       env: {
+        FCE_NEXT_DIST_DIR: ".next-e2e",
         NEXT_PUBLIC_API_BASE_URL: apiBaseUrl
       }
     }

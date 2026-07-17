@@ -20,6 +20,52 @@ test("side navigation stays in the SPA and review cards paint independently", as
   await expect.poll(() => page.evaluate(() => (window as typeof window & { __fceSpaSentinel?: string }).__fceSpaSentinel)).toBe("alive");
 });
 
+test("all product routes keep production CSS and bounded controls", async ({ page }) => {
+  const routes = [
+    "/",
+    "/scout",
+    "/review",
+    "/engine",
+    "/journal",
+    "/markets",
+    "/performance",
+    "/positions",
+    "/research",
+    "/settings",
+    "/shadow",
+    "/trades",
+    "/validation",
+    "/calibration"
+  ];
+
+  for (const route of routes) {
+    await page.goto(route);
+    const audit = await page.evaluate(() => {
+      const root = document.documentElement;
+      const oversizedControls = [...document.querySelectorAll("button, svg")]
+        .map((element) => {
+          const box = element.getBoundingClientRect();
+          return {
+            tag: element.tagName,
+            className: element.getAttribute("class") ?? "",
+            width: Math.round(box.width),
+            height: Math.round(box.height)
+          };
+        })
+        .filter((box) => box.width > Math.max(480, window.innerWidth * 0.6) || box.height > 520);
+      return {
+        stylesheetCount: document.styleSheets.length,
+        horizontalOverflow: root.scrollWidth - root.clientWidth,
+        oversizedControls
+      };
+    });
+
+    expect(audit.stylesheetCount, `${route}: production stylesheets`).toBeGreaterThanOrEqual(5);
+    expect(audit.horizontalOverflow, `${route}: horizontal overflow`).toBeLessThanOrEqual(2);
+    expect(audit.oversizedControls, `${route}: oversized button/svg`).toEqual([]);
+  }
+});
+
 test("live position cockpit smoke path", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByTestId("demo-mode-badge")).toBeVisible({ timeout: 30_000 });

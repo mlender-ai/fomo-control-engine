@@ -26,6 +26,16 @@ npm run typecheck   # tsc --noEmit
 npm run build       # Next.js 프로덕션 빌드
 ```
 
+`npm run build`는 로컬 `127.0.0.1:8876` 서버가 실행 중이면 실패한다. 실행 중인
+Next 프로세스가 이전 HTML을 메모리에 둔 채 `.next`만 교체되면 CSS/JS 청크가
+불일치해 전체 화면이 깨지므로, 서버를 먼저 중지하고 빌드한 다음
+`npm run start:local`로 다시 시작한다. 시작 후 `npm run check:local-assets`로
+HTML이 참조하는 모든 CSS/JS 청크가 2xx인지 확인한다.
+
+Playwright는 `dashboard/.next-e2e`를 별도 사용한다. E2E 실행이 로컬 프로덕션
+서버의 `.next`를 덮어쓰지 않도록 이 경로 분리를 유지한다. `build:e2e`는 Next가
+자동 변경하는 타입 설정 파일도 빌드 직후 원복한다.
+
 ## Gate 3: E2E (플로우/화면 구조 변경 시 — 선택, CI는 항상)
 
 ```bash
