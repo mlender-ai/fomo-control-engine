@@ -24,6 +24,14 @@ test.describe("chart visual regression", () => {
         await toggleLayer(page, layer);
       }
       await waitForChartOverlay(page);
+      if (state.name === "wyckoff") {
+        await expect(page.getByTestId("wyckoff-layer-status")).toBeVisible();
+        await expect(page.locator('[data-overlay-role="phase-label"]')).toHaveCount(0);
+      }
+      if (state.name === "harmonic") {
+        await expect(page.getByTestId("harmonic-layer-status")).toContainText("하모닉 미검출");
+        await expect(page.locator('[data-overlay-role="harmonic-candidate"]')).toHaveCount(0);
+      }
       await expect(page.getByTestId("position-chart")).toHaveScreenshot(`chart-${state.name}.png`, {
         animations: "disabled",
         // Lightweight Charts and font rasterization vary by a few axis glyphs

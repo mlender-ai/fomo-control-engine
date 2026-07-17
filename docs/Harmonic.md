@@ -55,6 +55,12 @@ PRZ는 관련 피보나치 투영값의 겹침 구간이다.
 
 API 응답 임계값 기본값은 `55`이며 설정은 `FCE_HARMONIC_MIN_CONFIDENCE`다. 임계값 아래 패턴은 응답하지 않는다.
 
+## Display Contract
+
+- 유효한 `completed` 또는 `forming` 패턴이 있을 때만 X-A-B-C-D 연결선, 비율, PRZ를 차트에 그린다.
+- `patterns=[]`이면 원시 ZigZag 피벗은 내부 계산 데이터로만 유지한다. P1, P2 같은 디버그 라벨이나 후보 연결선을 사용자 차트에 노출하지 않는다.
+- 미검출 상태는 `유효 X-A-B-C-D 비율 없음 · PRZ 없음`으로 표시하며 방향 근거로 사용하지 않는다.
+
 ## Action Plan Integration
 
 보유 방향과 반대 방향 PRZ만 익절 후보가 된다.

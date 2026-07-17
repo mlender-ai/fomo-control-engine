@@ -4228,35 +4228,88 @@ button.actionPlanRow:not(:disabled):hover {
   color: var(--terminal-text);
 }
 
-.harmonicNav {
-  display: flex;
+.taLayerStatus {
+  display: grid;
+  grid-template-columns: max-content minmax(0, max-content) minmax(0, 1fr) max-content;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
+  min-height: 38px;
+  border: 1px solid var(--terminal-line);
+  border-left-width: 3px;
+  border-radius: 5px;
+  background: rgba(8, 11, 16, 0.52);
+  padding: 7px 10px;
 }
 
-.harmonicNav button {
+.taLayerStatus.confirmed {
+  border-left-color: var(--terminal-cyan);
+}
+
+.taLayerStatus.inactive {
+  border-left-color: var(--terminal-muted);
+}
+
+.taLayerStatus strong,
+.taLayerStatus span,
+.taLayerStatus small {
+  min-width: 0;
+  letter-spacing: 0;
+}
+
+.taLayerStatus strong {
+  color: var(--terminal-text);
+  font-size: 11px;
+}
+
+.taLayerStatus span {
+  overflow: hidden;
+  color: var(--terminal-text);
+  font-family: var(--fce-font-number);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.taLayerStatus small {
+  color: var(--terminal-muted);
+  font-size: 10px;
+}
+
+.taLayerStatusPager {
+  display: inline-grid;
+  grid-template-columns: 26px 34px 26px;
+  align-items: center;
+  height: 24px;
+}
+
+.taLayerStatusPager button {
+  width: 26px;
+  height: 24px;
   border: 1px solid var(--terminal-line);
-  border-radius: 4px;
   background: transparent;
   color: var(--terminal-muted);
   cursor: pointer;
-  padding: 3px 9px;
-  font-size: 11px;
 }
 
-.harmonicNav button:hover {
-  border-color: rgba(240, 184, 64, 0.5);
-  color: var(--terminal-text);
-}
-
-.harmonicNav span {
-  color: var(--terminal-text);
-  font-family: "SF Mono", Monaco, Consolas, monospace;
-  font-size: 11px;
-}
-
-.harmonicNav .muted {
+.taLayerStatusPager b {
   color: var(--terminal-muted);
+  font-family: var(--fce-font-number);
+  font-size: 9px;
+  text-align: center;
+}
+
+@media (max-width: 760px) {
+  .taLayerStatus {
+    grid-template-columns: max-content minmax(0, 1fr);
+  }
+
+  .taLayerStatus small {
+    grid-column: 1 / -1;
+  }
+
+  .taLayerStatusPager {
+    grid-column: 1 / -1;
+  }
 }
 
 .stripHeadline {

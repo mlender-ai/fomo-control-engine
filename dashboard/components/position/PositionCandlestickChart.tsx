@@ -121,6 +121,7 @@ export function PositionCandlestickChart({
   const lastCandle = validation.candles.at(-1);
   const averageVolume = validation.valid ? average(visibleCandles.map((candle) => candle.volume)) : 0;
   const emaRibbon = useMemo(() => buildEmaRibbon(visibleCandles), [visibleCandles]);
+  const wyckoffFocused = layerMode === "pro" && effectiveLayers.ta.includes("wyckoff");
   const harmonicFocused = layerMode === "pro" && effectiveLayers.ta.includes("harmonic");
   const harmonicPatterns = useMemo(
     () => [...analysis.harmonic_patterns].sort((left, right) => right.confidence - left.confidence),
@@ -610,19 +611,28 @@ export function PositionCandlestickChart({
           onToggleLayer={onToggleLayer}
         />
       ) : null}
+      {wyckoffFocused ? <WyckoffLayerStatus analysis={analysis} /> : null}
       {harmonicFocused ? (
-        <div className="harmonicNav">
+        <div className={`taLayerStatus ${activeHarmonic ? "confirmed" : "inactive"}`} data-testid="harmonic-layer-status">
           {activeHarmonic ? (
             <>
-              <button onClick={() => setHarmonicIndex((value) => value - 1)} type="button" aria-label="이전 패턴">◀</button>
-              <span title={harmonicPatternTitle(activeHarmonic)}>
-                {activeHarmonic.label} · {activeHarmonic.direction === "bearish" ? "하락 반전 후보 구간(PRZ)" : "상승 반전 후보 구간(PRZ)"} · 신뢰도 {activeHarmonic.confidence}
-                {harmonicPatterns.length > 1 ? ` · ${(((harmonicIndex % harmonicPatterns.length) + harmonicPatterns.length) % harmonicPatterns.length) + 1}/${harmonicPatterns.length}` : ""}
-              </span>
-              <button onClick={() => setHarmonicIndex((value) => value + 1)} type="button" aria-label="다음 패턴">▶</button>
+              <strong>하모닉 확인</strong>
+              <span title={harmonicPatternTitle(activeHarmonic)}>{activeHarmonic.label} · {activeHarmonic.direction === "bearish" ? "하락 반전 PRZ" : "상승 반전 PRZ"}</span>
+              <small>신뢰도 {Math.round(activeHarmonic.confidence)} · {activeHarmonic.status === "forming" ? "형성 중" : "완성"}</small>
+              {harmonicPatterns.length > 1 ? (
+                <div className="taLayerStatusPager">
+                  <button onClick={() => setHarmonicIndex((value) => value - 1)} type="button" aria-label="이전 패턴">◀</button>
+                  <b>{(((harmonicIndex % harmonicPatterns.length) + harmonicPatterns.length) % harmonicPatterns.length) + 1}/{harmonicPatterns.length}</b>
+                  <button onClick={() => setHarmonicIndex((value) => value + 1)} type="button" aria-label="다음 패턴">▶</button>
+                </div>
+              ) : null}
             </>
           ) : (
-            <span className="muted">반전 패턴 조건을 충족한 구간이 없어 하모닉 판정을 보류 중입니다.</span>
+            <>
+              <strong>하모닉 미검출</strong>
+              <span>유효 X-A-B-C-D 비율 없음</span>
+              <small>PRZ 없음 · 방향 판정에 사용하지 않음</small>
+            </>
           )}
         </div>
       ) : null}
@@ -689,6 +699,36 @@ function ChartLayerControls({
       <small>레이어 하나씩 검증 · shift-클릭 비교(최대 2)</small>
     </div>
   );
+}
+
+function WyckoffLayerStatus({ analysis }: { analysis: PositionChartAnalysis }) {
+  const range = analysis.wyckoff_range;
+  const trendValue = analysis.wyckoff.trend;
+  const trend = isRecordValue(trendValue) && typeof trendValue.direction === "string"
+    ? trendValue.direction
+    : "neutral";
+  const trendLabel = trend === "bearish" ? "하락 추세" : trend === "bullish" ? "상승 추세" : "추세 중립";
+  const events = splitWyckoffEvents(analysis.wyckoff_markers, analysis.wyckoff_markers_low_confidence).events;
+  if (!range) {
+    return (
+      <div className="taLayerStatus inactive" data-testid="wyckoff-layer-status">
+        <strong>와이코프 미검출</strong>
+        <span>거래 레인지 없음 · {trendLabel}</span>
+        <small>Spring·UTAD·Phase 판정 대상 아님</small>
+      </div>
+    );
+  }
+  return (
+    <div className="taLayerStatus confirmed" data-testid="wyckoff-layer-status">
+      <strong>{phaseHintLabel(analysis.wyckoff_phase?.phase)}</strong>
+      <span>레인지 {formatPrice(range.support.price)}–{formatPrice(range.resistance.price)}</span>
+      <small>실제 확인 이벤트 {events.length}건 · {trendLabel}</small>
+    </div>
+  );
+}
+
+function isRecordValue(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function EmaRibbonHud({ ribbon }: { ribbon: EmaRibbonResult }) {
@@ -959,7 +999,7 @@ function renderTaOverlay(
     if (layers.ta.includes("harmonic")) {
       const harmonic = activeHarmonic
         ? harmonicPatternNodes(context, activeHarmonic)
-        : harmonicCandidateNodes(context);
+        : harmonicCandidateNodes();
       zones.push(...harmonic.zones);
       shapes.push(...harmonic.shapes);
       badges.push(...harmonic.badges);
@@ -1604,7 +1644,7 @@ function levelZoneNode(context: OverlayContext, level: ChartPriceLevel, index: n
 
 function wyckoffOverlayNodes(context: OverlayContext): OverlayGroup {
   const range = context.analysis.wyckoff_range;
-  if (!range) return unconfirmedWyckoffNodes(context);
+  if (!range) return unconfirmedWyckoffNodes();
   // 레인지 경계가 현재 보이는 범위 밖이면 price/timeToCoordinate가 null을 준다.
   // 통째로 숨기지 말고 차트 가장자리로 clamp해 — 스크롤/줌 위치와 무관하게 와이코프 구조가 항상 보이도록.
   const markCoord = context.series.priceToCoordinate(context.analysis.mark_price);
@@ -1628,16 +1668,7 @@ function wyckoffOverlayNodes(context: OverlayContext): OverlayGroup {
     `<line x1="${x}" x2="${x + width}" y1="${top}" y2="${top}" stroke="${rangeStroke}" stroke-width="2.5" />`,
     `<line x1="${x}" x2="${x + width}" y1="${bottom}" y2="${bottom}" stroke="${rangeStroke}" stroke-width="2.5" />`
   ];
-  const phaseLabels = ["A", "B", "C", "D", "E"];
-  const phaseRowY = clamp(y + 16, 18, Math.max(18, context.height - 32));
-  const shapes = phaseLabels.flatMap((label, index) => {
-    const phaseX = x + (width / phaseLabels.length) * index;
-    const labelX = phaseX + width / phaseLabels.length / 2 - 8;
-    return [
-      index > 0 ? `<line x1="${phaseX}" x2="${phaseX}" y1="${y}" y2="${y + height}" stroke="${context.palette.color("blue", 0.32)}" stroke-width="1" stroke-dasharray="4 4" />` : "",
-      `<text data-overlay-role="phase-label" x="${labelX}" y="${phaseRowY}" fill="${context.palette.color("blue", 0.82)}" font-size="10" font-family="SF Mono, Monaco, Consolas, monospace">Phase ${label}</text>`
-    ];
-  });
+  const shapes: string[] = [];
   const events = splitWyckoffEvents(context.analysis.wyckoff_markers, context.analysis.wyckoff_markers_low_confidence).events;
   shapes.push(...events.flatMap((marker) => wyckoffEventMarker(context, marker)));
   const groupedEvents = groupWyckoffBadges(context, events);
@@ -1712,52 +1743,8 @@ function onchainOperationLabel(marker: OnchainChartMarker): string {
 }
 
 
-function unconfirmedWyckoffNodes(context: OverlayContext): OverlayGroup {
-  const observationCandles = context.analysis.candles.slice(-32);
-  const firstCandle = observationCandles.at(0);
-  const lastCandle = observationCandles.at(-1);
-  const observationHigh = observationCandles.length ? Math.max(...observationCandles.map((candle) => candle.high)) : null;
-  const observationLow = observationCandles.length ? Math.min(...observationCandles.map((candle) => candle.low)) : null;
-  const rawX1 = firstCandle ? context.chart.timeScale().timeToCoordinate(firstCandle.time as Time) : null;
-  const rawX2 = lastCandle ? context.chart.timeScale().timeToCoordinate(lastCandle.time as Time) : null;
-  const rawTop = observationHigh === null ? null : context.series.priceToCoordinate(observationHigh);
-  const rawBottom = observationLow === null ? null : context.series.priceToCoordinate(observationLow);
-  const zones: string[] = [];
-  if (rawX1 !== null && rawX2 !== null && rawTop !== null && rawBottom !== null) {
-    const x = Math.min(rawX1, rawX2);
-    const y = Math.min(rawTop, rawBottom);
-    const width = Math.max(16, Math.abs(rawX2 - rawX1));
-    const height = Math.max(8, Math.abs(rawBottom - rawTop));
-    const stroke = context.palette.color("blue", 0.52);
-    zones.push(
-      `<rect data-overlay-role="wyckoff-observation-range" x="${x}" y="${y}" width="${width}" height="${height}" rx="3" fill="${context.palette.color("blue", 0.045)}" stroke="${stroke}" stroke-width="1.2" stroke-dasharray="6 5" />`,
-      `<line x1="${x}" x2="${x + width}" y1="${y + height / 2}" y2="${y + height / 2}" stroke="${context.palette.color("blue", 0.22)}" stroke-width="1" stroke-dasharray="3 5" />`
-    );
-  }
-  const events = splitWyckoffEvents(
-    context.analysis.wyckoff_markers,
-    context.analysis.wyckoff_markers_low_confidence
-  ).events.slice(-8);
-  const shapes = events.flatMap((marker) => {
-    const markerX = context.chart.timeScale().timeToCoordinate(marker.time as Time);
-    const markerY = context.series.priceToCoordinate(marker.price);
-    if (markerX === null || markerY === null) return [];
-    const upper = marker.side === "distribution" || marker.type.includes("utad") || marker.type.includes("sow");
-    const color = context.palette.flag(upper ? "invalidation" : "takeProfit", 0.72);
-    const edgeY = upper ? Math.max(22, markerY - 20) : Math.min(context.height - 26, markerY + 20);
-    return [
-      `<g data-overlay-role="wyckoff-observation"><line x1="${markerX}" x2="${markerX}" y1="${markerY}" y2="${edgeY}" stroke="${color}" stroke-width="1" stroke-dasharray="3 3" /><circle cx="${markerX}" cy="${markerY}" r="4" fill="${context.palette.color("panel", 0.92)}" stroke="${color}" stroke-width="1.5" /><text x="${markerX + 6}" y="${edgeY + (upper ? -2 : 9)}" fill="${color}" font-size="9" font-family="SF Mono, Monaco, Consolas, monospace">${escapeSvgText(eventShortLabel(marker))}</text><title>${escapeSvgText(`${eventShortLabel(marker)} · 관찰 신뢰도 ${Math.round(marker.confidence)}`)}</title></g>`
-    ];
-  });
-  const phase = phaseHintLabel(context.analysis.wyckoff_phase?.phase);
-  const label = events.length
-    ? `레인지 미확정 · ${phase} · 관찰 ${events.length}`
-    : `레인지 미확정 · ${phase}`;
-  return {
-    zones,
-    shapes,
-    badges: [labelBadge(18, 18, `관찰 범위 후보 · ${label}`, context.palette.color("blue", 0.14), context.palette.color("blue", 0.62), context.palette.color("text"), 210)]
-  };
+function unconfirmedWyckoffNodes(): OverlayGroup {
+  return { zones: [], shapes: [], badges: [] };
 }
 
 function wyckoffEventMarker(context: OverlayContext, marker: WyckoffMarker): string[] {
@@ -1847,28 +1834,8 @@ function harmonicPatternNodes(context: OverlayContext, pattern: PositionChartAna
   return { zones, shapes, badges };
 }
 
-function harmonicCandidateNodes(context: OverlayContext): OverlayGroup {
-  const pivots = (context.analysis.harmonic?.pivots ?? [])
-    .slice(-7)
-    .map((point, index) => {
-      const x = context.chart.timeScale().timeToCoordinate(point.time as Time);
-      const y = context.series.priceToCoordinate(point.price);
-      return x === null || y === null ? null : { x, y, point, index };
-    })
-    .filter((item): item is { x: number; y: number; point: PositionChartAnalysis["harmonic"]["pivots"][number]; index: number } => item !== null);
-  if (pivots.length < 3) {
-    return { zones: [], shapes: [], badges: [minimalFloatingLabel(context, "확정 패턴 없음 · 스윙 대기", 18, 28, "text")] };
-  }
-  const stroke = context.palette.color("amber", 0.86);
-  const shapes = [
-    `<polyline data-overlay-role="harmonic-candidate" points="${pivots.map((item) => `${item.x},${item.y}`).join(" ")}" fill="none" stroke="${stroke}" stroke-width="1.4" stroke-dasharray="5 5" />`,
-    ...pivots.map((item) => `<circle cx="${item.x}" cy="${item.y}" r="3.5" fill="${context.palette.color("panel", 0.96)}" stroke="${stroke}" stroke-width="1.4" />`)
-  ];
-  const badges = [
-    labelBadge(18, 18, `스윙 구조 관찰 · 확정 패턴 없음`, context.palette.color("amber", 0.12), stroke, context.palette.color("text"), 190),
-    ...pivots.map((item) => `<text x="${item.x + 5}" y="${item.y - 6}" fill="${stroke}" font-size="9" font-family="SF Mono, Monaco, Consolas, monospace">P${item.index + 1}</text>`)
-  ];
-  return { zones: [], shapes, badges };
+function harmonicCandidateNodes(): OverlayGroup {
+  return { zones: [], shapes: [], badges: [] };
 }
 
 function harmonicRatioLabels(

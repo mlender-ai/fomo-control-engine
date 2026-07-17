@@ -1062,7 +1062,7 @@ textarea:focus {
 .emaRibbonHud.compressed strong { color: var(--rh-amber); }
 
 .minimalChartVerdict,
-.harmonicNav,
+.taLayerStatus,
 .chartVolumeSummary {
   margin: 0 16px 10px;
   border-color: var(--rh-border);

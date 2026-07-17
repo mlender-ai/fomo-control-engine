@@ -11,6 +11,12 @@ FOMO Control Engine의 와이코프 엔진은 주문 실행 신호가 아니라 
 - 폭 제한: 레인지 폭이 ATR 대비 너무 작거나 크면 제외
 - 레인지가 없으면 `phase = trending`, 이벤트 목록은 빈 배열
 
+## Display Contract
+
+- `wyckoff_range=null`이면 임의 기간의 고가·저가로 관찰 박스를 만들지 않는다. `거래 레인지 없음`과 현재 추세만 표시한다.
+- 레인지가 있어도 Phase A-E를 시간축에 균등 분할하지 않는다. 실제 판정된 phase 하나와 `evidence_event_ids`에 연결된 실제 이벤트 시각만 표시한다.
+- Spring, UTAD, SOS, SOW 등은 감지된 이벤트가 있을 때만 마커로 그린다. 미검출 상태를 후보 패턴처럼 보이게 만들지 않는다.
+
 ## Event Set
 
 Accumulation side:
