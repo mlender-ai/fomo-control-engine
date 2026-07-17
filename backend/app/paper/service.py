@@ -331,7 +331,7 @@ def _bootstrap_validation_positions(
     simulation_loader: SimulationLoader,
     now: datetime,
 ) -> dict[str, Any]:
-    """Seed the 4-week paper benchmark once without weakening normal flip entries."""
+    """Seed the 4-week benchmark and recover only from policy-invalid seeds."""
     benchmark = paper_benchmark(repo)
     started_at = _parse_datetime(benchmark.get("started_at"))
     if started_at is None:
@@ -354,9 +354,18 @@ def _bootstrap_validation_positions(
                 }
             )
         )
-    benchmark_trades = [trade for trade in all_trades if trade.entry_at >= started_at or trade in current_seeds]
+    benchmark_trades = [
+        trade for trade in all_trades if (trade.entry_at >= started_at or trade in current_seeds) and trade.exit_reason != "duplicate_bootstrap_suppressed"
+    ]
+    invalid_seeds = [trade for trade in benchmark_trades if _is_policy_invalid_trade(trade)]
+    benchmark_trades = [trade for trade in benchmark_trades if not _is_policy_invalid_trade(trade)]
     if benchmark_trades:
         return {"opened": 0, "events": [], "errors": []}
+
+    latest_invalid_bar: dict[tuple[str, str], datetime] = {}
+    for trade in invalid_seeds:
+        key = (trade.symbol, trade.timeframe)
+        latest_invalid_bar[key] = max(latest_invalid_bar.get(key, trade.entry_bar_at), trade.entry_bar_at)
 
     capacity = max(0, int(settings.paper_max_open_positions) - len(repo.list_paper_trades(status="open", limit=100)))
     target = min(capacity, VALIDATION_BOOTSTRAP_MAX_POSITIONS)
@@ -377,6 +386,9 @@ def _bootstrap_validation_positions(
             direction = _stance_direction(confluence)
             stance_state = _stance_state(confluence)
             if bar is None or direction is None or stance_state.get("transitioning") is True:
+                continue
+            invalid_bar = latest_invalid_bar.get((symbol, timeframe))
+            if invalid_bar is not None and bar.timestamp <= invalid_bar:
                 continue
 
             evidence = _direction_evidence(confluence, direction)
@@ -441,10 +453,13 @@ def _bootstrap_validation_positions(
     for candidate in sorted(candidates, key=lambda item: item["rank"], reverse=True)[:target]:
         simulation = candidate["simulation"]
         signature_gates = candidate["signature_gates"]
+        recovering = bool(invalid_seeds)
+        entry_mode = "validation_bootstrap_recovery" if recovering else "validation_bootstrap"
         trade = open_trade(
             trade_id=uuid5(
                 NAMESPACE_URL,
-                f"fce:paper:validation-bootstrap:{started_at.isoformat()}:{candidate['symbol']}:{candidate['timeframe']}",
+                "fce:paper:validation-bootstrap:"
+                f"{started_at.isoformat()}:{candidate['symbol']}:{candidate['timeframe']}:{candidate['bar'].timestamp.isoformat()}",
             ),
             symbol=candidate["symbol"],
             timeframe=candidate["timeframe"],
@@ -454,8 +469,9 @@ def _bootstrap_validation_positions(
             invalidation_price=candidate["invalidation"],
             take_profit_price=candidate["take_profit"],
             evidence={
-                "entry_mode": "validation_bootstrap",
+                "entry_mode": entry_mode,
                 "benchmark_started_at": started_at.isoformat(),
+                "recovered_policy_invalid_count": len(invalid_seeds),
                 "items": candidate["evidence"],
                 "gates": candidate["gates"],
                 "signature_gate_mode": signature_gates.get("gate_mode"),
@@ -465,7 +481,7 @@ def _bootstrap_validation_positions(
                 "exit_policy": "ATR TP1 부분익절 · TP2 전량익절 · 시간 만료 시 stance 재검토",
             },
             checklist={
-                "entry_mode": "validation_bootstrap",
+                "entry_mode": entry_mode,
                 "items": simulation.get("checklist") or [],
                 "passed": simulation.get("checklist_passed"),
                 "total": simulation.get("checklist_total"),
@@ -475,7 +491,7 @@ def _bootstrap_validation_positions(
             },
             stance_snapshot=candidate["stance_state"],
             signature_snapshot={
-                "entry_mode": "validation_bootstrap",
+                "entry_mode": entry_mode,
                 "signature_gate": bool(signature_gates.get("signature_gate")),
                 "regime_gate": bool(signature_gates.get("regime_gate")),
                 "gate_mode": signature_gates.get("gate_mode"),
@@ -500,6 +516,11 @@ def _bootstrap_validation_positions(
 
 
 def _is_current_benchmark_seed(trade: PaperTrade, started_at: datetime) -> bool:
+    evidence = _dict(trade.entry_evidence)
+    if str(evidence.get("entry_mode") or "").startswith("validation_bootstrap"):
+        evidence_started_at = _parse_datetime(evidence.get("benchmark_started_at"))
+        if evidence_started_at == started_at:
+            return True
     expected_id = uuid5(
         NAMESPACE_URL,
         f"fce:paper:validation-bootstrap:{started_at.isoformat()}:{trade.symbol}:{trade.timeframe}",
@@ -507,10 +528,14 @@ def _is_current_benchmark_seed(trade: PaperTrade, started_at: datetime) -> bool:
     return trade.id == expected_id
 
 
+def _is_policy_invalid_trade(trade: PaperTrade) -> bool:
+    return any(str(tag).startswith("policy_invalid:") for tag in trade.loss_tags)
+
+
 def _suppress_duplicate_bootstrap_trades(repo: Any, *, now: datetime) -> int:
     groups: dict[tuple[str, str, datetime], list[PaperTrade]] = {}
     for trade in repo.list_paper_trades(status="open", limit=5000):
-        if _dict(trade.entry_evidence).get("entry_mode") != "validation_bootstrap":
+        if not str(_dict(trade.entry_evidence).get("entry_mode") or "").startswith("validation_bootstrap"):
             continue
         groups.setdefault((trade.symbol, trade.timeframe, trade.entry_bar_at), []).append(trade)
 

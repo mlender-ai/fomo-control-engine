@@ -220,6 +220,39 @@ def test_take_profit_pressure_cannot_close_before_first_profit() -> None:
     assert (second.action, second.reason, second.high_pressure_streak) == ("hold", "none", 0)
 
 
+def test_exit_timestamp_never_precedes_processing_time_entry() -> None:
+    policy = PaperPolicy()
+    trade = open_trade(
+        trade_id=TRADE_ID,
+        symbol="TESTUSDT",
+        timeframe="4h",
+        asset_class="crypto",
+        direction=Direction.long,
+        bar=candle(0, close=100),
+        invalidation_price=99,
+        take_profit_price=105,
+        evidence={},
+        checklist={},
+        stance_snapshot={},
+        signature_snapshot={},
+        policy=policy,
+    ).model_copy(update={"entry_at": BASE_TIME + timedelta(hours=2)})
+    bar = candle(0, close=98)
+
+    decision = evaluate_exit(
+        trade,
+        bar=bar,
+        stance_state={"stance": "long_leaning", "flipped": False, "transitioning": False},
+        take_profit_pressure="low",
+        prior_high_pressure_streak=0,
+        policy=policy,
+    )
+    closed = apply_exit_decision(trade, decision=decision, bar=bar, policy=policy)
+
+    assert closed.exit_at == trade.entry_at
+    assert closed.updated_at == trade.entry_at
+
+
 def test_legacy_pre_tp_pressure_exit_is_audited_and_excluded_from_benchmark() -> None:
     repo = MemoryRepository()
     trade = open_trade(
@@ -1146,6 +1179,115 @@ def test_benchmark_bootstrap_opens_current_stance_once_without_flip() -> None:
     assert trades[0].holding_bars == 3
     assert trades[0].stance_snapshot["flipped"] is False
     assert repo.list_paper_gate_funnel(symbol="TESTUSDT")[0]["entered"] is False
+
+
+def test_benchmark_bootstrap_recovers_policy_invalid_seed_on_new_bar() -> None:
+    repo = MemoryRepository()
+    repo.upsert_watchlist_item(WatchlistItem(symbol="TESTUSDT", asset_class="crypto"))
+    benchmark_started_at = BASE_TIME + timedelta(minutes=1)
+    first_run_at = BASE_TIME + timedelta(minutes=2)
+    start_paper_benchmark(repo, now=benchmark_started_at)
+    analysis = {
+        "symbol": "TESTUSDT",
+        "timeframe": "4h",
+        "asset_class": "crypto",
+        "candles": [{"time": int(BASE_TIME.timestamp()), "open": 100, "high": 101, "low": 99, "close": 100, "volume": 1_000}],
+        "liquidity": {"sweeps": [{"confirmed": True, "side": "sell_side", "type": "sweep", "grade": "Strong"}]},
+    }
+    signature = signatures_from_analysis(analysis)[0]
+    payload = {
+        "analysis": analysis,
+        "historical_backtest": {"stats": [{"signature_key": signature["key"], "signature": signature, "sample_size": 40, "win_1r_ci": [55.0, 70.0]}]},
+        "analyst_briefing": {
+            "confluence": {
+                "stance": "long_leaning",
+                "stance_state": {"stance": "long_leaning", "flipped": False, "transitioning": False},
+                "long_evidence": [{"claim": str(index)} for index in range(3)],
+                "short_evidence": [],
+            }
+        },
+        "gauges": {"bar_state": {"provisional": False}},
+    }
+    simulation = {
+        "rr_ratio": 1.2,
+        "survives_to_invalidation": True,
+        "checklist": [{"status": "pass"}] * 3 + [{"status": "fail"}] * 2,
+        "checklist_passed": 3,
+        "checklist_total": 5,
+        "action_plan": {"invalidation": {"price": 99}, "take_profit": [{"price": 106}]},
+    }
+
+    def load_analysis(_symbol: str, _timeframe: str) -> dict[str, object]:
+        return payload
+
+    def load_simulation(_symbol: str, _timeframe: str, _direction: str, _entry: float) -> dict[str, object]:
+        return simulation
+
+    first = run_paper_engine(
+        repo,
+        _settings(),
+        analysis_loader=load_analysis,
+        simulation_loader=load_simulation,
+        now=first_run_at,
+    )
+    original = repo.list_paper_trades(status="open")[0]
+    repo.upsert_paper_trade(
+        original.model_copy(
+            update={
+                "status": "closed",
+                "remaining_quantity": 0.0,
+                "exit_at": first_run_at,
+                "exit_bar_at": BASE_TIME,
+                "exit_price": 98.0,
+                "exit_reason": "take_profit_pressure",
+                "loss_tags": ["policy_invalid:pre_tp_pressure_exit", "exit:take_profit_pressure"],
+                "updated_at": first_run_at,
+            }
+        )
+    )
+
+    same_bar = run_paper_engine(
+        repo,
+        _settings(),
+        analysis_loader=load_analysis,
+        simulation_loader=load_simulation,
+        now=first_run_at + timedelta(minutes=1),
+    )
+    analysis["candles"].append(
+        {
+            "time": int((BASE_TIME + timedelta(hours=4)).timestamp()),
+            "open": 100,
+            "high": 102,
+            "low": 99,
+            "close": 101,
+            "volume": 1_100,
+        }
+    )
+    recovered = run_paper_engine(
+        repo,
+        _settings(),
+        analysis_loader=load_analysis,
+        simulation_loader=load_simulation,
+        now=BASE_TIME + timedelta(hours=4, minutes=2),
+    )
+    repeated = run_paper_engine(
+        repo,
+        _settings(),
+        analysis_loader=load_analysis,
+        simulation_loader=load_simulation,
+        now=BASE_TIME + timedelta(hours=4, minutes=3),
+    )
+
+    assert first["opened"] == 1
+    assert same_bar["opened"] == 0
+    assert recovered["opened"] == 1
+    assert repeated["opened"] == 0
+    active = repo.list_paper_trades(status="open")
+    assert len(active) == 1
+    assert active[0].id != original.id
+    assert active[0].entry_bar_at == BASE_TIME + timedelta(hours=4)
+    assert active[0].entry_evidence["entry_mode"] == "validation_bootstrap_recovery"
+    assert active[0].entry_evidence["recovered_policy_invalid_count"] == 1
 
 
 def test_bootstrap_concurrency_duplicates_are_suppressed_without_scoring() -> None:

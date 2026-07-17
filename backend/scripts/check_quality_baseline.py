@@ -44,7 +44,7 @@ def enforce_exception_count(baseline: dict) -> list[str]:
     config = baseline["exception_comments"]
     patterns = tuple(config["patterns"])
     allowed = int(config["allowed_count"])
-    ignored_dirs = {".git", ".next", "node_modules", "__pycache__"}
+    ignored_dirs = {".git", ".next", ".next-e2e", "node_modules", "__pycache__"}
     count = 0
     matches: list[str] = []
     for base in (ROOT / "backend", ROOT / "dashboard"):

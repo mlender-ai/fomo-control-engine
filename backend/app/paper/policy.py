@@ -188,8 +188,9 @@ def apply_exit_decision(
     policy: PaperPolicy,
 ) -> PaperTrade:
     holding_bars = trade.holding_bars + 1
+    event_at = max(bar.timestamp, trade.entry_at)
     if decision.action == "hold":
-        return trade.model_copy(update={"holding_bars": holding_bars, "updated_at": bar.timestamp})
+        return trade.model_copy(update={"holding_bars": holding_bars, "updated_at": event_at})
 
     execution_price = decision.execution_price or bar.close
     exit_quantity = trade.remaining_quantity * (0.5 if decision.action == "partial" else 1.0)
@@ -204,14 +205,14 @@ def apply_exit_decision(
         "net_pnl_usdt": net,
         "net_return_pct": (net / trade.margin_usdt) * 100.0,
         "holding_bars": holding_bars,
-        "updated_at": bar.timestamp,
+        "updated_at": event_at,
     }
     if decision.action == "partial":
         return trade.model_copy(
             update={
                 **common,
                 "remaining_quantity": trade.remaining_quantity - exit_quantity,
-                "partial_exit_at": bar.timestamp,
+                "partial_exit_at": event_at,
                 "partial_exit_price": execution_price,
                 "partial_exit_quantity": exit_quantity,
                 "stop_price": trade.entry_price,
@@ -223,7 +224,7 @@ def apply_exit_decision(
             "status": "closed",
             "remaining_quantity": 0.0,
             "exit_bar_at": bar.timestamp,
-            "exit_at": bar.timestamp,
+            "exit_at": event_at,
             "exit_price": execution_price,
             "exit_reason": decision.reason,
         }
