@@ -1,5 +1,41 @@
 import { expect, test } from "@playwright/test";
 
+test("PWA metadata, icons, and same-origin API work on mobile", async ({ page, request }) => {
+  const manifestResponse = await request.get("/manifest.webmanifest");
+  expect(manifestResponse.ok()).toBe(true);
+  const manifest = await manifestResponse.json();
+  expect(manifest).toMatchObject({
+    name: "FOMO Control Engine",
+    short_name: "FOMO Control",
+    display: "standalone",
+    start_url: "/?source=pwa"
+  });
+  expect(manifest.icons).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ sizes: "192x192", type: "image/png" }),
+      expect.objectContaining({ sizes: "512x512", type: "image/png" })
+    ])
+  );
+
+  for (const icon of manifest.icons) {
+    const iconResponse = await request.get(icon.src);
+    expect(iconResponse.ok(), icon.src).toBe(true);
+    expect(iconResponse.headers()["content-type"]).toContain("image/png");
+  }
+
+  const apiResponse = await request.get("/api/system/status");
+  expect(apiResponse.ok()).toBe(true);
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/");
+  await expect(page.locator('link[rel="manifest"]')).toHaveAttribute("href", /manifest\.webmanifest/);
+  await expect(page.getByTestId("position-strip")).toBeVisible({ timeout: 30_000 });
+  const horizontalOverflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth
+  );
+  expect(horizontalOverflow).toBeLessThanOrEqual(2);
+});
+
 test("side navigation stays in the SPA and review cards paint independently", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByTestId("demo-mode-badge")).toBeVisible({ timeout: 30_000 });

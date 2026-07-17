@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import Script from "next/script";
 import { TerminalShell } from "@/components/terminal";
 import { Providers } from "./providers";
@@ -6,8 +6,25 @@ import "./globals.css";
 import "./robinhood.css";
 
 export const metadata: Metadata = {
+  applicationName: "FOMO Control",
   title: "FOMO Control Engine",
-  description: "Personal trading decision engine"
+  description: "Personal trading decision engine",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "FOMO Control"
+  },
+  formatDetection: {
+    telephone: false
+  }
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  colorScheme: "dark",
+  themeColor: "#000000"
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

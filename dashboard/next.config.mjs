@@ -2,6 +2,7 @@ import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = dirname(fileURLToPath(import.meta.url));
+const backendOrigin = (process.env.FCE_BACKEND_ORIGIN ?? "http://127.0.0.1:8875").replace(/\/$/, "");
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
@@ -9,6 +10,14 @@ const nextConfig = {
   reactStrictMode: true,
   turbopack: {
     root
+  },
+  async rewrites() {
+    return [
+      {
+        source: "/api/:path*",
+        destination: `${backendOrigin}/api/:path*`
+      }
+    ];
   }
 };
 

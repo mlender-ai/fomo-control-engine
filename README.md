@@ -38,6 +38,8 @@ NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8875 npm run dev -- -H 127.0.0.1 -p 88
 
 Open [http://127.0.0.1:8876](http://127.0.0.1:8876).
 
+iPhone 홈 화면 웹앱과 같은 Wi-Fi 접속은 [`docs/PWA.md`](docs/PWA.md)를 따른다. 모바일 실행은 프로덕션 빌드 후 `npm run start:mobile`을 사용하며, 인증 없는 공용 인터넷 노출은 금지한다.
+
 Production-style dashboard check:
 
 ```bash

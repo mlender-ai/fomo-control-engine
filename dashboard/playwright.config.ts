@@ -58,6 +58,7 @@ export default defineConfig({
       reuseExistingServer: !process.env.CI,
       env: {
         FCE_NEXT_DIST_DIR: ".next-e2e",
+        FCE_BACKEND_ORIGIN: apiBaseUrl,
         NEXT_PUBLIC_API_BASE_URL: apiBaseUrl
       }
     }
