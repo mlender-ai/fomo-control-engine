@@ -55,7 +55,10 @@ test("minimal neutral market ribbon snapshot", async ({ page }) => {
   await expect(page.locator("[data-event-pill]").first()).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("position-market-context")).toBeVisible();
   await expect(page.getByTestId("compact-chart-workspace")).toHaveScreenshot("chart-minimal-neutral.png", {
-    animations: "disabled"
+    animations: "disabled",
+    // Linux runners can rasterize the dense Korean labels differently while
+    // preserving every chart and layout boundary in this full-workspace shot.
+    maxDiffPixelRatio: 0.012
   });
 });
 
