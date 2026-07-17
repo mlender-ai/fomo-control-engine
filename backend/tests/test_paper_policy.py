@@ -14,6 +14,7 @@ from app.paper.service import (
     _candidate_bootstrap_relaxed_active,
     _gate_diagnostic_event,
     _paper_target_plan,
+    _repair_pre_tp_pressure_exits,
     _signature_gate_evaluation,
     audit_atr_target_reachability,
     paper_benchmark,
@@ -178,6 +179,92 @@ def test_deterministic_partial_take_profit_then_pressure_exit_with_costs() -> No
     assert trade.gross_pnl_usdt == pytest.approx(25.5)
     assert trade.costs_usdt == pytest.approx(0.27 + 110 * 1.5 * 0.0009 + 107 * 1.5 * 0.0009)
     assert trade.net_pnl_usdt == pytest.approx(trade.gross_pnl_usdt - trade.costs_usdt)
+
+
+def test_take_profit_pressure_cannot_close_before_first_profit() -> None:
+    policy = PaperPolicy(take_profit_pressure_bars=2)
+    trade = open_trade(
+        trade_id=TRADE_ID,
+        symbol="TESTUSDT",
+        timeframe="4h",
+        asset_class="crypto",
+        direction=Direction.long,
+        bar=candle(0, close=100),
+        invalidation_price=95,
+        take_profit_price=110,
+        evidence={},
+        checklist={},
+        stance_snapshot={},
+        signature_snapshot={},
+        policy=policy,
+    )
+
+    first = evaluate_exit(
+        trade,
+        bar=candle(1, close=98),
+        stance_state={"stance": "long_leaning", "flipped": False},
+        take_profit_pressure="high",
+        prior_high_pressure_streak=0,
+        policy=policy,
+    )
+    second = evaluate_exit(
+        trade,
+        bar=candle(2, close=97),
+        stance_state={"stance": "long_leaning", "flipped": False},
+        take_profit_pressure="high",
+        prior_high_pressure_streak=first.high_pressure_streak,
+        policy=policy,
+    )
+
+    assert (first.action, first.high_pressure_streak) == ("hold", 0)
+    assert (second.action, second.reason, second.high_pressure_streak) == ("hold", "none", 0)
+
+
+def test_legacy_pre_tp_pressure_exit_is_audited_and_excluded_from_benchmark() -> None:
+    repo = MemoryRepository()
+    trade = open_trade(
+        trade_id=TRADE_ID,
+        symbol="TESTUSDT",
+        timeframe="4h",
+        asset_class="crypto",
+        direction=Direction.long,
+        bar=candle(0, close=100),
+        invalidation_price=95,
+        take_profit_price=110,
+        evidence={},
+        checklist={},
+        stance_snapshot={},
+        signature_snapshot={
+            "gate_mode": "candidate_bootstrap",
+            "qualified": {"signature_key": "harmonic:prz_touch:test"},
+        },
+        policy=PaperPolicy(),
+    ).model_copy(
+        update={
+            "status": "closed",
+            "remaining_quantity": 0.0,
+            "exit_bar_at": candle(2, close=98).timestamp,
+            "exit_at": candle(2, close=98).timestamp,
+            "exit_price": 98.0,
+            "exit_reason": "take_profit_pressure",
+            "net_pnl_usdt": -6.0,
+            "net_return_pct": -6.0,
+            "loss_tags": ["validated_signature_failed:unknown", "exit:take_profit_pressure"],
+        }
+    )
+    repo.upsert_paper_trade(trade)
+
+    assert _repair_pre_tp_pressure_exits(repo) == 1
+    repaired = repo.get_paper_trade(TRADE_ID)
+    assert repaired is not None
+    assert repaired.loss_tags == ["policy_invalid:pre_tp_pressure_exit", "exit:take_profit_pressure"]
+
+    scoreboard = paper_scoreboard(repo, _settings(), now=BASE_TIME + timedelta(days=1))
+    assert scoreboard["engine"]["trade_count"] == 0
+    assert scoreboard["engine"]["audited_trade_count"] == 1
+    assert scoreboard["engine"]["policy_invalid_count"] == 1
+    assert scoreboard["engine"]["net_return_pct"] == 0
+    assert scoreboard["equity_curve"]["engine"] == []
 
 
 def test_paper_exit_monitor_reports_live_mark_to_market_and_target_distances() -> None:

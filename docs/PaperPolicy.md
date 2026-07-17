@@ -25,7 +25,7 @@ The first matching rule wins:
 1. Confirmed close breaches invalidation, or the breakeven stop after partial profit.
 2. First take-profit is touched: close 50% at that candle close and move the stop to entry.
 3. A confirmed opposite stance flip closes the remainder.
-4. High take-profit pressure for two consecutive confirmed candles closes the remainder.
+4. After TP1 has realized a partial profit, high take-profit pressure for two consecutive confirmed candles closes only the remainder. Pressure can never close a pre-TP or losing position.
 5. Thirty confirmed holding candles close the remainder.
 
 ## Costs
@@ -35,6 +35,8 @@ Every entry and exit deducts taker fee plus asset-class slippage from executed n
 ## Audit trail and comparison
 
 The entry snapshot stores the evidence stack, stance, checklist, action levels, and validated signature statistics. Entry is registered in the judgment ledger. Closing produces a judgment score and tags losing trades with the signature, regime when available, and exit reason.
+
+Legacy pressure exits that occurred before TP1 are retained in the journal as `policy_invalid:pre_tp_pressure_exit` audit records and excluded from benchmark performance. They are not rewritten as wins or losses.
 
 The engine and user are compared over the same date window using return ratios, win rate, profit factor, maximum drawdown, and trade count. Absolute USDT amounts are not compared because sizing and symbol universes differ. The fixed notice is: **Conditions differ; this compares directional and timing judgment, not absolute capital performance.**
 

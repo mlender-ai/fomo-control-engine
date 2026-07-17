@@ -87,6 +87,7 @@ def run_paper_engine(
     if not bool(settings.paper_engine_enabled):
         return {"enabled": False, "evaluated": 0, "opened": 0, "partial": 0, "closed": 0, "errors": []}
     now = now or utc_now()
+    repaired_policy_exits = _repair_pre_tp_pressure_exits(repo)
     suppressed_duplicates = _suppress_duplicate_bootstrap_trades(repo, now=now)
     opened = partial = closed = evaluated = 0
     skipped_same_bar = 0
@@ -315,6 +316,7 @@ def run_paper_engine(
         "closed": closed,
         "skipped_same_bar": skipped_same_bar,
         "open_count": len(repo.list_paper_trades(status="open", limit=100)),
+        "repaired_policy_exits": repaired_policy_exits,
         "suppressed_duplicates": suppressed_duplicates,
         "events": events,
         "errors": errors,
@@ -1101,8 +1103,8 @@ def _finalize_closed_trade(repo: Any, trade: PaperTrade, analysis: dict[str, Any
     neutral = trade.exit_reason in {"time_stop", "time_decay"}
     loss_tags: list[str] = ["time_decay", f"exit:{trade.exit_reason}"] if neutral else []
     if trade.net_pnl_usdt < 0 and not neutral:
-        signature_key = str(trade.signature_snapshot.get("signature_key") or "unknown")
-        loss_tags = [f"validated_signature_failed:{signature_key}", f"exit:{trade.exit_reason}"]
+        gate_mode, signature_key = _trade_signature_attribution(trade)
+        loss_tags = [f"{gate_mode}_signature_failed:{signature_key}", f"exit:{trade.exit_reason}"]
         regime = analysis.get("market_regime") or analysis.get("regime")
         if regime:
             loss_tags.append(f"regime:{regime}")
@@ -1124,6 +1126,35 @@ def _finalize_closed_trade(repo: Any, trade: PaperTrade, analysis: dict[str, Any
         )
     )
     return result
+
+
+def _trade_signature_attribution(trade: PaperTrade) -> tuple[str, str]:
+    snapshot = _dict(trade.signature_snapshot)
+    qualified = _dict(snapshot.get("qualified"))
+    gate_mode = str(snapshot.get("gate_mode") or qualified.get("gate_mode") or "validated")
+    signature = _dict(qualified.get("signature"))
+    key = str(snapshot.get("signature_key") or qualified.get("signature_key") or signature.get("key") or "unknown")
+    return gate_mode, key
+
+
+def _is_pre_tp_pressure_exit(trade: PaperTrade) -> bool:
+    return trade.exit_reason == "take_profit_pressure" and trade.partial_exit_at is None
+
+
+def _repair_pre_tp_pressure_exits(repo: Any) -> int:
+    repaired = 0
+    for trade in repo.list_paper_trades(status="closed", limit=5000):
+        if not _is_pre_tp_pressure_exit(trade) or "policy_invalid:pre_tp_pressure_exit" in trade.loss_tags:
+            continue
+        repo.upsert_paper_trade(
+            trade.model_copy(
+                update={
+                    "loss_tags": ["policy_invalid:pre_tp_pressure_exit", "exit:take_profit_pressure"],
+                }
+            )
+        )
+        repaired += 1
+    return repaired
 
 
 def _record_entry_judgment(repo: Any, trade: PaperTrade) -> None:
@@ -1389,13 +1420,18 @@ def _qualified_signature(repo: Any, settings: Any, analysis: dict[str, Any], pay
 
 
 def _paper_metrics(trades: Iterable[PaperTrade]) -> dict[str, Any]:
-    rows = list(trades)
+    audited_rows = list(trades)
+    invalid_rows = [trade for trade in audited_rows if _is_pre_tp_pressure_exit(trade)]
+    rows = [trade for trade in audited_rows if not _is_pre_tp_pressure_exit(trade)]
     returns = [trade.net_return_pct for trade in sorted(rows, key=lambda item: item.exit_at or item.updated_at)]
     scored = [trade for trade in rows if trade.exit_reason not in {"time_stop", "time_decay"}]
     wins = [trade for trade in scored if trade.net_pnl_usdt > 0]
     gross_profit = sum(max(0.0, trade.net_pnl_usdt) for trade in rows)
     gross_loss = abs(sum(min(0.0, trade.net_pnl_usdt) for trade in rows))
-    return _metric_payload(returns, len(wins), gross_profit, gross_loss, scored_count=len(scored), neutral_count=len(rows) - len(scored))
+    metrics = _metric_payload(returns, len(wins), gross_profit, gross_loss, scored_count=len(scored), neutral_count=len(rows) - len(scored))
+    metrics["audited_trade_count"] = len(audited_rows)
+    metrics["policy_invalid_count"] = len(invalid_rows)
+    return metrics
 
 
 def _user_metrics(trades: Iterable[Any]) -> dict[str, Any]:
@@ -1436,7 +1472,7 @@ def _metric_payload(
 
 
 def _paper_equity_curve(trades: Iterable[PaperTrade]) -> list[dict[str, Any]]:
-    return _return_curve(((trade.exit_at or trade.updated_at, float(trade.net_return_pct)) for trade in trades))
+    return _return_curve(((trade.exit_at or trade.updated_at, float(trade.net_return_pct)) for trade in trades if not _is_pre_tp_pressure_exit(trade)))
 
 
 def _user_equity_curve(trades: Iterable[Any]) -> list[dict[str, Any]]:

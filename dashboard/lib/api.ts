@@ -1845,6 +1845,8 @@ export type PaperMetrics = {
   trade_count: number;
   scored_trade_count: number;
   neutral_count: number;
+  audited_trade_count?: number;
+  policy_invalid_count?: number;
   sample_sufficient: boolean;
 };
 

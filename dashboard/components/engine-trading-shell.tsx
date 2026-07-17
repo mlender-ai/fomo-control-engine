@@ -109,6 +109,7 @@ function BattleView({ data, whales, starting, onStart }: { data: PaperDashboard;
           <span className="engineSectionLabel">대결 기간 판정 · {shortDate(competition.started_at)} 이후</span>
           <strong className={competition.engine_leading ? "positive" : "neutral"}>{competition.engine_leading ? "엔진 우세" : competition.verdict === "insufficient_samples" ? "표본 부족" : "우세 미확정"}</strong>
           <small>엔진 채점 N={competition.engine.scored_trade_count} · 나 채점 N={competition.user.scored_trade_count}</small>
+          {competition.engine.policy_invalid_count ? <small>정책 오류 표본 {competition.engine.policy_invalid_count}건 성과 제외</small> : null}
           {!competition.engine.sample_sufficient || !competition.user.sample_sufficient ? <small>각 N≥10 전까지 우세 판정 유보</small> : null}
         </div>
         <EquityComparison engine={competition.equity_curve.engine} user={competition.equity_curve.user} />
@@ -362,7 +363,7 @@ function PaperPositionCard({ trade }: { trade: PaperTrade }) {
 function JournalView({ trades }: { trades: PaperTrade[] }) {
   const search = useSearchParams();
   const filter = search.get("filter") ?? "all";
-  const rows = trades.filter((trade) => filter === "win" ? trade.net_pnl_usdt > 0 && !isNeutralExit(trade.exit_reason) : filter === "loss" ? trade.net_pnl_usdt <= 0 && !isNeutralExit(trade.exit_reason) : filter === "neutral" ? isNeutralExit(trade.exit_reason) : filter === "all" ? true : trade.exit_reason === filter);
+  const rows = trades.filter((trade) => filter === "win" ? trade.net_pnl_usdt > 0 && !isNeutralTrade(trade) : filter === "loss" ? trade.net_pnl_usdt <= 0 && !isNeutralTrade(trade) : filter === "neutral" ? isNeutralTrade(trade) : filter === "all" ? true : trade.exit_reason === filter);
   return (
     <div className="engineView" data-testid="engine-journal-tab">
       <div className="engineFilters">{[["all","전체"],["win","승"],["loss","패"],["neutral","중립"],["invalidation_breach","무효화"],["opposite_stance_flip","반대 전환"],["time_decay","시간 감쇠"]].map(([id,label]) => <Link className={filter === id ? "active" : ""} href={`/engine?tab=journal&filter=${id}`} key={id}>{label}</Link>)}</div>
@@ -372,10 +373,12 @@ function JournalView({ trades }: { trades: PaperTrade[] }) {
 }
 
 function PaperJournalRow({ trade }: { trade: PaperTrade }) {
+  const policyInvalid = isPolicyInvalid(trade);
+  const reason = policyInvalid ? "정책 오류 표본 · 성과 제외" : exitReason(trade.exit_reason);
   return (
     <details className="engineJournalRow">
-      <summary><strong>{trade.symbol}</strong><span>{direction(trade.direction)}</span><b className={trade.net_pnl_usdt >= 0 ? "positive" : "negative"}>{pct(trade.net_return_pct)}</b><span>{trade.holding_bars}캔들</span><span>{exitReason(trade.exit_reason)}</span></summary>
-      <div className="engineJournalDetail"><section><h3>진입 당시</h3><p>스탠스 {stanceLabel(trade.stance_snapshot)}</p>{evidenceLines(trade).slice(0, 4).map((line) => <p key={line}>{line}</p>)}</section><section><h3>청산</h3><p>{exitReason(trade.exit_reason)} · {price(trade.exit_price)}</p><p>비용 차감 net {money(trade.net_pnl_usdt)} USDT</p><p>{trade.loss_tags.length ? trade.loss_tags.join(" · ") : "채점 결과는 판단 원장에 기록됨"}</p></section></div>
+      <summary><strong>{trade.symbol}</strong><span>{direction(trade.direction)}</span><b className={policyInvalid ? "neutral" : trade.net_pnl_usdt >= 0 ? "positive" : "negative"}>{pct(trade.net_return_pct)}</b><span>{trade.holding_bars}캔들</span><span>{reason}</span></summary>
+      <div className="engineJournalDetail"><section><h3>진입 당시</h3><p>스탠스 {stanceLabel(trade.stance_snapshot)}</p>{evidenceLines(trade).slice(0, 4).map((line) => <p key={line}>{line}</p>)}</section><section><h3>청산</h3><p>{reason} · {price(trade.exit_price)}</p><p>비용 차감 net {money(trade.net_pnl_usdt)} USDT</p><p>{trade.loss_tags.length ? trade.loss_tags.map(lossTagLabel).join(" · ") : "채점 결과는 판단 원장에 기록됨"}</p></section></div>
     </details>
   );
 }
@@ -494,6 +497,9 @@ function signedPct(value: number): string { return `${value > 0 ? "+" : ""}${Num
 function ratio(value: number | null): string { return value === null ? "유보" : Number(value).toFixed(2); }
 function winRate(value: PaperDashboard["scoreboard"]["engine"]): string { return value.sample_sufficient && value.win_rate_pct !== null ? pct(value.win_rate_pct) : `유보 · N=${value.scored_trade_count}`; }
 function isNeutralExit(value: string | null): boolean { return value === "time_stop" || value === "time_decay"; }
+function isPolicyInvalid(trade: PaperTrade): boolean { return trade.loss_tags.includes("policy_invalid:pre_tp_pressure_exit"); }
+function isNeutralTrade(trade: PaperTrade): boolean { return isNeutralExit(trade.exit_reason) || isPolicyInvalid(trade); }
+function lossTagLabel(value: string): string { if (value === "policy_invalid:pre_tp_pressure_exit") return "TP1 전 익절압력 오발동"; if (value === "exit:take_profit_pressure") return "기존 청산 기록 보존"; return value; }
 function price(value: number | null): string { if (value === null || !Number.isFinite(value)) return "-"; return value >= 100 ? value.toLocaleString(undefined, { maximumFractionDigits: 2 }) : value.toFixed(value >= 1 ? 4 : 6); }
 function money(value: number): string { return `${value > 0 ? "+" : ""}${Number(value).toFixed(2)}`; }
 function compactMoney(value: number): string { return value >= 1_000_000 ? `${(value / 1_000_000).toFixed(1)}M` : value >= 1_000 ? `${Math.round(value / 1_000)}K` : value.toFixed(0); }

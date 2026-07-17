@@ -168,8 +168,10 @@ def evaluate_exit(
     if _opposite_confirmed_flip(trade, stance_state):
         return ExitDecision("close", "opposite_stance_flip", 0)
 
-    high_streak = prior_high_pressure_streak + 1 if take_profit_pressure == "high" else 0
-    if high_streak >= policy.take_profit_pressure_bars:
+    # Take-profit pressure protects gains on the remainder; it is not a pre-TP
+    # stop and must never close a position that has not realized TP1.
+    high_streak = prior_high_pressure_streak + 1 if trade.partial_exit_at is not None and take_profit_pressure == "high" else 0
+    if trade.partial_exit_at is not None and high_streak >= policy.take_profit_pressure_bars:
         return ExitDecision("close", "take_profit_pressure", high_streak)
     if next_holding_bars >= policy.max_holding_bars:
         if _stance_supports_trade(trade, stance_state):
