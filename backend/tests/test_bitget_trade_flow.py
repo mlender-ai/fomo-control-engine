@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta, timezone
-
 from app.db.models import Direction, MarketCandle, MarketSnapshot, Position
+from app.exchange.bitget.client import BitgetClient
+from app.exchange.bitget.provider import BitgetMarketDataProvider
+from app.exchange.bitget.trade_cache import BitgetTradeFillCache, TradeFillCacheSlice
 from app.exchange.bitget.trades import (
     aggregate_trade_buckets,
     cvd_series_from_buckets,
@@ -109,6 +111,53 @@ def test_event_cvd_splits_real_fills_when_one_candle_bucket_would_hide_history()
     assert [item["delta"] for item in series] == [3.0, 0.0, 3.0, 0.0]
     assert [item["value"] for item in series] == [3.0, 3.0, 6.0, 6.0]
     assert all(item["method"] == "event_time_fills" for item in series)
+
+
+def test_trade_flow_reports_actual_coverage_for_bounded_cache() -> None:
+    candles = [_candle(index) for index in range(4)]
+    fills = [
+        parse_trade_fill(
+            {
+                "tradeId": str(index),
+                "price": "101",
+                "size": "1",
+                "side": "Buy",
+                "ts": _ms(candles[-1].timestamp + timedelta(minutes=index)),
+            },
+            "BTCUSDT",
+        )
+        for index in range(3)
+    ]
+
+    class BoundedCache(BitgetTradeFillCache):
+        def __init__(self) -> None:
+            pass
+
+        def fresh_fills(
+            self,
+            symbol: str,
+            timeframe: str,
+            start_at: datetime,
+            end_at: datetime,
+            max_age_seconds: int,
+            max_rows: int,
+        ) -> TradeFillCacheSlice:
+            return TradeFillCacheSlice(fills=fills, truncated=True)
+
+    provider = BitgetMarketDataProvider(
+        BitgetClient(),
+        trade_cache=BoundedCache(),
+        trade_fill_max_rows=3,
+    )
+
+    result = provider.get_trade_flow("BTCUSDT", "4h", candles)
+
+    assert result["coverage"]["from"] == fills[0].timestamp.isoformat()
+    assert result["coverage"]["to"] == fills[-1].timestamp.isoformat()
+    assert result["coverage"]["requested_from"] != result["coverage"]["from"]
+    assert result["coverage"]["truncated"] is True
+    assert result["coverage"]["max_rows"] == 3
+    assert "가장 최근 3건" in result["notes"][-1]
 
 
 def test_uncovered_volume_profile_bins_do_not_expose_fake_buy_sell() -> None:

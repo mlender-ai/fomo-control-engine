@@ -41,6 +41,8 @@ The compact Money Flow surface renders these OCC ratios in a dedicated `풋/콜 
 
 The current observation uses up to the most recent 24 confirmed 4-hour candle buckets (96 hours). Missing historical fills remain missing and are never synthesized. Direction thresholds are not fixed constants. For each input, the engine calculates the 40th percentile of the absolute values observed during the latest 30 days:
 
+WO-FCE-85 bounds each synchronous cache read to the latest 50,000 fills by default (`FCE_BITGET_TRADE_FILL_MAX_ROWS`). This prevents a high-volume symbol from loading millions of SQLite rows during one chart request. A bounded result reports its actual first and last fill timestamps, the requested window, and `truncated=true`; the API note explicitly identifies the recent-fill sample. Candles outside that actual fill coverage remain estimated and are never labeled as observed trade flow. SQLite or cached-payload read failures fall back to the public API or an unavailable observation instead of failing the whole position chart.
+
 ```text
 threshold(field) = percentile_40(abs(field[latest 30 days]))
 

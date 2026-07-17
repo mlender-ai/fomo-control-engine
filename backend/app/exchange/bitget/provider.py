@@ -57,6 +57,7 @@ class BitgetMarketDataProvider(MarketDataProvider):
         trade_cache: BitgetTradeFillCache | None = None,
         trade_fill_lookback_hours: int = 96,
         trade_fill_cache_ttl_seconds: int = 60,
+        trade_fill_max_rows: int = 50_000,
         snapshot_cache_ttl_seconds: int = 20,
     ) -> None:
         self.client = client
@@ -65,6 +66,7 @@ class BitgetMarketDataProvider(MarketDataProvider):
         self.trade_cache = trade_cache
         self.trade_fill_lookback_hours = trade_fill_lookback_hours
         self.trade_fill_cache_ttl_seconds = trade_fill_cache_ttl_seconds
+        self.trade_fill_max_rows = max(1, trade_fill_max_rows)
         self.snapshot_cache_ttl_seconds = max(0, snapshot_cache_ttl_seconds)
         self._cache_guard = threading.Lock()
         self._snapshot_locks: dict[tuple[str, str], threading.Lock] = {}
@@ -486,18 +488,21 @@ class BitgetMarketDataProvider(MarketDataProvider):
             ordered[0].timestamp,
             end_time - timedelta(hours=self.trade_fill_lookback_hours),
         )
-        fills = (
+        cached_slice = (
             self.trade_cache.fresh_fills(
                 cache_symbol,
                 timeframe,
                 start_time,
                 end_time,
                 self.trade_fill_cache_ttl_seconds,
+                self.trade_fill_max_rows,
             )
             if self.trade_cache
             else None
         )
-        source = "bitget_fills_history_cache" if fills is not None else "bitget_fills_history"
+        fills = cached_slice.fills if cached_slice is not None else None
+        truncated = cached_slice.truncated if cached_slice is not None else False
+        source = "bitget_fills_history_cache" if cached_slice is not None else "bitget_fills_history"
         error_note = None
         if fills is None:
             key_lock = self._key_lock(self._trade_flow_locks, (cache_symbol, timeframe.lower()))
@@ -505,18 +510,21 @@ class BitgetMarketDataProvider(MarketDataProvider):
             try:
                 # Another request may have populated the cache while this request
                 # waited. Recheck before calling the paginated fills endpoint.
-                fills = (
+                cached_slice = (
                     self.trade_cache.fresh_fills(
                         cache_symbol,
                         timeframe,
                         start_time,
                         end_time,
                         self.trade_fill_cache_ttl_seconds,
+                        self.trade_fill_max_rows,
                     )
                     if self.trade_cache
                     else None
                 )
-                if fills is not None:
+                fills = cached_slice.fills if cached_slice is not None else None
+                truncated = cached_slice.truncated if cached_slice is not None else False
+                if cached_slice is not None:
                     source = "bitget_fills_history_cache"
                 else:
                     try:
@@ -528,8 +536,17 @@ class BitgetMarketDataProvider(MarketDataProvider):
                         if self.trade_cache is not None:
                             self.trade_cache.store_fills(cache_symbol, timeframe, start_time, end_time, fills)
                     except BitgetAPIError as exc:
-                        stale = self.trade_cache.stale_fills(cache_symbol, start_time, end_time) if self.trade_cache else []
-                        if not stale:
+                        stale_slice = (
+                            self.trade_cache.stale_fills(
+                                cache_symbol,
+                                start_time,
+                                end_time,
+                                self.trade_fill_max_rows,
+                            )
+                            if self.trade_cache
+                            else None
+                        )
+                        if stale_slice is None or not stale_slice.fills:
                             empty = _empty_trade_flow(
                                 "fills_unavailable",
                                 "Bitget 현물 마켓 매핑 또는 체결 데이터를 확인할 수 없습니다."
@@ -543,7 +560,8 @@ class BitgetMarketDataProvider(MarketDataProvider):
                                 }
                             )
                             return empty
-                        fills = stale
+                        fills = stale_slice.fills
+                        truncated = stale_slice.truncated
                         source = "bitget_fills_history_stale_cache"
                         error_note = str(exc)
             finally:
@@ -556,6 +574,10 @@ class BitgetMarketDataProvider(MarketDataProvider):
             notes.append("조회 범위 내 Bitget 실체결 데이터가 없습니다.")
         if error_note:
             notes.append("Bitget 실체결 API 오류로 캐시된 체결 데이터를 사용했습니다.")
+        if truncated:
+            notes.append(f"고빈도 체결은 응답 지연을 막기 위해 가장 최근 {self.trade_fill_max_rows:,}건만 관측했습니다.")
+        coverage_from = fills[0].timestamp.isoformat() if fills else None
+        coverage_to = fills[-1].timestamp.isoformat() if fills else None
         return {
             "method": "trade_fills" if fills else "data_unavailable",
             "source": "bitget_spot" if market == "spot" else "bitget_futures",
@@ -563,10 +585,14 @@ class BitgetMarketDataProvider(MarketDataProvider):
             "status": "ok",
             "data_available": bool(fills),
             "coverage": {
-                "from": start_time.isoformat(),
-                "to": end_time.isoformat(),
+                "from": coverage_from,
+                "to": coverage_to,
+                "requested_from": start_time.isoformat(),
+                "requested_to": end_time.isoformat(),
                 "lookback_hours": self.trade_fill_lookback_hours,
                 "fills": len(fills),
+                "max_rows": self.trade_fill_max_rows,
+                "truncated": truncated,
                 "buckets": len(buckets),
                 "cvd_points": len(event_cvd),
                 "cvd_method": "event_time_fills" if event_cvd else None,

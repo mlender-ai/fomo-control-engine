@@ -221,6 +221,7 @@ def system_status() -> dict:
             "insight_min_regeneration_interval_minutes": settings.insight_min_regeneration_interval_minutes,
             "bitget_trade_fill_lookback_hours": settings.bitget_trade_fill_lookback_hours,
             "bitget_trade_fill_cache_ttl_seconds": settings.bitget_trade_fill_cache_ttl_seconds,
+            "bitget_trade_fill_max_rows": settings.bitget_trade_fill_max_rows,
             "harmonic_zigzag_atr_multiplier": settings.harmonic_zigzag_atr_multiplier,
             "harmonic_min_confidence": settings.harmonic_min_confidence,
             "harmonic_ratio_tolerance_multiplier": settings.harmonic_ratio_tolerance_multiplier,

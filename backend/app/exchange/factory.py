@@ -27,5 +27,6 @@ def create_market_data_provider(settings: Settings) -> MarketDataProvider:
             trade_cache=BitgetTradeFillCache.from_database_url(settings.database_url),
             trade_fill_lookback_hours=settings.bitget_trade_fill_lookback_hours,
             trade_fill_cache_ttl_seconds=settings.bitget_trade_fill_cache_ttl_seconds,
+            trade_fill_max_rows=settings.bitget_trade_fill_max_rows,
         )
     raise ValueError(f"Unsupported market data provider: {settings.market_data_provider}")

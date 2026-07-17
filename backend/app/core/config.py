@@ -53,6 +53,12 @@ class Settings(BaseSettings):
             "BITGET_TRADE_FILL_CACHE_TTL_SECONDS",
         ),
     )
+    bitget_trade_fill_max_rows: int = Field(
+        50_000,
+        ge=1_000,
+        le=500_000,
+        validation_alias=AliasChoices("FCE_BITGET_TRADE_FILL_MAX_ROWS", "BITGET_TRADE_FILL_MAX_ROWS"),
+    )
     bitget_liquidation_history_enabled: bool = Field(
         True,
         validation_alias=AliasChoices(
