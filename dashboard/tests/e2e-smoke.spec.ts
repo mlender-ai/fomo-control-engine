@@ -162,6 +162,11 @@ test("live position cockpit smoke path", async ({ page }) => {
   await expect(page.getByTestId("action-plan")).toBeVisible();
   await expect(page.locator(".analysisChartColumn").getByTestId("money-flow-card")).toBeVisible();
   await expect(page.locator(".evidenceRoomRail").getByTestId("money-flow-card")).toHaveCount(0);
+  const realizedHeatmap = page.getByTestId("realized-liquidation-heatmap");
+  await expect(realizedHeatmap).toBeVisible();
+  await expect(realizedHeatmap.getByTestId("realized-liquidation-density-summary")).toContainText("최대 실현 밀집");
+  await expect(realizedHeatmap.getByTestId("realized-liquidation-density-bands").locator("rect")).not.toHaveCount(0);
+  await expect(realizedHeatmap).toContainText("수평 밴드 = 선택 기간 누적 실현 밀집");
   const proPanelBox = await page.locator(".analysisChartColumn .positionChartPanel").boundingBox();
   const proFrameBox = await page.locator(".analysisChartColumn").getByTestId("chart-canvas-frame").boundingBox();
   expect(proPanelBox).not.toBeNull();
@@ -189,6 +194,38 @@ test("live position cockpit smoke path", async ({ page }) => {
   await expect(page.getByTestId("chart-guide-layer")).toHaveCount(0);
   await expect(page.getByTestId("evidence-room-panel")).toHaveAttribute("data-focus-layer", "wyckoff");
   await expect(page.getByTestId("chart-layer-plan")).toHaveAttribute("aria-pressed", "true");
+});
+
+test("realized liquidation density overlays current OHLC candles", async ({ page }) => {
+  await page.route("**/api/live/positions/*/chart-analysis*", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    if (Array.isArray(body.candles)) {
+      const lastConfirmed = Math.floor(Date.now() / 1000) - 4 * 60 * 60;
+      body.candles = body.candles.map((candle: { time: number }, index: number) => ({
+        ...candle,
+        time: lastConfirmed - (body.candles.length - index - 1) * 4 * 60 * 60
+      }));
+    }
+    await route.fulfill({ response, json: body });
+  });
+
+  await page.goto("/");
+  await expect(page.getByTestId("demo-mode-badge")).toBeVisible({ timeout: 30_000 });
+  await page.getByTestId("minimal-asset-card").filter({ hasText: "ETHUSDT" }).click();
+  await page.getByTestId("pro-mode-button").click();
+
+  const heatmap = page.getByTestId("realized-liquidation-heatmap");
+  await expect(heatmap.getByTestId("realized-liquidation-density-bands").locator("rect")).not.toHaveCount(0);
+  await expect(heatmap.getByTestId("realized-liquidation-candles").locator(".heatmapCandleBody")).not.toHaveCount(0);
+  await expect(heatmap.getByTestId("realized-liquidation-current-price")).toBeVisible();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(heatmap.getByTestId("realized-liquidation-density-summary")).toBeVisible();
+  const horizontalOverflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth
+  );
+  expect(horizontalOverflow).toBeLessThanOrEqual(2);
 });
 
 test("money flow exposes the driver, magnitude, and execution history", async ({ page }) => {

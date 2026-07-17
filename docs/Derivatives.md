@@ -94,6 +94,7 @@ Bitget's public liquidation history includes observed `price`, `side`, `amount`,
 - Event identity is deterministic across refreshes, so pagination does not duplicate stored observations.
 - Color intensity uses `price × amount` on a log scale. Bitget's REST page does not specify the amount unit, so every such value is labeled `estimated`; event price, side, amount, and timestamp remain direct observations.
 - The UI supports 24-hour and 72-hour windows, shows sample `N`, and labels the source as `Bitget public REST`.
+- WO-FCE-86 overlays confirmed OHLC candles on the same time/price axes and projects the strongest observed price buckets as horizontal **period-total realized-density bands**. The bands summarize liquidations that already occurred during the selected window; they are not standing orders, predicted leverage levels, or future liquidity.
 - This observation is excluded from Entry Score, directional confluence, automatic entry, and signature promotion.
 
 API:

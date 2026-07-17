@@ -206,7 +206,12 @@ export function SymbolAnalysisView({
           />
           <MoneyFlowCard derivatives={chartAnalysis?.derivatives} options={chartAnalysis?.options} />
           {chartAnalysis && (!chartAnalysis.asset_class || chartAnalysis.asset_class === "crypto") ? (
-            <LiquidationHeatmapPanel symbol={chartAnalysis.symbol} currentPrice={chartAnalysis.mark_price} />
+            <LiquidationHeatmapPanel
+              symbol={chartAnalysis.symbol}
+              currentPrice={chartAnalysis.mark_price}
+              candles={chartAnalysis.candles}
+              timeframe={chartAnalysis.timeframe}
+            />
           ) : null}
         </div>
         <aside className="evidenceRoomRail">

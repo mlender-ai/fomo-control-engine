@@ -49,3 +49,5 @@ The two surfaces must stay distinct:
 
 - `Liquidation Intelligence`: possible future cluster proxy / optional Coinglass model, always labeled estimated.
 - `Realized Liquidation Heatmap`: historical Bitget liquidation events, always labeled realized and not predictive.
+
+The realized panel combines confirmed OHLC candles, timestamped event cells, and horizontal period-total realized-density bands. It also compares observed intensity above and below the current price. These additions improve visual orientation only; they do not convert historical liquidations into a forecast or scoring input.
