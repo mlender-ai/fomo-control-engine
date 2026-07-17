@@ -1938,6 +1938,7 @@ export type PaperDashboard = {
     evaluations_24h: number;
     flip_count_7d?: number;
     entry_count_7d?: number;
+    validation_slots?: { active: number; target: number };
     next_confirmed_bar_minutes?: number | null;
     items: Array<{ id: string; label: string; ok: boolean; value: string; reason: string | null }>;
   };

@@ -18,6 +18,12 @@ All gates must pass:
 
 Each trade uses 100 USDT margin and 3x leverage. These values are configurable but identical for every new paper trade.
 
+## Continuous validation sampler
+
+While the four-week benchmark is active, the engine maintains at most two open validation slots. A slot may be seeded from the current confirmed stance without waiting for a new flip, but only when the existing candidate-bootstrap or validated-signature performance gate, checklist, risk/reward, invalidation, liquidation-safety, event-window, and freshness gates all pass. Closing a scored trade frees a slot; the next confirmed candle may refill it with the highest-ranked eligible symbol. The same symbol cannot re-enter on the same confirmed candle.
+
+This sampler increases paper sample throughput only. It does not use unvalidated events to choose direction, does not promote signatures, and never submits a live order.
+
 ## Exit priority
 
 The first matching rule wins:

@@ -330,7 +330,7 @@ def _bootstrap_validation_positions(
     simulation_loader: SimulationLoader,
     now: datetime,
 ) -> dict[str, Any]:
-    """Seed the 4-week benchmark and recover only from policy-invalid seeds."""
+    """Keep a small, gated validation sample active during the benchmark."""
     benchmark = paper_benchmark(repo)
     started_at = _parse_datetime(benchmark.get("started_at"))
     if started_at is None:
@@ -358,16 +358,15 @@ def _bootstrap_validation_positions(
     ]
     invalid_seeds = [trade for trade in benchmark_trades if _is_policy_invalid_trade(trade)]
     benchmark_trades = [trade for trade in benchmark_trades if not _is_policy_invalid_trade(trade)]
-    if benchmark_trades:
-        return {"opened": 0, "events": [], "errors": []}
 
-    latest_invalid_bar: dict[tuple[str, str], datetime] = {}
-    for trade in invalid_seeds:
+    latest_entry_bar: dict[tuple[str, str], datetime] = {}
+    for trade in [*invalid_seeds, *benchmark_trades]:
         key = (trade.symbol, trade.timeframe)
-        latest_invalid_bar[key] = max(latest_invalid_bar.get(key, trade.entry_bar_at), trade.entry_bar_at)
+        latest_entry_bar[key] = max(latest_entry_bar.get(key, trade.entry_bar_at), trade.entry_bar_at)
 
-    capacity = max(0, int(settings.paper_max_open_positions) - len(repo.list_paper_trades(status="open", limit=100)))
-    target = min(capacity, VALIDATION_BOOTSTRAP_MAX_POSITIONS)
+    open_trades = repo.list_paper_trades(status="open", limit=100)
+    validation_target = min(int(settings.paper_max_open_positions), VALIDATION_BOOTSTRAP_MAX_POSITIONS)
+    target = max(0, validation_target - len(open_trades))
     if target <= 0:
         return {"opened": 0, "events": [], "errors": []}
 
@@ -386,8 +385,8 @@ def _bootstrap_validation_positions(
             stance_state = _stance_state(confluence)
             if bar is None or direction is None or stance_state.get("transitioning") is True:
                 continue
-            invalid_bar = latest_invalid_bar.get((symbol, timeframe))
-            if invalid_bar is not None and bar.timestamp <= invalid_bar:
+            previous_entry_bar = latest_entry_bar.get((symbol, timeframe))
+            if previous_entry_bar is not None and bar.timestamp <= previous_entry_bar:
                 continue
 
             evidence = _direction_evidence(confluence, direction)
@@ -452,8 +451,8 @@ def _bootstrap_validation_positions(
     for candidate in sorted(candidates, key=lambda item: item["rank"], reverse=True)[:target]:
         simulation = candidate["simulation"]
         signature_gates = candidate["signature_gates"]
-        recovering = bool(invalid_seeds)
-        entry_mode = "validation_bootstrap_recovery" if recovering else "validation_bootstrap"
+        recovering = bool(invalid_seeds) and not benchmark_trades
+        entry_mode = "validation_bootstrap_recovery" if recovering else "validation_sampler" if benchmark_trades else "validation_bootstrap"
         trade = open_trade(
             trade_id=uuid5(
                 NAMESPACE_URL,
@@ -476,7 +475,7 @@ def _bootstrap_validation_positions(
                 "signature_gate_mode": signature_gates.get("gate_mode"),
                 "candidate_bootstrap": str(signature_gates.get("gate_mode") or "").startswith("candidate_bootstrap"),
                 "bootstrap_relaxed": signature_gates.get("gate_mode") == "candidate_bootstrap_relaxed",
-                "note": "4주 대결 최초 표본 수집용 · 성적 시그니처 게이트 통과",
+                "note": "4주 대결 검증 슬롯 표본 수집용 · 성적 시그니처 게이트 통과",
                 "exit_policy": "ATR TP1 부분익절 · TP2 전량익절 · 시간 만료 시 stance 재검토",
             },
             checklist={
@@ -765,6 +764,8 @@ def _paper_activation(repo: Any, settings: Any, funnel_24h: dict[str, Any], funn
         if trade.entry_at >= utc_now() - timedelta(days=7) and trade.exit_reason != "duplicate_bootstrap_suppressed"
     )
     entry_count = max(int(funnel_7d.get("entered") or 0), recent_trade_count)
+    open_count = len(repo.list_paper_trades(status="open", limit=100))
+    validation_slot_target = min(int(settings.paper_max_open_positions), VALIDATION_BOOTSTRAP_MAX_POSITIONS)
     items = [
         {
             "id": "enabled",
@@ -802,6 +803,7 @@ def _paper_activation(repo: Any, settings: Any, funnel_24h: dict[str, Any], funn
         "evaluations_24h": evaluations,
         "flip_count_7d": flip_count,
         "entry_count_7d": entry_count,
+        "validation_slots": {"active": min(open_count, validation_slot_target), "target": validation_slot_target},
         "next_confirmed_bar_minutes": _next_confirmed_bar_minutes(repo, universe=universe, now=utc_now()),
     }
 

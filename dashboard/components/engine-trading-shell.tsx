@@ -88,7 +88,7 @@ export function EngineTradingShell() {
 
       {error ? <TerminalWarning tone="error">{error}</TerminalWarning> : null}
       {whaleError ? <TerminalWarning tone="warning">고래 관측 갱신 실패 · {whaleError} · 페이퍼 엔진 화면은 계속 사용할 수 있습니다.</TerminalWarning> : null}
-      {!data ? <EngineLoading /> : active === "battle" ? <BattleView data={data} whales={whales} starting={starting} onStart={startBenchmark} /> : active === "positions" ? <PositionsView trades={data.open_trades} funnel={data.gate_funnel} /> : active === "journal" ? <JournalView trades={data.closed_trades} /> : active === "onchain" ? <OnchainView data={whales} onReload={loadWhales} /> : <EngineStatusView data={data} />}
+      {!data ? <EngineLoading /> : active === "battle" ? <BattleView data={data} whales={whales} starting={starting} onStart={startBenchmark} /> : active === "positions" ? <PositionsView trades={data.open_trades} funnel={data.gate_funnel} activation={data.activation} /> : active === "journal" ? <JournalView trades={data.closed_trades} /> : active === "onchain" ? <OnchainView data={whales} onReload={loadWhales} /> : <EngineStatusView data={data} />}
     </div>
   );
 }
@@ -352,17 +352,25 @@ function WhaleFlowChart({ points }: { points: OnchainWhaleDashboard["flow"]["tim
   return <div className="whaleFlowChart"><svg aria-label="고래 순체결 흐름 차트" preserveAspectRatio="none" role="img" viewBox={`0 0 ${width} ${height}`}><line className="whaleChartGrid" x1="0" x2={width} y1={mid - 44} y2={mid - 44} /><line className="whaleChartZero" x1="0" x2={width} y1={mid} y2={mid} /><line className="whaleChartGrid" x1="0" x2={width} y1={mid + 44} y2={mid + 44} />{points.map((point, index) => { const value = point.net_usd; const h = Math.max(value === 0 ? 0 : 2, Math.abs(value) / max * plotHeight); return <rect className={value >= 0 ? "long" : "short"} height={h} key={point.time} rx="1" width={barWidth} x={index * step + (step - barWidth) / 2} y={value >= 0 ? mid - h : mid} />; })}{labels.map((point, index) => <text key={point.time} textAnchor={index === 0 ? "start" : index === 2 ? "end" : "middle"} x={index === 0 ? 2 : index === 2 ? width - 2 : width / 2} y="220">{new Date(point.time * 1000).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit" })}</text>)}</svg><div className="whaleChartScale"><span>+{compactMoney(max)}</span><span>0</span><span>-{compactMoney(max)}</span></div></div>;
 }
 
-function PositionsView({ trades, funnel }: { trades: PaperTrade[]; funnel: PaperGateFunnel }) {
-  if (!trades.length) return <EngineEmpty title="현재 엔진 포지션 없음" body={funnelSummary(funnel)} actionHref="/engine?tab=status" actionLabel="게이트 퍼널 보기" />;
-  return <section className="enginePositionGrid" data-testid="engine-positions-tab">{trades.map((trade) => <PaperPositionCard key={trade.id} trade={trade} />)}</section>;
+function PositionsView({ trades, funnel, activation }: { trades: PaperTrade[]; funnel: PaperGateFunnel; activation: PaperDashboard["activation"] }) {
+  const slots = activation.validation_slots ?? { active: trades.length, target: 2 };
+  return <div className="engineView" data-testid="engine-positions-tab">
+    <section className="engineValidationStrip" data-testid="paper-validation-slots">
+      <div><span>4주 검증 슬롯</span><strong>{slots.active}/{slots.target} 가동</strong></div>
+      <p>{slots.active < slots.target ? `빈 슬롯 ${slots.target - slots.active}개 · 안전 게이트 통과 후보가 나오면 다음 확정 캔들에서 즉시 보충` : "검증 슬롯 가동 중 · 종료되면 다음 적격 후보로 자동 보충"}</p>
+      <small>각 포지션 100 USDT · 3x · 무효화 손절 · 실주문 없음</small>
+    </section>
+    {!trades.length ? <EngineEmpty title="현재 엔진 포지션 없음" body={funnelSummary(funnel)} actionHref="/engine?tab=status" actionLabel="게이트 퍼널 보기" /> : <section className="enginePositionGrid">{trades.map((trade) => <PaperPositionCard key={trade.id} trade={trade} />)}</section>}
+  </div>;
 }
 
 function PaperPositionCard({ trade }: { trade: PaperTrade }) {
   const evidence = evidenceLines(trade).slice(0, 3);
-  const validationBootstrap = record(trade.entry_evidence).entry_mode === "validation_bootstrap";
+  const entryMode = String(record(trade.entry_evidence).entry_mode ?? "");
+  const validationLabel = entryMode === "validation_bootstrap" ? "검증 시작 진입" : entryMode === "validation_bootstrap_recovery" ? "검증 복구 진입" : entryMode === "validation_sampler" ? "검증 슬롯 진입" : "";
   return (
     <article className="enginePositionCard">
-      <header><div><strong>{trade.symbol}</strong><span>{direction(trade.direction)} · {trade.leverage}x{validationBootstrap ? " · 검증 시작 진입" : ""}</span></div><b>{pct(trade.net_return_pct)}</b></header>
+      <header><div><strong>{trade.symbol}</strong><span>{direction(trade.direction)} · {trade.leverage}x{validationLabel ? ` · ${validationLabel}` : ""}</span></div><b>{pct(trade.net_return_pct)}</b></header>
       <dl><div><dt>진입</dt><dd>{price(trade.entry_price)}</dd></div><div><dt>무효화</dt><dd>{price(trade.invalidation_price)}</dd></div><div><dt>익절1</dt><dd>{price(trade.take_profit_price)}</dd></div><div><dt>익절2</dt><dd>{price(trade.take_profit_2_price)}</dd></div></dl>
       {trade.exit_monitor ? <p className="engineExitMonitor">자동 청산 감시 · 무효화까지 {signedPct(trade.exit_monitor.invalidation_distance_pct)} · 익절1까지 {signedPct(trade.exit_monitor.take_profit_distance_pct)}</p> : null}
       <div className="engineEvidence"><span>진입 근거</span>{evidence.map((line, index) => <p key={`${line}-${index}`}>{line}</p>)}</div>

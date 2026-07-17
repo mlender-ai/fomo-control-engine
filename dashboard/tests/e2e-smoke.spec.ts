@@ -398,6 +398,9 @@ test("engine trading workspace and absorbed calibration route", async ({ page })
   await expect(page.getByTestId("engine-battle-tab")).toBeVisible();
   await page.getByRole("link", { name: "엔진 포지션" }).click();
   await expect(page).toHaveURL(/tab=positions/);
+  await expect(page.getByTestId("paper-validation-slots")).toBeVisible();
+  await expect(page.getByTestId("paper-validation-slots")).toContainText(/4주 검증 슬롯/);
+  await expect(page.getByTestId("paper-validation-slots")).toContainText(/실주문 없음/);
   await page.getByRole("link", { name: "거래 일지" }).click();
   await expect(page.getByTestId("engine-journal-tab")).toBeVisible();
   await page.getByRole("link", { name: "엔진 상태" }).click();
