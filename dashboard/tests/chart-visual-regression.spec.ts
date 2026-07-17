@@ -9,6 +9,7 @@ test.describe("chart visual regression", () => {
     await expect(page.getByTestId("demo-mode-badge")).toBeVisible({ timeout: 30_000 });
     await page.getByTestId("pro-mode-button").click();
     await expect(page.getByTestId("chart-layer-plan")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId("chart-layer-ema")).toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId("chart-canvas-frame")).toBeVisible({ timeout: 30_000 });
   });
 

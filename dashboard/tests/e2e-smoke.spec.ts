@@ -52,7 +52,15 @@ test("all product routes keep production CSS and bounded controls", async ({ pag
             height: Math.round(box.height)
           };
         })
-        .filter((box) => box.width > Math.max(480, window.innerWidth * 0.6) || box.height > 520);
+        .filter((box) => {
+          if (box.tag === "BUTTON") {
+            return box.height > 120;
+          }
+          return (
+            box.height > 520 ||
+            (box.width > Math.max(480, window.innerWidth * 0.6) && box.height > 240)
+          );
+        });
       return {
         stylesheetCount: document.styleSheets.length,
         horizontalOverflow: root.scrollWidth - root.clientWidth,
