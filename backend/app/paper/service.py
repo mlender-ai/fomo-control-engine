@@ -70,9 +70,8 @@ def paper_universe(repo: Any) -> list[tuple[str, str]]:
     pairs.update((position.symbol.upper(), "4h") for position in repo.list_positions(PositionStatus.open))
     pairs.update((trade.symbol.upper(), trade.timeframe) for trade in repo.list_paper_trades(status="open"))
     pairs.update((intent.symbol.upper(), intent.timeframe or "4h") for intent in repo.list_entry_intents(status="active", limit=1000))
-    for discovery in repo.list_universe_discoveries(limit=500):
-        if discovery.gate_passed:
-            pairs.add((discovery.symbol.upper(), discovery.timeframe or "4h"))
+    for discovery in repo.list_recent_gate_passed_universe_discoveries(limit=500):
+        pairs.add((discovery.symbol.upper(), discovery.timeframe or "4h"))
     return sorted(pairs)
 
 
@@ -756,7 +755,8 @@ def _paper_activation(repo: Any, settings: Any, funnel_24h: dict[str, Any], funn
     worker = get_worker_status()
     sync_job = (worker.get("jobs") or {}).get("sync_positions") or {}
     worker_ok = worker.get("status") == "running" and int(sync_job.get("consecutive_failures") or 0) == 0
-    target_count = len(paper_universe(repo))
+    universe = paper_universe(repo)
+    target_count = len(universe)
     evaluations = int(funnel_24h.get("evaluations") or 0)
     flip_count = _stage_count(funnel_7d, "confirmed_flip")
     recent_trade_count = sum(
@@ -802,7 +802,7 @@ def _paper_activation(repo: Any, settings: Any, funnel_24h: dict[str, Any], funn
         "evaluations_24h": evaluations,
         "flip_count_7d": flip_count,
         "entry_count_7d": entry_count,
-        "next_confirmed_bar_minutes": _next_confirmed_bar_minutes(repo, now=utc_now()),
+        "next_confirmed_bar_minutes": _next_confirmed_bar_minutes(repo, universe=universe, now=utc_now()),
     }
 
 
@@ -814,9 +814,9 @@ def _stage_count(funnel: dict[str, Any], stage_id: str) -> int:
     return 0
 
 
-def _next_confirmed_bar_minutes(repo: Any, *, now: datetime) -> int | None:
+def _next_confirmed_bar_minutes(repo: Any, *, universe: list[tuple[str, str]], now: datetime) -> int | None:
     deadlines: list[datetime] = []
-    for symbol, timeframe in paper_universe(repo):
+    for symbol, timeframe in universe:
         state = repo.get_paper_engine_state(symbol, timeframe) or {}
         last_bar = _parse_datetime(state.get("last_bar_at"))
         if last_bar is None:

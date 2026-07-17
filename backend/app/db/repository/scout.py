@@ -106,6 +106,10 @@ class MemoryScoutRepositoryMixin:
             discoveries = [item for item in discoveries if item.status == status]
         return sorted(discoveries, key=lambda item: item.created_at, reverse=True)[:limit]
 
+    def list_recent_gate_passed_universe_discoveries(self, limit: int = 500) -> list[UniverseDiscovery]:
+        recent = sorted(self.universe_discoveries.values(), key=lambda item: item.created_at, reverse=True)[:limit]
+        return [item for item in recent if item.gate_passed]
+
     def list_watchlist(self) -> list[WatchlistItem]:
         return sorted(self.watchlist.values(), key=lambda item: item.added_at, reverse=True)
 
@@ -432,6 +436,24 @@ class SQLiteScoutRepositoryMixin:
         params.append(limit)
         with self._connect() as connection:
             rows = connection.execute(query, tuple(params)).fetchall()
+        return [UniverseDiscovery.model_validate_json(row["payload"]) for row in rows]
+
+    def list_recent_gate_passed_universe_discoveries(self, limit: int = 500) -> list[UniverseDiscovery]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT payload
+                FROM (
+                    SELECT payload, gate_passed, created_at
+                    FROM universe_discoveries
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                ) AS recent
+                WHERE gate_passed = 1
+                ORDER BY created_at DESC
+                """,
+                (limit,),
+            ).fetchall()
         return [UniverseDiscovery.model_validate_json(row["payload"]) for row in rows]
 
     def list_watchlist(self) -> list[WatchlistItem]:

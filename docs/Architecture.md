@@ -107,3 +107,9 @@ FCE_DATABASE_URL=sqlite:///./fomo_control_engine.db
 ```
 
 Schema changes must go through `app/db/migrations/`. Runtime maintenance is handled by backup and retention jobs in `app/db/maintenance.py`.
+
+## Read Projection Latency Rule
+
+- Dashboard `GET` projections must use repository state already refreshed by the worker when that state is sufficient for display. They must not repeat full external market snapshots per row.
+- Optional projections such as public whale observations load independently. Their latency or failure must not block the core position or paper-engine workspace.
+- Fresh external collection remains an explicit refresh/worker responsibility; read projections do not mutate trading state or place orders.

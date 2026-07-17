@@ -25,28 +25,37 @@ export function EngineTradingShell() {
   const [whales, setWhales] = useState<OnchainWhaleDashboard | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [whaleError, setWhaleError] = useState("");
   const [starting, setStarting] = useState(false);
+
+  const loadWhales = useCallback(async () => {
+    try {
+      setWhales(await api.onchainWhales());
+      setWhaleError("");
+    } catch (reason) {
+      setWhaleError(reason instanceof Error ? reason.message : "고래 관측 데이터를 불러오지 못했습니다.");
+    }
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
+    void loadWhales();
     try {
-      const [paper, onchain] = await Promise.all([api.paperDashboard(), api.onchainWhales()]);
-      setData(paper);
-      setWhales(onchain);
+      setData(await api.paperDashboard());
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "엔진 트레이딩 데이터를 불러오지 못했습니다.");
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [loadWhales]);
 
   useEffect(() => { void load(); }, [load]);
   useEffect(() => {
     if (active !== "onchain") return;
-    const timer = window.setInterval(() => { void api.onchainWhales().then(setWhales).catch(() => undefined); }, 30_000);
+    const timer = window.setInterval(() => { void loadWhales(); }, 30_000);
     return () => window.clearInterval(timer);
-  }, [active]);
+  }, [active, loadWhales]);
 
   async function startBenchmark(reset = false) {
     if (reset && !window.confirm("기존 거래 기록은 보존하고 4주 비교 창만 오늘부터 다시 시작합니다.")) return;
@@ -78,7 +87,8 @@ export function EngineTradingShell() {
       </nav>
 
       {error ? <TerminalWarning tone="error">{error}</TerminalWarning> : null}
-      {!data ? <EngineLoading /> : active === "battle" ? <BattleView data={data} whales={whales} starting={starting} onStart={startBenchmark} /> : active === "positions" ? <PositionsView trades={data.open_trades} funnel={data.gate_funnel} /> : active === "journal" ? <JournalView trades={data.closed_trades} /> : active === "onchain" ? <OnchainView data={whales} onReload={load} /> : <EngineStatusView data={data} />}
+      {whaleError ? <TerminalWarning tone="warning">고래 관측 갱신 실패 · {whaleError} · 페이퍼 엔진 화면은 계속 사용할 수 있습니다.</TerminalWarning> : null}
+      {!data ? <EngineLoading /> : active === "battle" ? <BattleView data={data} whales={whales} starting={starting} onStart={startBenchmark} /> : active === "positions" ? <PositionsView trades={data.open_trades} funnel={data.gate_funnel} /> : active === "journal" ? <JournalView trades={data.closed_trades} /> : active === "onchain" ? <OnchainView data={whales} onReload={loadWhales} /> : <EngineStatusView data={data} />}
     </div>
   );
 }

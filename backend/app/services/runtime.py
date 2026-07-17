@@ -41,7 +41,6 @@ from app.marketdata.money_flow import flow_observation
 from app.marketdata.signals import build_derivative_signals
 from app.exchange.bitget.trades import timeframe_seconds
 from app.paper.service import paper_dashboard as _paper_dashboard
-from app.paper.service import paper_exit_monitor
 from app.paper.service import paper_gate_funnel as _paper_gate_funnel
 from app.paper.service import paper_universe as _paper_universe
 from app.paper.service import paper_scoreboard as _paper_scoreboard
@@ -1097,20 +1096,11 @@ def sync_user_fills() -> dict[str, Any]:
 
 
 def paper_dashboard() -> dict[str, Any]:
-    payload = _paper_dashboard(
+    return _paper_dashboard(
         runtime.repository,
         runtime.settings,
         calibration=calibration_snapshot(),
     )
-    for trade in payload.get("open_trades", []):
-        try:
-            snapshot = runtime.market_provider.get_snapshot(str(trade.get("symbol")), str(trade.get("timeframe") or "4h"))
-            monitor = paper_exit_monitor(trade, snapshot.price)
-            if monitor is not None:
-                trade["exit_monitor"] = monitor
-        except Exception:
-            continue
-    return payload
 
 
 def start_paper_benchmark(reset: bool = False) -> dict[str, Any]:

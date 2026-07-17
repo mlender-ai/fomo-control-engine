@@ -371,3 +371,15 @@ test("engine trading workspace and absorbed calibration route", async ({ page })
   await page.goto("/calibration");
   await expect(page).toHaveURL(/\/engine\?tab=status/);
 });
+
+test("engine core remains usable when optional whale data fails", async ({ page }) => {
+  await page.route("**/api/onchain/whales", async (route) => {
+    await route.abort("failed");
+  });
+
+  await page.goto("/engine");
+
+  await expect(page.getByTestId("engine-battle-tab")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText(/고래 관측 갱신 실패/)).toBeVisible();
+  await expect(page.getByText(/페이퍼 엔진 화면은 계속 사용할 수 있습니다/)).toBeVisible();
+});

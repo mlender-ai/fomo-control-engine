@@ -32,3 +32,25 @@ def test_paper_dashboard_api(monkeypatch) -> None:
     assert response.status_code == 200
     assert response.json()["calibration"]["signature_state_counts"]["validated"] == 3
     assert response.json()["live_orders_enabled"] is False
+
+
+def test_paper_dashboard_service_uses_worker_snapshot_without_market_fetch(monkeypatch) -> None:
+    expected = {
+        "open_trades": [
+            {
+                "symbol": "BTCUSDT",
+                "timeframe": "4h",
+                "exit_monitor": {"mark_price": 101.0},
+            }
+        ]
+    }
+
+    monkeypatch.setattr(runtime, "calibration_snapshot", lambda: {"cache_status": "ready"})
+    monkeypatch.setattr(runtime, "_paper_dashboard", lambda *_args, **_kwargs: expected)
+
+    def fail_market_fetch(*_args, **_kwargs):
+        raise AssertionError("read-only paper dashboard fetched an external market snapshot")
+
+    monkeypatch.setattr(runtime.runtime.market_provider, "get_snapshot", fail_market_fetch)
+
+    assert runtime.paper_dashboard() == expected

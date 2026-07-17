@@ -1,4 +1,6 @@
-from app.db.models import Direction, Position, Report
+from datetime import datetime, timedelta, timezone
+
+from app.db.models import Direction, Position, Report, UniverseDiscovery
 from app.db.repository import create_repository
 from app.exchange.mock import MockMarketDataProvider
 from app.report.engine import generate_report
@@ -50,3 +52,23 @@ def test_sqlite_repository_persists_entry_block_logs(tmp_path) -> None:
     assert repo.upsert_entry_block_log(record) is False
     reopened = create_repository(database_url)
     assert reopened.list_entry_block_logs(symbol="BTCUSDT") == [record]
+
+
+def test_sqlite_repository_filters_gate_passed_inside_recent_window(tmp_path) -> None:
+    repo = create_repository(f"sqlite:///{tmp_path / 'universe.db'}")
+    now = datetime(2026, 7, 18, tzinfo=timezone.utc)
+    for index, gate_passed in enumerate((True, False, False)):
+        repo.upsert_universe_discovery(
+            UniverseDiscovery(
+                symbol=f"TEST{index}USDT",
+                signature_key=f"test:{index}",
+                signature={},
+                status="stored",
+                gate_passed=gate_passed,
+                created_at=now + timedelta(minutes=index),
+                updated_at=now + timedelta(minutes=index),
+            )
+        )
+
+    assert repo.list_recent_gate_passed_universe_discoveries(limit=2) == []
+    assert [item.symbol for item in repo.list_recent_gate_passed_universe_discoveries(limit=3)] == ["TEST0USDT"]
