@@ -1,4 +1,4 @@
-export type TaFocusLayer = "levels" | "volume_profile" | "wyckoff" | "liquidity" | "harmonic" | "indicators" | "ema" | "onchain";
+export type TaFocusLayer = "levels" | "liquidation_realized" | "liquidation_estimated" | "volume_profile" | "wyckoff" | "liquidity" | "harmonic" | "indicators" | "ema" | "onchain";
 export type ChartLayerId = "plan" | "flow" | TaFocusLayer;
 export type MinimalEvidenceLayer = "plan" | "levels" | "liquidity" | "wyckoff" | "harmonic" | "flow";
 
@@ -18,7 +18,7 @@ export type MinimalChartEvidence = {
 export const DEFAULT_LAYER_STATE: ChartLayerState = {
   plan: true,
   flow: false,
-  ta: []
+  ta: ["liquidation_realized"]
 };
 
 export const MINIMAL_FIXED_LAYER_STATE: ChartLayerState = {
@@ -30,6 +30,8 @@ export const MINIMAL_FIXED_LAYER_STATE: ChartLayerState = {
 export const CHART_LAYER_DEFS: Array<{ id: ChartLayerId; label: string; description: string }> = [
   { id: "plan", label: "플랜", description: "무효화·익절 박스와 가격 플래그" },
   { id: "levels", label: "레벨", description: "구조 지지/저항 존 (점수 상위 3+3)" },
+  { id: "liquidation_realized", label: "청산밀집(실현)", description: "Bitget에서 실제 발생한 청산 가격 밀집 · 미래 예상 아님" },
+  { id: "liquidation_estimated", label: "청산밀집(추정)", description: "Coinglass 추정 어댑터 미연동" },
   { id: "liquidity", label: "유동성", description: "동일 고저점·전고전저 풀과 확정 스윕" },
   { id: "volume_profile", label: "볼륨", description: "볼륨 프로파일 · 최다 거래 가격(POC)" },
   { id: "wyckoff", label: "와이코프", description: "국면 박스와 이벤트 마커" },
@@ -40,7 +42,7 @@ export const CHART_LAYER_DEFS: Array<{ id: ChartLayerId; label: string; descript
 
 const VISIBLE_LAYER_IDS = new Set(CHART_LAYER_DEFS.map((layer) => layer.id));
 
-export const TA_FOCUS_LAYERS: TaFocusLayer[] = ["levels", "volume_profile", "wyckoff", "liquidity", "harmonic", "indicators", "ema", "onchain"];
+export const TA_FOCUS_LAYERS: TaFocusLayer[] = ["levels", "liquidation_realized", "liquidation_estimated", "volume_profile", "wyckoff", "liquidity", "harmonic", "indicators", "ema", "onchain"];
 export const MAX_COMPARE_LAYERS = 2;
 
 export function isTaLayer(id: ChartLayerId): id is TaFocusLayer {
@@ -71,19 +73,25 @@ export function setFocusedLayer(state: ChartLayerState, id: ChartLayerId): Chart
   return focusState(state, [id]);
 }
 
-/** 플랜은 독립이고 TA 포커스는 기본 1개, shift 비교는 최대 2개다. */
+/** 일반 클릭은 독립 토글, shift 비교 추가는 최대 2개다. */
 export function toggleLayer(state: ChartLayerState, id: ChartLayerId, additive = false): ChartLayerState {
   if (id === "plan") return { ...state, plan: !state.plan };
   const active = activeFocusLayers(state);
-  if (id === "onchain" || active.includes("onchain")) {
-    return focusState(state, active.length === 1 && active[0] === id ? [] : [id]);
-  }
   if (!additive) {
-    return focusState(state, active.length === 1 && active[0] === id ? [] : [id]);
+    return focusStateUnbounded(state, active.includes(id) ? active.filter((layer) => layer !== id) : [...active, id]);
   }
   if (active.includes(id)) return focusState(state, active.filter((layer) => layer !== id));
   if (active.length >= MAX_COMPARE_LAYERS) return state;
   return focusState(state, [...active, id]);
+}
+
+function focusStateUnbounded(state: ChartLayerState, active: ChartLayerId[]): ChartLayerState {
+  const unique = [...new Set(active.filter((id) => id !== "plan"))];
+  return {
+    ...state,
+    flow: unique.includes("flow"),
+    ta: unique.filter(isTaLayer)
+  };
 }
 
 /** 아코디언 동기화용 대표 TA 레이어. */
@@ -91,7 +99,7 @@ export function focusedTaLayer(state: ChartLayerState): TaFocusLayer | null {
   return state.ta[0] ?? null;
 }
 
-const STORAGE_KEY = "fce.chartLayers.v1";
+const STORAGE_KEY = "fce.chartLayers.v2";
 
 export function loadLayerState(): ChartLayerState {
   if (typeof window === "undefined") return DEFAULT_LAYER_STATE;
@@ -108,7 +116,7 @@ export function loadLayerState(): ChartLayerState {
       ...(Array.isArray(parsed.ta) ? parsed.ta.filter((layer): layer is TaFocusLayer => (TA_FOCUS_LAYERS as string[]).includes(layer) && VISIBLE_LAYER_IDS.has(layer)) : []),
       ...(parsed.flow === true && VISIBLE_LAYER_IDS.has("flow") ? (["flow"] as ChartLayerId[]) : [])
     ];
-    return focusState(base, storedFocus.slice(0, MAX_COMPARE_LAYERS));
+    return focusStateUnbounded(base, storedFocus);
   } catch {
     return DEFAULT_LAYER_STATE;
   }

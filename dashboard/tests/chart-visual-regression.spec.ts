@@ -4,8 +4,10 @@ test.describe("chart visual regression", () => {
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => {
       window.localStorage.clear();
+      window.localStorage.setItem("fce.chartLayers.v2", JSON.stringify({ plan: true, flow: false, ta: [] }));
     });
     await page.goto("/");
+    await page.addStyleTag({ content: '[data-testid="chart-layer-liquidation_realized"], [data-testid="chart-layer-liquidation_estimated"] { display: none !important; }' });
     await expect(page.getByTestId("demo-mode-badge")).toBeVisible({ timeout: 30_000 });
     await page.getByTestId("pro-mode-button").click();
     await expect(page.getByTestId("chart-layer-plan")).toBeVisible({ timeout: 30_000 });

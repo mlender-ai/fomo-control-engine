@@ -2491,6 +2491,38 @@ h3 {
   pointer-events: none;
 }
 
+.unifiedHeatmapCanvas {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.unifiedHeatmapLegend {
+  position: absolute;
+  right: calc(var(--chart-axis-gutter, 82px) + 12px);
+  bottom: 30px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid rgba(var(--chart-neutral-rgb), 0.34);
+  border-radius: 5px;
+  background: rgba(var(--chart-panel-rgb), 0.84);
+  padding: 5px 7px;
+  color: var(--terminal-muted);
+  font-family: var(--fce-font-number);
+  font-size: 9px;
+  pointer-events: none;
+}
+
+.unifiedHeatmapLegend i {
+  width: 112px;
+  height: 7px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #21125f 0%, #007fff 38%, #20e3b2 68%, #ffd84a 100%);
+}
+
 .volumeProfileOverlay .validatedEventPill,
 .volumeProfileOverlay [data-stance-flip="true"],
 .volumeProfileOverlay .onchainMarker,
@@ -4163,6 +4195,173 @@ h3 {
   margin-left: 6px;
   color: var(--terminal-muted);
   font-size: 11px;
+}
+
+.taLayerToggle button:disabled {
+  cursor: not-allowed;
+  opacity: 0.46;
+}
+
+.taLayerToggle button > small {
+  margin-left: 5px;
+  color: inherit;
+  font-size: 8px;
+}
+
+.unifiedHeatmapControls {
+  display: grid;
+  gap: 8px;
+  margin: 0 16px 10px;
+  border: 1px solid var(--terminal-line);
+  border-radius: 8px;
+  background: rgba(var(--chart-panel-rgb), 0.54);
+  padding: 10px;
+}
+
+.unifiedHeatmapControls > header,
+.unifiedHeatmapControls > header > div,
+.unifiedHeatmapControls > header > label,
+.unifiedHeatmapFilterBar,
+.unifiedHeatmapFilterBar > div {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.unifiedHeatmapControls > header {
+  justify-content: space-between;
+}
+
+.unifiedHeatmapControls > header strong {
+  color: var(--terminal-text);
+  font-size: 12px;
+}
+
+.unifiedHeatmapControls > header span,
+.unifiedHeatmapFilterBar > div > span,
+.heatmapBasis {
+  color: var(--terminal-muted);
+  font-size: 9px;
+}
+
+.unifiedHeatmapControls > header b {
+  color: var(--terminal-cyan);
+  font-family: var(--fce-font-number);
+  font-size: 10px;
+}
+
+.unifiedHeatmapControls > header em {
+  border: 1px solid rgba(var(--chart-amber-rgb), 0.52);
+  border-radius: 999px;
+  color: var(--terminal-amber);
+  padding: 2px 6px;
+  font-size: 8px;
+  font-style: normal;
+}
+
+.unifiedHeatmapControls > header label {
+  color: var(--terminal-muted);
+  font-family: var(--fce-font-number);
+  font-size: 9px;
+}
+
+.unifiedHeatmapControls > header input {
+  width: 80px;
+  accent-color: var(--terminal-cyan);
+}
+
+.unifiedHeatmapFilterBar {
+  gap: 7px 14px;
+  border-top: 1px solid var(--terminal-line);
+  padding-top: 8px;
+}
+
+.unifiedHeatmapFilterBar > div > span {
+  margin-right: 2px;
+  text-transform: uppercase;
+}
+
+.unifiedHeatmapFilterBar button {
+  min-height: 24px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: rgba(var(--chart-neutral-rgb), 0.08);
+  color: var(--terminal-muted);
+  cursor: pointer;
+  padding: 3px 7px;
+  font-family: var(--fce-font-number);
+  font-size: 9px;
+}
+
+.unifiedHeatmapFilterBar button.active {
+  border-color: rgba(var(--chart-blue-rgb), 0.58);
+  background: rgba(var(--chart-blue-rgb), 0.1);
+  color: var(--terminal-cyan);
+}
+
+.unifiedHeatmapSummary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border: 1px solid var(--terminal-line);
+  border-radius: 5px;
+  background: var(--terminal-line);
+}
+
+.unifiedHeatmapSummary > div,
+.unifiedHeatmapSummary > button {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  border: 0;
+  background: rgba(var(--chart-panel-rgb), 0.96);
+  padding: 7px 8px;
+  text-align: left;
+}
+
+.unifiedHeatmapSummary > button {
+  cursor: pointer;
+}
+
+.unifiedHeatmapSummary > button:hover {
+  background: rgba(var(--chart-amber-rgb), 0.08);
+}
+
+.unifiedHeatmapSummary span {
+  color: var(--terminal-muted);
+  font-size: 8px;
+}
+
+.unifiedHeatmapSummary strong {
+  overflow: hidden;
+  color: var(--terminal-text);
+  font-family: var(--fce-font-number);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.unifiedHeatmapSummary .heatmapBasis {
+  grid-column: 1 / -1;
+  background: rgba(var(--chart-panel-rgb), 0.96);
+  padding: 5px 8px;
+}
+
+.unifiedHeatmapError {
+  margin: 0;
+  color: var(--terminal-negative);
+  font-size: 10px;
+}
+
+.chartHoverReadout .heatmapRawValue {
+  color: var(--terminal-amber);
+}
+
+@media (max-width: 900px) {
+  .unifiedHeatmapSummary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .unifiedHeatmapLegend i { width: 70px; }
 }
 
 .actionPlanPanel {

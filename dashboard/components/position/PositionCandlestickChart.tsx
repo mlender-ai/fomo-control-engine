@@ -14,7 +14,7 @@ import {
   type Time
 } from "lightweight-charts";
 import { useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
-import type {
+import { api, type UnifiedLiquidationHeatmap, type
   ChartCandle,
   ChartPriceLevel,
   CompactChartGauges,
@@ -50,6 +50,17 @@ import { VolumePanel } from "./VolumePanel";
 
 const LABEL_MERGE_PX = 8;
 const AXIS_GUTTER = 82;
+type HeatmapFilters = {
+  side: "all" | "long" | "short";
+  size: "all" | "q2_plus" | "q3_plus" | "q4" | "10x" | "25x" | "50x" | "100x";
+  range: "12H" | "24H" | "3D" | "1W" | "1M";
+  mode: "persist" | "event";
+};
+
+const DEFAULT_HEATMAP_FILTERS: HeatmapFilters = { side: "all", size: "all", range: "3D", mode: "persist" };
+const HEATMAP_FILTERS_KEY = "fce.unifiedHeatmap.filters.v1";
+const HEATMAP_OPACITY_KEY = "fce.unifiedHeatmap.opacity.v1";
+
 export function PositionCandlestickChart({
   analysis,
   trendSummary,
@@ -85,10 +96,13 @@ export function PositionCandlestickChart({
   };
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const heatmapCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const overlayRef = useRef<SVGSVGElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
   const priceAtYRef = useRef<((y: number) => number | null) | null>(null);
   const overlayDrawRef = useRef<(() => void) | null>(null);
+  const heatmapRangeApplyRef = useRef<((range: HeatmapFilters["range"]) => void) | null>(null);
+  const heatmapFingerprintRef = useRef("");
   const viewportRef = useRef<{ key: string; locked: boolean; range: LogicalRange | null }>({ key: "", locked: false, range: null });
   const [harmonicIndex, setHarmonicIndex] = useState(0);
   const [guideOpen, setGuideOpen] = useState(false);
@@ -96,6 +110,11 @@ export function PositionCandlestickChart({
   const [dragStartPrice, setDragStartPrice] = useState<number | null>(null);
   const [dragStartY, setDragStartY] = useState<number | null>(null);
   const [zoneBand, setZoneBand] = useState<{ top: number; bottom: number } | null>(null);
+  const [heatmap, setHeatmap] = useState<UnifiedLiquidationHeatmap | null>(null);
+  const [heatmapError, setHeatmapError] = useState("");
+  const [heatmapFilters, setHeatmapFilters] = useState<HeatmapFilters>(loadHeatmapFilters);
+  const [heatmapOpacity, setHeatmapOpacity] = useState(loadHeatmapOpacity);
+  const [heatmapHighlightPrice, setHeatmapHighlightPrice] = useState<number | null>(null);
   const showSecondaryTaRows = useSecondaryTaRows();
   const validation = useMemo(() => validateCandles(analysis.candles), [analysis.candles]);
   const visibleCandles = useMemo(
@@ -106,6 +125,7 @@ export function PositionCandlestickChart({
     () => (layerMode === "minimal" ? (compressed ? MINIMAL_FIXED_LAYER_STATE : minimalLayersForEvidence(minimalEvidence)) : layers),
     [compressed, layerMode, minimalEvidence, layers]
   );
+  const realizedHeatmapActive = layerMode === "pro" && effectiveLayers.ta.includes("liquidation_realized");
   const seriesLayerState = useMemo(
     () => ({
       flow: effectiveLayers.flow,
@@ -142,7 +162,10 @@ export function PositionCandlestickChart({
     layerMode,
     minimalEvidence,
     compressed,
-    gauges
+    gauges,
+    heatmap,
+    heatmapOpacity,
+    heatmapHighlightPrice
   });
 
   useEffect(() => {
@@ -157,10 +180,59 @@ export function PositionCandlestickChart({
       layerMode,
       minimalEvidence,
       compressed,
-      gauges
+      gauges,
+      heatmap,
+      heatmapOpacity,
+      heatmapHighlightPrice
     };
     overlayDrawRef.current?.();
-  }, [activeHarmonic, analysis, compressed, density, effectiveLayers, gauges, highlightPrice, layerMode, minimalEvidence, plan, positionOverlay]);
+  }, [activeHarmonic, analysis, compressed, density, effectiveLayers, gauges, heatmap, heatmapHighlightPrice, heatmapOpacity, highlightPrice, layerMode, minimalEvidence, plan, positionOverlay]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(HEATMAP_FILTERS_KEY, JSON.stringify(heatmapFilters));
+      window.localStorage.setItem(HEATMAP_OPACITY_KEY, String(heatmapOpacity));
+    } catch {
+      // localStorage 비활성 환경에서는 세션 상태로만 동작
+    }
+  }, [heatmapFilters, heatmapOpacity]);
+
+  useEffect(() => {
+    if (!realizedHeatmapActive) return;
+    let active = true;
+    const load = async () => {
+      try {
+        const payload = await api.unifiedLiquidationHeatmap(analysis.symbol, analysis.timeframe, heatmapFilters);
+        if (!active) return;
+        const lastBucketTotal = payload.grid.at(-1)?.reduce((sum, value) => sum + value, 0) ?? 0;
+        const fingerprint = `${payload.source}:${payload.last_event_ts}:${payload.n_events}:${payload.max_value_usd_estimated}:${lastBucketTotal}:${JSON.stringify(payload.filters)}`;
+        if (fingerprint !== heatmapFingerprintRef.current) {
+          heatmapFingerprintRef.current = fingerprint;
+          setHeatmap(payload);
+        }
+        setHeatmapError("");
+      } catch (error) {
+        if (!active) return;
+        setHeatmapError(error instanceof Error ? error.message : "실현 청산 그리드를 불러오지 못했습니다.");
+      }
+    };
+    void load();
+    const timer = window.setInterval(load, 5_000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [analysis.symbol, analysis.timeframe, heatmapFilters, realizedHeatmapActive]);
+
+  useEffect(() => {
+    if (!realizedHeatmapActive) return;
+    heatmapRangeApplyRef.current?.(heatmapFilters.range);
+  }, [heatmapFilters.range, realizedHeatmapActive]);
+
+  useEffect(() => {
+    if (!heatmap?.filters.leverage_available || !["q2_plus", "q3_plus", "q4"].includes(heatmapFilters.size)) return;
+    setHeatmapFilters((current) => ({ ...current, size: "all" }));
+  }, [heatmap?.filters.leverage_available, heatmapFilters.size]);
 
   useEffect(() => {
     if (intentZoneDraft?.lower === null && intentZoneDraft?.upper === null) {
@@ -434,6 +506,11 @@ export function PositionCandlestickChart({
         return;
       }
       tooltip.classList.add("is-active");
+      const heatmapReadout = heatmapCellAt(
+        overlayInputsRef.current.heatmap,
+        Number(data.time),
+        candleSeries.coordinateToPrice(param.point.y)
+      );
       tooltip.innerHTML = `
         <strong>${formatKoreanDateTime(Number(data.time))}</strong>
         <span>시가 ${formatPrice(data.open)}</span>
@@ -441,12 +518,29 @@ export function PositionCandlestickChart({
         <span>저가 ${formatPrice(data.low)}</span>
         <span>종가 ${formatPrice(data.close)}</span>
         <span>거래량 ${formatCompactNumber(volumeAtTime(visibleCandles, Number(data.time)))}</span>
+        ${heatmapReadout ? `<span class="heatmapRawValue">실현 청산 원본 버킷 ${formatUsd(heatmapReadout.value)} · ${heatmapReadout.events}건</span>` : ""}
       `;
     });
+
+    const applyHeatmapRange = (range: HeatmapFilters["range"]) => {
+      const hours = range === "12H" ? 12 : range === "24H" ? 24 : range === "3D" ? 72 : range === "1W" ? 168 : 720;
+      const candleSeconds = visibleCandles.length > 1
+        ? Math.max(60, visibleCandles.at(-1)!.time - visibleCandles.at(-2)!.time)
+        : 14_400;
+      const bars = Math.max(12, Math.ceil(hours * 3600 / candleSeconds));
+      const last = visibleCandles.length - 1;
+      const rangeValue = { from: Math.max(-0.5, last - bars + 0.5), to: last + 4.5 } as LogicalRange;
+      chart.timeScale().setVisibleLogicalRange(rangeValue);
+      viewportRef.current = { key: viewportKey, locked: false, range: rangeValue };
+      window.setTimeout(() => overlayDrawRef.current?.(), 0);
+    };
+    heatmapRangeApplyRef.current = applyHeatmapRange;
 
     const storedViewport = viewportRef.current;
     if (storedViewport.key === viewportKey && storedViewport.locked && storedViewport.range) {
       chart.timeScale().setVisibleLogicalRange(storedViewport.range);
+    } else if (overlayInputsRef.current.layers.ta.includes("liquidation_realized")) {
+      applyHeatmapRange(heatmapFilters.range);
     } else {
       chart.timeScale().fitContent();
       chart.timeScale().applyOptions({ rightOffset: 18 });
@@ -466,6 +560,15 @@ export function PositionCandlestickChart({
 
     const drawOverlay = () => {
       const current = overlayInputsRef.current;
+      renderUnifiedHeatmap(
+        heatmapCanvasRef.current,
+        container,
+        candleSeries,
+        chart,
+        current.heatmap,
+        current.layers.ta.includes("liquidation_realized") ? current.heatmapOpacity : 0,
+        current.heatmapHighlightPrice
+      );
       renderTaOverlay(
         overlay,
         container,
@@ -505,9 +608,10 @@ export function PositionCandlestickChart({
       container.removeEventListener("touchstart", markViewportLocked);
       priceAtYRef.current = null;
       if (overlayDrawRef.current === drawOverlay) overlayDrawRef.current = null;
+      if (heatmapRangeApplyRef.current === applyHeatmapRange) heatmapRangeApplyRef.current = null;
       chart.remove();
     };
-  }, [analysis, averageVolume, emaRibbon, priceLines, seriesLayerState, validation, visibleCandles, layerMode, viewportKey]);
+  }, [analysis, averageVolume, emaRibbon, heatmapFilters.range, priceLines, seriesLayerState, validation, visibleCandles, layerMode, viewportKey]);
 
   function pointerY(event: PointerEvent<HTMLDivElement>): number {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -611,6 +715,17 @@ export function PositionCandlestickChart({
           onToggleLayer={onToggleLayer}
         />
       ) : null}
+      {realizedHeatmapActive ? (
+        <UnifiedHeatmapControls
+          filters={heatmapFilters}
+          heatmap={heatmap}
+          error={heatmapError}
+          opacity={heatmapOpacity}
+          onFilterChange={(key, value) => setHeatmapFilters((current) => ({ ...current, [key]: value }))}
+          onOpacityChange={setHeatmapOpacity}
+          onZoneFocus={setHeatmapHighlightPrice}
+        />
+      ) : null}
       {wyckoffFocused ? <WyckoffLayerStatus analysis={analysis} /> : null}
       {harmonicFocused ? (
         <div className={`taLayerStatus ${activeHarmonic ? "confirmed" : "inactive"}`} data-testid="harmonic-layer-status">
@@ -642,7 +757,9 @@ export function PositionCandlestickChart({
       </div>
       <div className={`positionChartCanvasFrame ${guideOpen ? "showOverlayGuides" : ""}`} data-testid="chart-canvas-frame">
         <div className="positionChartCanvas" data-testid="chart-canvas" ref={containerRef} />
+        <canvas className="unifiedHeatmapCanvas" data-testid="unified-heatmap-canvas" ref={heatmapCanvasRef} />
         <svg className="volumeProfileOverlay" data-testid="chart-overlay" ref={overlayRef} />
+        {realizedHeatmapActive && heatmap ? <HeatmapLegend heatmap={heatmap} /> : null}
         {seriesLayerState.ema && emaRibbon ? <EmaRibbonHud ribbon={emaRibbon} /> : null}
         {zoneBand ? (
           <div
@@ -687,18 +804,117 @@ function ChartLayerControls({
           aria-pressed={layerActive(layers, layer.id)}
           className={layerActive(layers, layer.id) ? "active" : ""}
           data-testid={`chart-layer-${layer.id}`}
+          disabled={layer.id === "liquidation_estimated"}
           key={layer.id}
           onClick={(event) => onToggleLayer(layer.id, event.shiftKey)}
-          title={layer.description}
+          title={layer.id === "liquidation_estimated" ? "미연동 · Coinglass 추정 수집기는 이번 작업 범위 밖입니다." : layer.description}
           type="button"
         >
-          {layer.label}
+          {layer.label}{layer.id === "liquidation_estimated" ? <small>미연동</small> : null}
         </button>
       ))}
       {comparisonCount === 2 ? <em className="chartCompareBadge" data-testid="chart-compare-badge">비교 중</em> : null}
-      <small>레이어 하나씩 검증 · shift-클릭 비교(최대 2)</small>
+      <small>일반 클릭 다중 토글 · shift-클릭 비교 추가(최대 2)</small>
     </div>
   );
+}
+
+function UnifiedHeatmapControls({
+  filters,
+  heatmap,
+  error,
+  opacity,
+  onFilterChange,
+  onOpacityChange,
+  onZoneFocus
+}: {
+  filters: HeatmapFilters;
+  heatmap: UnifiedLiquidationHeatmap | null;
+  error: string;
+  opacity: number;
+  onFilterChange: <Key extends keyof HeatmapFilters>(key: Key, value: HeatmapFilters[Key]) => void;
+  onOpacityChange: (value: number) => void;
+  onZoneFocus: (price: number) => void;
+}) {
+  return (
+    <section className="unifiedHeatmapControls" data-testid="unified-heatmap-controls">
+      <header>
+        <div>
+          <strong>실현 청산 밀집</strong>
+          <span>{heatmap?.truth_label ?? "실제 청산 · 예상 아님"}</span>
+          <b>N={heatmap?.n_events ?? 0}</b>
+          {heatmap?.sample_low !== false ? <em>표본 부족</em> : null}
+        </div>
+        <label title="히트맵 전역 투명도">
+          농도
+          <input
+            aria-label="청산 히트맵 투명도"
+            max="0.9"
+            min="0.2"
+            onChange={(event) => onOpacityChange(Number(event.target.value))}
+            step="0.05"
+            type="range"
+            value={opacity}
+          />
+          <span>{Math.round(opacity * 100)}%</span>
+        </label>
+      </header>
+      <div className="unifiedHeatmapFilterBar">
+        <FilterGroup
+          label="방향"
+          options={[["all", "전체"], ["long", "롱만"], ["short", "숏만"]]}
+          value={filters.side}
+          onChange={(value) => onFilterChange("side", value as HeatmapFilters["side"])}
+        />
+        <FilterGroup
+          label={heatmap?.filters.leverage_available ? "레버리지" : "규모"}
+          options={heatmap?.filters.leverage_available
+            ? [["all", "전체"], ["10x", "10x+"], ["25x", "25x+"], ["50x", "50x+"], ["100x", "100x+"]]
+            : [["all", "전체 규모"], ["q2_plus", "Q2+"], ["q3_plus", "Q3+"], ["q4", "Q4"]]}
+          value={filters.size}
+          onChange={(value) => onFilterChange("size", value as HeatmapFilters["size"])}
+        />
+        <FilterGroup
+          label="기간"
+          options={[["12H", "12H"], ["24H", "24H"], ["3D", "3D"], ["1W", "1W"], ["1M", "1M"]]}
+          value={filters.range}
+          onChange={(value) => onFilterChange("range", value as HeatmapFilters["range"])}
+        />
+        <FilterGroup
+          label="표현"
+          options={[["persist", "persist"], ["event", "event"]]}
+          value={filters.mode}
+          onChange={(value) => onFilterChange("mode", value as HeatmapFilters["mode"])}
+        />
+      </div>
+      {heatmap ? (
+        <div className="unifiedHeatmapSummary" data-testid="unified-heatmap-summary">
+          <SummaryMetric label="최대 밀집" value={heatmap.top_zones[0] ? `${formatPrice(heatmap.top_zones[0].price_mid)} · ${formatUsd(heatmap.top_zones[0].total_usd_estimated)}` : "-"} onClick={heatmap.top_zones[0] ? () => onZoneFocus(heatmap.top_zones[0].price_mid) : undefined} />
+          <SummaryMetric label="현재가 위 / 아래" value={`${formatUsd(heatmap.position_split.above_usd_estimated)} / ${formatUsd(heatmap.position_split.below_usd_estimated)}`} />
+          <SummaryMetric label="롱 / 숏 청산" value={`${formatUsd(heatmap.side_split.long_usd_estimated)} / ${formatUsd(heatmap.side_split.short_usd_estimated)}`} />
+          <SummaryMetric label="마지막 이벤트" value={heatmap.last_event_ts ? formatKoreanDateTime(Date.parse(heatmap.last_event_ts) / 1000) : "-"} />
+          <span className="heatmapBasis">{heatmap.filters.leverage_available ? "레버리지 원천값" : "레버리지 없음 · 규모 분위 폴백"}</span>
+        </div>
+      ) : null}
+      {error ? <p className="unifiedHeatmapError">{error}</p> : null}
+    </section>
+  );
+}
+
+function FilterGroup({ label, options, value, onChange }: { label: string; options: string[][]; value: string; onChange: (value: string) => void }) {
+  return (
+    <div role="group" aria-label={label}>
+      <span>{label}</span>
+      {options.map(([option, caption]) => (
+        <button aria-pressed={value === option} className={value === option ? "active" : ""} key={option} onClick={() => onChange(option)} type="button">{caption}</button>
+      ))}
+    </div>
+  );
+}
+
+function SummaryMetric({ label, value, onClick }: { label: string; value: string; onClick?: () => void }) {
+  const content = <><span>{label}</span><strong>{value}</strong></>;
+  return onClick ? <button onClick={onClick} type="button">{content}</button> : <div>{content}</div>;
 }
 
 function WyckoffLayerStatus({ analysis }: { analysis: PositionChartAnalysis }) {
@@ -926,6 +1142,158 @@ function chartLineColor(kind: ChartPriceLine["kind"], palette: ResolvedChartPale
   return palette.flag("invalidation", opacity);
 }
 
+
+function renderUnifiedHeatmap(
+  canvas: HTMLCanvasElement | null,
+  container: HTMLDivElement,
+  series: { priceToCoordinate(price: number): number | null },
+  chart: { timeScale(): { timeToCoordinate(time: Time): number | null } },
+  heatmap: UnifiedLiquidationHeatmap | null,
+  opacity: number,
+  highlightPrice: number | null
+) {
+  if (!canvas) return;
+  const width = container.clientWidth;
+  const height = container.clientHeight;
+  const ratio = Math.max(1, window.devicePixelRatio || 1);
+  const pixelWidth = Math.round(width * ratio);
+  const pixelHeight = Math.round(height * ratio);
+  if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+    canvas.width = pixelWidth;
+    canvas.height = pixelHeight;
+  }
+  canvas.style.width = `${width}px`;
+  canvas.style.height = `${height}px`;
+  const destination = canvas.getContext("2d");
+  if (!destination) return;
+  destination.clearRect(0, 0, pixelWidth, pixelHeight);
+  if (!heatmap || opacity <= 0 || !heatmap.max_value_usd_estimated) return;
+
+  const offscreen = typeof OffscreenCanvas !== "undefined"
+    ? new OffscreenCanvas(pixelWidth, pixelHeight)
+    : document.createElement("canvas");
+  if (offscreen instanceof HTMLCanvasElement) {
+    offscreen.width = pixelWidth;
+    offscreen.height = pixelHeight;
+  }
+  const context = offscreen.getContext("2d");
+  if (!context) return;
+  context.scale(ratio, ratio);
+  const maxLog = Math.log1p(heatmap.max_value_usd_estimated);
+  const stepSeconds = heatmap.timeframe_seconds ?? 14_400;
+  heatmap.grid.forEach((row, timeIndex) => {
+    const bucketSeconds = Math.floor(Date.parse(heatmap.time_buckets[timeIndex]) / 1000);
+    const x1 = chart.timeScale().timeToCoordinate(bucketSeconds as Time);
+    const x2 = chart.timeScale().timeToCoordinate((bucketSeconds + stepSeconds) as Time);
+    if (x1 === null || x2 === null) return;
+    const left = Math.min(x1, x2);
+    const cellWidth = Math.max(1, Math.abs(x2 - x1) + 0.6);
+    row.forEach((value, priceIndex) => {
+      if (value <= 0) return;
+      const low = heatmap.price_bins.min + priceIndex * heatmap.price_bins.step;
+      const high = low + heatmap.price_bins.step;
+      const y1 = series.priceToCoordinate(high);
+      const y2 = series.priceToCoordinate(low);
+      if (y1 === null || y2 === null) return;
+      const normalized = maxLog > 0 ? Math.log1p(value) / maxLog : 0;
+      context.fillStyle = heatmapColor(normalized, opacity);
+      context.fillRect(left, Math.min(y1, y2), cellWidth, Math.max(1.2, Math.abs(y2 - y1) + 0.5));
+    });
+  });
+  for (const zone of heatmap.top_zones.slice(0, 3)) {
+    const y1 = series.priceToCoordinate(zone.price_high);
+    const y2 = series.priceToCoordinate(zone.price_low);
+    if (y1 === null || y2 === null) continue;
+    context.strokeStyle = "rgba(255, 220, 76, 0.72)";
+    context.lineWidth = 1;
+    context.setLineDash([5, 4]);
+    context.strokeRect(0.5, Math.min(y1, y2), Math.max(1, width - AXIS_GUTTER), Math.max(2, Math.abs(y2 - y1)));
+  }
+  if (highlightPrice !== null) {
+    const y = series.priceToCoordinate(highlightPrice);
+    if (y !== null) {
+      context.setLineDash([]);
+      context.strokeStyle = "rgba(255, 236, 98, 0.96)";
+      context.lineWidth = 2;
+      context.beginPath();
+      context.moveTo(0, y);
+      context.lineTo(Math.max(1, width - AXIS_GUTTER), y);
+      context.stroke();
+    }
+  }
+  destination.drawImage(offscreen, 0, 0);
+}
+
+function heatmapColor(value: number, opacity: number): string {
+  const stops = [
+    { at: 0, color: [31, 18, 95] },
+    { at: 0.38, color: [0, 127, 255] },
+    { at: 0.68, color: [32, 227, 178] },
+    { at: 1, color: [255, 216, 74] }
+  ];
+  const bounded = clamp(value, 0, 1);
+  const upper = stops.findIndex((stop) => stop.at >= bounded);
+  const right = stops[Math.max(1, upper === -1 ? stops.length - 1 : upper)];
+  const left = stops[Math.max(0, stops.indexOf(right) - 1)];
+  const progress = (bounded - left.at) / Math.max(right.at - left.at, 1e-9);
+  const rgb = left.color.map((channel, index) => Math.round(channel + (right.color[index] - channel) * progress));
+  return `rgba(${rgb.join(",")},${clamp(opacity * (0.48 + bounded * 0.52), 0.1, 0.9)})`;
+}
+
+function HeatmapLegend({ heatmap }: { heatmap: UnifiedLiquidationHeatmap }) {
+  return (
+    <div className="unifiedHeatmapLegend" data-testid="unified-heatmap-legend">
+      <span>$0</span><i /><span>{formatUsd(heatmap.max_value_usd_estimated)}</span>
+    </div>
+  );
+}
+
+function heatmapCellAt(heatmap: UnifiedLiquidationHeatmap | null, time: number, price: number | null): { value: number; events: number } | null {
+  if (!heatmap || price === null || !heatmap.time_buckets.length || !heatmap.timeframe_seconds) return null;
+  const start = Date.parse(heatmap.time_buckets[0]) / 1000;
+  const timeIndex = Math.floor((time - start) / heatmap.timeframe_seconds);
+  const priceIndex = Math.floor((price - heatmap.price_bins.min) / heatmap.price_bins.step);
+  const value = heatmap.grid[timeIndex]?.[priceIndex];
+  if (!value) return null;
+  const bucketStart = start + timeIndex * heatmap.timeframe_seconds;
+  const priceLow = heatmap.price_bins.min + priceIndex * heatmap.price_bins.step;
+  const priceHigh = priceLow + heatmap.price_bins.step;
+  const events = heatmap.events.filter((event) => {
+    if (event.price < priceLow || event.price >= priceHigh) return false;
+    const eventTime = Date.parse(event.timestamp) / 1000;
+    if (heatmap.filters.mode === "event") return eventTime >= bucketStart && eventTime < bucketStart + heatmap.timeframe_seconds!;
+    const end = event.persisted_until ? Date.parse(event.persisted_until) / 1000 : Number.POSITIVE_INFINITY;
+    return eventTime < bucketStart + heatmap.timeframe_seconds! && end > bucketStart;
+  }).length;
+  return { value, events };
+}
+
+function loadHeatmapFilters(): HeatmapFilters {
+  if (typeof window === "undefined") return DEFAULT_HEATMAP_FILTERS;
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(HEATMAP_FILTERS_KEY) || "{}") as Partial<HeatmapFilters>;
+    return {
+      side: ["all", "long", "short"].includes(parsed.side || "") ? parsed.side! : "all",
+      size: ["all", "q2_plus", "q3_plus", "q4", "10x", "25x", "50x", "100x"].includes(parsed.size || "") ? parsed.size! : "all",
+      range: ["12H", "24H", "3D", "1W", "1M"].includes(parsed.range || "") ? parsed.range! : "3D",
+      mode: parsed.mode === "event" ? "event" : "persist"
+    };
+  } catch {
+    return DEFAULT_HEATMAP_FILTERS;
+  }
+}
+
+function loadHeatmapOpacity(): number {
+  if (typeof window === "undefined") return 0.55;
+  const raw = window.localStorage.getItem(HEATMAP_OPACITY_KEY);
+  if (raw === null) return 0.55;
+  const value = Number(raw);
+  return Number.isFinite(value) ? clamp(value, 0.2, 0.9) : 0.55;
+}
+
+function formatUsd(value: number): string {
+  return `$${formatCompactNumber(value)}`;
+}
 
 function renderTaOverlay(
   svg: SVGSVGElement | null,

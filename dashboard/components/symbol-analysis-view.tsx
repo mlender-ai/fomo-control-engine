@@ -310,6 +310,7 @@ function signatureMatchesLayer(signature: Record<string, unknown> | undefined, l
   const source = `${signature?.engine ?? ""} ${signature?.event_type ?? ""}`.toLowerCase();
   const aliases: Record<ChartLayerId, string[]> = {
     plan: ["plan"], levels: ["level"], liquidity: ["liquidity", "sweep"], volume_profile: ["volume", "poc"],
+    liquidation_realized: ["liquidation", "realized"], liquidation_estimated: ["liquidation", "estimated"],
     wyckoff: ["wyckoff", "spring", "utad"], harmonic: ["harmonic", "prz"], flow: ["flow", "funding", "oi"], indicators: ["indicator", "technical"], ema: ["ema", "ribbon"], onchain: ["onchain", "whale", "hyperliquid"]
   };
   return aliases[layer].some((alias) => source.includes(alias));

@@ -1249,6 +1249,61 @@ export type LiquidationHeatmap = {
   refresh?: { stored: number; pages: number };
 };
 
+export type UnifiedLiquidationHeatmap = {
+  symbol: string;
+  source: "bitget_realized" | "coinglass_est";
+  source_status: string;
+  truth_label: string;
+  timeframe_seconds: number | null;
+  range: "12H" | "24H" | "3D" | "1W" | "1M";
+  window_start: string;
+  window_end: string;
+  time_buckets: string[];
+  price_bins: { count: number; min: number; max: number; step: number };
+  grid: number[][];
+  side_grid: { long: number[][]; short: number[][] };
+  max_value_usd_estimated: number;
+  n_events: number;
+  available_events: number;
+  sample_low: boolean;
+  side_split: { long_usd_estimated: number; short_usd_estimated: number };
+  position_split: { above_usd_estimated: number; below_usd_estimated: number };
+  last_event_ts: string | null;
+  top_zones: Array<{
+    price_index: number;
+    price_low: number;
+    price_high: number;
+    price_mid: number;
+    total_usd_estimated: number;
+    long_usd_estimated: number;
+    short_usd_estimated: number;
+    events: number;
+  }>;
+  events: Array<{
+    timestamp: string;
+    price: number;
+    size_usd_estimated: number;
+    raw_amount: number;
+    side: "long" | "short";
+    leverage: number | null;
+    persisted_until: string | null;
+  }>;
+  filters: {
+    side: "all" | "long" | "short";
+    size: "all" | "q2_plus" | "q3_plus" | "q4" | "10x" | "25x" | "50x" | "100x";
+    min_size_usd: number;
+    mode: "persist" | "event";
+    filter_basis: "leverage" | "size_quartile";
+    leverage_available: boolean;
+    leverage_minimum: number | null;
+    available_thresholds: string[];
+    quartile_thresholds_usd: Record<string, number>;
+  };
+  rendering: { normalization: "log1p"; default_opacity: number; raw_values_preserved: boolean };
+  coverage: Record<string, unknown>;
+  notes: string[];
+};
+
 export type OneLinerStance = "상방" | "하방" | "횡보" | "판단불가";
 
 export type OneLinerLine = {
@@ -2319,6 +2374,14 @@ export const api = {
     request<LiquidationHeatmap>(`/api/derivatives/${encodeURIComponent(symbol)}/liquidation-heatmap/refresh?window_hours=${windowHours}`, {
       method: "POST"
     }),
+  unifiedLiquidationHeatmap: (
+    symbol: string,
+    timeframe: string,
+    filters: { side: "all" | "long" | "short"; size: "all" | "q2_plus" | "q3_plus" | "q4" | "10x" | "25x" | "50x" | "100x"; range: "12H" | "24H" | "3D" | "1W" | "1M"; mode: "persist" | "event" }
+  ) => {
+    const query = new URLSearchParams({ symbol, tf: timeframe, ...filters, price_bins: "120", source: "realized" });
+    return request<UnifiedLiquidationHeatmap>(`/api/liq/heatmap?${query.toString()}`);
+  },
   positions: () => request<Position[]>("/api/positions"),
   createPosition: (payload: {
     symbol: string;

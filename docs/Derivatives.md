@@ -106,6 +106,20 @@ POST /api/derivatives/{symbol}/liquidation-heatmap/refresh?window_hours=72
 
 The forward-looking Coinglass `aggregated-heatmap/model2` remains a separate optional model. A realized Bitget hotspot must never be relabeled as an expected liquidation cluster.
 
+### Unified chart raster (WO-FCE-UNIFIED-CHART-01)
+
+The pro chart can also request the observed events as a candle-aligned time × price grid and paint that raster on the main chart coordinate system. This does not replace the WO-FCE-78/86 card; the card stays available while the unified view is validated.
+
+```text
+GET /api/liq/heatmap?symbol=ETHUSDT&tf=4h&range=3D&side=all&size=all&mode=persist&price_bins=120
+```
+
+- `event` paints value only in the event bucket. `persist` repeats the same raw event value until a later **confirmed** candle first trades through the observed event price. Persistence is a historical display transform, not an unfilled-order or forecast claim.
+- The response keeps the full raw event list and unmodified USD-estimated bucket values. Log normalization and opacity are rendering metadata only.
+- Bitget currently supplies no leverage field in the collected row. The UI therefore labels the filter `규모` and uses explicit quartile membership: `Q2+` starts at the 25th percentile, `Q3+` at the median, and `Q4` at the 75th percentile. The response publishes the actual thresholds and `leverage_available=false`. If a future source provides leverage for every event, metadata switches to `filter_basis=leverage`; no leverage is inferred.
+- `source=coinglass_est` returns the same adapter shape with `source_status=locked` until an existing collector is connected. It is a separate disabled layer and is never mixed with Bitget realized totals.
+- The UI polls this observation at no more than five-second intervals while its layer is active. It remains excluded from Entry Score, directional confluence, paper-engine entry gates, and live orders.
+
 ## WO-FCE-21 Integration
 
 Derivative data is injected into existing product surfaces instead of creating a separate dashboard.

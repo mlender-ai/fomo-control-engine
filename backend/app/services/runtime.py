@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import threading
+import time
 from typing import Any
 from uuid import UUID
 
@@ -31,7 +33,7 @@ from app.db.models import (
 )
 from app.derivatives.context import derivative_context_for_symbol
 from app.derivatives.engine import coinglass_status_snapshot
-from app.derivatives.liquidation_heatmap import build_realized_liquidation_heatmap
+from app.derivatives.liquidation_heatmap import build_realized_liquidation_heatmap, build_unified_liquidation_heatmap
 from app.demo.derivatives import FakeDerivativesProvider
 from app.demo.seed import seed_demo_data as _seed_demo_data
 from app.marketdata.bitget_derivatives import BitgetDerivProvider
@@ -79,6 +81,9 @@ class SymbolMatch:
 
 
 _coinglass_round_robin_cursor = 0
+_unified_heatmap_cache: dict[tuple[Any, ...], tuple[float, dict[str, Any]]] = {}
+_unified_heatmap_cache_lock = threading.Lock()
+_UNIFIED_HEATMAP_CACHE_SECONDS = 4.0
 
 
 def provider_name() -> str:
@@ -376,6 +381,69 @@ def liquidation_heatmap(symbol: str, window_hours: int = 72) -> dict[str, Any]:
         current_price=current_price,
         window_hours=window_hours,
     )
+
+
+def unified_liquidation_heatmap(
+    symbol: str,
+    *,
+    timeframe: str = "4h",
+    range_key: str = "3D",
+    side: str = "all",
+    size_filter: str = "all",
+    min_size: float | None = None,
+    mode: str = "persist",
+    price_bins: int = 120,
+    source: str = "realized",
+    from_at: datetime | None = None,
+    to_at: datetime | None = None,
+) -> dict[str, Any]:
+    normalized = symbol.upper()
+    cache_key = (
+        id(runtime.repository),
+        id(runtime.market_provider),
+        normalized,
+        timeframe,
+        range_key,
+        side,
+        size_filter,
+        min_size,
+        mode,
+        price_bins,
+        source,
+        from_at.isoformat() if from_at else None,
+        to_at.isoformat() if to_at else None,
+    )
+    monotonic_now = time.monotonic()
+    with _unified_heatmap_cache_lock:
+        cached = _unified_heatmap_cache.get(cache_key)
+        if cached and monotonic_now - cached[0] < _UNIFIED_HEATMAP_CACHE_SECONDS:
+            return cached[1]
+    snapshot = runtime.market_provider.get_snapshot(normalized, timeframe)
+    events = runtime.repository.list_liquidation_events(
+        symbol=normalized,
+        source="bitget" if source != "coinglass_est" else "coinglass",
+        limit=10_000,
+    )
+    payload = build_unified_liquidation_heatmap(
+        events,
+        snapshot.candles,
+        normalized,
+        timeframe_seconds=timeframe_seconds(timeframe),
+        range_key=range_key,
+        side=side,
+        size_filter=size_filter,
+        min_size=min_size,
+        mode=mode,
+        price_bins=price_bins,
+        source=source,
+        from_at=from_at,
+        to_at=to_at,
+    )
+    with _unified_heatmap_cache_lock:
+        if len(_unified_heatmap_cache) >= 128:
+            _unified_heatmap_cache.clear()
+        _unified_heatmap_cache[cache_key] = (monotonic_now, payload)
+    return payload
 
 
 def refresh_liquidation_heatmap(symbol: str, window_hours: int = 72) -> dict[str, Any]:

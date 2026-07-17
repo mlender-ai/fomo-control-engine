@@ -51,3 +51,9 @@ The two surfaces must stay distinct:
 - `Realized Liquidation Heatmap`: historical Bitget liquidation events, always labeled realized and not predictive.
 
 The realized panel combines confirmed OHLC candles, timestamped event cells, and horizontal period-total realized-density bands. It also compares observed intensity above and below the current price. These additions improve visual orientation only; they do not convert historical liquidations into a forecast or scoring input.
+
+## WO-FCE-UNIFIED-CHART-01 Shared-axis view
+
+The main pro chart now has a separate `청산밀집(실현)` layer. It reuses the main candle viewport, price scale, plan lines, EMA series, current-price flag, and crosshair instead of introducing another chart axis. The default combination is `플랜 + 청산밀집(실현)`; ordinary clicks can compose more layers, while shift-click keeps the two-layer comparison cap.
+
+The inline controls expose side, size quartile, range, `persist/event`, and opacity. `N`, low-sample status, `실제 청산 · 예상 아님`, above/below totals, long/short totals, and last event remain visible next to the chart. Crosshair readout shows the unmodified source bucket total. The old realized card remains in place as the C5 validation fallback.
