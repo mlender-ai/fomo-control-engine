@@ -334,7 +334,25 @@ def _bootstrap_validation_positions(
     started_at = _parse_datetime(benchmark.get("started_at"))
     if started_at is None:
         return {"opened": 0, "events": [], "errors": []}
-    benchmark_trades = [trade for trade in repo.list_paper_trades(limit=5000) if trade.entry_at >= started_at]
+    all_trades = repo.list_paper_trades(limit=5000)
+    current_seeds = [trade for trade in all_trades if _is_current_benchmark_seed(trade, started_at)]
+    for trade in current_seeds:
+        if trade.entry_at >= started_at and _dict(trade.entry_evidence).get("benchmark_started_at"):
+            continue
+        repo.upsert_paper_trade(
+            trade.model_copy(
+                update={
+                    "entry_at": max(trade.entry_at, started_at),
+                    "created_at": max(trade.created_at, started_at),
+                    "updated_at": max(trade.updated_at, started_at),
+                    "entry_evidence": {
+                        **trade.entry_evidence,
+                        "benchmark_started_at": started_at.isoformat(),
+                    },
+                }
+            )
+        )
+    benchmark_trades = [trade for trade in all_trades if trade.entry_at >= started_at or trade in current_seeds]
     if benchmark_trades:
         return {"opened": 0, "events": [], "errors": []}
 
@@ -435,6 +453,7 @@ def _bootstrap_validation_positions(
             take_profit_price=candidate["take_profit"],
             evidence={
                 "entry_mode": "validation_bootstrap",
+                "benchmark_started_at": started_at.isoformat(),
                 "items": candidate["evidence"],
                 "gates": candidate["gates"],
                 "signature_gate_mode": signature_gates.get("gate_mode"),
@@ -466,6 +485,7 @@ def _bootstrap_validation_positions(
             entry_atr=_float(candidate["target_plan"].get("atr")),
             target_plan=candidate["target_plan"],
         )
+        trade = trade.model_copy(update={"entry_at": now, "created_at": now, "updated_at": now})
         repo.upsert_paper_trade(trade)
         _record_entry_judgment(repo, trade)
         opened.append(trade)
@@ -475,6 +495,14 @@ def _bootstrap_validation_positions(
         "events": [_paper_event("opened", trade) for trade in opened],
         "errors": errors,
     }
+
+
+def _is_current_benchmark_seed(trade: PaperTrade, started_at: datetime) -> bool:
+    expected_id = uuid5(
+        NAMESPACE_URL,
+        f"fce:paper:validation-bootstrap:{started_at.isoformat()}:{trade.symbol}:{trade.timeframe}",
+    )
+    return trade.id == expected_id
 
 
 def _suppress_duplicate_bootstrap_trades(repo: Any, *, now: datetime) -> int:

@@ -998,7 +998,9 @@ def test_benchmark_anchor_and_manual_tracking_join_paper_universe() -> None:
 def test_benchmark_bootstrap_opens_current_stance_once_without_flip() -> None:
     repo = MemoryRepository()
     repo.upsert_watchlist_item(WatchlistItem(symbol="TESTUSDT", asset_class="crypto"))
-    start_paper_benchmark(repo, now=BASE_TIME - timedelta(minutes=1))
+    benchmark_started_at = BASE_TIME + timedelta(minutes=1)
+    first_run_at = BASE_TIME + timedelta(minutes=2)
+    start_paper_benchmark(repo, now=benchmark_started_at)
     analysis = {
         "symbol": "TESTUSDT",
         "timeframe": "4h",
@@ -1034,14 +1036,16 @@ def test_benchmark_bootstrap_opens_current_stance_once_without_flip() -> None:
         _settings(),
         analysis_loader=lambda _symbol, _timeframe: payload,
         simulation_loader=lambda _symbol, _timeframe, _direction, _entry: simulation,
-        now=BASE_TIME,
+        now=first_run_at,
     )
+    seeded = repo.list_paper_trades(status="open")[0]
+    repo.upsert_paper_trade(seeded.model_copy(update={"holding_bars": 3, "updated_at": first_run_at}))
     second = run_paper_engine(
         repo,
         _settings(),
         analysis_loader=lambda _symbol, _timeframe: payload,
         simulation_loader=lambda _symbol, _timeframe, _direction, _entry: simulation,
-        now=BASE_TIME,
+        now=first_run_at + timedelta(minutes=1),
     )
 
     assert first["opened"] == 1
@@ -1049,6 +1053,10 @@ def test_benchmark_bootstrap_opens_current_stance_once_without_flip() -> None:
     trades = repo.list_paper_trades(status="open")
     assert len(trades) == 1
     assert trades[0].entry_evidence["entry_mode"] == "validation_bootstrap"
+    assert trades[0].entry_evidence["benchmark_started_at"] == benchmark_started_at.isoformat()
+    assert trades[0].entry_bar_at == BASE_TIME
+    assert trades[0].entry_at == first_run_at
+    assert trades[0].holding_bars == 3
     assert trades[0].stance_snapshot["flipped"] is False
     assert repo.list_paper_gate_funnel(symbol="TESTUSDT")[0]["entered"] is False
 
