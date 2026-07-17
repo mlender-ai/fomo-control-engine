@@ -9,6 +9,7 @@ from app.db.models import AutonomyLog, BacktestStat, Direction, EntryIntent, Jud
 from app.db.repository import MemoryRepository, SQLiteRepository
 from app.paper.policy import PaperPolicy, apply_exit_decision, evaluate_entry, evaluate_exit, open_trade
 from app.paper.service import (
+    ENTRY_GATE_VERSION,
     _candidate_bootstrap_active,
     _candidate_bootstrap_relaxed_active,
     _gate_diagnostic_event,
@@ -637,6 +638,132 @@ def test_candidate_bootstrap_relaxes_only_for_first_two_weeks_and_tags_trade() -
     assert trade.signature_snapshot["bootstrap_thresholds"] == {"min_sample_size": 8, "min_win_1r_pct": 45.0}
     assert repo.list_paper_gate_funnel(symbol="TESTUSDT")[0]["bootstrap_relaxed"] is True
     assert _candidate_bootstrap_relaxed_active(repo, _settings(), now=BASE_TIME + timedelta(days=14)) is False
+
+
+def test_candidate_bootstrap_pools_exact_signature_across_symbol_stats() -> None:
+    repo = MemoryRepository()
+    start_paper_benchmark(repo, now=BASE_TIME)
+    key = "fvg:gap_formed:candidate:long:crypto:4h"
+    for symbol in ("AAAUSDT", "BBBUSDT"):
+        repo.upsert_backtest_stat(
+            BacktestStat(
+                signature_key=key,
+                symbol=symbol,
+                timeframe="4h",
+                asset_class="crypto",
+                engine="fvg",
+                event_type="gap_formed",
+                strength_class="candidate",
+                direction="long",
+                sample_size=4,
+                win_1r_pct=50.0,
+            )
+        )
+    repo.upsert_backtest_stat(
+        BacktestStat(
+            signature_key=key,
+            symbol="ALL",
+            timeframe="4h",
+            asset_class="crypto",
+            scope="all",
+            engine="fvg",
+            event_type="candidate_review",
+            strength_class="candidate",
+            direction="long",
+            sample_size=100,
+            win_1r_pct=100.0,
+            payload={"candidate_review": True},
+        )
+    )
+    repo.add_judgment(
+        JudgmentLedgerEntry(
+            judgment_id="candidate:TESTUSDT:4h:fvg:pooled",
+            position_id=UUID(int=0),
+            source_type="candidate_signature",
+            source_id="fvg:pooled",
+            as_of=BASE_TIME,
+            type="candidate_signature",
+            claim={"symbol": "TESTUSDT", "timeframe": "4h", "engine": "fvg", "event_type": "gap_formed", "direction": "long"},
+        )
+    )
+
+    gate = _signature_gate_evaluation(
+        repo,
+        _settings(),
+        _candidate_entry_payload()["analysis"],
+        _candidate_entry_payload(),
+        Direction.long,
+        now=BASE_TIME + timedelta(hours=1),
+    )
+
+    assert gate["gate_mode"] == "candidate_bootstrap_relaxed"
+    assert gate["qualified"]["stat"]["sample_size"] == 8
+    assert gate["qualified"]["stat"]["win_1r_pct"] == 50.0
+    assert gate["qualified"]["stat"]["source_stats_count"] == 2
+    assert gate["qualified"]["stat"]["source_symbols"] == ["AAAUSDT", "BBBUSDT"]
+
+
+def test_signature_gate_upgrade_reevaluates_rejected_bar_once() -> None:
+    repo = MemoryRepository()
+    repo.upsert_watchlist_item(WatchlistItem(symbol="TESTUSDT", asset_class="crypto"))
+    start_paper_benchmark(repo, now=BASE_TIME)
+    key = "fvg:gap_formed:candidate:long:crypto:4h"
+    repo.upsert_backtest_stat(
+        BacktestStat(
+            signature_key=key,
+            symbol="TESTUSDT",
+            timeframe="4h",
+            asset_class="crypto",
+            engine="fvg",
+            event_type="gap_formed",
+            strength_class="candidate",
+            direction="long",
+            sample_size=8,
+            win_1r_pct=50.0,
+        )
+    )
+    repo.add_judgment(
+        JudgmentLedgerEntry(
+            judgment_id="candidate:TESTUSDT:4h:fvg:upgrade",
+            position_id=UUID(int=0),
+            source_type="candidate_signature",
+            source_id="fvg:upgrade",
+            as_of=BASE_TIME,
+            type="candidate_signature",
+            claim={"symbol": "TESTUSDT", "timeframe": "4h", "engine": "fvg", "event_type": "gap_formed", "direction": "long"},
+        )
+    )
+    repo.upsert_paper_engine_state("TESTUSDT", "4h", {"last_bar_at": BASE_TIME.isoformat()})
+    repo.upsert_paper_gate_funnel(
+        {
+            "symbol": "TESTUSDT",
+            "timeframe": "4h",
+            "bar_at": BASE_TIME.isoformat(),
+            "rejected_at": "signature_gate",
+            "entered": False,
+        }
+    )
+    now = BASE_TIME + timedelta(hours=1)
+
+    first = run_paper_engine(
+        repo,
+        _settings(),
+        analysis_loader=lambda _symbol, _timeframe: _candidate_entry_payload(),
+        simulation_loader=lambda _symbol, _timeframe, _direction, _entry: _candidate_entry_simulation(),
+        now=now,
+    )
+    second = run_paper_engine(
+        repo,
+        _settings(),
+        analysis_loader=lambda _symbol, _timeframe: _candidate_entry_payload(),
+        simulation_loader=lambda _symbol, _timeframe, _direction, _entry: _candidate_entry_simulation(),
+        now=now,
+    )
+
+    assert first["opened"] == 1
+    assert second["opened"] == 0
+    assert second["skipped_same_bar"] == 1
+    assert repo.get_paper_engine_state("TESTUSDT", "4h")["entry_gate_version"] == ENTRY_GATE_VERSION
 
 
 def test_flip_block_logs_explain_each_failed_gate_and_checklist_rates() -> None:

@@ -101,11 +101,7 @@ class FakeDirectionalPositionClient:
         if row is None:
             return {"assetPositions": []}
         coin, size, value = row
-        return {
-            "assetPositions": [
-                {"position": {"coin": coin, "szi": size, "positionValue": value, "entryPx": "100"}}
-            ]
-        }
+        return {"assetPositions": [{"position": {"coin": coin, "szi": size, "positionValue": value, "entryPx": "100"}}]}
 
 
 def test_fill_classification_open_close_and_flip() -> None:

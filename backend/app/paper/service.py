@@ -8,6 +8,7 @@ from app.analyst.gauges import build_gauges
 from app.analyst.signature_registry import current_state
 from app.backtest.candidate_scoring import CANDIDATE_ENGINES
 from app.backtest.outcomes import atr
+from app.backtest.statistics import bootstrap_ci_from_counts
 from app.backtest.signatures import SetupSignature, signature_key, signatures_from_analysis
 from app.db.models import (
     Direction,
@@ -40,6 +41,7 @@ VALIDATION_BOOTSTRAP_MAX_POSITIONS = 2
 VALIDATION_BOOTSTRAP_MIN_EVIDENCE = 3
 VALIDATION_BOOTSTRAP_MIN_CHECKLIST_PASSED = 3
 VALIDATION_BOOTSTRAP_MIN_RR = 1.0
+ENTRY_GATE_VERSION = "pooled-signature-v1"
 
 
 def policy_from_settings(settings: Any, asset_class: str = "crypto") -> PaperPolicy:
@@ -103,11 +105,18 @@ def run_paper_engine(
                 continue
             state = repo.get_paper_engine_state(symbol, timeframe) or {}
             bar_key = bar.timestamp.isoformat()
-            funnel_recorded = any(
-                str(row.get("timeframe") or "4h") == timeframe and str(row.get("bar_at") or "") == bar_key
-                for row in repo.list_paper_gate_funnel(symbol=symbol, limit=10)
+            prior_funnel = next(
+                (
+                    row
+                    for row in repo.list_paper_gate_funnel(symbol=symbol, limit=10)
+                    if str(row.get("timeframe") or "4h") == timeframe and str(row.get("bar_at") or "") == bar_key
+                ),
+                None,
             )
-            if state.get("last_bar_at") == bar_key and funnel_recorded:
+            gate_upgrade_pending = bool(
+                prior_funnel and prior_funnel.get("rejected_at") == "signature_gate" and state.get("entry_gate_version") != ENTRY_GATE_VERSION
+            )
+            if state.get("last_bar_at") == bar_key and prior_funnel is not None and not gate_upgrade_pending:
                 skipped_same_bar += 1
                 continue
             evaluated += 1
@@ -274,6 +283,7 @@ def run_paper_engine(
                 timeframe,
                 {
                     "last_bar_at": bar_key,
+                    "entry_gate_version": ENTRY_GATE_VERSION,
                     "last_price": bar.close,
                     "stance_state": _stance_state(confluence),
                     "take_profit_pressure_high_streak": high_streak,
@@ -947,6 +957,7 @@ def _gate_funnel_record(
         "candidate_bootstrap_active": bool(signature_gates.get("bootstrap_active")),
         "bootstrap_relaxed": signature_gates.get("gate_mode") == "candidate_bootstrap_relaxed",
         "candidate_samples": signature_gates.get("candidate_samples") or [],
+        "entry_gate_version": ENTRY_GATE_VERSION,
     }
 
 
@@ -1170,12 +1181,7 @@ def _signature_gate_evaluation(
         if signature.get("direction") != direction.value:
             continue
         key = str(signature.get("key") or "")
-        stat = by_key.get(key)
-        if not stat and key:
-            stored = repo.list_backtest_stats(signature_key=key, limit=1)
-            stat = stored[0].model_dump(mode="json") if stored else None
-            if stat:
-                stat.update(_dict(stat.get("payload")))
+        stat = _pooled_signature_stat(repo, key, fallback=by_key.get(key)) if key else None
         if not stat:
             continue
         state = current_state(repo, key, stat=stat, settings=settings)
@@ -1229,6 +1235,55 @@ def _signature_gate_evaluation(
         "bootstrap_relaxed_active": relaxed_active,
         "candidate_samples": candidate_samples,
     }
+
+
+def _pooled_signature_stat(repo: Any, signature_key_value: str, *, fallback: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    """Pool the latest symbol-scoped rows for one exact signature key."""
+    stored = repo.list_backtest_stats(signature_key=signature_key_value, limit=5000)
+    latest_by_source: dict[tuple[str, str, str], Any] = {}
+    for item in stored:
+        if bool(item.payload.get("candidate_review")) or item.scope != "symbol":
+            continue
+        source = (item.symbol.upper(), item.timeframe, item.scope)
+        latest_by_source.setdefault(source, item)
+    rows = list(latest_by_source.values())
+    if not rows:
+        return dict(fallback) if isinstance(fallback, dict) else None
+
+    sample_size = sum(max(0, int(item.sample_size)) for item in rows)
+    wins_1r = sum(_stat_wins(item.sample_size, item.win_1r_pct) for item in rows)
+    wins_2r = sum(_stat_wins(item.sample_size, item.win_2r_pct) for item in rows)
+    first = rows[0]
+    stat = first.model_dump(mode="json")
+    stat.update(_dict(first.payload))
+    ci = bootstrap_ci_from_counts(wins_1r, sample_size) if sample_size else None
+    stat.update(
+        {
+            "sample_size": sample_size,
+            "win_1r_pct": round(wins_1r / sample_size * 100, 1) if sample_size else None,
+            "win_2r_pct": round(wins_2r / sample_size * 100, 1) if sample_size else None,
+            "win_1r_ci": list(ci) if ci else None,
+            "pooled_signature": True,
+            "source_stats_count": len(rows),
+            "source_symbols": sorted({item.symbol.upper() for item in rows}),
+            "sources": {
+                "backtest": {
+                    "sample_size": sample_size,
+                    "wins_1r": wins_1r,
+                    "wins_2r": wins_2r,
+                    "rows": len(rows),
+                },
+                "live": {"sample_size": 0},
+            },
+        }
+    )
+    return stat
+
+
+def _stat_wins(sample_size: int, win_pct: float | None) -> int:
+    if sample_size <= 0 or win_pct is None:
+        return 0
+    return max(0, min(sample_size, round(sample_size * float(win_pct) / 100.0)))
 
 
 def _candidate_bootstrap_active(repo: Any, settings: Any, *, now: datetime | None = None) -> bool:

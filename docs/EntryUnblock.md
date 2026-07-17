@@ -51,3 +51,10 @@
 - `backend/tests/test_paper_policy.py`: 한시 완화, 자동 복원, 태깅, 병목 상세 및 체크리스트 통계
 - `backend/tests/test_sqlite_repository.py`: 로그 영속성과 중복 방지
 - `HARNESS.md`의 백엔드·프론트 게이트를 통과해야 완료한다.
+
+## 2026-07-17 집계 정합성 보정
+
+- 페이퍼 진입 게이트는 정확히 같은 `signature_key`의 최신 심볼 스코프 백테스트를 표본수로 가중 합산한다.
+- `candidate_review` 및 `asset_class/all` 집계행은 원천 심볼 통계와 중복 계산하지 않는다.
+- 풀링 결과에는 표본 N, 1R 승수, 원천 심볼과 행 수를 남기며 라이브 검증 표본과 섞지 않는다.
+- 기존 임계값과 승격 규정은 변경하지 않는다. 집계 방식 변경 전에 `signature_gate`에서만 탈락한 최신 확정봉은 버전 표식으로 한 번만 재평가한다.
