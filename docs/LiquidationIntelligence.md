@@ -43,17 +43,26 @@ The liquidation result is not added directly into Entry Opportunity Score in v0.
 
 ## WO-FCE-78 Realized History
 
-The separate realized-liquidation panel reads Bitget's public three-day liquidation REST history. It observes price, side, amount, and event time after liquidation has occurred. It does not change this module's forward-looking proxy and is not added to Entry Score or direction scoring.
+The realized-liquidation data path reads Bitget's public three-day liquidation REST history. It observes price, side, amount, and event time after liquidation has occurred. It does not change this module's forward-looking proxy and is not added to Entry Score or direction scoring.
 
 The two surfaces must stay distinct:
 
 - `Liquidation Intelligence`: possible future cluster proxy / optional Coinglass model, always labeled estimated.
 - `Realized Liquidation Heatmap`: historical Bitget liquidation events, always labeled realized and not predictive.
 
-The realized panel combines confirmed OHLC candles, timestamped event cells, and horizontal period-total realized-density bands. It also compares observed intensity above and below the current price. These additions improve visual orientation only; they do not convert historical liquidations into a forecast or scoring input.
+The realized layer combines confirmed OHLC candles, timestamped event cells, and horizontal period-total realized-density bands. It also compares observed intensity above and below the current price. These additions improve visual orientation only; they do not convert historical liquidations into a forecast or scoring input.
 
 ## WO-FCE-UNIFIED-CHART-01 Shared-axis view
 
 The main pro chart now has a separate `청산밀집(실현)` layer. It reuses the main candle viewport, price scale, plan lines, EMA series, current-price flag, and crosshair instead of introducing another chart axis. The default combination is `플랜 + 청산밀집(실현)`; ordinary clicks can compose more layers, while shift-click keeps the two-layer comparison cap.
 
-The inline controls expose side, size quartile, range, `persist/event`, and opacity. `N`, low-sample status, `실제 청산 · 예상 아님`, above/below totals, long/short totals, and last event remain visible next to the chart. Crosshair readout shows the unmodified source bucket total. The old realized card remains in place as the C5 validation fallback.
+The inline controls expose side, size quartile, range, `persist/event`, and opacity. `N`, low-sample status, `실제 청산 · 예상 아님`, above/below totals, long/short totals, and last event remain visible next to the chart. Crosshair readout shows the unmodified source bucket total.
+
+## WO-FCE-UNIFIED-CHART-02 Single live surface
+
+The shared-axis pro chart is now the only realized-liquidation chart surface. The duplicate standalone card was removed together with its frontend client and styles, so candles, current price, action plan, and realized density cannot drift across two independent viewports.
+
+- Former yellow dotted outlines are replaced by ranked solid bands and matching `밀집 1/2/3` controls. Each control states the observed price, estimated realized USD, and event count; these bands are density summaries, not action-plan guardrails.
+- Default opacity is 68%, and a versioned preference key prevents an old 20% value from silently restoring the low-visibility state.
+- `LIVE · 청산 5초` reports the polling cadence and latest successful receive time. `최근 확정` identifies the newest confirmed OHLC candle. The UI does not imply tick streaming or promote an unconfirmed candle.
+- A pulsing current-price marker and latest-confirmed marker improve visual motion while preserving the read-only, confirmed-candle, non-predictive rules.

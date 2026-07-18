@@ -11,21 +11,24 @@ import {
   type CandlestickData,
   type HistogramData,
   type LogicalRange,
+  type SeriesMarker,
   type Time
 } from "lightweight-charts";
 import { useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
-import { api, type UnifiedLiquidationHeatmap, type
-  ChartCandle,
-  ChartPriceLevel,
-  CompactChartGauges,
-  LiquidityPool,
-  LiquiditySweep,
-  PositionActionPlan,
-  PositionActionPlanItem,
-  PositionChartAnalysis,
-  PositionWatchTrigger,
-  OnchainChartMarker,
-  WyckoffMarker
+import {
+  api,
+  type ChartCandle,
+  type ChartPriceLevel,
+  type CompactChartGauges,
+  type LiquidityPool,
+  type LiquiditySweep,
+  type OnchainChartMarker,
+  type PositionActionPlan,
+  type PositionActionPlanItem,
+  type PositionChartAnalysis,
+  type PositionWatchTrigger,
+  type UnifiedLiquidationHeatmap,
+  type WyckoffMarker
 } from "@/lib/api";
 import {
   activeFocusLayers,
@@ -59,7 +62,8 @@ type HeatmapFilters = {
 
 const DEFAULT_HEATMAP_FILTERS: HeatmapFilters = { side: "all", size: "all", range: "3D", mode: "persist" };
 const HEATMAP_FILTERS_KEY = "fce.unifiedHeatmap.filters.v1";
-const HEATMAP_OPACITY_KEY = "fce.unifiedHeatmap.opacity.v1";
+const HEATMAP_OPACITY_KEY = "fce.unifiedHeatmap.opacity.v2";
+const DEFAULT_HEATMAP_OPACITY = 0.68;
 
 export function PositionCandlestickChart({
   analysis,
@@ -112,6 +116,7 @@ export function PositionCandlestickChart({
   const [zoneBand, setZoneBand] = useState<{ top: number; bottom: number } | null>(null);
   const [heatmap, setHeatmap] = useState<UnifiedLiquidationHeatmap | null>(null);
   const [heatmapError, setHeatmapError] = useState("");
+  const [heatmapReceivedAt, setHeatmapReceivedAt] = useState<number | null>(null);
   const [heatmapFilters, setHeatmapFilters] = useState<HeatmapFilters>(loadHeatmapFilters);
   const [heatmapOpacity, setHeatmapOpacity] = useState(loadHeatmapOpacity);
   const [heatmapHighlightPrice, setHeatmapHighlightPrice] = useState<number | null>(null);
@@ -130,7 +135,8 @@ export function PositionCandlestickChart({
     () => ({
       flow: effectiveLayers.flow,
       indicators: effectiveLayers.ta.includes("indicators"),
-      ema: effectiveLayers.ta.includes("ema")
+      ema: effectiveLayers.ta.includes("ema"),
+      realized: effectiveLayers.ta.includes("liquidation_realized")
     }),
     [effectiveLayers.flow, effectiveLayers.ta]
   );
@@ -210,6 +216,7 @@ export function PositionCandlestickChart({
           heatmapFingerprintRef.current = fingerprint;
           setHeatmap(payload);
         }
+        setHeatmapReceivedAt(Date.now());
         setHeatmapError("");
       } catch (error) {
         if (!active) return;
@@ -478,7 +485,7 @@ export function PositionCandlestickChart({
       });
     });
 
-    const spikeMarkers = seriesLayerState.flow
+    const chartMarkers: SeriesMarker<Time>[] = seriesLayerState.flow
       ? visibleCandles
           .filter((candle) => candle.volume >= averageVolume * 1.8)
           .slice(-3)
@@ -490,8 +497,18 @@ export function PositionCandlestickChart({
             text: ""
           }))
       : [];
-    if (spikeMarkers.length) {
-      createSeriesMarkers(candleSeries, spikeMarkers.sort((left, right) => Number(left.time) - Number(right.time)));
+    const latestConfirmed = visibleCandles.at(-1);
+    if (seriesLayerState.realized && latestConfirmed) {
+      chartMarkers.push({
+        time: latestConfirmed.time as Time,
+        position: "aboveBar" as const,
+        color: palette.color("blue", 0.96),
+        shape: "circle" as const,
+        text: "최근 확정"
+      });
+    }
+    if (chartMarkers.length) {
+      createSeriesMarkers(candleSeries, chartMarkers.sort((left, right) => Number(left.time) - Number(right.time)));
     }
 
     chart.subscribeCrosshairMove((param) => {
@@ -720,10 +737,13 @@ export function PositionCandlestickChart({
           filters={heatmapFilters}
           heatmap={heatmap}
           error={heatmapError}
+          lastConfirmedAt={lastCandle?.time ?? null}
           opacity={heatmapOpacity}
+          receivedAt={heatmapReceivedAt}
           onFilterChange={(key, value) => setHeatmapFilters((current) => ({ ...current, [key]: value }))}
           onOpacityChange={setHeatmapOpacity}
-          onZoneFocus={setHeatmapHighlightPrice}
+          onZoneFocus={(price) => setHeatmapHighlightPrice((current) => current === price ? null : price)}
+          activeZonePrice={heatmapHighlightPrice}
         />
       ) : null}
       {wyckoffFocused ? <WyckoffLayerStatus analysis={analysis} /> : null}
@@ -823,18 +843,24 @@ function UnifiedHeatmapControls({
   filters,
   heatmap,
   error,
+  lastConfirmedAt,
   opacity,
+  receivedAt,
   onFilterChange,
   onOpacityChange,
-  onZoneFocus
+  onZoneFocus,
+  activeZonePrice
 }: {
   filters: HeatmapFilters;
   heatmap: UnifiedLiquidationHeatmap | null;
   error: string;
+  lastConfirmedAt: number | null;
   opacity: number;
+  receivedAt: number | null;
   onFilterChange: <Key extends keyof HeatmapFilters>(key: Key, value: HeatmapFilters[Key]) => void;
   onOpacityChange: (value: number) => void;
   onZoneFocus: (price: number) => void;
+  activeZonePrice: number | null;
 }) {
   return (
     <section className="unifiedHeatmapControls" data-testid="unified-heatmap-controls">
@@ -845,14 +871,21 @@ function UnifiedHeatmapControls({
           <b>N={heatmap?.n_events ?? 0}</b>
           {heatmap?.sample_low !== false ? <em>표본 부족</em> : null}
         </div>
+        <div className="unifiedHeatmapLive" data-testid="unified-heatmap-live" title="실현 청산 API는 5초마다 확인하며 캔들은 확정된 구간만 사용합니다.">
+          <i aria-hidden="true" />
+          <strong>LIVE</strong>
+          <span>청산 5초</span>
+          <time>{receivedAt ? new Date(receivedAt).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "연결 중"}</time>
+          <small>최근 확정 {lastConfirmedAt ? formatKoreanDateTime(lastConfirmedAt) : "-"}</small>
+        </div>
         <label title="히트맵 전역 투명도">
           농도
           <input
             aria-label="청산 히트맵 투명도"
-            max="0.9"
-            min="0.2"
+            max="0.95"
+            min="0.35"
             onChange={(event) => onOpacityChange(Number(event.target.value))}
-            step="0.05"
+            step="0.01"
             type="range"
             value={opacity}
           />
@@ -888,12 +921,33 @@ function UnifiedHeatmapControls({
         />
       </div>
       {heatmap ? (
-        <div className="unifiedHeatmapSummary" data-testid="unified-heatmap-summary">
-          <SummaryMetric label="최대 밀집" value={heatmap.top_zones[0] ? `${formatPrice(heatmap.top_zones[0].price_mid)} · ${formatUsd(heatmap.top_zones[0].total_usd_estimated)}` : "-"} onClick={heatmap.top_zones[0] ? () => onZoneFocus(heatmap.top_zones[0].price_mid) : undefined} />
-          <SummaryMetric label="현재가 위 / 아래" value={`${formatUsd(heatmap.position_split.above_usd_estimated)} / ${formatUsd(heatmap.position_split.below_usd_estimated)}`} />
-          <SummaryMetric label="롱 / 숏 청산" value={`${formatUsd(heatmap.side_split.long_usd_estimated)} / ${formatUsd(heatmap.side_split.short_usd_estimated)}`} />
-          <SummaryMetric label="마지막 이벤트" value={heatmap.last_event_ts ? formatKoreanDateTime(Date.parse(heatmap.last_event_ts) / 1000) : "-"} />
-          <span className="heatmapBasis">{heatmap.filters.leverage_available ? "레버리지 원천값" : "레버리지 없음 · 규모 분위 폴백"}</span>
+        <div className="unifiedHeatmapOverview">
+          <div className="unifiedHeatmapSummary" data-testid="unified-heatmap-summary">
+            <SummaryMetric label="현재가 위 / 아래" value={`${formatUsd(heatmap.position_split.above_usd_estimated)} / ${formatUsd(heatmap.position_split.below_usd_estimated)}`} />
+            <SummaryMetric label="롱 / 숏 청산" value={`${formatUsd(heatmap.side_split.long_usd_estimated)} / ${formatUsd(heatmap.side_split.short_usd_estimated)}`} />
+            <SummaryMetric label="마지막 이벤트" value={heatmap.last_event_ts ? formatKoreanDateTime(Date.parse(heatmap.last_event_ts) / 1000) : "-"} />
+            <span className="heatmapBasis">{heatmap.filters.leverage_available ? "레버리지 원천값" : "레버리지 없음 · 규모 분위 폴백"}</span>
+          </div>
+          <div className="unifiedHeatmapZones" data-testid="unified-heatmap-zones">
+            <div>
+              <strong>상위 실현 밀집 3구간</strong>
+              <span>밝은 실선 밴드 = 해당 가격대에 누적된 과거 실현 청산</span>
+            </div>
+            {heatmap.top_zones.slice(0, 3).map((zone, index) => (
+              <button
+                aria-pressed={activeZonePrice === zone.price_mid}
+                className={`rank-${index + 1} ${activeZonePrice === zone.price_mid ? "active" : ""}`}
+                data-testid={`unified-heatmap-zone-${index + 1}`}
+                key={zone.price_index}
+                onClick={() => onZoneFocus(zone.price_mid)}
+                type="button"
+              >
+                <em>밀집 {index + 1}</em>
+                <strong>{formatPrice(zone.price_mid)}</strong>
+                <span>{formatUsd(zone.total_usd_estimated)} · {zone.events}건</span>
+              </button>
+            ))}
+          </div>
         </div>
       ) : null}
       {error ? <p className="unifiedHeatmapError">{error}</p> : null}
@@ -912,9 +966,8 @@ function FilterGroup({ label, options, value, onChange }: { label: string; optio
   );
 }
 
-function SummaryMetric({ label, value, onClick }: { label: string; value: string; onClick?: () => void }) {
-  const content = <><span>{label}</span><strong>{value}</strong></>;
-  return onClick ? <button onClick={onClick} type="button">{content}</button> : <div>{content}</div>;
+function SummaryMetric({ label, value }: { label: string; value: string }) {
+  return <div><span>{label}</span><strong>{value}</strong></div>;
 }
 
 function WyckoffLayerStatus({ analysis }: { analysis: PositionChartAnalysis }) {
@@ -1200,14 +1253,46 @@ function renderUnifiedHeatmap(
       context.fillRect(left, Math.min(y1, y2), cellWidth, Math.max(1.2, Math.abs(y2 - y1) + 0.5));
     });
   });
-  for (const zone of heatmap.top_zones.slice(0, 3)) {
+  const zonePalette = [
+    { fill: "rgba(255, 216, 74, 0.12)", stroke: "rgba(255, 224, 96, 0.96)", text: "rgb(255, 232, 133)" },
+    { fill: "rgba(43, 211, 255, 0.09)", stroke: "rgba(64, 218, 255, 0.88)", text: "rgb(137, 232, 255)" },
+    { fill: "rgba(32, 227, 178, 0.08)", stroke: "rgba(65, 225, 185, 0.82)", text: "rgb(142, 240, 213)" }
+  ];
+  const labelPositions: number[] = [];
+  for (const [index, zone] of heatmap.top_zones.slice(0, 3).entries()) {
     const y1 = series.priceToCoordinate(zone.price_high);
     const y2 = series.priceToCoordinate(zone.price_low);
     if (y1 === null || y2 === null) continue;
-    context.strokeStyle = "rgba(255, 220, 76, 0.72)";
+    const tone = zonePalette[index];
+    const top = Math.min(y1, y2);
+    const bandHeight = Math.max(3, Math.abs(y2 - y1));
+    const chartWidth = Math.max(1, width - AXIS_GUTTER);
+    context.save();
+    context.setLineDash([]);
+    context.fillStyle = tone.fill;
+    context.fillRect(0, top, chartWidth, bandHeight);
+    context.shadowColor = tone.stroke;
+    context.shadowBlur = index === 0 ? 8 : 5;
+    context.strokeStyle = tone.stroke;
+    context.lineWidth = index === 0 ? 1.8 : 1.2;
+    context.strokeRect(0.5, top + 0.5, chartWidth - 1, Math.max(2, bandHeight - 1));
+    context.shadowBlur = 0;
+    const label = `밀집 ${index + 1} · ${formatUsd(zone.total_usd_estimated)}`;
+    context.font = "700 10px SF Mono, Monaco, Consolas, monospace";
+    const labelWidth = Math.ceil(context.measureText(label).width) + 14;
+    let labelY = clamp(top + bandHeight / 2 - 9, 8, Math.max(8, height - 30));
+    while (labelPositions.some((position) => Math.abs(position - labelY) < 21)) {
+      labelY = clamp(labelY + 21, 8, Math.max(8, height - 30));
+    }
+    labelPositions.push(labelY);
+    context.fillStyle = "rgba(2, 7, 18, 0.9)";
+    context.fillRect(9, labelY, labelWidth, 18);
+    context.strokeStyle = tone.stroke;
     context.lineWidth = 1;
-    context.setLineDash([5, 4]);
-    context.strokeRect(0.5, Math.min(y1, y2), Math.max(1, width - AXIS_GUTTER), Math.max(2, Math.abs(y2 - y1)));
+    context.strokeRect(9.5, labelY + 0.5, labelWidth - 1, 17);
+    context.fillStyle = tone.text;
+    context.fillText(label, 16, labelY + 12.5);
+    context.restore();
   }
   if (highlightPrice !== null) {
     const y = series.priceToCoordinate(highlightPrice);
@@ -1237,7 +1322,7 @@ function heatmapColor(value: number, opacity: number): string {
   const left = stops[Math.max(0, stops.indexOf(right) - 1)];
   const progress = (bounded - left.at) / Math.max(right.at - left.at, 1e-9);
   const rgb = left.color.map((channel, index) => Math.round(channel + (right.color[index] - channel) * progress));
-  return `rgba(${rgb.join(",")},${clamp(opacity * (0.48 + bounded * 0.52), 0.1, 0.9)})`;
+  return `rgba(${rgb.join(",")},${clamp(opacity * (0.58 + bounded * 0.42), 0.16, 0.95)})`;
 }
 
 function HeatmapLegend({ heatmap }: { heatmap: UnifiedLiquidationHeatmap }) {
@@ -1284,11 +1369,11 @@ function loadHeatmapFilters(): HeatmapFilters {
 }
 
 function loadHeatmapOpacity(): number {
-  if (typeof window === "undefined") return 0.55;
+  if (typeof window === "undefined") return DEFAULT_HEATMAP_OPACITY;
   const raw = window.localStorage.getItem(HEATMAP_OPACITY_KEY);
-  if (raw === null) return 0.55;
+  if (raw === null) return DEFAULT_HEATMAP_OPACITY;
   const value = Number(raw);
-  return Number.isFinite(value) ? clamp(value, 0.2, 0.9) : 0.55;
+  return Number.isFinite(value) ? clamp(value, 0.35, 0.95) : DEFAULT_HEATMAP_OPACITY;
 }
 
 function formatUsd(value: number): string {
@@ -1836,8 +1921,12 @@ function priceFlagNodes(context: OverlayContext): string[] {
     const fill = context.palette.flag(flag.kind, highlighted ? 1 : 0.92);
     const stroke = context.palette.color("text", highlighted ? 0.8 : 0.24);
     const text = flag.kind === "mark" ? context.palette.color("panel") : context.palette.color("panel");
+    const livePulse = flag.kind === "mark" && context.layers.ta.includes("liquidation_realized")
+      ? `<circle class="liveMarkPulse" cx="${x - 5}" cy="${flag.y}" r="4" fill="${context.palette.color("blue", 0.96)}" />`
+      : "";
     return [
       `<g data-price-flag-kind="${flag.kind}">`,
+      livePulse,
       `<rect x="${x}" y="${flag.y - 10}" width="${width}" height="20" rx="4" fill="${fill}" stroke="${stroke}" stroke-width="${highlighted ? 1.6 : 1}" />`,
       `<text x="${x + 7}" y="${flag.y + 3.5}" fill="${text}" font-size="${highlighted ? 10.5 : 9.5}" font-weight="${highlighted ? 750 : 650}" font-family="SF Mono, Monaco, Consolas, monospace">${escapeSvgText(displayLabel)}</text>`,
       "</g>"

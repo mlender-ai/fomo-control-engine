@@ -93,8 +93,8 @@ Bitget's public liquidation history includes observed `price`, `side`, `amount`,
 - `buy` means a long position was liquidated; `sell` means a short position was liquidated, following Bitget's endpoint contract.
 - Event identity is deterministic across refreshes, so pagination does not duplicate stored observations.
 - Color intensity uses `price × amount` on a log scale. Bitget's REST page does not specify the amount unit, so every such value is labeled `estimated`; event price, side, amount, and timestamp remain direct observations.
-- The UI supports 24-hour and 72-hour windows, shows sample `N`, and labels the source as `Bitget public REST`.
-- WO-FCE-86 overlays confirmed OHLC candles on the same time/price axes and projects the strongest observed price buckets as horizontal **period-total realized-density bands**. The bands summarize liquidations that already occurred during the selected window; they are not standing orders, predicted leverage levels, or future liquidity.
+- The legacy endpoint supports 24-hour and 72-hour windows. Since WO-FCE-UNIFIED-CHART-02, the product UI consumes the candle-aligned unified endpoint below instead of rendering a second standalone chart.
+- WO-FCE-86 established the confirmed-OHLC overlay and horizontal **period-total realized-density bands**. The standalone rendering was retired after the shared-axis view reached parity; the bands still summarize liquidations that already occurred and are not standing orders, predicted leverage levels, or future liquidity.
 - This observation is excluded from Entry Score, directional confluence, automatic entry, and signature promotion.
 
 API:
@@ -106,9 +106,9 @@ POST /api/derivatives/{symbol}/liquidation-heatmap/refresh?window_hours=72
 
 The forward-looking Coinglass `aggregated-heatmap/model2` remains a separate optional model. A realized Bitget hotspot must never be relabeled as an expected liquidation cluster.
 
-### Unified chart raster (WO-FCE-UNIFIED-CHART-01)
+### Unified chart raster (WO-FCE-UNIFIED-CHART-01/02)
 
-The pro chart can also request the observed events as a candle-aligned time × price grid and paint that raster on the main chart coordinate system. This does not replace the WO-FCE-78/86 card; the card stays available while the unified view is validated.
+The pro chart requests observed events as a candle-aligned time × price grid and paints that raster on the main chart coordinate system. WO-FCE-UNIFIED-CHART-02 made this the only liquidation chart surface and removed the duplicate WO-FCE-78/86 frontend card, client API, and styles.
 
 ```text
 GET /api/liq/heatmap?symbol=ETHUSDT&tf=4h&range=3D&side=all&size=all&mode=persist&price_bins=120
@@ -119,6 +119,9 @@ GET /api/liq/heatmap?symbol=ETHUSDT&tf=4h&range=3D&side=all&size=all&mode=persis
 - Bitget currently supplies no leverage field in the collected row. The UI therefore labels the filter `규모` and uses explicit quartile membership: `Q2+` starts at the 25th percentile, `Q3+` at the median, and `Q4` at the 75th percentile. The response publishes the actual thresholds and `leverage_available=false`. If a future source provides leverage for every event, metadata switches to `filter_basis=leverage`; no leverage is inferred.
 - `source=coinglass_est` returns the same adapter shape with `source_status=locked` until an existing collector is connected. It is a separate disabled layer and is never mixed with Bitget realized totals.
 - The UI polls this observation at no more than five-second intervals while its layer is active. It remains excluded from Entry Score, directional confluence, paper-engine entry gates, and live orders.
+- The UI exposes `LIVE · 청산 5초`, last receive time, and the latest `최근 확정` candle time. `LIVE` describes observation polling only; it does not claim an unconfirmed candle or streaming order-book feed.
+- The top three realized-density zones use ranked solid bands (`밀집 1/2/3`) with price, estimated realized USD, and event count. They replace the unexplained yellow dotted outlines. Clicking a zone highlights its price; it does not create an action-plan guardrail.
+- The rendering default is 68% opacity under the versioned `fce.unifiedHeatmap.opacity.v2` preference. Raw bucket totals are unchanged.
 
 ## WO-FCE-21 Integration
 

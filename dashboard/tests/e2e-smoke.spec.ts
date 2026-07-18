@@ -162,17 +162,20 @@ test("live position cockpit smoke path", async ({ page }) => {
   await expect(page.getByTestId("action-plan")).toBeVisible();
   await expect(page.locator(".analysisChartColumn").getByTestId("money-flow-card")).toBeVisible();
   await expect(page.locator(".evidenceRoomRail").getByTestId("money-flow-card")).toHaveCount(0);
-  const realizedHeatmap = page.getByTestId("realized-liquidation-heatmap");
-  await expect(realizedHeatmap).toBeVisible();
-  await expect(realizedHeatmap.getByTestId("realized-liquidation-density-summary")).toContainText("최대 실현 밀집");
-  await expect(realizedHeatmap.getByTestId("realized-liquidation-density-bands").locator("rect")).not.toHaveCount(0);
-  await expect(realizedHeatmap).toContainText("수평 밴드 = 선택 기간 누적 실현 밀집");
+  await expect(page.getByTestId("realized-liquidation-heatmap")).toHaveCount(0);
   await expect(page.getByTestId("chart-layer-liquidation_realized")).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByTestId("chart-layer-liquidation_estimated")).toBeDisabled();
   await expect(page.getByTestId("unified-heatmap-controls")).toContainText("실제 청산 · 예상 아님");
   await expect(page.getByTestId("unified-heatmap-controls")).toContainText("N=");
+  await expect(page.getByTestId("unified-heatmap-live")).toContainText("LIVE");
+  await expect(page.getByTestId("unified-heatmap-live")).toContainText("청산 5초");
+  await expect(page.getByTestId("unified-heatmap-live")).toContainText("최근 확정");
+  await expect(page.getByTestId("unified-heatmap-zones")).toContainText("밝은 실선 밴드");
+  await expect(page.getByTestId("unified-heatmap-zone-1")).toBeVisible();
+  await expect(page.getByTestId("unified-heatmap-zone-2")).toBeVisible();
+  await expect(page.getByTestId("unified-heatmap-zone-3")).toBeVisible();
   await expect(page.getByTestId("unified-heatmap-canvas")).toBeVisible();
-  await expect(page.getByRole("slider", { name: "청산 히트맵 투명도" })).toHaveValue("0.55");
+  await expect(page.getByRole("slider", { name: "청산 히트맵 투명도" })).toHaveValue("0.68");
   const beforeFilterUrl = page.url();
   await page.getByTestId("unified-heatmap-controls").getByRole("button", { name: "Q4" }).click();
   await expect(page.getByTestId("unified-heatmap-controls").getByRole("button", { name: "Q4" })).toHaveAttribute("aria-pressed", "true");
@@ -211,7 +214,7 @@ test("live position cockpit smoke path", async ({ page }) => {
   await expect(page.getByTestId("chart-layer-plan")).toHaveAttribute("aria-pressed", "true");
 });
 
-test("realized liquidation density overlays current OHLC candles", async ({ page }) => {
+test("unified liquidation density is the single live chart surface", async ({ page }) => {
   await page.route("**/api/live/positions/*/chart-analysis*", async (route) => {
     const response = await route.fetch();
     const body = await response.json();
@@ -230,13 +233,16 @@ test("realized liquidation density overlays current OHLC candles", async ({ page
   await page.getByTestId("minimal-asset-card").filter({ hasText: "ETHUSDT" }).click();
   await page.getByTestId("pro-mode-button").click();
 
-  const heatmap = page.getByTestId("realized-liquidation-heatmap");
-  await expect(heatmap.getByTestId("realized-liquidation-density-bands").locator("rect")).not.toHaveCount(0);
-  await expect(heatmap.getByTestId("realized-liquidation-candles").locator(".heatmapCandleBody")).not.toHaveCount(0);
-  await expect(heatmap.getByTestId("realized-liquidation-current-price")).toBeVisible();
+  await expect(page.getByTestId("realized-liquidation-heatmap")).toHaveCount(0);
+  await expect(page.getByTestId("unified-heatmap-controls")).toBeVisible();
+  await expect(page.getByTestId("unified-heatmap-live")).toContainText("LIVE");
+  await expect(page.getByTestId("unified-heatmap-live")).toContainText("최근 확정");
+  await expect(page.getByTestId("unified-heatmap-zones")).toContainText("상위 실현 밀집 3구간");
+  await expect(page.getByTestId("unified-heatmap-canvas")).toBeVisible();
+  await expect(page.locator("[data-price-flag-kind='mark'] .liveMarkPulse")).toHaveCount(1);
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(heatmap.getByTestId("realized-liquidation-density-summary")).toBeVisible();
+  await expect(page.getByTestId("unified-heatmap-zones")).toBeVisible();
   const horizontalOverflow = await page.evaluate(
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth
   );

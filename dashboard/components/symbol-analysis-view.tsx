@@ -4,7 +4,6 @@ import { ReactNode, useEffect, useState } from "react";
 import { HealthScoreBreakdownView } from "@/components/score-breakdown";
 import { MoneyFlowCard } from "@/components/position/CompactChartWorkspace";
 import { PositionChart, type PositionChartOverlay } from "@/components/position/PositionChart";
-import { LiquidationHeatmapPanel } from "@/components/position/LiquidationHeatmapPanel";
 import { VolumeProfilePanel } from "@/components/position/VolumeProfilePanel";
 import { VolumeXrayPanel } from "@/components/position/VolumeXrayPanel";
 import {
@@ -205,14 +204,6 @@ export function SymbolAnalysisView({
             intentZoneSelector={intentZoneSelector}
           />
           <MoneyFlowCard derivatives={chartAnalysis?.derivatives} options={chartAnalysis?.options} />
-          {chartAnalysis && (!chartAnalysis.asset_class || chartAnalysis.asset_class === "crypto") ? (
-            <LiquidationHeatmapPanel
-              symbol={chartAnalysis.symbol}
-              currentPrice={chartAnalysis.mark_price}
-              candles={chartAnalysis.candles}
-              timeframe={chartAnalysis.timeframe}
-            />
-          ) : null}
         </div>
         <aside className="evidenceRoomRail">
           {sidePanel}

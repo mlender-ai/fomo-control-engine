@@ -1191,64 +1191,6 @@ export type DerivativesContext = {
   source_status?: string;
 };
 
-export type LiquidationHeatmapCell = {
-  time: string;
-  time_index: number;
-  price_index: number;
-  price_low: number;
-  price_high: number;
-  long_usd_estimated: number;
-  short_usd_estimated: number;
-  total_usd_estimated: number;
-  raw_amount: number;
-  events: number;
-  intensity: number;
-  dominant_side: "long" | "short";
-};
-
-export type LiquidationHeatmapZone = {
-  price_low: number;
-  price_high: number;
-  price_mid: number;
-  long_usd_estimated: number;
-  short_usd_estimated: number;
-  total_usd_estimated: number;
-  raw_amount: number;
-  events: number;
-  share_pct: number;
-  dominant_side: "long" | "short";
-};
-
-export type LiquidationHeatmap = {
-  symbol: string;
-  mode: "realized_liquidations";
-  source: "bitget_public_rest";
-  source_status: "ok" | "empty" | "locked" | "error" | string;
-  as_of: string;
-  window_start: string;
-  window_end: string;
-  latest_event_at: string | null;
-  window_hours: number;
-  sample_size: number;
-  current_price: number | null;
-  price_low: number | null;
-  price_high: number | null;
-  price_bin_size: number | null;
-  price_bins: number;
-  time_bins: number;
-  cells: LiquidationHeatmapCell[];
-  top_zones: LiquidationHeatmapZone[];
-  summary: {
-    long_usd_estimated: number;
-    short_usd_estimated: number;
-    total_usd_estimated: number;
-    dominant_side: "long" | "short" | null;
-  };
-  coverage: Record<string, unknown>;
-  notes: string[];
-  refresh?: { stored: number; pages: number };
-};
-
 export type UnifiedLiquidationHeatmap = {
   symbol: string;
   source: "bitget_realized" | "coinglass_est";
@@ -2367,12 +2309,6 @@ export const api = {
     request<Report>("/api/reports", {
       method: "POST",
       body: JSON.stringify({ symbol, timeframe: "4h" })
-    }),
-  liquidationHeatmap: (symbol: string, windowHours: 24 | 72 = 72) =>
-    request<LiquidationHeatmap>(`/api/derivatives/${encodeURIComponent(symbol)}/liquidation-heatmap?window_hours=${windowHours}`),
-  refreshLiquidationHeatmap: (symbol: string, windowHours: 24 | 72 = 72) =>
-    request<LiquidationHeatmap>(`/api/derivatives/${encodeURIComponent(symbol)}/liquidation-heatmap/refresh?window_hours=${windowHours}`, {
-      method: "POST"
     }),
   unifiedLiquidationHeatmap: (
     symbol: string,
