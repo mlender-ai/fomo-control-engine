@@ -64,10 +64,16 @@ This join is not a union of the Bitget crypto universe and the Toss stock univer
 - An identity match creates a `pending` candidate, not an active join. A mismatch becomes `rejected`; an ambiguous or unknown identity stays pending without join access. Only an explicit user approval changes a matching pending candidate to `verified`.
 - Leveraged ETFs remain one underlying instrument. The leverage factor is displayed as context and is not used to scale prices or signals.
 
-The management surface is the stock scout page. It shows the Bitget contract and Toss identity evidence side by side, with `approve` and `reject` controls for pending candidates. Rejected candidates can be regenerated only after the canonical identity or source metadata is corrected; verification is never inferred from a prior ticker match.
+The stock scout page remains the full mapping management surface. The live-position cockpit also shows the selected contract's mapping state and allows an identity-matched pending candidate to be manually approved in context. Both surfaces show the Bitget contract and Toss identity evidence side by side; neither can infer verification from a prior ticker match. Rejected candidates can be regenerated only after the canonical identity or source metadata is corrected.
 
 ### Read-only chart decoration
 
 For a verified map, the current Bitget mark is always the price of record. Toss daily OHLC is retained in raw form and also aligned to the Bitget mark by the contemporaneous basis ratio so its structural levels can share the existing chart scale. The chart exposes both source prices, the basis ratio and timestamp, Toss session freshness, security warnings, and any leverage warning. Toss does not provide US investor-category flow, so that signal is explicitly marked unavailable instead of being inferred from another source.
 
 This decoration occurs after the existing Bitget analysis and gauges have been computed. It does not mutate cached analysis, Entry Score, paper-engine decisions, candidate promotion, or any order path. A pending/rejected map, missing Toss data, or a join error leaves the original Bitget chart intact.
+
+### Live-position source hierarchy (WO-FCE-BITGET-TOSS-MAP-02)
+
+The position cockpit is source-aware. For a stock-underlying perpetual, the summary panel names Bitget as the execution and live-price source and Toss as the read-only chart and structure source. It exposes the verification state, both source prices, basis, underlying session freshness, leverage context, and the explicit absence of US investor-category flow. A pending identity match can be approved from this panel and the chart is reloaded immediately.
+
+Crypto whale telemetry is shown only for pure crypto contracts. It is not a substitute for equity-underlying ownership or flow data, so NBIS, SOXL, MSTR, and other eligible stock perpetuals never display the crypto whale banner or its position-card label.

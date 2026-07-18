@@ -16,7 +16,7 @@ import {
   UploadCloud,
   Waves
 } from "lucide-react";
-import { FormEvent, useEffect, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { CompactChartWorkspace, type CompactNextPrice } from "@/components/position/CompactChartWorkspace";
 import { MinimalAssetCard } from "@/components/position/MinimalAssetCard";
 import { TerminalPanel, TerminalWarning } from "@/components/terminal";
@@ -33,6 +33,9 @@ import {
   type LivePositionDetail,
   type LivePositionPayload,
   type LivePositionsResponse,
+  type InstrumentMapItem,
+  type InstrumentMapState,
+  type InstrumentMapTarget,
   type OneLinerLine,
   type OneLinerStance,
   type OneLinerSummary,
@@ -76,6 +79,9 @@ export function LivePositionCockpit() {
   const [stripChartAnalysis, setStripChartAnalysis] = useState<Record<string, PositionChartAnalysis>>({});
   const [whales, setWhales] = useState<OnchainWhaleDashboard | null>(null);
   const [whaleError, setWhaleError] = useState("");
+  const [instrumentMaps, setInstrumentMaps] = useState<InstrumentMapState | null>(null);
+  const [instrumentMapLoading, setInstrumentMapLoading] = useState(true);
+  const [instrumentMapError, setInstrumentMapError] = useState("");
   const [viewMode, setViewMode] = useState<FceViewMode>("minimal");
   const selectedChartRequestRef = useRef(0);
   const selectedDetailRequestRef = useRef(0);
@@ -84,6 +90,19 @@ export function LivePositionCockpit() {
 
   useEffect(() => {
     setViewMode(new URLSearchParams(window.location.search).get("mode") === "pro" ? "pro" : loadFceViewMode());
+  }, []);
+
+  const loadInstrumentMaps = useCallback(async (sync = false) => {
+    setInstrumentMapLoading(true);
+    try {
+      const next = sync ? await api.syncInstrumentMaps() : await api.instrumentMaps();
+      setInstrumentMaps(next);
+      setInstrumentMapError("");
+    } catch (err) {
+      setInstrumentMapError(err instanceof Error ? err.message : "기초자산 매핑 상태를 불러오지 못했습니다.");
+    } finally {
+      setInstrumentMapLoading(false);
+    }
   }, []);
 
   function updateViewMode(mode: FceViewMode) {
@@ -239,6 +258,14 @@ export function LivePositionCockpit() {
   const selectedChartForPayload = selectedChartAnalysis?.position_id === selectedPayload?.position.id ? selectedChartAnalysis : null;
   const selectedWhaleSummary = selectedPayload ? whalePositionSummary(whales, selectedPayload.position.symbol) : null;
   const stripChartKey = positions.map((item) => item.position.id).join("|");
+  const selectedInstrumentTarget = selectedPayload ? instrumentTargetForSymbol(instrumentMaps, selectedPayload.position.symbol) : null;
+  const selectedInstrumentMap = selectedPayload ? instrumentMapForSymbol(instrumentMaps, selectedPayload.position.symbol) : null;
+  const selectedIsStockUnderlying = selectedInstrumentTarget?.join_eligible === true || selectedChartForPayload?.asset_class === "stock";
+
+  useEffect(() => {
+    if (!stripChartKey) return;
+    void loadInstrumentMaps(true);
+  }, [loadInstrumentMaps, stripChartKey]);
 
   function selectPosition(positionId: string) {
     setSelectedId(positionId);
@@ -279,6 +306,23 @@ export function LivePositionCockpit() {
       setSelectedChartError(err instanceof Error ? err.message : "차트 분석 데이터를 불러오지 못했습니다.");
     } finally {
       if (selectedChartRequestRef.current === requestId && showSpinner) setSelectedChartLoading(false);
+    }
+  }
+
+  async function approveUnderlyingMap(symbol: string) {
+    if (!selectedPayload) return;
+    setActionLoading(`map:${symbol}`);
+    setError("");
+    setNotice("");
+    try {
+      await api.approveInstrumentMap(symbol);
+      await loadInstrumentMaps(false);
+      await loadSelectedChart(selectedPayload.position.id, true, viewMode === "minimal");
+      setNotice(`${symbol}의 검증된 Toss 기초자산 조인을 활성화했습니다.`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "기초자산 매핑 승인에 실패했습니다.");
+    } finally {
+      setActionLoading("");
     }
   }
 
@@ -384,6 +428,7 @@ export function LivePositionCockpit() {
         <>
           <PositionStrip
             chartAnalysisById={stripChartAnalysis}
+            instrumentMaps={instrumentMaps}
             whales={whales}
             positions={positions}
             referenceTime={data?.timestamp ?? null}
@@ -393,12 +438,31 @@ export function LivePositionCockpit() {
           />
           {selectedPayload ? (
             <>
-              <PositionWhaleBanner
-                direction={selectedPayload.position.direction}
-                error={whaleError}
-                loading={!whales && !whaleError}
-                summary={selectedWhaleSummary}
-              />
+              {selectedIsStockUnderlying || selectedInstrumentTarget?.join_eligible ? (
+                <PositionUnderlyingBanner
+                  analysis={selectedChartForPayload}
+                  busy={actionLoading === `map:${selectedPayload.position.symbol}`}
+                  error={instrumentMapError}
+                  loading={instrumentMapLoading}
+                  mapping={selectedInstrumentMap}
+                  onApprove={() => void approveUnderlyingMap(selectedPayload.position.symbol)}
+                  symbol={selectedPayload.position.symbol}
+                  target={selectedInstrumentTarget}
+                />
+              ) : instrumentMaps || selectedChartForPayload?.asset_class === "crypto" ? (
+                <PositionWhaleBanner
+                  direction={selectedPayload.position.direction}
+                  error={whaleError}
+                  loading={!whales && !whaleError}
+                  summary={selectedWhaleSummary}
+                />
+              ) : (
+                <PositionSourceStatus
+                  error={instrumentMapError}
+                  loading={instrumentMapLoading}
+                  onRetry={() => void loadInstrumentMaps(true)}
+                />
+              )}
               {viewMode === "minimal" ? (
                 <MinimalPositionWorkspace
                   payload={selectedPayload}
@@ -456,6 +520,7 @@ export function LivePositionCockpit() {
 function PositionStrip({
   chartAnalysisById,
   compact,
+  instrumentMaps,
   positions,
   referenceTime,
   selectedId,
@@ -464,6 +529,7 @@ function PositionStrip({
 }: {
   chartAnalysisById: Record<string, PositionChartAnalysis>;
   compact: boolean;
+  instrumentMaps: InstrumentMapState | null;
   positions: LivePositionPayload[];
   referenceTime: string | null;
   selectedId: string;
@@ -477,13 +543,13 @@ function PositionStrip({
         const trigger = nearestActionTrigger(item);
         const freshness = analysisFreshness(item, referenceTime);
         const whaleSummary = whalePositionSummary(whales, item.position.symbol);
-        const whaleMeta = whaleMicroLabel(whaleSummary);
+        const sourceMeta = positionSourceMeta(instrumentMaps, item.position.symbol, whaleSummary);
         const selected = item.position.id === selectedId;
         if (compact) {
           return (
             <MinimalAssetCard
               key={item.position.id}
-              meta={`${directionLabel(item.position.direction)} · ${item.position.leverage}x${whaleMeta ? ` · ${whaleMeta}` : ""}`}
+              meta={`${directionLabel(item.position.direction)} · ${item.position.leverage}x${sourceMeta.label ? ` · ${sourceMeta.label}` : ""}`}
               onClick={() => onSelect(item.position.id)}
               selected={selected}
               stale={freshness.stale}
@@ -526,13 +592,167 @@ function PositionStrip({
               {plainifyTaText(headlineForPayload(item))}
               {trigger ? <b>{formatDistance(trigger.distance_pct)}</b> : null}
             </span>
-            {whaleMeta ? <span className="stripWhaleMeta"><Waves size={11} />{whaleMeta}</span> : null}
+            {sourceMeta.label ? (
+              <span className={sourceMeta.kind === "underlying" ? "stripUnderlyingMeta" : "stripWhaleMeta"}>
+                {sourceMeta.kind === "underlying" ? <Landmark size={11} /> : <Waves size={11} />}
+                {sourceMeta.label}
+              </span>
+            ) : null}
             <span className={`analysisAsOfChip ${freshness.stale ? "stale" : ""}`}>{freshness.label}</span>
           </button>
         );
       })}
     </section>
   );
+}
+
+function PositionSourceStatus({
+  error,
+  loading,
+  onRetry
+}: {
+  error: string;
+  loading: boolean;
+  onRetry: () => void;
+}) {
+  return (
+    <section className={`positionSourceStatus ${error ? "error" : "loading"}`} data-testid="position-source-status">
+      {error ? <AlertTriangle size={16} /> : <RefreshCw className={loading ? "spin" : ""} size={16} />}
+      <span>{error || "자산 유형과 관측 소스를 확인하고 있습니다."}</span>
+      {error ? <button className="button small secondary" onClick={onRetry} type="button">다시 확인</button> : null}
+    </section>
+  );
+}
+
+function PositionUnderlyingBanner({
+  analysis,
+  busy,
+  error,
+  loading,
+  mapping,
+  onApprove,
+  symbol,
+  target
+}: {
+  analysis: PositionChartAnalysis | null;
+  busy: boolean;
+  error: string;
+  loading: boolean;
+  mapping: InstrumentMapItem | null;
+  onApprove: () => void;
+  symbol: string;
+  target: InstrumentMapTarget | null;
+}) {
+  const join = analysis?.underlying_join;
+  const status = mapping?.verification_status ?? target?.mapping_status ?? "pending";
+  const checks = mapping?.verification_evidence.checks ?? {};
+  const identityChecks = [checks.official_name, checks.exchange, checks.asset_type].filter(Boolean).length;
+  const basis = Number(join?.basis_pct ?? 0);
+
+  if (loading && !mapping && !target) {
+    return <PositionSourceStatus error="" loading onRetry={() => undefined} />;
+  }
+
+  return (
+    <section className={`positionUnderlyingBanner status-${status}`} data-testid="position-underlying-banner">
+      <header>
+        <div>
+          <Landmark size={17} />
+          <span>주식 기초자산 연결</span>
+          <strong>{symbol}</strong>
+        </div>
+        <small><i />실행·실시간가 Bitget · 차트·구조 Toss</small>
+      </header>
+
+      {error ? <p className="underlyingBannerAlert"><AlertTriangle size={14} />매핑 갱신 실패 · {error}</p> : null}
+
+      {status === "pending" ? (
+        <div className="underlyingPendingGrid">
+          <div>
+            <span>Bitget 계약</span>
+            <strong>{mapping?.bitget_symbol ?? symbol}</strong>
+            <small>{mapping?.bitget_type === "spot" ? "현물" : "USDT 선물"} · 실행/현재가</small>
+          </div>
+          <div>
+            <span>Toss 후보</span>
+            <strong>{mapping?.underlying_name ?? mapping?.toss_symbol ?? "신원 확인 중"}</strong>
+            <small>{mapping ? `${mapping.toss_exchange} · ${underlyingKindLabel(mapping.underlying_kind)}` : "메타데이터 확인 중"}</small>
+          </div>
+          <div className="underlyingPendingDecision">
+            <span>1:1 신원 검증</span>
+            <strong>{mapping?.identity_match ? `${identityChecks || 3}/3 일치` : "승인 불가"}</strong>
+            <small>정식 명칭 · 거래소 · 자산유형</small>
+          </div>
+          <button className="button" disabled={busy || !mapping?.identity_match} onClick={onApprove} type="button">
+            <ShieldCheck size={15} />{busy ? "연결 중" : "Toss 조인 승인"}
+          </button>
+        </div>
+      ) : status === "verified" && join?.status === "joined" ? (
+        <>
+          <div className="underlyingSourceMetrics">
+            <div><span>Bitget 실행가</span><strong>{formatPrice(join.bitget_price)}</strong><small>가격 기준 · {join.bitget_symbol}</small></div>
+            <div><span>Toss 기초자산</span><strong>{formatPrice(join.toss_price)}</strong><small>{join.underlying_name} · {join.toss_exchange}</small></div>
+            <div><span>베이시스</span><strong className={basis > 0 ? "positive" : basis < 0 ? "negative" : ""}>{basis > 0 ? "+" : ""}{basis.toFixed(2)}%</strong><small>차트 구조 정렬 비율</small></div>
+            <div><span>기초자산 세션</span><strong>{join.stale ? "장 마감" : "장중"}</strong><small>{join.toss_price_at ? new Date(join.toss_price_at).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "기준시각 확인 중"}</small></div>
+          </div>
+          <div className="underlyingSourceNotes">
+            <span><ShieldCheck size={13} />검증된 1:1 매핑 · Toss 일봉 구조가 아래 Bitget 차트 축에 정렬됩니다.</span>
+            {join.flow_note ? <span><Activity size={13} />{join.flow_note}</span> : null}
+            {join.leverage_note ? <em><AlertTriangle size={13} />{join.leverage_note}</em> : null}
+          </div>
+        </>
+      ) : status === "verified" ? (
+        <div className="underlyingUnavailable">
+          {analysis ? <AlertTriangle size={16} /> : <RefreshCw className="spin" size={16} />}
+          <div>
+            <strong>{analysis ? "Toss 구조 데이터 지연 · Bitget 차트 유지" : "Toss 기초자산 데이터를 불러오는 중입니다."}</strong>
+            <span>{join?.reason || "검증된 매핑을 기준으로 원주 일봉과 세션을 확인합니다."}</span>
+          </div>
+        </div>
+      ) : (
+        <div className="underlyingUnavailable">
+          <AlertTriangle size={16} />
+          <div><strong>Toss 조인 비활성</strong><span>{mapping?.notes || target?.join_reason || "매핑 검증이 필요합니다."}</span></div>
+        </div>
+      )}
+      <footer>주식 선물에는 크립토 고래 추적을 적용하지 않음 · Toss 데이터는 읽기 전용 관측이며 주문·자동 진입에 사용하지 않음</footer>
+    </section>
+  );
+}
+
+function instrumentTargetForSymbol(state: InstrumentMapState | null, symbol: string): InstrumentMapTarget | null {
+  const normalized = symbol.toUpperCase();
+  return state?.targets.find((item) => item.symbol.toUpperCase() === normalized) ?? null;
+}
+
+function instrumentMapForSymbol(state: InstrumentMapState | null, symbol: string): InstrumentMapItem | null {
+  const normalized = symbol.toUpperCase();
+  return state?.items.find((item) => item.bitget_symbol.toUpperCase() === normalized) ?? null;
+}
+
+function positionSourceMeta(
+  state: InstrumentMapState | null,
+  symbol: string,
+  whaleSummary: PositionWhaleSummary | null
+): { kind: "underlying" | "whale"; label: string } {
+  if (!state) return { kind: "whale", label: "" };
+  const target = instrumentTargetForSymbol(state, symbol);
+  if (target?.join_eligible) {
+    const mapping = instrumentMapForSymbol(state, symbol);
+    const label = mapping?.verification_status === "verified"
+      ? "Toss 차트 연결"
+      : mapping?.verification_status === "rejected"
+        ? "Toss 매핑 거부"
+        : "Toss 승인 대기";
+    return { kind: "underlying", label };
+  }
+  return { kind: "whale", label: whaleMicroLabel(whaleSummary) };
+}
+
+function underlyingKindLabel(kind: InstrumentMapItem["underlying_kind"]): string {
+  if (kind === "leveraged_etf") return "레버리지 ETF";
+  if (kind === "etf") return "ETF";
+  return "주식";
 }
 
 type PositionWhaleSummary = OnchainWhaleDashboard["symbol_activity"][string] & {

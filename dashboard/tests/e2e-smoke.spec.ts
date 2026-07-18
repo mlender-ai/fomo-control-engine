@@ -390,6 +390,123 @@ test("minimal evidence deep-links into a reproducible evidence room", async ({ p
   await expect(page.getByTestId("chart-layer-levels")).toHaveAttribute("aria-pressed", "true");
 });
 
+test("stock perpetual position shows Toss source hierarchy instead of crypto whales", async ({ page, request }) => {
+  const mappingState = {
+    targets: [{
+      symbol: "SOXLUSDT",
+      sources: ["position"],
+      asset_class: "stock",
+      source_category: "bitget_rwa",
+      join_eligible: true,
+      join_reason: "검증 대상",
+      mapping_status: "verified"
+    }],
+    items: [{
+      bitget_symbol: "SOXLUSDT",
+      bitget_type: "usdt_futures",
+      underlying_name: "DIREXION DAILY SEMICONDUCTOR BULL 3X SHARES",
+      underlying_kind: "leveraged_etf",
+      toss_symbol: "SOXL",
+      toss_market: "US",
+      toss_exchange: "AMEX",
+      leverage_note: "3x 레버리지 ETF · Bitget 퍼페추얼 결합 시 레버리지 중첩",
+      verification_status: "verified",
+      verified_by: "manual",
+      verified_at: "2026-07-18T13:00:00Z",
+      identity_match: true,
+      notes: "사용자 수동 승인",
+      verification_evidence: {
+        checks: { official_name: true, exchange: true, asset_type: true },
+        ticker_only_match_used: false
+      },
+      created_at: "2026-07-18T12:00:00Z",
+      updated_at: "2026-07-18T13:00:00Z"
+    }],
+    policy: {
+      price_of_record: "Bitget",
+      structure_source: "Toss underlying",
+      pending_join_enabled: false,
+      crypto_toss_enabled: false
+    }
+  };
+
+  await page.route("**/api/instrument-maps**", async (route) => {
+    await route.fulfill({ json: mappingState });
+  });
+
+  const livePositionsResponse = await request.get("/api/live/positions");
+  expect(livePositionsResponse.ok()).toBe(true);
+  const livePositionsPayload = await livePositionsResponse.json();
+  const sourcePosition = livePositionsPayload.positions[0];
+  expect(sourcePosition?.position?.id).toBeTruthy();
+  sourcePosition.position.symbol = "SOXLUSDT";
+
+  const positionId = sourcePosition.position.id;
+  const detailResponse = await request.get(`/api/live/positions/${positionId}`);
+  const detailPayload = await detailResponse.json();
+  detailPayload.position.symbol = "SOXLUSDT";
+
+  const chartResponse = await request.get(`/api/live/positions/${positionId}/chart-analysis?timeframe=4h&compact=true`);
+  const chartPayload = await chartResponse.json();
+  chartPayload.symbol = "SOXLUSDT";
+  chartPayload.asset_class = "stock";
+  chartPayload.underlying_join = {
+    status: "joined",
+    price_of_record: "bitget",
+    structure_source: "toss",
+    structure_timeframe: "1d",
+    bitget_symbol: "SOXLUSDT",
+    bitget_price: 133.5,
+    toss_symbol: "SOXL",
+    toss_price: 134.03,
+    toss_price_at: "2026-07-18T08:59:00Z",
+    basis_pct: -0.4,
+    market_state: "closed",
+    stale: true,
+    underlying_name: "DIREXION DAILY SEMICONDUCTOR BULL 3X SHARES",
+    underlying_kind: "leveraged_etf",
+    toss_exchange: "AMEX",
+    leverage_note: "3x 레버리지 ETF · Bitget 퍼페추얼 결합 시 레버리지 중첩",
+    flow_status: "unavailable_us",
+    flow_note: "Toss US 투자자별 수급 미제공 · 해당 신호 비활성",
+    warning_gate_blocked: false,
+    warning_badges: []
+  };
+
+  await page.route("**/api/live/positions**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith("/chart-analysis")) {
+      await route.fulfill({ json: chartPayload });
+      return;
+    }
+    if (url.pathname === `/api/live/positions/${positionId}`) {
+      await route.fulfill({ json: detailPayload });
+      return;
+    }
+    if (url.pathname === "/api/live/positions") {
+      await route.fulfill({ json: livePositionsPayload });
+      return;
+    }
+    await route.continue();
+  });
+
+  await page.goto("/");
+  const sourceBanner = page.getByTestId("position-underlying-banner");
+  await expect(sourceBanner).toBeVisible({ timeout: 30_000 });
+  await expect(sourceBanner).toContainText("실행·실시간가 Bitget · 차트·구조 Toss");
+  await expect(sourceBanner).toContainText("Bitget 실행가");
+  await expect(sourceBanner).toContainText("Toss 기초자산");
+  await expect(sourceBanner).toContainText("Toss US 투자자별 수급 미제공");
+  await expect(page.getByTestId("position-whale-banner")).toHaveCount(0);
+  await expect(page.getByTestId("underlying-join-strip")).toBeVisible();
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth
+  );
+  expect(overflow).toBeLessThanOrEqual(2);
+});
+
 test("scout and analysis smoke paths", async ({ page }) => {
   await page.goto("/scout");
   await expect(page.getByTestId("demo-mode-badge")).toBeVisible({ timeout: 30_000 });

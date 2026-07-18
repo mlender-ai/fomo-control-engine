@@ -3741,6 +3741,164 @@ textarea:focus {
   font: 600 10px/1.2 var(--rh-font-mono);
 }
 
+.stripUnderlyingMeta {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--rh-green) !important;
+  font: 650 10px/1.2 var(--rh-font-mono);
+}
+
+.positionSourceStatus,
+.positionUnderlyingBanner {
+  width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--rh-border);
+  border-left: 3px solid var(--rh-green);
+  border-radius: var(--rh-radius-md);
+  background: var(--rh-surface);
+}
+
+.positionSourceStatus {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 48px;
+  padding: 11px 14px;
+  color: var(--rh-muted);
+  font-size: 12px;
+}
+
+.positionSourceStatus.error { border-left-color: var(--rh-orange); }
+.positionSourceStatus .button { margin-left: auto; }
+
+.positionUnderlyingBanner {
+  display: grid;
+  gap: 10px;
+  padding: 13px 15px 11px;
+}
+
+.positionUnderlyingBanner.status-pending { border-left-color: var(--rh-orange); }
+.positionUnderlyingBanner.status-rejected { border-left-color: var(--rh-red); }
+
+.positionUnderlyingBanner > header,
+.positionUnderlyingBanner > header > div,
+.underlyingSourceNotes > span,
+.underlyingSourceNotes > em,
+.underlyingBannerAlert,
+.underlyingUnavailable {
+  display: flex;
+  align-items: center;
+}
+
+.positionUnderlyingBanner > header {
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.positionUnderlyingBanner > header > div { gap: 7px; min-width: 0; }
+.positionUnderlyingBanner > header svg { flex: 0 0 auto; color: var(--rh-green); }
+.positionUnderlyingBanner > header span { color: var(--rh-muted); font-size: 11px; }
+.positionUnderlyingBanner > header strong { overflow: hidden; color: var(--rh-white); font: 700 13px/1.2 var(--rh-font-mono); text-overflow: ellipsis; }
+
+.positionUnderlyingBanner > header small {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--rh-muted);
+  font: 550 10px/1.2 var(--rh-font-mono);
+  white-space: nowrap;
+}
+
+.positionUnderlyingBanner > header small i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--rh-green);
+}
+
+.underlyingPendingGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  align-items: stretch;
+  border-block: 1px solid var(--rh-border);
+}
+
+.underlyingPendingGrid > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 10px 12px;
+}
+
+.underlyingPendingGrid > div + div { border-left: 1px solid var(--rh-border); }
+.underlyingPendingGrid span,
+.underlyingPendingGrid small,
+.underlyingSourceMetrics span,
+.underlyingSourceMetrics small { color: var(--rh-muted); font-size: 10px; }
+.underlyingPendingGrid strong,
+.underlyingSourceMetrics strong { overflow: hidden; color: var(--rh-white); font: 650 13px/1.25 var(--rh-font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.underlyingPendingGrid .button { align-self: center; margin: 8px 0 8px 12px; white-space: nowrap; }
+.underlyingPendingDecision strong { color: var(--rh-orange); }
+
+.underlyingSourceMetrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-block: 1px solid var(--rh-border);
+}
+
+.underlyingSourceMetrics > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 9px 12px;
+}
+
+.underlyingSourceMetrics > div + div { border-left: 1px solid var(--rh-border); }
+.underlyingSourceMetrics strong.positive { color: var(--rh-green); }
+.underlyingSourceMetrics strong.negative { color: var(--rh-red); }
+
+.underlyingSourceNotes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px 18px;
+}
+
+.underlyingSourceNotes > span,
+.underlyingSourceNotes > em {
+  gap: 5px;
+  color: var(--rh-muted);
+  font-size: 10px;
+  font-style: normal;
+}
+
+.underlyingSourceNotes > em { color: var(--rh-orange); }
+
+.underlyingBannerAlert {
+  gap: 6px;
+  margin: 0;
+  color: var(--rh-orange);
+  font-size: 11px;
+}
+
+.underlyingUnavailable {
+  gap: 10px;
+  min-height: 50px;
+  border-block: 1px solid var(--rh-border);
+  padding: 9px 12px;
+  color: var(--rh-orange);
+}
+
+.underlyingUnavailable > div { display: grid; gap: 3px; min-width: 0; }
+.underlyingUnavailable strong { color: var(--rh-white); font-size: 12px; }
+.underlyingUnavailable span { color: var(--rh-muted); font-size: 10px; }
+
+.positionUnderlyingBanner > footer {
+  color: var(--rh-muted);
+  font-size: 9px;
+  line-height: 1.3;
+}
+
 .positionWhaleBanner {
   display: grid;
   gap: 10px;
@@ -3885,6 +4043,13 @@ textarea:focus {
 }
 
 @media (max-width: 900px) {
+  .underlyingPendingGrid,
+  .underlyingSourceMetrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .underlyingPendingGrid > div:nth-child(3),
+  .underlyingSourceMetrics > div:nth-child(3) { border-top: 1px solid var(--rh-border); border-left: 0; }
+  .underlyingPendingGrid > div:nth-child(4),
+  .underlyingSourceMetrics > div:nth-child(4) { border-top: 1px solid var(--rh-border); }
+  .underlyingPendingGrid .button { margin: 8px 0 8px 12px; }
   .positionWhaleSummary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .positionWhaleSummary > div:nth-child(3) { border-left: 0; border-top: 1px solid var(--rh-border); }
   .positionWhaleSummary > div:nth-child(4) { border-top: 1px solid var(--rh-border); }
@@ -3892,6 +4057,16 @@ textarea:focus {
 }
 
 @media (max-width: 620px) {
+  .positionUnderlyingBanner > header { align-items: flex-start; flex-wrap: wrap; }
+  .positionUnderlyingBanner > header small { width: 100%; white-space: normal; }
+  .underlyingPendingGrid,
+  .underlyingSourceMetrics { grid-template-columns: minmax(0, 1fr); }
+  .underlyingPendingGrid > div + div,
+  .underlyingSourceMetrics > div + div { border-top: 1px solid var(--rh-border); border-left: 0; }
+  .underlyingPendingGrid .button { width: 100%; margin: 10px 0 0; }
+  .underlyingSourceNotes { display: grid; }
+  .positionSourceStatus { align-items: flex-start; flex-wrap: wrap; }
+  .positionSourceStatus .button { width: 100%; margin-left: 0; }
   .positionWhaleBanner > header,
   .positionWhaleLatest { align-items: flex-start; flex-wrap: wrap; }
   .positionWhaleBanner > header small { width: 100%; }
