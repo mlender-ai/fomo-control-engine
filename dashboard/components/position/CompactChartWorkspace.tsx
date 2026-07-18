@@ -1,10 +1,11 @@
 "use client";
 
 import { ArrowDown, ArrowUp, Minus, ShieldCheck, TriangleAlert, Waves } from "lucide-react";
-import type { CompactChartGauges, DerivativesContext, OccOptionsSummary, PositionActionPlan, PositionChartAnalysis } from "@/lib/api";
+import type { CompactChartGauges, DerivativesContext, OccOptionsSummary, PositionActionPlan, PositionChartAnalysis, PositionDeepDive } from "@/lib/api";
 import { MINIMAL_FIXED_LAYER_STATE } from "@/lib/chartLayers";
 import { formatPrice } from "@/lib/format";
 import { PositionChart, type PositionChartOverlay } from "./PositionChart";
+import { PositionDeepDivePanel } from "./PositionDeepDivePanel";
 
 export type CompactNextPrice = {
   label: string;
@@ -22,6 +23,11 @@ export function CompactChartWorkspace({
   gauges,
   nextPrice,
   positionOverlay = null,
+  deepDive = null,
+  deepDiveLoading = false,
+  deepDiveError = "",
+  onRetryDeepDive,
+  onSaveThesis,
   onOpenEvidence
 }: {
   analysis: PositionChartAnalysis | null;
@@ -33,6 +39,11 @@ export function CompactChartWorkspace({
   gauges: CompactChartGauges | null;
   nextPrice: CompactNextPrice | null;
   positionOverlay?: PositionChartOverlay | null;
+  deepDive?: PositionDeepDive | null;
+  deepDiveLoading?: boolean;
+  deepDiveError?: string;
+  onRetryDeepDive?: () => void;
+  onSaveThesis?: (value: string) => Promise<void>;
   onOpenEvidence?: () => void;
 }) {
   const marketTrendSummary = gauges?.market_view?.stance_label || trendSummary;
@@ -57,13 +68,24 @@ export function CompactChartWorkspace({
         />
         <MoneyFlowCard derivatives={analysis?.derivatives} gauges={gauges} options={analysis?.options} />
       </div>
-      <CompactGaugePanel
-        gauges={gauges}
-        nextPrice={marketNextPrice}
-        loading={loading}
-        hasPosition={positionOverlay !== null}
-        onOpenEvidence={onOpenEvidence}
-      />
+      {deepDive || deepDiveLoading || deepDiveError ? (
+        <PositionDeepDivePanel
+          deepDive={deepDive}
+          loading={deepDiveLoading}
+          error={deepDiveError}
+          onRetry={onRetryDeepDive || onRetry}
+          onSaveThesis={onSaveThesis || (async () => undefined)}
+          onOpenEvidence={onOpenEvidence}
+        />
+      ) : (
+        <CompactGaugePanel
+          gauges={gauges}
+          nextPrice={marketNextPrice}
+          loading={loading}
+          hasPosition={positionOverlay !== null}
+          onOpenEvidence={onOpenEvidence}
+        />
+      )}
     </section>
   );
 }

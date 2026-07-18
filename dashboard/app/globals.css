@@ -7198,10 +7198,332 @@ button.actionPlanRow:not(:disabled):hover {
 
 .compactChartWorkspace {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(220px, 250px);
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 340px);
   gap: 12px;
   min-width: 0;
   align-items: stretch;
+}
+
+.positionDeepDivePanel {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid var(--terminal-line);
+  border-radius: 8px;
+  background: var(--fce-surface-panel);
+  padding: 12px;
+}
+
+.positionDeepDivePanel > header,
+.deepDiveBlockTitle,
+.deepDiveSignal > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.positionDeepDivePanel > header {
+  padding: 2px 2px 10px;
+  border-bottom: 1px solid var(--terminal-line);
+}
+
+.positionDeepDivePanel > header > div {
+  display: grid;
+  gap: 2px;
+}
+
+.positionDeepDivePanel > header span,
+.deepDiveBlockTitle span {
+  color: var(--terminal-muted);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.positionDeepDivePanel > header strong {
+  color: var(--terminal-text);
+  font-size: 13px;
+}
+
+.positionDeepDivePanel > header time,
+.deepDiveBlockTitle em {
+  color: var(--terminal-muted);
+  font-family: var(--fce-font-number);
+  font-size: 9px;
+  font-style: normal;
+}
+
+.positionDeepDivePanel.loading,
+.positionDeepDivePanel.error,
+.positionDeepDivePanel.unavailable {
+  min-height: 220px;
+  color: var(--terminal-muted);
+}
+
+.deepDiveBlock {
+  display: grid;
+  gap: 9px;
+  border: 1px solid var(--terminal-line);
+  border-radius: 7px;
+  background: var(--fce-surface-inset);
+  padding: 11px;
+}
+
+.deepDiveBlock > strong {
+  color: var(--terminal-text);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.deepDiveBlock > p,
+.positionDeepDivePanel > footer {
+  margin: 0;
+  color: var(--terminal-muted);
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.thesisStatus {
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: rgba(0, 200, 5, 0.12);
+  color: var(--terminal-positive) !important;
+}
+
+.thesisStatus.weakened {
+  background: rgba(245, 166, 35, 0.12);
+  color: var(--terminal-amber) !important;
+}
+
+.thesisStatus.invalid {
+  background: rgba(255, 80, 91, 0.12);
+  color: var(--terminal-negative) !important;
+}
+
+.thesisEditor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 30px;
+  gap: 5px;
+}
+
+.thesisEditor input {
+  min-width: 0;
+  border: 1px solid var(--terminal-line);
+  border-radius: 5px;
+  background: var(--fce-surface-panel);
+  color: var(--terminal-text);
+  padding: 7px 8px;
+  font-size: 10px;
+}
+
+.thesisEditor button {
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--terminal-line);
+  border-radius: 5px;
+  background: var(--fce-surface-panel);
+  color: var(--terminal-positive);
+}
+
+.deepDiveSignalList {
+  display: grid;
+  gap: 6px;
+}
+
+.deepDiveSignal {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 8px;
+  border-bottom: 1px solid var(--terminal-line);
+  padding: 2px 0 7px;
+}
+
+.deepDiveSignal:last-child {
+  border-bottom: 0;
+}
+
+.deepDiveSignal > div,
+.deepDiveSignal > p,
+.deepDiveSignal > small,
+.deepDiveSignal > details {
+  grid-column: 1;
+}
+
+.deepDiveSignal > div strong {
+  color: var(--terminal-text);
+  font-size: 10px;
+}
+
+.signalSources {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 3px;
+}
+
+.signalSources em {
+  padding: 2px 4px;
+  border: 1px solid var(--terminal-line);
+  border-radius: 3px;
+  color: var(--terminal-muted);
+  font-size: 7px;
+  font-style: normal;
+}
+
+.deepDiveSignal p,
+.deepDiveSignal small,
+.deepDiveSignal details {
+  margin: 0;
+  color: var(--terminal-muted);
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+.deepDiveSignal.active p {
+  color: var(--terminal-text);
+}
+
+.deepDiveSignal.unavailable {
+  opacity: 0.52;
+}
+
+.deepDiveSignal summary,
+.partialSimulation summary {
+  cursor: pointer;
+  color: var(--terminal-muted);
+}
+
+.basisSparkline {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  width: 88px;
+  height: 24px;
+}
+
+.basisSparkline line {
+  stroke: var(--terminal-line);
+  stroke-width: 1;
+}
+
+.basisSparkline path {
+  fill: none;
+  stroke: var(--terminal-cyan);
+  stroke-width: 1.8;
+}
+
+.deepDiveEvidenceLink {
+  width: 100%;
+}
+
+.riskMetricGrid,
+.ledgerMiniView {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.riskMetricGrid > div,
+.ledgerMiniView > div {
+  display: grid;
+  gap: 2px;
+  border: 1px solid var(--terminal-line);
+  border-radius: 5px;
+  padding: 7px;
+}
+
+.riskMetricGrid span,
+.ledgerMiniView span,
+.ledgerMiniView em {
+  color: var(--terminal-muted);
+  font-size: 8px;
+  font-style: normal;
+}
+
+.riskMetricGrid strong,
+.ledgerMiniView strong {
+  color: var(--terminal-text);
+  font-family: var(--fce-font-number);
+  font-size: 11px;
+}
+
+.ledgerMiniView {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.signalPerformanceMini {
+  display: grid;
+  gap: 5px;
+}
+
+.signalPerformanceMini > span {
+  color: var(--terminal-muted);
+  font-size: 8px;
+  font-weight: 800;
+}
+
+.signalPerformanceMini > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 2px 6px;
+  align-items: baseline;
+  border-left: 2px solid var(--terminal-line);
+  padding-left: 7px;
+}
+
+.signalPerformanceMini span,
+.signalPerformanceMini em {
+  color: var(--terminal-muted);
+  font-size: 8px;
+  font-style: normal;
+}
+
+.signalPerformanceMini strong {
+  color: var(--terminal-text);
+  font-family: var(--fce-font-number);
+  font-size: 9px;
+}
+
+.signalPerformanceMini em {
+  grid-column: 1 / -1;
+}
+
+.marketReading {
+  display: grid;
+  gap: 5px;
+  border-left: 2px solid var(--terminal-muted);
+  padding-left: 8px;
+}
+
+.marketReading.opposed { border-left-color: var(--terminal-amber); }
+.marketReading.aligned { border-left-color: var(--terminal-positive); }
+
+.marketReading strong {
+  color: var(--terminal-text);
+  font-size: 10px;
+}
+
+.marketReading ul {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding-left: 14px;
+  color: var(--terminal-muted);
+  font-size: 9px;
+}
+
+.marketReading p,
+.partialSimulation p {
+  margin: 0;
+  color: var(--terminal-muted);
+  font-size: 9px;
+  line-height: 1.4;
+}
+
+.partialSimulation {
+  color: var(--terminal-muted);
+  font-size: 9px;
 }
 
 .compactChartMain,

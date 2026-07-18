@@ -43,6 +43,7 @@ import {
   type OnchainWhaleEvent,
   type PositionActionPlan,
   type PositionChartAnalysis,
+  type PositionDeepDive,
   type ScenarioMatchResponse
 } from "@/lib/api";
 import { type MinimalEvidenceLayer } from "@/lib/chartLayers";
@@ -74,6 +75,9 @@ export function LivePositionCockpit() {
   const [error, setError] = useState("");
   const [selectedChartAnalysis, setSelectedChartAnalysis] = useState<PositionChartAnalysis | null>(null);
   const [selectedDetail, setSelectedDetail] = useState<LivePositionDetail | null>(null);
+  const [selectedDeepDive, setSelectedDeepDive] = useState<PositionDeepDive | null>(null);
+  const [selectedDeepDiveLoading, setSelectedDeepDiveLoading] = useState(false);
+  const [selectedDeepDiveError, setSelectedDeepDiveError] = useState("");
   const [selectedChartLoading, setSelectedChartLoading] = useState(false);
   const [selectedChartError, setSelectedChartError] = useState("");
   const [stripChartAnalysis, setStripChartAnalysis] = useState<Record<string, PositionChartAnalysis>>({});
@@ -85,6 +89,7 @@ export function LivePositionCockpit() {
   const [viewMode, setViewMode] = useState<FceViewMode>("minimal");
   const selectedChartRequestRef = useRef(0);
   const selectedDetailRequestRef = useRef(0);
+  const selectedDeepDiveRequestRef = useRef(0);
   const hasPositionDataRef = useRef(false);
   const workspace = useAnalysisWorkspace();
 
@@ -231,13 +236,14 @@ export function LivePositionCockpit() {
     }
   }
 
-  async function refreshSelected(positionId: string) {
+  async function refreshSelected(positionId: string, includeDeepDive = false) {
     setActionLoading(`refresh:${positionId}`);
     setError("");
     setNotice("");
     try {
       await api.analyzeLivePosition(positionId);
       const requests: Array<Promise<unknown>> = [loadSelectedChart(positionId, false), load(false)];
+      if (includeDeepDive) requests.push(loadSelectedDeepDive(positionId, false));
       requests.push(
         api.livePosition(positionId).then((detail) => {
           setSelectedDetail(detail);
@@ -256,6 +262,7 @@ export function LivePositionCockpit() {
   const selected = positions.find((item) => item.position.id === selectedId) ?? positions[0];
   const selectedPayload = selectedDetail?.position.id === selected?.position.id ? selectedDetail : selected;
   const selectedChartForPayload = selectedChartAnalysis?.position_id === selectedPayload?.position.id ? selectedChartAnalysis : null;
+  const selectedDeepDiveForPayload = selectedDeepDive?.position_id === selectedPayload?.position.id ? selectedDeepDive : null;
   const selectedWhaleSummary = selectedPayload ? whalePositionSummary(whales, selectedPayload.position.symbol) : null;
   const stripChartKey = positions.map((item) => item.position.id).join("|");
   const selectedInstrumentTarget = selectedPayload ? instrumentTargetForSymbol(instrumentMaps, selectedPayload.position.symbol) : null;
@@ -309,6 +316,34 @@ export function LivePositionCockpit() {
     }
   }
 
+  async function loadSelectedDeepDive(positionId: string, showSpinner = true) {
+    const requestId = selectedDeepDiveRequestRef.current + 1;
+    selectedDeepDiveRequestRef.current = requestId;
+    if (showSpinner) setSelectedDeepDiveLoading(true);
+    setSelectedDeepDiveError("");
+    try {
+      const next = await api.positionDeepDive(positionId);
+      if (selectedDeepDiveRequestRef.current !== requestId) return;
+      setSelectedDeepDive(next);
+    } catch (err) {
+      if (selectedDeepDiveRequestRef.current !== requestId) return;
+      if (showSpinner) setSelectedDeepDive(null);
+      setSelectedDeepDiveError(err instanceof Error ? err.message : "포지션 심화 판정을 불러오지 못했습니다.");
+    } finally {
+      if (selectedDeepDiveRequestRef.current === requestId && showSpinner) setSelectedDeepDiveLoading(false);
+    }
+  }
+
+  async function saveEntryThesis(positionId: string, thesis: string) {
+    await api.updatePositionMemo(positionId, { thesis_text: thesis });
+    const [detail] = await Promise.all([
+      api.livePosition(positionId),
+      loadSelectedDeepDive(positionId, false)
+    ]);
+    setSelectedDetail(detail);
+    setNotice("진입 논거를 저장했습니다. 최초 스냅샷은 보존하고 현재 비교에 반영했습니다.");
+  }
+
   async function approveUnderlyingMap(symbol: string) {
     if (!selectedPayload) return;
     setActionLoading(`map:${symbol}`);
@@ -355,6 +390,17 @@ export function LivePositionCockpit() {
     }
     void loadSelectedChart(selected.position.id, !hasCurrentChart, viewMode === "minimal");
   }, [selected?.position.id, viewMode]);
+
+  useEffect(() => {
+    if (!selected?.position.id || viewMode !== "minimal" || !selectedIsStockUnderlying) {
+      setSelectedDeepDive(null);
+      setSelectedDeepDiveError("");
+      return;
+    }
+    const hasCurrent = selectedDeepDive?.position_id === selected.position.id;
+    if (hasCurrent) return;
+    void loadSelectedDeepDive(selected.position.id, true);
+  }, [selected?.position.id, selectedDeepDive?.position_id, selectedIsStockUnderlying, viewMode]);
 
   useEffect(() => {
     if (viewMode !== "pro" || !positions.length) {
@@ -469,8 +515,13 @@ export function LivePositionCockpit() {
                   chartAnalysis={selectedChartForPayload}
                   chartLoading={selectedChartLoading}
                   chartError={selectedChartError}
+                  deepDive={selectedDeepDiveForPayload}
+                  deepDiveLoading={selectedDeepDiveLoading}
+                  deepDiveError={selectedDeepDiveError}
                   onRetryChart={() => void loadSelectedChart(selectedPayload.position.id)}
-                  onRefresh={() => void refreshSelected(selectedPayload.position.id)}
+                  onRetryDeepDive={() => void loadSelectedDeepDive(selectedPayload.position.id)}
+                  onSaveThesis={(value) => saveEntryThesis(selectedPayload.position.id, value)}
+                  onRefresh={() => void refreshSelected(selectedPayload.position.id, selectedIsStockUnderlying)}
                   refreshing={actionLoading === `refresh:${selectedPayload.position.id}`}
                   onShowPro={() => updateViewMode("pro")}
                   onBack={returnToPositionList}
@@ -981,7 +1032,12 @@ function MinimalPositionWorkspace({
   chartAnalysis,
   chartLoading,
   chartError,
+  deepDive,
+  deepDiveLoading,
+  deepDiveError,
   onRetryChart,
+  onRetryDeepDive,
+  onSaveThesis,
   onRefresh,
   refreshing,
   onShowPro,
@@ -992,7 +1048,12 @@ function MinimalPositionWorkspace({
   chartAnalysis: PositionChartAnalysis | null;
   chartLoading: boolean;
   chartError: string;
+  deepDive: PositionDeepDive | null;
+  deepDiveLoading: boolean;
+  deepDiveError: string;
   onRetryChart: () => void;
+  onRetryDeepDive: () => void;
+  onSaveThesis: (value: string) => Promise<void>;
   onRefresh: () => void;
   refreshing: boolean;
   onShowPro: () => void;
@@ -1000,7 +1061,6 @@ function MinimalPositionWorkspace({
   workspace: ReturnType<typeof useAnalysisWorkspace>;
 }) {
   const plan = actionPlanForPayload(payload);
-  const copy = minimalPositionCopy(payload);
   const gauges = (payload as LivePositionDetail).gauges ?? null;
   const nextPrice = compactNextPriceForPlan(plan, payload.latest_snapshot.mark_price);
   void onRefresh;
@@ -1026,6 +1086,11 @@ function MinimalPositionWorkspace({
         gauges={gauges}
         nextPrice={nextPrice}
         positionOverlay={chartOverlayFromPayload(payload)}
+        deepDive={deepDive}
+        deepDiveLoading={deepDiveLoading}
+        deepDiveError={deepDiveError}
+        onRetryDeepDive={onRetryDeepDive}
+        onSaveThesis={onSaveThesis}
         onOpenEvidence={() => {
           workspace.focusEvidence("levels", nextPrice?.price ?? null);
           onShowPro();

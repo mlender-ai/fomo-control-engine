@@ -430,6 +430,97 @@ export type LivePositionDetail = LivePositionPayload & {
   judgment_scores: JudgmentScore[];
 };
 
+export type PositionDeepDiveSource = {
+  id: "bitget" | "toss" | "position" | string;
+  label: string;
+};
+
+export type PositionDeepDiveSignal = {
+  id: string;
+  label: string;
+  status: "active" | "unavailable";
+  sources: PositionDeepDiveSource[];
+  moat_reason: string;
+  reading: string;
+  detail: string;
+  data: Record<string, unknown> & {
+    state?: string;
+    sparkline?: Array<{ time: number; value: number; kind: string }>;
+    warning?: string;
+  };
+};
+
+export type PositionDeepDive = {
+  status: "ready" | "unavailable";
+  position_id: string;
+  symbol: string;
+  as_of: string;
+  reason?: string;
+  truth_policy?: string;
+  underlying?: {
+    symbol?: string;
+    name?: string;
+    exchange?: string;
+    kind?: string;
+    market_state?: string;
+    stale?: boolean;
+  };
+  entry_snapshot: {
+    capture_policy?: string;
+    captured_at?: string;
+    capture_note?: string;
+    thesis?: { text?: string; source?: string };
+    structure?: Record<string, unknown>;
+  };
+  thesis?: {
+    status: "maintained" | "weakened" | "invalid";
+    status_label: string;
+    text?: string;
+    source?: string;
+    entry?: Record<string, unknown>;
+    current?: Record<string, unknown>;
+    comparison_note?: string;
+  };
+  cross_signals: PositionDeepDiveSignal[];
+  risk: {
+    liquidation_distance_pct?: number | null;
+    invalidation_price?: number | null;
+    invalidation_distance_pct?: number | null;
+    next_structure_price?: number | null;
+    reward_risk_r?: number | null;
+    market_reading?: {
+      stance: "up" | "down" | "insufficient" | string;
+      label: string;
+      position_alignment: "aligned" | "opposed" | "unknown" | string;
+      reasons: string[];
+      reversal_condition?: { price: number; condition: string; source: string } | null;
+    };
+    partial_exit_simulation?: Array<{
+      reduction_pct: number;
+      remaining_quantity: number;
+      remaining_notional: number;
+      liquidation_distance_pct: number | null;
+      invalidation_risk_notional: number | null;
+      assumption: string;
+    }>;
+  };
+  ledger: {
+    latest_judgment_id: string;
+    outcomes: Array<{ horizon_days: number; observed_at: string; price: number; return_pct: number }>;
+    performance: Array<{ horizon_days: number; n: number; hit_rate_pct: number | null; sample_low: boolean }>;
+    signal_performance?: Array<{
+      signal_id: string;
+      signal_label: string;
+      horizon_days: number;
+      n: number;
+      hit_rate_pct: number | null;
+      sample_low: boolean;
+    }>;
+    horizons: number[];
+    score_policy: string;
+  };
+};
+
 export type CompactChartGauges = {
   direction: {
     active: boolean;
@@ -1494,6 +1585,7 @@ export type PositionChartAnalysis = {
     stale?: boolean;
     underlying_name?: string;
     underlying_kind?: "stock" | "etf" | "leveraged_etf";
+    underlying_leverage_factor?: number | null;
     toss_exchange?: string;
     leverage_note?: string | null;
     flow_status?: "available" | "unavailable_us";
@@ -2282,6 +2374,8 @@ export const api = {
     request<PositionChartAnalysis>(
       `/api/live/positions/${positionId}/chart-analysis?timeframe=${encodeURIComponent(timeframe)}${compact ? "&compact=true" : ""}`
     ),
+  positionDeepDive: (positionId: string) =>
+    request<PositionDeepDive>(`/api/live/positions/${positionId}/deepdive`),
   analyzeLivePosition: (positionId: string) =>
     request<LivePositionPayload>(`/api/live/positions/${positionId}/analyze`, {
       method: "POST"

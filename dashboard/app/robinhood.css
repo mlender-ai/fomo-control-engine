@@ -928,7 +928,7 @@ textarea:focus {
 }
 
 .compactChartWorkspace {
-  grid-template-columns: minmax(0, 1fr) 242px;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 340px);
 }
 
 .compactChartMain,
@@ -3560,7 +3560,7 @@ textarea:focus {
   }
 
   .compactChartWorkspace {
-    grid-template-columns: minmax(0, 1fr) 220px;
+    grid-template-columns: minmax(0, 1fr) 300px;
   }
 }
 

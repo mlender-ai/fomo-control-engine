@@ -472,11 +472,42 @@ test("stock perpetual position shows Toss source hierarchy instead of crypto wha
     warning_gate_blocked: false,
     warning_badges: []
   };
+  const deepDivePayload = {
+    status: "ready",
+    position_id: positionId,
+    symbol: "SOXLUSDT",
+    as_of: "2026-07-18T13:20:00Z",
+    truth_policy: "서로 다른 출처에서 동시에 관측된 값만 교차신호로 표시하며, 주문 판단에는 사용하지 않습니다.",
+    underlying: { symbol: "SOXL", name: "DIREXION DAILY SEMICONDUCTOR BULL 3X SHARES", exchange: "AMEX", kind: "leveraged_etf", market_state: "closed", stale: true },
+    entry_snapshot: { capture_policy: "first_observed_proxy", thesis: { text: "반도체 기초 구조 회복 관측", source: "user" }, structure: { overall_stance: "하방" } },
+    thesis: { status: "weakened", status_label: "약화", text: "반도체 기초 구조 회복 관측", source: "user", entry: {}, current: {}, comparison_note: "최초 심화 관측 스냅샷과 비교합니다." },
+    cross_signals: [
+      { id: "basis_behavior", label: "베이시스 행동", status: "active", sources: [{ id: "bitget", label: "Bitget" }, { id: "toss", label: "Toss" }], moat_reason: "두 가격이 모두 필요합니다.", reading: "괴리폭 축소 관측", detail: "현재 -0.40% · 괴리폭 -0.40%p", data: { state: "contracting", sparkline: [{ time: 1, value: -0.8, kind: "confirmed_close" }, { time: 2, value: -0.4, kind: "live_observation" }] } },
+      { id: "funding_momentum_divergence", label: "펀딩 × 기초 모멘텀", status: "active", sources: [{ id: "bitget", label: "Bitget" }, { id: "toss", label: "Toss" }], moat_reason: "펀딩과 기초 일봉이 모두 필요합니다.", reading: "쏠림과 기초 모멘텀 불일치 관측", detail: "펀딩 +0.0100% · 기초 5일 -2.10%", data: { state: "divergent" } },
+      { id: "liquidation_shelf", label: "청산 선반 상대 위치", status: "active", sources: [{ id: "bitget", label: "Bitget" }, { id: "position", label: "내 포지션" }], moat_reason: "청산대와 진입가가 모두 필요합니다.", reading: "진입가는 청산 선반 위", detail: "선반 120.00 · 실현 추정 명목 $250,000", data: { state: "위" } },
+      { id: "underlying_flow_alignment", label: "기초 수급 × 내 방향", status: "unavailable", sources: [{ id: "toss", label: "Toss" }, { id: "position", label: "내 포지션" }], moat_reason: "수급과 방향이 모두 필요합니다.", reading: "데이터 없음", detail: "기초자산 시장 비거래 시간 · 수급 신호 비활성", data: { reason: "market_closed" } },
+      { id: "leverage_stack", label: "레버리지 중첩", status: "active", sources: [{ id: "toss", label: "Toss" }, { id: "bitget", label: "Bitget" }, { id: "position", label: "내 포지션" }], moat_reason: "세 배율이 모두 필요합니다.", reading: "중첩 익스포저 관측", detail: "기초 3x × 퍼페추얼 10x = 명목 30x", data: { state: "stacked", warning: "레버리지 ETF는 보유기간과 경로에 따라 기초지수 누적수익률과 괴리가 생길 수 있습니다." } }
+    ],
+    risk: {
+      liquidation_distance_pct: 31.2,
+      invalidation_price: 116.7,
+      invalidation_distance_pct: 6.1,
+      next_structure_price: 138.4,
+      reward_risk_r: 1.42,
+      market_reading: { stance: "down", label: "하방 관측", position_alignment: "opposed", reasons: ["레벨: 저항 아래 정체", "쏠림과 기초 모멘텀 불일치 관측"], reversal_condition: { price: 138.4, condition: "확정 캔들이 상단 구조를 회복하면 현재 하방 읽기를 재평가", source: "Bitget 확정 캔들 구조 레벨" } },
+      partial_exit_simulation: [{ reduction_pct: 25, remaining_quantity: 3.75, remaining_notional: 500.63, liquidation_distance_pct: 31.2, invalidation_risk_notional: 30.54, assumption: "정적 계산" }]
+    },
+    ledger: { latest_judgment_id: "j1", outcomes: [], performance: [{ horizon_days: 1, n: 0, hit_rate_pct: null, sample_low: true }, { horizon_days: 5, n: 0, hit_rate_pct: null, sample_low: true }, { horizon_days: 20, n: 0, hit_rate_pct: null, sample_low: true }], signal_performance: [{ signal_id: "basis_behavior", signal_label: "베이시스 행동", horizon_days: 1, n: 0, hit_rate_pct: null, sample_low: true }], horizons: [1, 5, 20], score_policy: "실제 경과 가격만 기록합니다." }
+  };
 
   await page.route("**/api/live/positions**", async (route) => {
     const url = new URL(route.request().url());
     if (url.pathname.endsWith("/chart-analysis")) {
       await route.fulfill({ json: chartPayload });
+      return;
+    }
+    if (url.pathname === `/api/live/positions/${positionId}/deepdive`) {
+      await route.fulfill({ json: deepDivePayload });
       return;
     }
     if (url.pathname === `/api/live/positions/${positionId}`) {
@@ -499,6 +530,12 @@ test("stock perpetual position shows Toss source hierarchy instead of crypto wha
   await expect(sourceBanner).toContainText("Toss US 투자자별 수급 미제공");
   await expect(page.getByTestId("position-whale-banner")).toHaveCount(0);
   await expect(page.getByTestId("underlying-join-strip")).toBeVisible();
+  await expect(page.getByTestId("position-deepdive-panel")).toBeVisible();
+  await expect(page.getByTestId("deepdive-thesis-block")).toContainText("약화");
+  await expect(page.getByTestId("deepdive-cross-signal-block")).toContainText("명목 30x");
+  await expect(page.getByTestId("deepdive-cross-signal-block")).toContainText("수급 신호 비활성");
+  await expect(page.getByTestId("deepdive-risk-ledger-block")).toContainText("표본 부족");
+  await expect(page.getByTestId("deepdive-signal-performance")).toContainText("베이시스 행동");
 
   await page.setViewportSize({ width: 390, height: 844 });
   const overflow = await page.evaluate(
