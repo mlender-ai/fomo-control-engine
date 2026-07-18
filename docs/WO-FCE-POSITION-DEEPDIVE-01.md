@@ -63,7 +63,7 @@
 - [x] 비거래 시간 Toss 수급 신호 비활성을 회귀 테스트한다.
 - [x] SOXLUSDT 실포지션 3블록 스크린샷 확인
 - [x] HARNESS 로컬 게이트 통과
-- [ ] origin/main 반영과 CI success 확인
+- [x] origin/main 반영과 CI success 확인
 
 ## 실데이터 검증 로그 (2026-07-19)
 
@@ -74,6 +74,7 @@
 - 실제 포지션 Ledger: 최초 판정 `c99f48c9-db69-5475-91c5-b9cebb2cd721` 저장, 아직 실제 T+1이 지나지 않아 outcome 0건으로 유지.
 - 자동 결과 1사이클 테스트: `position-cycle-1`, T+1 실제 경과 전 0건 → 24시간 1분 뒤 1건, -10% 하락 읽기 적중, N=1 `sample_low=true`.
 - UI: 1440px에서 우측 레일 340px, 390px 모바일에서 가로 overflow 0, 브라우저 콘솔 error 0.
+- CI: GitHub Actions `29652346880`에서 backend·frontend·E2E 전부 success.
 
 ![SOXLUSDT 포지션 심화 계기판](artifacts/WO-FCE-POSITION-DEEPDIVE-01/SOXLUSDT-deepdive-desktop.png)
 
@@ -93,4 +94,4 @@
 
 - [x] HARNESS.md 게이트 통과
 - [x] docs 갱신
-- [ ] origin/main 반영 + CI success 확인
+- [x] origin/main 반영 + CI success 확인
