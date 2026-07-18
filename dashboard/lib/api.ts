@@ -747,6 +747,51 @@ export type WatchlistEntry = {
   asset_class: "crypto" | "stock" | "index" | "unknown";
 };
 
+export type InstrumentMapItem = {
+  bitget_symbol: string;
+  bitget_type: "usdt_futures" | "spot";
+  underlying_name: string;
+  underlying_kind: "stock" | "etf" | "leveraged_etf";
+  toss_symbol: string;
+  toss_market: "US" | "KR";
+  toss_exchange: string;
+  leverage_note: string | null;
+  verification_status: "verified" | "pending" | "rejected";
+  verified_by: "manual" | "auto-candidate";
+  verified_at: string | null;
+  identity_match: boolean;
+  notes: string;
+  verification_evidence: {
+    bitget?: Record<string, unknown>;
+    toss?: Record<string, unknown>;
+    checks?: Record<string, boolean>;
+    ticker_only_match_used?: boolean;
+  };
+  created_at: string;
+  updated_at: string;
+};
+
+export type InstrumentMapTarget = {
+  symbol: string;
+  sources: Array<"position" | "watchlist">;
+  asset_class: "crypto" | "stock" | "index" | "unknown";
+  source_category: string;
+  join_eligible: boolean;
+  join_reason: string;
+  mapping_status: "verified" | "pending" | "rejected" | "not_applicable";
+};
+
+export type InstrumentMapState = {
+  targets: InstrumentMapTarget[];
+  items: InstrumentMapItem[];
+  policy: {
+    price_of_record: "Bitget";
+    structure_source: string;
+    pending_join_enabled: false;
+    crypto_toss_enabled: false;
+  };
+};
+
 export type ScoutScanRow = {
   symbol: string;
   asset_class?: "crypto" | "stock" | "index" | "unknown";
@@ -1433,6 +1478,42 @@ export type PositionChartAnalysis = {
     last_candle_at: string;
   };
   historical_backtest?: HistoricalBacktest | null;
+  underlying_join?: {
+    status: "joined" | "unavailable";
+    price_of_record: "bitget";
+    structure_source: "toss";
+    structure_timeframe?: "1d";
+    bitget_symbol: string;
+    bitget_price?: number;
+    toss_symbol: string;
+    toss_price?: number;
+    toss_price_at?: string | null;
+    basis_pct?: number;
+    basis_scale?: number;
+    market_state?: string;
+    stale?: boolean;
+    underlying_name?: string;
+    underlying_kind?: "stock" | "etf" | "leveraged_etf";
+    toss_exchange?: string;
+    leverage_note?: string | null;
+    flow_status?: "available" | "unavailable_us";
+    flow_note?: string | null;
+    toss_warnings?: string[];
+    warning_gate_blocked?: boolean;
+    warning_badges?: string[];
+    verified_at?: string | null;
+    raw_candles?: Array<{
+      opened_at: string;
+      open: number;
+      high: number;
+      low: number;
+      close: number;
+      volume: number;
+    }>;
+    loaded_at?: string;
+    disclaimer?: string;
+    reason?: string;
+  };
 };
 
 export type OnchainWhaleReview = {
@@ -2245,6 +2326,15 @@ export const api = {
   removeWatchlistItem: (symbol: string) =>
     request<{ removed: string }>(`/api/watchlist/${encodeURIComponent(symbol)}`, {
       method: "DELETE"
+    }),
+  instrumentMaps: () => request<InstrumentMapState>("/api/instrument-maps"),
+  syncInstrumentMaps: () => request<InstrumentMapState>("/api/instrument-maps/sync", { method: "POST" }),
+  approveInstrumentMap: (symbol: string) =>
+    request<{ item: InstrumentMapItem }>(`/api/instrument-maps/${encodeURIComponent(symbol)}/approve`, { method: "POST" }),
+  rejectInstrumentMap: (symbol: string, note = "") =>
+    request<{ item: InstrumentMapItem }>(`/api/instrument-maps/${encodeURIComponent(symbol)}/reject`, {
+      method: "POST",
+      body: JSON.stringify({ note })
     }),
   scoutAnalysis: (symbol: string, timeframe = "4h", force = false, detail = false) =>
     request<ScoutAnalysisResponse>(`/api/scout/${encodeURIComponent(symbol)}/analysis?timeframe=${encodeURIComponent(timeframe)}&force=${force}&detail=${detail}`),

@@ -11,6 +11,7 @@ from __future__ import annotations
 import time
 import logging
 import threading
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID, NAMESPACE_URL, uuid5
@@ -77,6 +78,10 @@ class WatchlistRequest(BaseModel):
     symbol: str
     note: str = ""
     default_timeframe: str = "4h"
+
+
+class InstrumentMapDecisionRequest(BaseModel):
+    note: str = ""
 
 
 def _repo():
@@ -211,6 +216,36 @@ def list_watchlist() -> dict:
     return {"items": [item.model_dump(mode="json") for item in _repo().list_watchlist()]}
 
 
+def list_instrument_maps(sync: bool = False) -> dict:
+    from app.toss.instrument_join import list_mapping_state, sync_mapping_candidates
+
+    if sync:
+        return sync_mapping_candidates(_repo(), runtime.settings)
+    return list_mapping_state(_repo())
+
+
+def sync_instrument_maps() -> dict:
+    from app.toss.instrument_join import sync_mapping_candidates
+
+    return sync_mapping_candidates(_repo(), runtime.settings)
+
+
+def approve_instrument_map(bitget_symbol: str) -> dict:
+    from app.toss.instrument_join import approve_mapping, reset_join_cache
+
+    item = approve_mapping(_repo(), bitget_symbol)
+    reset_join_cache()
+    return {"item": item.model_dump(mode="json")}
+
+
+def reject_instrument_map(bitget_symbol: str, request: InstrumentMapDecisionRequest | None = None) -> dict:
+    from app.toss.instrument_join import reject_mapping, reset_join_cache
+
+    item = reject_mapping(_repo(), bitget_symbol, (request or InstrumentMapDecisionRequest()).note)
+    reset_join_cache()
+    return {"item": item.model_dump(mode="json")}
+
+
 def add_watchlist_item(request: WatchlistRequest) -> dict:
     symbol = normalize_scout_symbol(request.symbol)
     catalog = next((item for item in _repo().search_symbols(symbol, 20) if item.symbol.upper() == symbol), None)
@@ -269,12 +304,19 @@ def scout_analysis(symbol: str, timeframe: str = "4h", force: bool = False, deta
         timeframe=timeframe,
         hysteresis_params=hysteresis_params_from_settings(runtime.settings),
     )
+    from app.toss.instrument_join import decorate_chart_analysis
+
+    display_analysis = decorate_chart_analysis(
+        _repo(),
+        runtime.settings,
+        deepcopy(entry["analysis"]),
+    )
     return {
         "symbol": symbol,
         "timeframe": timeframe,
         "as_of": entry["as_of"],
         "cache_age_seconds": round(time.monotonic() - entry["cached_at_monotonic"], 1),
-        "analysis": entry["analysis"],
+        "analysis": display_analysis,
         "summary": entry["summary"],
         "historical_backtest": entry["historical_backtest"],
         "analyst_briefing": briefing,

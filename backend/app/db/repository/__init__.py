@@ -3,6 +3,7 @@ from __future__ import annotations
 from .backtest import MemoryBacktestRepositoryMixin, SQLiteBacktestRepositoryMixin
 from .base import MemoryRepositoryBase, Repository, SQLiteRepositoryBase
 from .ledger import MemoryLedgerRepositoryMixin, SQLiteLedgerRepositoryMixin
+from .instrument_map import MemoryInstrumentMapRepositoryMixin, SQLiteInstrumentMapRepositoryMixin
 from .marketdata import MemoryMarketdataRepositoryMixin, SQLiteMarketdataRepositoryMixin
 from .paper import MemoryPaperRepositoryMixin, SQLitePaperRepositoryMixin
 from .positions import MemoryPositionsRepositoryMixin, SQLitePositionsRepositoryMixin
@@ -11,6 +12,7 @@ from .scout import MemoryScoutRepositoryMixin, SQLiteScoutRepositoryMixin
 
 class MemoryRepository(
     MemoryPositionsRepositoryMixin,
+    MemoryInstrumentMapRepositoryMixin,
     MemoryScoutRepositoryMixin,
     MemoryPaperRepositoryMixin,
     MemoryBacktestRepositoryMixin,
@@ -23,6 +25,7 @@ class MemoryRepository(
 
 class SQLiteRepository(
     SQLitePositionsRepositoryMixin,
+    SQLiteInstrumentMapRepositoryMixin,
     SQLiteScoutRepositoryMixin,
     SQLitePaperRepositoryMixin,
     SQLiteBacktestRepositoryMixin,

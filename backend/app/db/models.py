@@ -22,6 +22,25 @@ class PositionStatus(str, Enum):
     needs_exit_record = "needs_exit_record"
 
 
+class InstrumentMap(BaseModel):
+    bitget_symbol: str
+    bitget_type: Literal["usdt_futures", "spot"] = "usdt_futures"
+    underlying_name: str
+    underlying_kind: Literal["stock", "etf", "leveraged_etf"]
+    toss_symbol: str
+    toss_market: Literal["US", "KR"] = "US"
+    toss_exchange: str
+    leverage_note: str | None = None
+    verification_status: Literal["verified", "pending", "rejected"] = "pending"
+    verified_by: Literal["manual", "auto-candidate"] = "auto-candidate"
+    verified_at: datetime | None = None
+    identity_match: bool = False
+    notes: str = ""
+    verification_evidence: dict = Field(default_factory=dict)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
 class ScoreBreakdown(BaseModel):
     structure: int
     volume: int

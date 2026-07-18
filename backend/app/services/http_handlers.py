@@ -948,6 +948,9 @@ def get_position_chart_analysis(position_id: UUID, timeframe: str = "4h", compac
     try:
         market_analysis, position_analysis = _chart_analysis_bundle_for_position(position, timeframe, include_trade_flow=not compact)
         analysis = market_analysis if compact else position_analysis
+        from app.toss.instrument_join import decorate_chart_analysis
+
+        analysis = decorate_chart_analysis(repository, settings, analysis)
         if compact:
             return {**_compact_chart_analysis(analysis), "position_id": str(position.id)}
         return {**analysis, "detail_level": "full"}

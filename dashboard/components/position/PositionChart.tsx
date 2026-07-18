@@ -3,6 +3,7 @@
 import type { CompactChartGauges, OnchainChartMarker, PositionActionPlan, PositionChartAnalysis } from "@/lib/api";
 import type { ChartLayerId, ChartLayerState, MinimalChartEvidence } from "@/lib/chartLayers";
 import type { Density } from "@/lib/density";
+import { formatPrice } from "@/lib/format";
 import { PositionCandlestickChart } from "./PositionCandlestickChart";
 
 export function PositionChart({
@@ -84,6 +85,7 @@ export function PositionChart({
   return (
     <section className="positionChartPanel" data-testid="position-chart">
       {loading ? <div className="chartRefreshingBadge">차트 갱신 중</div> : null}
+      {analysis.underlying_join ? <UnderlyingJoinStrip analysis={analysis} /> : null}
       <PositionCandlestickChart
         analysis={analysis}
         trendSummary={trendSummary}
@@ -102,6 +104,42 @@ export function PositionChart({
       {shouldShowOnchainTimeline(analysis, layers, layerMode) ? (
         <OnchainFlowTimeline analysis={analysis} compact={compressed || layerMode === "minimal"} />
       ) : null}
+    </section>
+  );
+}
+
+function UnderlyingJoinStrip({ analysis }: { analysis: PositionChartAnalysis }) {
+  const join = analysis.underlying_join;
+  if (!join) return null;
+  if (join.status !== "joined") {
+    return (
+      <section className="underlyingJoinStrip unavailable" data-testid="underlying-join-strip">
+        <div><span>기초자산 조인 지연</span><strong>Bitget 차트 유지</strong></div>
+        <p>{join.reason || "Toss 기초자산 데이터를 불러오지 못했습니다."}</p>
+      </section>
+    );
+  }
+  const basis = Number(join.basis_pct ?? 0);
+  return (
+    <section className={`underlyingJoinStrip ${join.stale ? "stale" : "live"}`} data-testid="underlying-join-strip">
+      <div className="underlyingJoinTitle">
+        <span>검증된 1:1 조인</span>
+        <strong>{join.underlying_name}</strong>
+        <small>{join.toss_exchange} · Toss 구조 {join.structure_timeframe?.toUpperCase()}</small>
+      </div>
+      <div className="underlyingJoinPrices">
+        <span><i>Bitget 실행</i><b>{formatPrice(join.bitget_price)}</b></span>
+        <span><i>Toss 원본</i><b>{formatPrice(join.toss_price)}</b></span>
+        <span><i>베이시스</i><b className={basis > 0 ? "positive" : basis < 0 ? "negative" : ""}>{basis > 0 ? "+" : ""}{basis.toFixed(2)}%</b></span>
+      </div>
+      <div className="underlyingJoinState">
+        <strong>{join.stale ? "기초자산 장 마감 · 구조 데이터 정지" : "기초자산 장중"}</strong>
+        <span>기준 {join.toss_price_at ? new Date(join.toss_price_at).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "확인 중"}</span>
+        {join.flow_note ? <span>{join.flow_note}</span> : null}
+        {join.warning_gate_blocked ? <em>Toss 경고 게이트 차단 · {join.toss_warnings?.join(", ")}</em> : null}
+        {!join.warning_gate_blocked && join.warning_badges?.length ? <span>Toss 경고: {join.warning_badges.join(", ")}</span> : null}
+        {join.leverage_note ? <em>{join.leverage_note}</em> : null}
+      </div>
     </section>
   );
 }

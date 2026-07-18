@@ -419,6 +419,73 @@ test("scout and analysis smoke paths", async ({ page }) => {
 
 });
 
+test("instrument join requires explicit approval and supports rejection", async ({ page }) => {
+  const statuses: Record<string, "pending" | "verified" | "rejected"> = {
+    NBISUSDT: "pending",
+    SOXLUSDT: "pending"
+  };
+  const item = (symbol: string) => ({
+    bitget_symbol: symbol,
+    bitget_type: "usdt_futures",
+    underlying_name: symbol === "NBISUSDT" ? "NEBIUS GROUP N.V." : "DIREXION DAILY SEMICONDUCTOR BULL 3X SHARES",
+    underlying_kind: symbol === "NBISUSDT" ? "stock" : "leveraged_etf",
+    toss_symbol: symbol.replace("USDT", ""),
+    toss_market: "US",
+    toss_exchange: symbol === "NBISUSDT" ? "NASDAQ" : "AMEX",
+    leverage_note: symbol === "SOXLUSDT" ? "3배 레버리지 ETF · 배수 조정 없음" : null,
+    verification_status: statuses[symbol],
+    verified_by: statuses[symbol] === "pending" ? "auto-candidate" : "manual",
+    verified_at: statuses[symbol] === "verified" ? "2026-07-18T13:00:00Z" : null,
+    identity_match: true,
+    notes: statuses[symbol] === "pending" ? "사용자 승인 대기" : "사용자 수동 결정",
+    verification_evidence: {
+      bitget: { underlying_name: symbol === "NBISUSDT" ? "NEBIUS GROUP N.V." : "DIREXION DAILY SEMICONDUCTOR BULL 3X SHARES", exchange: symbol === "NBISUSDT" ? "NASDAQ" : "AMEX", asset_type: symbol === "NBISUSDT" ? "stock" : "leveraged_etf" },
+      toss: { official_name: symbol === "NBISUSDT" ? "NEBIUS GROUP N.V." : "DIREXION DAILY SEMICONDUCTOR BULL 3X SHARES", exchange: symbol === "NBISUSDT" ? "NASDAQ" : "AMEX", asset_type: symbol === "NBISUSDT" ? "stock" : "leveraged_etf" },
+      checks: { official_name: true, exchange: true, asset_type: true },
+      ticker_only_match_used: false
+    },
+    created_at: "2026-07-18T12:00:00Z",
+    updated_at: "2026-07-18T13:00:00Z"
+  });
+  const state = () => ({
+    targets: Object.keys(statuses).map((symbol) => ({
+      symbol,
+      sources: ["position"],
+      asset_class: "stock",
+      source_category: "bitget_rwa",
+      join_eligible: true,
+      join_reason: "검증 대상",
+      mapping_status: statuses[symbol]
+    })),
+    items: Object.keys(statuses).map(item),
+    policy: { price_of_record: "Bitget", structure_source: "Toss underlying", pending_join_enabled: false, crypto_toss_enabled: false }
+  });
+
+  await page.route("**/api/instrument-maps**", async (route) => {
+    const url = new URL(route.request().url());
+    const decision = url.pathname.match(/\/api\/instrument-maps\/(.+)\/(approve|reject)$/);
+    if (decision) {
+      const symbol = decodeURIComponent(decision[1]);
+      statuses[symbol] = decision[2] === "approve" ? "verified" : "rejected";
+      await route.fulfill({ json: { item: item(symbol) } });
+      return;
+    }
+    await route.fulfill({ json: state() });
+  });
+
+  await page.goto("/scout");
+  const panel = page.getByTestId("instrument-map-panel");
+  await expect(panel).toBeVisible({ timeout: 30_000 });
+  const nbis = panel.locator('[data-symbol="NBISUSDT"]');
+  const soxl = panel.locator('[data-symbol="SOXLUSDT"]');
+  await expect(nbis).toHaveAttribute("data-map-status", "pending");
+  await expect(soxl).toContainText("3배 레버리지 ETF");
+  await nbis.getByRole("button", { name: "승인", exact: true }).click();
+  await expect(nbis).toHaveAttribute("data-map-status", "verified");
+  await soxl.getByRole("button", { name: "거부", exact: true }).click();
+  await expect(soxl).toHaveAttribute("data-map-status", "rejected");
+});
+
 test("manual scout tracking is one click and stays separate from engine detections", async ({ page }) => {
   await page.goto("/scout");
   await expect(page.getByTestId("demo-mode-badge")).toBeVisible({ timeout: 30_000 });

@@ -51,3 +51,23 @@ Candidate snapshots use the generic `entity_type` (`crypto`, `stock_kr`, `stock_
 Set the credential and watchlist variables in `backend/.env`, register the machine's public IP in Toss WTS, then opt in with `FCE_TOSS_STOCK_SCOUT_ENABLED=true`. Do not put credentials in the repository or GitHub Actions.
 
 Real-data acceptance evidence (one-hour 429 recovery log, three live attention-gap candidates, screenshots, and a T+1 outcome cycle) can only be produced after those local values are present. Until then the API and UI return `credentials_required` with empty groups; they never substitute demo candidates.
+
+## Bitget stock perpetual ↔ Toss underlying join (WO-FCE-BITGET-TOSS-MAP-01)
+
+This join is not a union of the Bitget crypto universe and the Toss stock universe. It connects only a stock-underlying Bitget perpetual that is already present in the user's open positions or watchlist to the same verified Toss underlying. Bitget remains the execution and live-price source; Toss supplies read-only underlying candles, levels, and session context.
+
+### Eligibility and identity gate
+
+- The target universe is rebuilt from current Bitget open positions and the explicit watchlist. The full Bitget futures catalogue is never scanned through Toss.
+- A contract is eligible only when the Bitget catalogue marks it as both `bitget_rwa` and `isRwa=YES`. BTC, ETH, HYPE, and every other pure crypto symbol are excluded before a Toss client can be constructed.
+- A version-controlled identity record supplies the expected official name, listing exchange, and asset type. All three fields must match normalized Toss metadata. A ticker-string match alone has no authority.
+- An identity match creates a `pending` candidate, not an active join. A mismatch becomes `rejected`; an ambiguous or unknown identity stays pending without join access. Only an explicit user approval changes a matching pending candidate to `verified`.
+- Leveraged ETFs remain one underlying instrument. The leverage factor is displayed as context and is not used to scale prices or signals.
+
+The management surface is the stock scout page. It shows the Bitget contract and Toss identity evidence side by side, with `approve` and `reject` controls for pending candidates. Rejected candidates can be regenerated only after the canonical identity or source metadata is corrected; verification is never inferred from a prior ticker match.
+
+### Read-only chart decoration
+
+For a verified map, the current Bitget mark is always the price of record. Toss daily OHLC is retained in raw form and also aligned to the Bitget mark by the contemporaneous basis ratio so its structural levels can share the existing chart scale. The chart exposes both source prices, the basis ratio and timestamp, Toss session freshness, security warnings, and any leverage warning. Toss does not provide US investor-category flow, so that signal is explicitly marked unavailable instead of being inferred from another source.
+
+This decoration occurs after the existing Bitget analysis and gauges have been computed. It does not mutate cached analysis, Entry Score, paper-engine decisions, candidate promotion, or any order path. A pending/rejected map, missing Toss data, or a join error leaves the original Bitget chart intact.

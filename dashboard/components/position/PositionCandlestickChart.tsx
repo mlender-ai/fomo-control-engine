@@ -528,6 +528,7 @@ export function PositionCandlestickChart({
         Number(data.time),
         candleSeries.coordinateToPrice(param.point.y)
       );
+      const underlyingRaw = underlyingRawCandle(analysis, Number(data.time));
       tooltip.innerHTML = `
         <strong>${formatKoreanDateTime(Number(data.time))}</strong>
         <span>시가 ${formatPrice(data.open)}</span>
@@ -535,6 +536,7 @@ export function PositionCandlestickChart({
         <span>저가 ${formatPrice(data.low)}</span>
         <span>종가 ${formatPrice(data.close)}</span>
         <span>거래량 ${formatCompactNumber(volumeAtTime(visibleCandles, Number(data.time)))}</span>
+        ${underlyingRaw ? `<span class="underlyingRawValue">Toss 원본 O ${formatPrice(underlyingRaw.open)} · H ${formatPrice(underlyingRaw.high)} · L ${formatPrice(underlyingRaw.low)} · C ${formatPrice(underlyingRaw.close)}</span>` : ""}
         ${heatmapReadout ? `<span class="heatmapRawValue">실현 청산 원본 버킷 ${formatUsd(heatmapReadout.value)} · ${heatmapReadout.events}건</span>` : ""}
       `;
     });
@@ -807,6 +809,13 @@ export function PositionCandlestickChart({
       {effectiveLayers.flow ? <VolumePanel analysis={analysis} averageVolume={averageVolume} /> : null}
     </>
   );
+}
+
+function underlyingRawCandle(analysis: PositionChartAnalysis, time: number) {
+  return analysis.underlying_join?.raw_candles?.find((candle) => {
+    const timestamp = Math.floor(new Date(candle.opened_at).getTime() / 1000);
+    return timestamp === time;
+  }) ?? null;
 }
 
 function ChartLayerControls({

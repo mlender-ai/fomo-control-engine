@@ -2345,6 +2345,230 @@ h3 {
   padding: 16px;
 }
 
+.underlyingJoinStrip {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.2fr) minmax(300px, 1fr) minmax(240px, 1fr);
+  gap: 14px;
+  align-items: center;
+  border: 1px solid rgba(var(--chart-cyan-rgb), 0.34);
+  border-left: 3px solid var(--terminal-cyan);
+  border-radius: 6px;
+  background: rgba(7, 19, 22, 0.78);
+  padding: 10px 12px;
+}
+
+.underlyingJoinStrip.stale {
+  border-color: rgba(255, 190, 68, 0.36);
+  border-left-color: var(--terminal-amber);
+  background: rgba(28, 21, 8, 0.7);
+}
+
+.underlyingJoinStrip.unavailable {
+  grid-template-columns: auto 1fr;
+  border-left-color: var(--terminal-negative);
+}
+
+.underlyingJoinTitle,
+.underlyingJoinState,
+.underlyingJoinStrip.unavailable > div {
+  display: grid;
+  gap: 3px;
+}
+
+.underlyingJoinTitle span,
+.underlyingJoinTitle small,
+.underlyingJoinState span,
+.underlyingJoinPrices i,
+.underlyingJoinStrip.unavailable span {
+  color: var(--terminal-muted);
+  font-size: 10px;
+  font-style: normal;
+}
+
+.underlyingJoinTitle strong,
+.underlyingJoinState strong,
+.underlyingJoinStrip.unavailable strong {
+  color: var(--terminal-text);
+  font-size: 12px;
+}
+
+.underlyingJoinPrices {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.underlyingJoinPrices span {
+  display: grid;
+  gap: 2px;
+  border-left: 1px solid var(--terminal-line);
+  padding-left: 8px;
+}
+
+.underlyingJoinPrices b {
+  color: var(--terminal-text);
+  font-family: var(--fce-font-number);
+  font-size: 12px;
+}
+
+.underlyingJoinPrices b.positive { color: var(--terminal-positive); }
+.underlyingJoinPrices b.negative { color: var(--terminal-negative); }
+
+.underlyingJoinState em {
+  color: var(--terminal-amber);
+  font-size: 10px;
+  font-style: normal;
+}
+
+.underlyingJoinStrip.unavailable p {
+  margin: 0;
+  color: var(--terminal-muted);
+  font-size: 11px;
+}
+
+.chartHoverReadout .underlyingRawValue {
+  color: var(--terminal-cyan);
+}
+
+.instrumentMapPanel {
+  display: grid;
+  gap: 12px;
+  border: 1px solid var(--terminal-line);
+  border-radius: 8px;
+  background: rgba(10, 14, 18, 0.86);
+  padding: 14px;
+}
+
+.instrumentMapPanel > header {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.instrumentMapPanel > header > div {
+  display: grid;
+  gap: 3px;
+}
+
+.instrumentMapPanel > header span,
+.instrumentMapPanel > header p {
+  margin: 0;
+  color: var(--terminal-muted);
+  font-size: 10px;
+}
+
+.instrumentMapPanel > header h2 {
+  margin: 0;
+  color: var(--terminal-text);
+  font-size: 16px;
+}
+
+.instrumentMapFilters {
+  display: flex;
+  gap: 6px;
+}
+
+.instrumentMapFilters button {
+  border: 1px solid var(--terminal-line);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--terminal-muted);
+  padding: 6px 9px;
+  font-size: 11px;
+}
+
+.instrumentMapFilters button.active {
+  border-color: rgba(var(--chart-cyan-rgb), 0.42);
+  background: rgba(var(--chart-cyan-rgb), 0.1);
+  color: var(--terminal-cyan);
+}
+
+.instrumentMapRows {
+  display: grid;
+  gap: 8px;
+}
+
+.instrumentMapRow {
+  display: grid;
+  grid-template-columns: 130px 180px minmax(340px, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid var(--terminal-line);
+  border-left: 3px solid var(--terminal-muted);
+  border-radius: 6px;
+  padding: 10px;
+}
+
+.instrumentMapRow.verified { border-left-color: var(--terminal-positive); }
+.instrumentMapRow.pending { border-left-color: var(--terminal-amber); }
+.instrumentMapRow.rejected { opacity: 0.66; border-left-color: var(--terminal-negative); }
+
+.instrumentMapIdentity {
+  display: grid;
+  gap: 2px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.instrumentMapIdentity strong { color: var(--terminal-text); font-family: var(--fce-font-number); }
+.instrumentMapIdentity span { color: var(--terminal-muted); font-size: 10px; }
+
+.instrumentMapSources { display: flex; flex-wrap: wrap; gap: 4px; }
+.sourceBadge { border: 1px solid var(--terminal-line); border-radius: 999px; padding: 3px 6px; color: var(--terminal-muted); font-size: 9px; }
+.sourceBadge.bitget { border-color: rgba(80, 210, 130, 0.35); color: var(--terminal-positive); }
+.sourceBadge.toss { border-color: rgba(var(--chart-cyan-rgb), 0.4); color: var(--terminal-cyan); }
+.sourceBadge.pending { color: var(--terminal-amber); }
+.sourceBadge.rejected { color: var(--terminal-negative); }
+
+.instrumentMapEvidence {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.instrumentMapEvidence > div {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  border-left: 1px solid var(--terminal-line);
+  padding-left: 8px;
+}
+
+.instrumentMapEvidence small,
+.instrumentMapEvidence span,
+.instrumentMapReason,
+.instrumentMapRow footer,
+.instrumentLeverageNote {
+  color: var(--terminal-muted);
+  font-size: 9px;
+}
+
+.instrumentMapEvidence strong {
+  overflow: hidden;
+  color: var(--terminal-text);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.instrumentMapReason,
+.instrumentLeverageNote { margin: 0; }
+.instrumentLeverageNote { grid-column: 3; color: var(--terminal-amber); }
+.instrumentMapActions { display: flex; gap: 5px; }
+.instrumentMapActions .button { min-height: 30px; padding: 5px 8px; font-size: 10px; }
+.instrumentMapRow footer { grid-column: 1 / -1; }
+.instrumentMapEmpty { margin: 0; color: var(--terminal-muted); font-size: 11px; }
+
+@media (max-width: 980px) {
+  .underlyingJoinStrip,
+  .instrumentMapRow {
+    grid-template-columns: 1fr;
+  }
+  .instrumentLeverageNote { grid-column: 1; }
+}
+
 .chartRefreshingBadge {
   position: absolute;
   top: 14px;

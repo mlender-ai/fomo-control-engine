@@ -16,6 +16,8 @@ import {
   type EntryIntent,
   type FullAlignment,
   type HistoricalBacktest,
+  type InstrumentMapItem,
+  type InstrumentMapState,
   type OneLinerLine,
   type OneLinerSummary,
   type ScoutAnalysisResponse,
@@ -82,6 +84,9 @@ const ASSET_FILTERS: Array<{ id: AssetFilter; label: string }> = [
 export function ScoutShell() {
   const [scoutSurface, setScoutSurface] = useState<ScoutSurface>("crypto");
   const [watchlist, setWatchlist] = useState<WatchlistEntry[]>([]);
+  const [instrumentMaps, setInstrumentMaps] = useState<InstrumentMapState | null>(null);
+  const [instrumentMapsLoading, setInstrumentMapsLoading] = useState(false);
+  const [instrumentMapsError, setInstrumentMapsError] = useState("");
   const [scanRows, setScanRows] = useState<ScoutScanRow[]>([]);
   const [armedSetups, setArmedSetups] = useState<ArmedSetup[]>([]);
   const [entryIntents, setEntryIntents] = useState<EntryIntent[]>([]);
@@ -143,7 +148,33 @@ export function ScoutShell() {
 
   useEffect(() => {
     void loadWatchlist();
+    void loadInstrumentMaps(true);
   }, []);
+
+  async function loadInstrumentMaps(sync = false) {
+    setInstrumentMapsLoading(true);
+    setInstrumentMapsError("");
+    try {
+      const response = sync ? await api.syncInstrumentMaps() : await api.instrumentMaps();
+      setInstrumentMaps(response);
+    } catch (err) {
+      setInstrumentMapsError(err instanceof Error ? err.message : "인스트루먼트 매핑을 불러오지 못했습니다.");
+    } finally {
+      setInstrumentMapsLoading(false);
+    }
+  }
+
+  async function decideInstrumentMap(symbol: string, decision: "approve" | "reject") {
+    setInstrumentMapsError("");
+    try {
+      if (decision === "approve") await api.approveInstrumentMap(symbol);
+      else await api.rejectInstrumentMap(symbol);
+      await loadInstrumentMaps(false);
+      setNotice(decision === "approve" ? `${symbol} 기초자산 조인을 승인했습니다.` : `${symbol} 매핑 후보를 거부했습니다.`);
+    } catch (err) {
+      setInstrumentMapsError(err instanceof Error ? err.message : "매핑 상태를 변경하지 못했습니다.");
+    }
+  }
 
   useEffect(() => {
     if (!query.trim()) {
@@ -425,6 +456,16 @@ export function ScoutShell() {
 
       <ScoutSurfaceTabs value={scoutSurface} onChange={setScoutSurface} />
 
+      <InstrumentMapPanel
+        state={instrumentMaps}
+        loading={instrumentMapsLoading}
+        error={instrumentMapsError}
+        onRefresh={() => void loadInstrumentMaps(true)}
+        onApprove={(symbol) => void decideInstrumentMap(symbol, "approve")}
+        onReject={(symbol) => void decideInstrumentMap(symbol, "reject")}
+        onOpen={(symbol) => setActiveSymbol(symbol)}
+      />
+
       {error ? <TerminalWarning tone="error">{error}</TerminalWarning> : null}
       {notice ? <TerminalWarning tone="info">{notice}</TerminalWarning> : null}
 
@@ -615,6 +656,127 @@ function ScoutSurfaceTabs({ value, onChange }: { value: ScoutSurface; onChange: 
       ))}
     </nav>
   );
+}
+
+function InstrumentMapPanel({
+  state,
+  loading,
+  error,
+  onRefresh,
+  onApprove,
+  onReject,
+  onOpen
+}: {
+  state: InstrumentMapState | null;
+  loading: boolean;
+  error: string;
+  onRefresh: () => void;
+  onApprove: (symbol: string) => void;
+  onReject: (symbol: string) => void;
+  onOpen: (symbol: string) => void;
+}) {
+  const [filter, setFilter] = useState<"all" | "joined" | "crypto">("all");
+  const maps = new Map((state?.items ?? []).map((item) => [item.bitget_symbol, item]));
+  const targets = (state?.targets ?? []).filter((target) => {
+    if (filter === "joined") return target.join_eligible;
+    if (filter === "crypto") return !target.join_eligible;
+    return true;
+  });
+  return (
+    <section className="instrumentMapPanel" data-testid="instrument-map-panel">
+      <header>
+        <div>
+          <span>실행 ↔ 기초자산</span>
+          <h2>검증된 인스트루먼트 조인</h2>
+          <p>현재 포지션·워치리스트만 검사 · 티커 단독 매칭 금지 · 승인 전 분석 조인 없음</p>
+        </div>
+        <button className="button secondary" type="button" onClick={onRefresh} disabled={loading}>
+          <RefreshCw size={14} /> {loading ? "검증 중" : "후보 갱신"}
+        </button>
+      </header>
+      <div className="instrumentMapFilters" role="group" aria-label="인스트루먼트 조인 필터">
+        {([['all', '전체'], ['joined', '주식 선물(조인)'], ['crypto', '순수 크립토']] as const).map(([id, label]) => (
+          <button aria-pressed={filter === id} className={filter === id ? "active" : ""} key={id} onClick={() => setFilter(id)} type="button">{label}</button>
+        ))}
+      </div>
+      {error ? <TerminalWarning tone="error">{error}</TerminalWarning> : null}
+      <div className="instrumentMapRows">
+        {targets.map((target) => {
+          const item = maps.get(target.symbol);
+          return (
+            <InstrumentMapRow
+              item={target.join_eligible ? item : undefined}
+              key={target.symbol}
+              symbol={target.symbol}
+              joinEligible={target.join_eligible}
+              sources={target.sources}
+              onApprove={onApprove}
+              onReject={onReject}
+              onOpen={onOpen}
+            />
+          );
+        })}
+        {!targets.length && !loading ? <p className="instrumentMapEmpty">현재 필터에 해당하는 실제 포지션·워치리스트가 없습니다.</p> : null}
+      </div>
+    </section>
+  );
+}
+
+function InstrumentMapRow({
+  item,
+  symbol,
+  joinEligible,
+  sources,
+  onApprove,
+  onReject,
+  onOpen
+}: {
+  item?: InstrumentMapItem;
+  symbol: string;
+  joinEligible: boolean;
+  sources: Array<"position" | "watchlist">;
+  onApprove: (symbol: string) => void;
+  onReject: (symbol: string) => void;
+  onOpen: (symbol: string) => void;
+}) {
+  const status = item?.verification_status ?? "bitget_only";
+  const bitgetEvidence = item?.verification_evidence.bitget ?? {};
+  const tossEvidence = item?.verification_evidence.toss ?? {};
+  return (
+    <article className={`instrumentMapRow ${status}`} data-map-status={status} data-symbol={symbol}>
+      <button className="instrumentMapIdentity" disabled={status !== "verified"} onClick={() => onOpen(symbol)} type="button">
+        <strong>{symbol}</strong>
+        <span>{sources.includes("position") ? "실제 포지션" : "워치리스트"}</span>
+      </button>
+      <div className="instrumentMapSources">
+        <span className="sourceBadge bitget">Bitget 실행</span>
+        {status === "verified" ? <span className="sourceBadge toss">Toss 차트</span> : null}
+        {!joinEligible ? <span className="sourceBadge only">Bitget 전용</span> : null}
+        {status === "pending" ? <span className="sourceBadge pending">승인 대기</span> : null}
+        {status === "rejected" ? <span className="sourceBadge rejected">매핑 거부</span> : null}
+      </div>
+      {item ? (
+        <div className="instrumentMapEvidence">
+          <div><small>Bitget 기초자산 신원</small><strong>{String(bitgetEvidence.underlying_name ?? item.underlying_name)}</strong><span>{String(bitgetEvidence.exchange ?? item.toss_exchange)} · {kindLabel(String(bitgetEvidence.asset_type ?? item.underlying_kind))}</span></div>
+          <div><small>Toss 종목 메타데이터</small><strong>{String(tossEvidence.official_name ?? item.underlying_name)}</strong><span>{String(tossEvidence.exchange ?? item.toss_exchange)} · {kindLabel(String(tossEvidence.asset_type ?? item.underlying_kind))}</span></div>
+        </div>
+      ) : <p className="instrumentMapReason">순수 크립토 또는 RWA 검증 증거 없음 · Toss 조회 안 함</p>}
+      {item?.leverage_note ? <p className="instrumentLeverageNote">{item.leverage_note}</p> : null}
+      <div className="instrumentMapActions">
+        {status === "pending" ? (
+          <>
+            <button className="button" disabled={!item?.identity_match} onClick={() => onApprove(symbol)} type="button">승인</button>
+            <button className="button secondary" onClick={() => onReject(symbol)} type="button">거부</button>
+          </>
+        ) : status === "verified" ? <button className="button secondary" onClick={() => onOpen(symbol)} type="button">통합 차트</button> : null}
+      </div>
+      {item ? <footer>{item.notes}</footer> : null}
+    </article>
+  );
+}
+
+function kindLabel(kind: string): string {
+  return ({ stock: "주식", etf: "ETF", leveraged_etf: "레버리지 ETF" } as Record<string, string>)[kind] ?? kind;
 }
 
 function StockScoutSurface({ surface, onChange }: { surface: Exclude<ScoutSurface, "crypto">; onChange: (value: ScoutSurface) => void }) {
