@@ -120,7 +120,7 @@ GET /api/liq/heatmap?symbol=ETHUSDT&tf=4h&range=3D&side=all&size=all&mode=persis
 - `source=coinglass_est` returns the same adapter shape with `source_status=locked` until an existing collector is connected. It is a separate disabled layer and is never mixed with Bitget realized totals.
 - The UI polls this observation at no more than five-second intervals while its layer is active. It remains excluded from Entry Score, directional confluence, paper-engine entry gates, and live orders.
 - The UI exposes `LIVE · 청산 5초`, last receive time, and the latest `최근 확정` candle time. `LIVE` describes observation polling only; it does not claim an unconfirmed candle or streaming order-book feed.
-- The top three realized-density zones use ranked solid bands (`밀집 1/2/3`) with price, estimated realized USD, and event count. They replace the unexplained yellow dotted outlines. Clicking a zone highlights its price; it does not create an action-plan guardrail.
+- When events exist, the top three realized-density zones use ranked solid bands (`밀집 1/2/3`) with price, estimated realized USD, and event count. They replace the unexplained yellow dotted outlines. Clicking a zone highlights its price; it does not create an action-plan guardrail. An empty source explicitly shows `아직 표시할 실현 이벤트 없음` instead of rendering empty controls.
 - The rendering default is 68% opacity under the versioned `fce.unifiedHeatmap.opacity.v2` preference. Raw bucket totals are unchanged.
 
 ## WO-FCE-21 Integration

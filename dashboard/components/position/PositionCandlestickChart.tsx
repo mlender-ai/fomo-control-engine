@@ -933,20 +933,22 @@ function UnifiedHeatmapControls({
               <strong>상위 실현 밀집 3구간</strong>
               <span>밝은 실선 밴드 = 해당 가격대에 누적된 과거 실현 청산</span>
             </div>
-            {heatmap.top_zones.slice(0, 3).map((zone, index) => (
-              <button
-                aria-pressed={activeZonePrice === zone.price_mid}
-                className={`rank-${index + 1} ${activeZonePrice === zone.price_mid ? "active" : ""}`}
-                data-testid={`unified-heatmap-zone-${index + 1}`}
-                key={zone.price_index}
-                onClick={() => onZoneFocus(zone.price_mid)}
-                type="button"
-              >
-                <em>밀집 {index + 1}</em>
-                <strong>{formatPrice(zone.price_mid)}</strong>
-                <span>{formatUsd(zone.total_usd_estimated)} · {zone.events}건</span>
-              </button>
-            ))}
+            {heatmap.top_zones.length ? heatmap.top_zones.slice(0, 3).map((zone, index) => (
+                <button
+                  aria-pressed={activeZonePrice === zone.price_mid}
+                  className={`rank-${index + 1} ${activeZonePrice === zone.price_mid ? "active" : ""}`}
+                  data-testid={`unified-heatmap-zone-${index + 1}`}
+                  key={zone.price_index}
+                  onClick={() => onZoneFocus(zone.price_mid)}
+                  type="button"
+                >
+                  <em>밀집 {index + 1}</em>
+                  <strong>{formatPrice(zone.price_mid)}</strong>
+                  <span>{formatUsd(zone.total_usd_estimated)} · {zone.events}건</span>
+                </button>
+              )) : (
+                <span className="unifiedHeatmapZonesEmpty">아직 표시할 실현 이벤트 없음</span>
+              )}
           </div>
         </div>
       ) : null}

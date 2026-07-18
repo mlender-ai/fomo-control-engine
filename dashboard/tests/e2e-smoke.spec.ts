@@ -171,9 +171,7 @@ test("live position cockpit smoke path", async ({ page }) => {
   await expect(page.getByTestId("unified-heatmap-live")).toContainText("청산 5초");
   await expect(page.getByTestId("unified-heatmap-live")).toContainText("최근 확정");
   await expect(page.getByTestId("unified-heatmap-zones")).toContainText("밝은 실선 밴드");
-  await expect(page.getByTestId("unified-heatmap-zone-1")).toBeVisible();
-  await expect(page.getByTestId("unified-heatmap-zone-2")).toBeVisible();
-  await expect(page.getByTestId("unified-heatmap-zone-3")).toBeVisible();
+  await expect(page.getByTestId("unified-heatmap-zones")).toContainText(/밀집 1|아직 표시할 실현 이벤트 없음/);
   await expect(page.getByTestId("unified-heatmap-canvas")).toBeVisible();
   await expect(page.getByRole("slider", { name: "청산 히트맵 투명도" })).toHaveValue("0.68");
   const beforeFilterUrl = page.url();
