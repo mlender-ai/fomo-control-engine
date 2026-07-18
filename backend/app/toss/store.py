@@ -10,6 +10,13 @@ from uuid import uuid4
 from app.db.sqlite_utils import connect_sqlite
 
 
+POSITION_SIGNAL_LABELS = {
+    "basis_behavior": "베이시스 행동",
+    "funding_momentum_divergence": "펀딩 × 기초 모멘텀",
+    "underlying_flow_alignment": "기초 수급 × 내 방향",
+}
+
+
 class TossStockStore:
     def __init__(self, database_url: str) -> None:
         self.path = database_url.removeprefix("sqlite:///") if database_url.startswith("sqlite:///") else ""
@@ -112,6 +119,170 @@ class TossStockStore:
             )
         return judgment_id
 
+    def record_position_judgment(
+        self,
+        *,
+        judgment_id: str,
+        symbol: str,
+        observed_at: str,
+        price: float,
+        evidence: dict[str, Any],
+    ) -> bool:
+        if not self.enabled or price <= 0:
+            return False
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """INSERT OR IGNORE INTO scout_judgment_snapshots
+                (id, entity_type, symbol, signal_type, observed_at, price, evidence, source)
+                VALUES (?, 'stock_us', ?, 'position_deepdive', ?, ?, ?, 'bitget+toss+position')""",
+                (
+                    judgment_id,
+                    symbol.upper(),
+                    observed_at,
+                    float(price),
+                    json.dumps(evidence, ensure_ascii=False),
+                ),
+            )
+        return cursor.rowcount > 0
+
+    def position_performance(self, position_id: str) -> list[dict[str, Any]]:
+        if not self.enabled:
+            return []
+        try:
+            with self._connect() as connection:
+                rows = connection.execute(
+                    """SELECT s.evidence, o.horizon_days, o.return_pct
+                    FROM scout_judgment_snapshots s
+                    JOIN scout_judgment_outcomes o ON o.judgment_id=s.id
+                    WHERE s.signal_type='position_deepdive'
+                    ORDER BY o.observed_at DESC"""
+                ).fetchall()
+        except sqlite3.OperationalError as exc:
+            if "no such table" not in str(exc):
+                raise
+            return []
+        grouped: dict[int, list[bool]] = {1: [], 5: [], 20: []}
+        for row in rows:
+            try:
+                evidence = json.loads(row["evidence"])
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if str(evidence.get("position_id") or "") != position_id:
+                continue
+            expected = evidence.get("expected_move")
+            if expected not in {"up", "down"}:
+                continue
+            correct = float(row["return_pct"]) > 0 if expected == "up" else float(row["return_pct"]) < 0
+            grouped[int(row["horizon_days"])].append(correct)
+        return [
+            {
+                "horizon_days": horizon,
+                "n": len(results),
+                "hit_rate_pct": round(sum(results) / len(results) * 100, 1) if results else None,
+                "sample_low": len(results) < 30,
+            }
+            for horizon, results in grouped.items()
+        ]
+
+    def outcomes_for_judgment(self, judgment_id: str) -> list[dict[str, Any]]:
+        if not self.enabled:
+            return []
+        try:
+            with self._connect() as connection:
+                rows = connection.execute(
+                    """SELECT horizon_days, observed_at, price, return_pct
+                    FROM scout_judgment_outcomes WHERE judgment_id=? ORDER BY horizon_days""",
+                    (judgment_id,),
+                ).fetchall()
+        except sqlite3.OperationalError as exc:
+            if "no such table" not in str(exc):
+                raise
+            return []
+        return [dict(row) for row in rows]
+
+    def position_signal_performance(self, position_id: str) -> list[dict[str, Any]]:
+        if not self.enabled:
+            return []
+        try:
+            with self._connect() as connection:
+                rows = connection.execute(
+                    """SELECT s.evidence, o.horizon_days, o.return_pct
+                    FROM scout_judgment_snapshots s
+                    LEFT JOIN scout_judgment_outcomes o ON o.judgment_id=s.id
+                    WHERE s.signal_type='position_deepdive'
+                    ORDER BY s.observed_at DESC, o.horizon_days"""
+                ).fetchall()
+        except sqlite3.OperationalError as exc:
+            if "no such table" not in str(exc):
+                raise
+            return []
+        labels: dict[str, str] = {}
+        grouped: dict[tuple[str, int], list[bool]] = {}
+        for row in rows:
+            try:
+                evidence = json.loads(row["evidence"])
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if str(evidence.get("position_id") or "") != position_id:
+                continue
+            for signal in evidence.get("cross_signals") or []:
+                if not isinstance(signal, dict) or signal.get("status") != "active":
+                    continue
+                expected = _signal_expected_move(signal)
+                signal_id = str(signal.get("id") or "")
+                if not signal_id or expected is None:
+                    continue
+                labels.setdefault(signal_id, str(signal.get("label") or POSITION_SIGNAL_LABELS.get(signal_id) or signal_id))
+                for horizon in (1, 5, 20):
+                    grouped.setdefault((signal_id, horizon), [])
+                if row["horizon_days"] is None or row["return_pct"] is None:
+                    continue
+                horizon = int(row["horizon_days"])
+                result = float(row["return_pct"])
+                grouped[(signal_id, horizon)].append(result > 0 if expected == "up" else result < 0)
+        return [
+            {
+                "signal_id": signal_id,
+                "signal_label": labels[signal_id],
+                "horizon_days": horizon,
+                "n": len(results),
+                "hit_rate_pct": round(sum(results) / len(results) * 100, 1) if results else None,
+                "sample_low": len(results) < 30,
+            }
+            for (signal_id, horizon), results in grouped.items()
+        ]
+
+    def due_position_symbols(self, now: datetime | None = None) -> list[str]:
+        if not self.enabled:
+            return []
+        now = now or datetime.now(timezone.utc)
+        try:
+            with self._connect() as connection:
+                snapshots = connection.execute(
+                    """SELECT id, symbol, observed_at FROM scout_judgment_snapshots
+                    WHERE signal_type='position_deepdive'"""
+                ).fetchall()
+                recorded = {
+                    (str(row["judgment_id"]), int(row["horizon_days"]))
+                    for row in connection.execute(
+                        """SELECT judgment_id, horizon_days FROM scout_judgment_outcomes
+                        WHERE judgment_id IN (
+                            SELECT id FROM scout_judgment_snapshots WHERE signal_type='position_deepdive'
+                        )"""
+                    ).fetchall()
+                }
+        except sqlite3.OperationalError as exc:
+            if "no such table" not in str(exc):
+                raise
+            return []
+        due: set[str] = set()
+        for row in snapshots:
+            observed = datetime.fromisoformat(str(row["observed_at"]).replace("Z", "+00:00"))
+            age_days = (now - observed).total_seconds() / 86_400
+            if any(age_days >= horizon and (str(row["id"]), horizon) not in recorded for horizon in (1, 5, 20)):
+                due.add(str(row["symbol"]).upper())
+        return sorted(due)
+
     def performance(self, entity_type: str) -> list[dict[str, Any]]:
         if not self.enabled:
             return []
@@ -154,3 +325,29 @@ class TossStockStore:
                     )
                     recorded += cursor.rowcount
         return recorded
+
+
+def _signal_expected_move(signal: dict[str, Any]) -> str | None:
+    data = signal.get("data") if isinstance(signal.get("data"), dict) else {}
+    signal_id = signal.get("id")
+    if signal_id == "basis_behavior":
+        width_change = data.get("width_change_pct_points")
+        sparkline = data.get("sparkline") if isinstance(data.get("sparkline"), list) else []
+        if len(sparkline) >= 2 and isinstance(sparkline[0], dict) and isinstance(sparkline[-1], dict):
+            first = sparkline[0].get("value")
+            last = sparkline[-1].get("value")
+            if isinstance(first, (int, float)) and isinstance(last, (int, float)):
+                width_change = abs(last) - abs(first)
+        current = data.get("current_pct")
+        if isinstance(width_change, (int, float)) and width_change > 0.25 and isinstance(current, (int, float)) and current != 0:
+            return "down" if current < 0 else "up"
+    if signal_id == "funding_momentum_divergence":
+        funding = data.get("funding_rate")
+        momentum = data.get("underlying_momentum_5d_pct")
+        if isinstance(funding, (int, float)) and funding != 0 and isinstance(momentum, (int, float)) and momentum != 0:
+            return "up" if momentum > 0 else "down"
+    if signal_id == "underlying_flow_alignment":
+        net_amount = data.get("net_amount")
+        if isinstance(net_amount, (int, float)) and net_amount != 0:
+            return "up" if net_amount > 0 else "down"
+    return None

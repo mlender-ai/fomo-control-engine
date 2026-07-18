@@ -1,5 +1,6 @@
 from datetime import timedelta
 from concurrent.futures import ThreadPoolExecutor
+from uuid import UUID
 
 from app.api.deps import configure_runtime
 from app.db.models import Direction, MarketSnapshot, Position, PositionSnapshot, WatchlistItem, utc_now
@@ -187,6 +188,29 @@ def test_live_position_chart_analysis_contract(client) -> None:
     assert compact["one_liners"] == payload["one_liners"]
     assert all("raw_json" not in metric for metric in compact["derivatives"]["metrics"])
     assert compact["liquidity"].get("rejected_sweeps") == []
+
+
+def test_crypto_position_deepdive_does_not_attach_toss_signals(client) -> None:
+    report = client.post("/api/reports", json={"symbol": "BTCUSDT", "timeframe": "4h"}).json()
+    position = client.post(
+        "/api/positions",
+        json={
+            "symbol": "BTCUSDT",
+            "direction": "long",
+            "entry_price": report["price"],
+            "quantity": 0.01,
+            "leverage": 2,
+        },
+    ).json()
+
+    response = client.get(f"/api/live/positions/{position['id']}/deepdive")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "unavailable"
+    assert payload["cross_signals"] == []
+    judgments = routes.repository.list_judgments(UUID(position["id"]), limit=20)
+    assert any(item.type == "position_entry_snapshot" for item in judgments)
 
 
 def test_cached_position_recalculates_liquidation_distance_from_current_mark() -> None:

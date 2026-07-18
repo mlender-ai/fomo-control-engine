@@ -68,6 +68,7 @@ from app.positions.engine import (
 )
 from app.positions.insight import build_position_insight_input, make_ai_position_insight
 from app.positions.pnl import resolve_position_pnl_percent
+from app.positions.deepdive import build_entry_snapshot_claim, build_position_deepdive, deepdive_judgment_claim
 from app.onchain.service import chart_onchain_context
 from app.report.engine import generate_report
 from app.review.engine import (
@@ -958,6 +959,108 @@ def get_position_chart_analysis(position_id: UUID, timeframe: str = "4h", compac
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except MarketDataError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+def get_position_deepdive(position_id: UUID) -> dict:
+    position = repository.get_position(position_id)
+    if position is None:
+        raise HTTPException(status_code=404, detail="Position not found")
+    try:
+        _market_analysis, raw_analysis = _chart_analysis_bundle_for_position(position, "4h", include_trade_flow=False)
+        from app.toss.instrument_join import decorate_chart_analysis
+
+        joined_analysis = decorate_chart_analysis(repository, settings, raw_analysis)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except MarketDataError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    payload = _live_position_payload(position, store_snapshot=False)
+    snapshot = payload["latest_snapshot"]
+    action_plan = build_action_plan(position, snapshot, raw_analysis)
+    try:
+        from app.services import runtime as service_runtime
+
+        heatmap = service_runtime.unified_liquidation_heatmap(
+            position.symbol,
+            timeframe="4h",
+            range_key="3D",
+            mode="persist",
+            size_filter="all",
+        )
+    except Exception as exc:
+        logger.warning("position deepdive heatmap unavailable for %s: %s", position.symbol, exc)
+        heatmap = {"source_status": "unavailable", "top_zones": [], "n_events": 0, "sample_low": True}
+
+    now = utc_now()
+    judgments = repository.list_judgments(position.id, limit=500)
+    entry = next((item for item in judgments if item.type == "position_entry_snapshot"), None)
+    if entry is None:
+        entry_claim = build_entry_snapshot_claim(position, raw_analysis, joined_analysis, captured_at=now)
+        entry = repository.add_judgment(
+            JudgmentLedgerEntry(
+                judgment_id=str(uuid5(NAMESPACE_URL, f"fce:position-entry-snapshot:{position.id}")),
+                position_id=position.id,
+                source_type="position_deepdive",
+                source_id=str(position.id),
+                as_of=now,
+                type="position_entry_snapshot",
+                claim=entry_claim,
+                param_version=engine_param_snapshot(repository),
+            )
+        )
+    entry_claim = entry.claim
+
+    from app.toss.store import TossStockStore
+
+    database_path = getattr(repository, "database_path", None)
+    store = TossStockStore(f"sqlite:///{database_path}" if database_path else "memory://")
+    mark_price = float(raw_analysis.get("mark_price") or position.mark_price or position.current_price or position.entry_price)
+    if store.enabled:
+        store.record_due_outcomes({position.symbol.upper(): mark_price}, now=now)
+    daily_judgment_id = str(uuid5(NAMESPACE_URL, f"fce:position-deepdive:{position.id}:{now.date().isoformat()}"))
+    existing_daily = next((item for item in judgments if item.judgment_id == daily_judgment_id), None)
+    ledger = {
+        "latest_judgment_id": daily_judgment_id,
+        "outcomes": store.outcomes_for_judgment(daily_judgment_id) if store.enabled else [],
+        "performance": store.position_performance(str(position.id)) if store.enabled else [],
+        "signal_performance": store.position_signal_performance(str(position.id)) if store.enabled else [],
+        "horizons": [1, 5, 20],
+        "score_policy": "최초 관측 이후 실제 T+1/T+5/T+20 가격만 기록합니다.",
+    }
+    deepdive = build_position_deepdive(
+        position,
+        raw_analysis,
+        joined_analysis,
+        heatmap,
+        action_plan,
+        entry_claim,
+        ledger=ledger,
+        now=now,
+    )
+    if deepdive.get("status") == "ready" and existing_daily is None:
+        claim = deepdive_judgment_claim(deepdive, position, mark_price)
+        repository.add_judgment(
+            JudgmentLedgerEntry(
+                judgment_id=daily_judgment_id,
+                position_id=position.id,
+                source_type="position_deepdive",
+                source_id=str(entry.id),
+                as_of=now,
+                type="position_deepdive",
+                claim=claim,
+                param_version=engine_param_snapshot(repository),
+            )
+        )
+        if store.enabled:
+            store.record_position_judgment(
+                judgment_id=daily_judgment_id,
+                symbol=position.symbol,
+                observed_at=now.isoformat(),
+                price=mark_price,
+                evidence=claim,
+            )
+    return deepdive
 
 
 def get_position_snapshots(position_id: UUID, limit: int = 50) -> dict:

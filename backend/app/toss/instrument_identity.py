@@ -14,6 +14,7 @@ class CanonicalUnderlying:
     official_name: str
     exchange: str
     kind: UnderlyingKind
+    leverage_factor: float = 1.0
     leverage_note: str | None = None
 
 
@@ -38,6 +39,7 @@ CANONICAL_UNDERLYINGS: dict[str, CanonicalUnderlying] = {
         official_name="DIREXION SHARES ETF TRUST DAILY SEMICONDUCTOR BULL 3X SHS",
         exchange="AMEX",
         kind="leveraged_etf",
+        leverage_factor=3.0,
         leverage_note="3x 레버리지 ETF · Bitget 퍼페추얼 결합 시 레버리지 중첩",
     ),
 }

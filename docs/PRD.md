@@ -13,6 +13,7 @@ FOMO Control Engine is a personal trading decision engine. It helps the user dec
 - Monitor open positions against fresh reports.
 - Save exits and generate review text.
 - Persist reports, positions, monitoring logs, and completed trades.
+- For verified stock-underlying futures, persist first-observed entry context and cross-source Bitget × Toss × position judgments with honest T+1/T+5/T+20 outcomes.
 - Allow mock/live Bitget market data switching.
 - Read actual Bitget futures positions through private read-only API.
 - Sync actual exchange positions into internal position tracking without closing them automatically.

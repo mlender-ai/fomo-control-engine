@@ -372,6 +372,7 @@ def _joined_display_analysis(analysis: dict[str, Any], observation: dict[str, An
         "liquidation": original_levels.get("liquidation", analysis.get("liquidation_price")),
     }
     mapping = observation["mapping"]
+    leverage_factor = _mapping_leverage_factor(mapping)
     joined["underlying_join"] = {
         "status": "joined",
         "price_of_record": "bitget",
@@ -388,6 +389,7 @@ def _joined_display_analysis(analysis: dict[str, Any], observation: dict[str, An
         "stale": observation["market_state"] != "open",
         "underlying_name": mapping["underlying_name"],
         "underlying_kind": mapping["underlying_kind"],
+        "underlying_leverage_factor": leverage_factor,
         "toss_exchange": mapping["toss_exchange"],
         "leverage_note": mapping.get("leverage_note"),
         "flow_status": "unavailable_us" if mapping["toss_market"] == "US" else "available",
@@ -401,6 +403,17 @@ def _joined_display_analysis(analysis: dict[str, Any], observation: dict[str, An
         "disclaimer": "차트 구조=Toss 기초자산 · 현재가/실행/파생지표=Bitget 퍼페추얼 · 자동 진입 근거로 미사용",
     }
     return joined
+
+
+def _mapping_leverage_factor(mapping: dict[str, Any]) -> float | None:
+    evidence = mapping.get("verification_evidence") if isinstance(mapping.get("verification_evidence"), dict) else {}
+    toss = evidence.get("toss") if isinstance(evidence.get("toss"), dict) else {}
+    try:
+        factor = abs(float(toss.get("leverage_factor")))
+    except (TypeError, ValueError):
+        canonical = canonical_underlying(str(mapping.get("toss_symbol") or ""))
+        factor = canonical.leverage_factor if canonical else 1.0
+    return factor if factor > 0 else None
 
 
 def _verification_evidence(contract: CatalogSymbol, canonical: Any, toss_stock: dict[str, Any], checks: dict[str, bool]) -> dict[str, Any]:

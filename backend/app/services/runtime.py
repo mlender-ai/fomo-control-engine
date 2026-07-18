@@ -116,6 +116,28 @@ def sync_and_analyze_positions() -> dict[str, Any]:
     removed = [str(symbol).upper() for symbol in payload.get("scout_tracking_removed", [])]
     removed.extend(clear_scout_tracking_for_open_positions()["removed"])
     payload["scout_tracking_removed"] = sorted(set(removed))
+    try:
+        from app.toss.store import TossStockStore
+
+        prices: dict[str, float] = {}
+        for position in runtime.repository.list_positions(PositionStatus.open):
+            current_price = position.mark_price or position.current_price
+            if current_price is not None:
+                prices[position.symbol.upper()] = float(current_price)
+        database_path = getattr(runtime.repository, "database_path", None)
+        store = TossStockStore(f"sqlite:///{database_path}" if database_path else "memory://")
+        for symbol in store.due_position_symbols() if store.enabled else []:
+            if symbol in prices:
+                continue
+            try:
+                snapshot = runtime.market_provider.get_snapshot(symbol, "4h")
+            except Exception:
+                continue
+            if snapshot.price > 0:
+                prices[symbol] = float(snapshot.price)
+        payload["position_deepdive_outcomes_recorded"] = store.record_due_outcomes(prices) if store.enabled else 0
+    except Exception as exc:
+        payload["position_deepdive_outcome_error"] = f"{type(exc).__name__}: {exc}"
     return payload
 
 
