@@ -53,7 +53,7 @@
 - 활성화 후 `docs/Scout.md`의 외부 검증 절차로 증빙을 추가한다.
 
 ## 로컬 검증
-- 백엔드 전체: 519 passed, coverage 76.76%, core 88.07%
+- 백엔드 전체: 519 passed, coverage 76.74%, core 88.07%
 - 토스/스카우트 API: 25 passed
 - 프론트: lint 오류 0, typecheck, production build
 - E2E: 18 passed

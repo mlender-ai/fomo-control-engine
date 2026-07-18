@@ -115,16 +115,21 @@ class TossStockStore:
     def performance(self, entity_type: str) -> list[dict[str, Any]]:
         if not self.enabled:
             return []
-        with self._connect() as connection:
-            rows = connection.execute(
-                """SELECT s.signal_type, o.horizon_days, COUNT(*) AS n,
-                AVG(o.return_pct) AS avg_return_pct,
-                AVG(CASE WHEN o.return_pct > 0 THEN 1.0 ELSE 0.0 END) * 100 AS hit_rate_pct
-                FROM scout_judgment_snapshots s JOIN scout_judgment_outcomes o ON o.judgment_id=s.id
-                WHERE s.entity_type=? GROUP BY s.signal_type, o.horizon_days
-                ORDER BY s.signal_type, o.horizon_days""",
-                (entity_type,),
-            ).fetchall()
+        try:
+            with self._connect() as connection:
+                rows = connection.execute(
+                    """SELECT s.signal_type, o.horizon_days, COUNT(*) AS n,
+                    AVG(o.return_pct) AS avg_return_pct,
+                    AVG(CASE WHEN o.return_pct > 0 THEN 1.0 ELSE 0.0 END) * 100 AS hit_rate_pct
+                    FROM scout_judgment_snapshots s JOIN scout_judgment_outcomes o ON o.judgment_id=s.id
+                    WHERE s.entity_type=? GROUP BY s.signal_type, o.horizon_days
+                    ORDER BY s.signal_type, o.horizon_days""",
+                    (entity_type,),
+                ).fetchall()
+        except sqlite3.OperationalError as exc:
+            if "no such table" not in str(exc):
+                raise
+            return []
         return [dict(row) | {"sample_low": int(row["n"]) < 30} for row in rows]
 
     def record_due_outcomes(self, prices: dict[str, float], now: datetime | None = None) -> int:
