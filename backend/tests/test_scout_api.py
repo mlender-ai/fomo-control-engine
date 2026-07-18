@@ -293,3 +293,19 @@ def test_watch_intent_is_idempotent_and_has_no_zone(client: TestClient) -> None:
     assert first.json()["intent"]["direction"] is None
     assert first.json()["intent"]["zone_lower"] is None
     assert second.json()["created"] is False
+
+
+def test_stock_scout_is_read_only_and_honest_when_unconfigured(client: TestClient, monkeypatch) -> None:
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "toss_stock_scout_enabled", False)
+    monkeypatch.setattr(settings, "toss_client_id", "")
+    monkeypatch.setattr(settings, "toss_client_secret", "")
+
+    response = client.get("/api/scout/stocks/KR")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "credentials_required"
+    assert payload["read_only_label"] == "Toss 데이터 · 주문 실행 없음"
+    assert payload["groups"] == {}

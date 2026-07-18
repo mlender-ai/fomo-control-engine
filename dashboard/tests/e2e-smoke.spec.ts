@@ -394,6 +394,14 @@ test("scout and analysis smoke paths", async ({ page }) => {
   await page.goto("/scout");
   await expect(page.getByTestId("demo-mode-badge")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("scout-page")).toBeVisible();
+  await page.getByRole("button", { name: "주식 KR", exact: true }).click();
+  await expect(page.getByTestId("stock-scout-page")).toBeVisible();
+  await expect(page.getByTestId("stock-scout-page")).toContainText("Toss 데이터 · 주문 실행 없음");
+  await expect(page.getByTestId("stock-scout-page")).toContainText("근거 없는 종목과 숫자는 생성하지 않습니다.");
+  await page.getByRole("button", { name: "판정 성적", exact: true }).click();
+  await expect(page.getByTestId("stock-scout-page")).toContainText("T+1 · T+5 · T+20");
+  await page.getByRole("button", { name: "크립토", exact: true }).click();
+  await expect(page.getByTestId("scout-page")).toBeVisible();
   if (await page.getByTestId("catalog-status-banner").isVisible().catch(() => false)) {
     await page.getByTestId("catalog-status-banner").getByRole("button", { name: "재시도" }).click();
     await expect(page.getByTestId("catalog-status-banner")).toBeHidden({ timeout: 30_000 });

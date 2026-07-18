@@ -9,6 +9,48 @@ export type ScoreBreakdown = {
   fomo: number;
 };
 
+export type StockScoutSignal = {
+  type: string;
+  label: string;
+  gap?: number;
+  tone: "candidate" | "risk" | string;
+};
+
+export type StockScoutCandidate = {
+  market: "KR" | "US";
+  entity_type: "stock_kr" | "stock_us";
+  symbol: string;
+  name: string;
+  price: number | null;
+  observed_at: string;
+  source: string;
+  warning_badges: string[];
+  signals: StockScoutSignal[];
+  market_rank: number | null;
+  retail_rank: number | null;
+};
+
+export type StockScoutResponse = {
+  market: "KR" | "US";
+  configured: boolean;
+  collector_enabled: boolean;
+  status: string;
+  market_state?: string;
+  message?: string | null;
+  read_only_label: string;
+  source: string;
+  groups: Record<string, StockScoutCandidate[]>;
+  performance: Array<{
+    signal_type: string;
+    horizon_days: number;
+    n: number;
+    avg_return_pct: number;
+    hit_rate_pct: number;
+    sample_low: boolean;
+  }>;
+  observed_at: string;
+};
+
 export type Report = {
   id: string;
   symbol: string;
@@ -2219,6 +2261,8 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload)
     }),
+  stockScout: (market: "KR" | "US", refresh = false) =>
+    request<StockScoutResponse>(`/api/scout/stocks/${market}?refresh=${refresh}`),
   universeDiscoveries: (params: { symbol?: string; status?: string; limit?: number } = {}) =>
     request<{ discoveries: UniverseDiscovery[] }>(
       `/api/scout/discoveries${Object.keys(params).length ? `?${new URLSearchParams(

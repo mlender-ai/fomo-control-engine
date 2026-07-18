@@ -4223,13 +4223,13 @@ h3 {
 
 .unifiedHeatmapControls {
   display: grid;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
-  margin: 0 16px 10px;
+  margin: 0 16px 8px;
   border: 1px solid var(--terminal-line);
   border-radius: 8px;
   background: rgba(var(--chart-panel-rgb), 0.54);
-  padding: 11px;
+  padding: 8px 10px;
 }
 
 .unifiedHeatmapControls > header,
@@ -4347,7 +4347,7 @@ h3 {
   gap: 8px;
   min-width: 0;
   border-top: 1px solid var(--terminal-line);
-  padding-top: 9px;
+  padding-top: 7px;
 }
 
 .unifiedHeatmapFilterBar {
@@ -4435,7 +4435,7 @@ h3 {
   gap: 7px;
   min-width: 0;
   border-top: 1px solid var(--terminal-line);
-  padding-top: 9px;
+  padding-top: 7px;
 }
 
 .unifiedHeatmapZones > header {
@@ -5408,6 +5408,75 @@ button.actionPlanRow:not(:disabled):hover {
 
 .scoutPage {
   gap: 12px;
+}
+
+.scoutSurfaceTabs {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--terminal-line);
+  padding: 0 0 10px;
+}
+
+.scoutSurfaceTabs button {
+  min-height: 34px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--terminal-muted);
+  padding: 6px 12px;
+  white-space: nowrap;
+}
+
+.scoutSurfaceTabs button.active {
+  border-color: rgba(var(--chart-green-rgb), .42);
+  background: rgba(var(--chart-green-rgb), .1);
+  color: var(--terminal-positive);
+}
+
+.stockScoutTrustBar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  border: 1px solid rgba(var(--chart-green-rgb), .35);
+  border-radius: 8px;
+  background: rgba(var(--chart-green-rgb), .06);
+  padding: 11px 13px;
+}
+
+.stockScoutTrustBar strong { color: var(--terminal-positive); font-size: 12px; }
+.stockScoutTrustBar span { color: var(--terminal-muted); font-size: 10px; }
+.stockScoutTrustBar em { margin-left: auto; color: var(--terminal-cyan); font-size: 10px; font-style: normal; }
+.stockSignalGroups { display: grid; gap: 16px; }
+.stockSignalGroups > section, .stockPerformanceSection { display: grid; gap: 10px; }
+.stockSignalGroups > section > header, .stockPerformanceSection > header { display: flex; align-items: end; justify-content: space-between; }
+.stockSignalGroups h2, .stockPerformanceSection h2 { margin: 2px 0 0; font-size: 15px; }
+.stockSignalGroups header span, .stockSignalGroups header small, .stockPerformanceSection header span, .stockPerformanceSection header small { color: var(--terminal-muted); font-size: 9px; }
+.stockCandidateGrid, .stockPerformanceGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 8px; }
+.stockCandidateGrid > article, .stockPerformanceGrid > article { display: grid; gap: 8px; min-width: 0; border: 1px solid var(--terminal-line); border-radius: 8px; background: var(--terminal-panel); padding: 12px; }
+.stockCandidateGrid article > header { display: flex; justify-content: space-between; gap: 8px; }
+.stockCandidateGrid article > header div { display: grid; gap: 2px; }
+.stockCandidateGrid article > header strong { font-size: 13px; }
+.stockCandidateGrid article > header span, .stockCandidateGrid footer { color: var(--terminal-muted); font-size: 9px; }
+.stockCandidateGrid article > header em, .stockPerformanceGrid em { width: fit-content; border: 1px solid rgba(var(--chart-amber-rgb), .45); border-radius: 999px; color: var(--terminal-amber); padding: 2px 6px; font-size: 8px; font-style: normal; }
+.stockCandidateGrid article > b, .stockPerformanceGrid strong { font-family: var(--fce-font-number); color: var(--terminal-text); font-size: 16px; }
+.stockCandidateGrid article > p { margin: 0; color: var(--terminal-cyan); font-size: 11px; }
+.stockCandidateGrid dl { display: flex; gap: 16px; margin: 0; }
+.stockCandidateGrid dl div { display: grid; gap: 2px; }
+.stockCandidateGrid dt { color: var(--terminal-muted); font-size: 8px; }
+.stockCandidateGrid dd { margin: 0; font-family: var(--fce-font-number); font-size: 11px; }
+.stockCandidateGrid footer { display: flex; justify-content: space-between; gap: 8px; border-top: 1px solid var(--terminal-line); padding-top: 8px; }
+.stockScoutEmpty { display: grid; min-height: 220px; place-content: center; gap: 8px; border: 1px dashed var(--terminal-line); border-radius: 8px; color: var(--terminal-muted); text-align: center; }
+.stockScoutEmpty strong { color: var(--terminal-text); }
+.stockScoutEmpty p { max-width: 440px; margin: 0; font-size: 11px; }
+.stockScoutEmpty small { font-size: 9px; }
+.stockPerformanceGrid article span, .stockPerformanceGrid article small { color: var(--terminal-muted); font-size: 9px; }
+
+@media (max-width: 560px) {
+  .stockScoutTrustBar { align-items: flex-start; flex-direction: column; }
+  .stockScoutTrustBar em { margin-left: 0; }
+  .stockCandidateGrid, .stockPerformanceGrid { grid-template-columns: 1fr; }
 }
 
 .scoutSearchBar {

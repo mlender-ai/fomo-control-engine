@@ -20,6 +20,7 @@ from app.notify.state import NotificationState
 from app.notify.telegram import TelegramSender
 from app.services import runtime as service
 from app.worker.heartbeat import HeartbeatRecord, SQLiteHeartbeatStore
+from app.toss.service import collect_market as collect_toss_market
 
 logger = logging.getLogger("worker.manager")
 
@@ -251,6 +252,13 @@ class WorkerManager:
         payload.pop("_alert_candidate_objects", None)
         return payload
 
+    async def _collect_toss_stocks(self) -> dict[str, Any]:
+        kr, us = await asyncio.gather(
+            collect_toss_market(self.settings, "KR"),
+            collect_toss_market(self.settings, "US"),
+        )
+        return {"KR": kr.get("status"), "US": us.get("status")}
+
     async def _telegram_bot_loop(self) -> None:
         heartbeat = self.heartbeats["telegram_bot"]
 
@@ -412,6 +420,12 @@ class WorkerManager:
                 self.settings.worker_universe_scan_interval_seconds,
                 self._universe_scan,
                 enabled=self.settings.universe_scanner_enabled,
+            ),
+            "toss_stock_scout": WorkerJob(
+                "toss_stock_scout",
+                self.settings.toss_poll_interval_seconds,
+                self._collect_toss_stocks,
+                enabled=self.settings.toss_stock_scout_enabled,
             ),
             "telegram_bot": WorkerJob("telegram_bot", 0, None, scheduled=False),
         }

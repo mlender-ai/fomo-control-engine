@@ -20,6 +20,7 @@ import {
   type OneLinerSummary,
   type ScoutAnalysisResponse,
   type ScoutScanRow,
+  type StockScoutResponse,
   type TrackedScoutItem,
   type UniverseDiscovery,
   type WatchlistEntry
@@ -32,6 +33,7 @@ import { loadFceViewMode, saveFceViewMode, type FceViewMode } from "@/lib/viewMo
 
 type SortKey = "setup_proximity_pct" | "long_score" | "short_score" | "prz_distance_pct" | "nearest_level_distance_pct" | "liquidity_pool_distance_pct" | "change_24h" | "crowding_score" | "funding_rate";
 type AssetFilter = "all" | "crypto" | "stock_index" | "unknown";
+type ScoutSurface = "crypto" | "KR" | "US" | "performance";
 
 const SORT_COLUMNS: Array<{ key: SortKey; label: string; direction: "asc" | "desc" }> = [
   { key: "setup_proximity_pct", label: "셋업 근접도", direction: "asc" },
@@ -78,6 +80,7 @@ const ASSET_FILTERS: Array<{ id: AssetFilter; label: string }> = [
 ];
 
 export function ScoutShell() {
+  const [scoutSurface, setScoutSurface] = useState<ScoutSurface>("crypto");
   const [watchlist, setWatchlist] = useState<WatchlistEntry[]>([]);
   const [scanRows, setScanRows] = useState<ScoutScanRow[]>([]);
   const [armedSetups, setArmedSetups] = useState<ArmedSetup[]>([]);
@@ -396,6 +399,10 @@ export function ScoutShell() {
     return <ScoutSymbolView symbol={activeSymbol} viewMode={viewMode} onViewModeChange={updateViewMode} onBack={() => setActiveSymbol("")} />;
   }
 
+  if (scoutSurface !== "crypto") {
+    return <StockScoutSurface surface={scoutSurface} onChange={setScoutSurface} />;
+  }
+
   return (
     <div className="page scoutPage" data-testid="scout-page">
       <header className="cockpitToolbar">
@@ -415,6 +422,8 @@ export function ScoutShell() {
           <ViewModeToggle mode={viewMode} onChange={updateViewMode} />
         </div>
       </header>
+
+      <ScoutSurfaceTabs value={scoutSurface} onChange={setScoutSurface} />
 
       {error ? <TerminalWarning tone="error">{error}</TerminalWarning> : null}
       {notice ? <TerminalWarning tone="info">{notice}</TerminalWarning> : null}
@@ -588,6 +597,127 @@ export function ScoutShell() {
       )}
     </div>
   );
+}
+
+function ScoutSurfaceTabs({ value, onChange }: { value: ScoutSurface; onChange: (value: ScoutSurface) => void }) {
+  const tabs: Array<[ScoutSurface, string]> = [
+    ["crypto", "크립토"],
+    ["KR", "주식 KR"],
+    ["US", "주식 US"],
+    ["performance", "판정 성적"]
+  ];
+  return (
+    <nav className="scoutSurfaceTabs" aria-label="스카우트 시장">
+      {tabs.map(([id, label]) => (
+        <button aria-pressed={value === id} className={value === id ? "active" : ""} key={id} onClick={() => onChange(id)} type="button">
+          {label}
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+function StockScoutSurface({ surface, onChange }: { surface: Exclude<ScoutSurface, "crypto">; onChange: (value: ScoutSurface) => void }) {
+  const [payloads, setPayloads] = useState<StockScoutResponse[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  async function load(refresh = false) {
+    setLoading(true);
+    setError("");
+    try {
+      const markets: Array<"KR" | "US"> = surface === "performance" ? ["KR", "US"] : [surface];
+      setPayloads(await Promise.all(markets.map((market) => api.stockScout(market, refresh))));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "주식 관측을 불러오지 못했습니다.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    let active = true;
+    const markets: Array<"KR" | "US"> = surface === "performance" ? ["KR", "US"] : [surface];
+    setLoading(true);
+    setError("");
+    void Promise.all(markets.map((market) => api.stockScout(market, false)))
+      .then((rows) => { if (active) setPayloads(rows); })
+      .catch((reason) => { if (active) setError(reason instanceof Error ? reason.message : "주식 관측을 불러오지 못했습니다."); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [surface]);
+
+  const primary = payloads[0];
+  const candidateGroups = primary ? Object.entries(primary.groups) : [];
+  const performance = payloads.flatMap((payload) => payload.performance.map((row) => ({ ...row, market: payload.market })));
+  return (
+    <div className="page scoutPage stockScoutPage" data-testid="stock-scout-page">
+      <header className="cockpitToolbar">
+        <div>
+          <p className="eyebrow">주식 관측 스카우트</p>
+          <h1>{surface === "performance" ? "판정 성적" : `${surface} 주식 후보`}</h1>
+        </div>
+        <button className="button secondary" disabled={loading || surface === "performance"} onClick={() => void load(true)} type="button">
+          <RefreshCw size={15} /> {loading ? "관측 중" : "지금 관측"}
+        </button>
+      </header>
+      <ScoutSurfaceTabs value={surface} onChange={onChange} />
+      <section className="stockScoutTrustBar">
+        <strong>Toss 데이터 · 주문 실행 없음</strong>
+        <span>관측·판정 기록이며 매수 권유가 아닙니다.</span>
+        {primary ? <em>{marketStateLabel(primary.market_state ?? primary.status)}</em> : null}
+      </section>
+      {error ? <TerminalWarning tone="error">{error}</TerminalWarning> : null}
+      {surface === "performance" ? (
+        <section className="stockPerformanceSection">
+          <header><div><span>Judgment Ledger 파일럿</span><h2>신호별 사후 분포</h2></div><small>T+1 · T+5 · T+20</small></header>
+          {performance.length ? (
+            <div className="stockPerformanceGrid">
+              {performance.map((row) => (
+                <article key={`${row.market}:${row.signal_type}:${row.horizon_days}`}>
+                  <span>{row.market} · {stockSignalLabel(row.signal_type)} · T+{row.horizon_days}</span>
+                  <strong>{row.avg_return_pct >= 0 ? "+" : ""}{row.avg_return_pct.toFixed(2)}%</strong>
+                  <small>양(+) 비율 {row.hit_rate_pct.toFixed(1)}% · N={row.n}</small>
+                  {row.sample_low ? <em>표본 부족</em> : null}
+                </article>
+              ))}
+            </div>
+          ) : <StockEmpty message="기록된 사후 성과가 없습니다. 실관측 후보의 T+1 이후부터 채워집니다." />}
+        </section>
+      ) : primary && candidateGroups.length ? (
+        <div className="stockSignalGroups">
+          {candidateGroups.map(([signalType, candidates]) => (
+            <section key={signalType}>
+              <header><div><span>독립 관측 신호</span><h2>{stockSignalLabel(signalType)}</h2></div><small>{candidates.length}종목</small></header>
+              <div className="stockCandidateGrid">
+                {candidates.map((candidate) => (
+                  <article key={`${signalType}:${candidate.symbol}`}>
+                    <header><div><strong>{candidate.name}</strong><span>{candidate.symbol}</span></div>{candidate.warning_badges.map((badge) => <em key={badge}>{badge}</em>)}</header>
+                    <b>{candidate.price == null ? "가격 없음" : formatPrice(candidate.price)}</b>
+                    {candidate.signals.filter((signal) => signal.type === signalType).map((signal) => <p key={signal.type}>{signal.label}</p>)}
+                    <dl><div><dt>시장 순위</dt><dd>{candidate.market_rank ?? "-"}</dd></div><div><dt>토스 체결 순위</dt><dd>{candidate.retail_rank ?? "-"}</dd></div></dl>
+                    <footer><span>{candidate.source}</span><time>{new Date(candidate.observed_at).toLocaleString("ko-KR")}</time></footer>
+                  </article>
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+      ) : <StockEmpty message={primary?.message ?? (loading ? "관측 데이터를 확인하고 있습니다." : "근거가 충족된 실관측 후보가 없습니다.")} />}
+    </div>
+  );
+}
+
+function StockEmpty({ message }: { message: string }) {
+  return <div className="stockScoutEmpty"><strong>표시할 실관측 데이터 없음</strong><p>{message}</p><small>근거 없는 종목과 숫자는 생성하지 않습니다.</small></div>;
+}
+
+function stockSignalLabel(value: string): string {
+  return ({ attention_gap: "주목도 격차", retail_overheat: "리테일 과열", investor_flow: "수급 동시발생", momentum: "모멘텀", orderbook_change: "호가 변화", price_limit_risk: "상한가 근접" } as Record<string, string>)[value] ?? value;
+}
+
+function marketStateLabel(value: string): string {
+  return ({ open: "장중", closed: "마감", holiday: "휴장", credentials_required: "인증 필요", authentication_failed: "인증 실패 · 수집 중지", edge_blocked: "허용 IP 확인", maintenance: "점검 중", paused: "수집 중지", observed: "관측 완료", empty_universe: "관심종목 없음" } as Record<string, string>)[value] ?? value;
 }
 
 function TrackingSection({

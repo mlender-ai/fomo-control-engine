@@ -1021,6 +1021,34 @@ class Settings(BaseSettings):
             "PAPER_TELEGRAM_ALERTS_ENABLED",
         ),
     )
+    toss_stock_scout_enabled: bool = Field(
+        False,
+        validation_alias=AliasChoices("FCE_TOSS_STOCK_SCOUT_ENABLED", "TOSS_STOCK_SCOUT_ENABLED"),
+    )
+    toss_client_id: str = Field("", validation_alias=AliasChoices("FCE_TOSS_CLIENT_ID", "TOSS_CLIENT_ID"))
+    toss_client_secret: str = Field("", validation_alias=AliasChoices("FCE_TOSS_CLIENT_SECRET", "TOSS_CLIENT_SECRET"))
+    toss_base_url: str = Field(
+        "https://openapi.tossinvest.com",
+        validation_alias=AliasChoices("FCE_TOSS_BASE_URL", "TOSS_BASE_URL"),
+    )
+    toss_timeout_seconds: float = Field(
+        10.0,
+        gt=0,
+        validation_alias=AliasChoices("FCE_TOSS_TIMEOUT_SECONDS", "TOSS_TIMEOUT_SECONDS"),
+    )
+    toss_poll_interval_seconds: int = Field(
+        10,
+        ge=10,
+        validation_alias=AliasChoices("FCE_TOSS_POLL_INTERVAL_SECONDS", "TOSS_POLL_INTERVAL_SECONDS"),
+    )
+    toss_kr_watchlist_csv: str = Field(
+        "",
+        validation_alias=AliasChoices("FCE_TOSS_KR_WATCHLIST", "TOSS_KR_WATCHLIST"),
+    )
+    toss_us_watchlist_csv: str = Field(
+        "",
+        validation_alias=AliasChoices("FCE_TOSS_US_WATCHLIST", "TOSS_US_WATCHLIST"),
+    )
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -1071,6 +1099,14 @@ class Settings(BaseSettings):
     @property
     def universe_stock_allowlist_set(self) -> set[str]:
         return {ticker.strip().upper() for ticker in self.universe_stock_allowlist.split(",") if ticker.strip()}
+
+    @property
+    def toss_kr_watchlist(self) -> list[str]:
+        return [item.strip().upper() for item in self.toss_kr_watchlist_csv.split(",") if item.strip()][:400]
+
+    @property
+    def toss_us_watchlist(self) -> list[str]:
+        return [item.strip().upper() for item in self.toss_us_watchlist_csv.split(",") if item.strip()][:400]
 
 
 @lru_cache

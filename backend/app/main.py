@@ -15,6 +15,7 @@ from app.derivatives.routes import router as derivatives_router
 from app.notify.routes import router as notify_router
 from app.onchain.routes import router as onchain_router
 from app.paper.routes import router as paper_router
+from app.toss.routes import router as toss_router
 from app.services import runtime as service
 from app.worker.manager import WorkerManager
 from app.worker.routes import router as worker_router
@@ -56,6 +57,7 @@ app.include_router(notify_router)
 app.include_router(worker_router)
 app.include_router(paper_router)
 app.include_router(onchain_router)
+app.include_router(toss_router)
 
 
 @app.middleware("http")
