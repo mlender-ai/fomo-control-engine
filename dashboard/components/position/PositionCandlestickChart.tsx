@@ -862,95 +862,107 @@ function UnifiedHeatmapControls({
   onZoneFocus: (price: number) => void;
   activeZonePrice: number | null;
 }) {
+  const sideFilterLabel = filters.side === "long" ? "롱만" : filters.side === "short" ? "숏만" : "전체 방향";
+  const sizeFilterLabel = filters.size === "all" ? "전체 규모" : filters.size.toUpperCase().replace("_PLUS", "+");
   return (
     <section className="unifiedHeatmapControls" data-testid="unified-heatmap-controls">
       <header>
-        <div>
-          <strong>실현 청산 밀집</strong>
-          <span>{heatmap?.truth_label ?? "실제 청산 · 예상 아님"}</span>
+        <div className="unifiedHeatmapIdentity">
+          <strong>실현 청산</strong>
+          <span>과거 발생 · 예측 아님</span>
           <b>N={heatmap?.n_events ?? 0}</b>
           {heatmap?.sample_low !== false ? <em>표본 부족</em> : null}
         </div>
-        <div className="unifiedHeatmapLive" data-testid="unified-heatmap-live" title="실현 청산 API는 5초마다 확인하며 캔들은 확정된 구간만 사용합니다.">
-          <i aria-hidden="true" />
-          <strong>LIVE</strong>
-          <span>청산 5초</span>
-          <time>{receivedAt ? new Date(receivedAt).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "연결 중"}</time>
-          <small>최근 확정 {lastConfirmedAt ? formatKoreanDateTime(lastConfirmedAt) : "-"}</small>
+        <div className="unifiedHeatmapHeaderActions">
+          <div className="unifiedHeatmapLive" data-testid="unified-heatmap-live" title={receivedAt ? `마지막 청산 응답 ${new Date(receivedAt).toLocaleTimeString("ko-KR")}` : "청산 데이터 연결 중"}>
+            <i aria-hidden="true" />
+            <strong>LIVE</strong>
+            <span>5초 갱신</span>
+            <small>최근 확정 {lastConfirmedAt ? formatCompactKoreanDateTime(lastConfirmedAt) : "-"}</small>
+          </div>
+          <label title="차트 위 청산 밀집 색상 농도">
+            농도
+            <input
+              aria-label="청산 히트맵 투명도"
+              max="0.95"
+              min="0.35"
+              onChange={(event) => onOpacityChange(Number(event.target.value))}
+              step="0.01"
+              type="range"
+              value={opacity}
+            />
+            <span>{Math.round(opacity * 100)}%</span>
+          </label>
         </div>
-        <label title="히트맵 전역 투명도">
-          농도
-          <input
-            aria-label="청산 히트맵 투명도"
-            max="0.95"
-            min="0.35"
-            onChange={(event) => onOpacityChange(Number(event.target.value))}
-            step="0.01"
-            type="range"
-            value={opacity}
-          />
-          <span>{Math.round(opacity * 100)}%</span>
-        </label>
       </header>
-      <div className="unifiedHeatmapFilterBar">
-        <FilterGroup
-          label="방향"
-          options={[["all", "전체"], ["long", "롱만"], ["short", "숏만"]]}
-          value={filters.side}
-          onChange={(value) => onFilterChange("side", value as HeatmapFilters["side"])}
-        />
-        <FilterGroup
-          label={heatmap?.filters.leverage_available ? "레버리지" : "규모"}
-          options={heatmap?.filters.leverage_available
-            ? [["all", "전체"], ["10x", "10x+"], ["25x", "25x+"], ["50x", "50x+"], ["100x", "100x+"]]
-            : [["all", "전체 규모"], ["q2_plus", "Q2+"], ["q3_plus", "Q3+"], ["q4", "Q4"]]}
-          value={filters.size}
-          onChange={(value) => onFilterChange("size", value as HeatmapFilters["size"])}
-        />
-        <FilterGroup
-          label="기간"
-          options={[["12H", "12H"], ["24H", "24H"], ["3D", "3D"], ["1W", "1W"], ["1M", "1M"]]}
-          value={filters.range}
-          onChange={(value) => onFilterChange("range", value as HeatmapFilters["range"])}
-        />
-        <FilterGroup
-          label="표현"
-          options={[["persist", "persist"], ["event", "event"]]}
-          value={filters.mode}
-          onChange={(value) => onFilterChange("mode", value as HeatmapFilters["mode"])}
-        />
+      <div className="unifiedHeatmapToolbar">
+        <div className="unifiedHeatmapFilterBar unifiedHeatmapPrimaryFilters">
+          <FilterGroup
+            label="기간"
+            options={[["12H", "12H"], ["24H", "24H"], ["3D", "3D"], ["1W", "1W"], ["1M", "1M"]]}
+            value={filters.range}
+            onChange={(value) => onFilterChange("range", value as HeatmapFilters["range"])}
+          />
+          <FilterGroup
+            label="표현"
+            options={[["persist", "누적 잔존"], ["event", "발생 시점"]]}
+            value={filters.mode}
+            onChange={(value) => onFilterChange("mode", value as HeatmapFilters["mode"])}
+          />
+        </div>
+        <details className="unifiedHeatmapAdvanced" data-testid="unified-heatmap-advanced">
+          <summary>
+            세부 필터
+            <span>{sideFilterLabel} · {sizeFilterLabel}</span>
+          </summary>
+          <div className="unifiedHeatmapAdvancedBody">
+            <FilterGroup
+              label="방향"
+              options={[["all", "전체"], ["long", "롱만"], ["short", "숏만"]]}
+              value={filters.side}
+              onChange={(value) => onFilterChange("side", value as HeatmapFilters["side"])}
+            />
+            <FilterGroup
+              label={heatmap?.filters.leverage_available ? "레버리지" : "규모"}
+              options={heatmap?.filters.leverage_available
+                ? [["all", "전체"], ["10x", "10x+"], ["25x", "25x+"], ["50x", "50x+"], ["100x", "100x+"]]
+                : [["all", "전체 규모"], ["q2_plus", "Q2+"], ["q3_plus", "Q3+"], ["q4", "Q4"]]}
+              value={filters.size}
+              onChange={(value) => onFilterChange("size", value as HeatmapFilters["size"])}
+            />
+            <small>{heatmap?.filters.leverage_available ? "원천 레버리지 기준" : "레버리지 없음 · 규모 분위 기준"}</small>
+          </div>
+        </details>
       </div>
       {heatmap ? (
-        <div className="unifiedHeatmapOverview">
-          <div className="unifiedHeatmapSummary" data-testid="unified-heatmap-summary">
-            <SummaryMetric label="현재가 위 / 아래" value={`${formatUsd(heatmap.position_split.above_usd_estimated)} / ${formatUsd(heatmap.position_split.below_usd_estimated)}`} />
-            <SummaryMetric label="롱 / 숏 청산" value={`${formatUsd(heatmap.side_split.long_usd_estimated)} / ${formatUsd(heatmap.side_split.short_usd_estimated)}`} />
-            <SummaryMetric label="마지막 이벤트" value={heatmap.last_event_ts ? formatKoreanDateTime(Date.parse(heatmap.last_event_ts) / 1000) : "-"} />
-            <span className="heatmapBasis">{heatmap.filters.leverage_available ? "레버리지 원천값" : "레버리지 없음 · 규모 분위 폴백"}</span>
-          </div>
-          <div className="unifiedHeatmapZones" data-testid="unified-heatmap-zones">
+        <section className="unifiedHeatmapZones" data-testid="unified-heatmap-zones">
+          <header>
             <div>
-              <strong>상위 실현 밀집 3구간</strong>
-              <span>밝은 실선 밴드 = 해당 가격대에 누적된 과거 실현 청산</span>
+              <strong>핵심 밀집 구간</strong>
+              <span>밝은 실선 = 해당 가격대에 누적된 과거 실현 청산</span>
             </div>
+            <small>가격을 누르면 차트에서 강조</small>
+          </header>
+          <div className="unifiedHeatmapZoneGrid">
             {heatmap.top_zones.length ? heatmap.top_zones.slice(0, 3).map((zone, index) => (
-                <button
-                  aria-pressed={activeZonePrice === zone.price_mid}
-                  className={`rank-${index + 1} ${activeZonePrice === zone.price_mid ? "active" : ""}`}
-                  data-testid={`unified-heatmap-zone-${index + 1}`}
-                  key={zone.price_index}
-                  onClick={() => onZoneFocus(zone.price_mid)}
-                  type="button"
-                >
-                  <em>밀집 {index + 1}</em>
-                  <strong>{formatPrice(zone.price_mid)}</strong>
-                  <span>{formatUsd(zone.total_usd_estimated)} · {zone.events}건</span>
-                </button>
-              )) : (
-                <span className="unifiedHeatmapZonesEmpty">아직 표시할 실현 이벤트 없음</span>
-              )}
+              <button
+                aria-pressed={activeZonePrice === zone.price_mid}
+                className={`rank-${index + 1} ${activeZonePrice === zone.price_mid ? "active" : ""}`}
+                data-testid={`unified-heatmap-zone-${index + 1}`}
+                key={zone.price_index}
+                onClick={() => onZoneFocus(zone.price_mid)}
+                type="button"
+              >
+                <em>{index + 1}</em>
+                <span>밀집 {index + 1}</span>
+                <strong>{formatPrice(zone.price_mid)}</strong>
+                <small>{formatUsd(zone.total_usd_estimated)} · {zone.events}건</small>
+              </button>
+            )) : (
+              <span className="unifiedHeatmapZonesEmpty">아직 표시할 실현 이벤트 없음</span>
+            )}
           </div>
-        </div>
+        </section>
       ) : null}
       {error ? <p className="unifiedHeatmapError">{error}</p> : null}
     </section>
@@ -966,10 +978,6 @@ function FilterGroup({ label, options, value, onChange }: { label: string; optio
       ))}
     </div>
   );
-}
-
-function SummaryMetric({ label, value }: { label: string; value: string }) {
-  return <div><span>{label}</span><strong>{value}</strong></div>;
 }
 
 function WyckoffLayerStatus({ analysis }: { analysis: PositionChartAnalysis }) {
@@ -2636,6 +2644,15 @@ function formatKoreanDateTime(time: number): string {
   const hour = String(date.getHours()).padStart(2, "0");
   const minute = String(date.getMinutes()).padStart(2, "0");
   return `${year}.${month}.${day} ${hour}:${minute}`;
+}
+
+function formatCompactKoreanDateTime(time: number): string {
+  const date = new Date(time * 1000);
+  const month = date.getMonth() + 1;
+  const day = date.getDate();
+  const hour = String(date.getHours()).padStart(2, "0");
+  const minute = String(date.getMinutes()).padStart(2, "0");
+  return `${month}.${day} ${hour}:${minute}`;
 }
 
 function formatCompactNumber(value: number): string {

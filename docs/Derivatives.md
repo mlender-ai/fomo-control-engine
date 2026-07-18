@@ -106,7 +106,7 @@ POST /api/derivatives/{symbol}/liquidation-heatmap/refresh?window_hours=72
 
 The forward-looking Coinglass `aggregated-heatmap/model2` remains a separate optional model. A realized Bitget hotspot must never be relabeled as an expected liquidation cluster.
 
-### Unified chart raster (WO-FCE-UNIFIED-CHART-01/02)
+### Unified chart raster (WO-FCE-UNIFIED-CHART-01/02/03)
 
 The pro chart requests observed events as a candle-aligned time × price grid and paints that raster on the main chart coordinate system. WO-FCE-UNIFIED-CHART-02 made this the only liquidation chart surface and removed the duplicate WO-FCE-78/86 frontend card, client API, and styles.
 
@@ -119,7 +119,8 @@ GET /api/liq/heatmap?symbol=ETHUSDT&tf=4h&range=3D&side=all&size=all&mode=persis
 - Bitget currently supplies no leverage field in the collected row. The UI therefore labels the filter `규모` and uses explicit quartile membership: `Q2+` starts at the 25th percentile, `Q3+` at the median, and `Q4` at the 75th percentile. The response publishes the actual thresholds and `leverage_available=false`. If a future source provides leverage for every event, metadata switches to `filter_basis=leverage`; no leverage is inferred.
 - `source=coinglass_est` returns the same adapter shape with `source_status=locked` until an existing collector is connected. It is a separate disabled layer and is never mixed with Bitget realized totals.
 - The UI polls this observation at no more than five-second intervals while its layer is active. It remains excluded from Entry Score, directional confluence, paper-engine entry gates, and live orders.
-- The UI exposes `LIVE · 청산 5초`, last receive time, and the latest `최근 확정` candle time. `LIVE` describes observation polling only; it does not claim an unconfirmed candle or streaming order-book feed.
+- The default control surface exposes trust context (`과거 발생 · 예측 아님`, `N`, `LIVE · 5초 갱신`, `최근 확정`), range, display mode, and opacity. Exact receive time remains available as hover detail; direction and size are available under `세부 필터`. Above/below totals, long/short totals, and last-event summaries were removed from the default surface because they duplicated the chart and displaced the price zones.
+- The display labels are `누적 잔존` for `persist` and `발생 시점` for `event`. `LIVE` describes observation polling only; it does not claim an unconfirmed candle or streaming order-book feed.
 - When events exist, the top three realized-density zones use ranked solid bands (`밀집 1/2/3`) with price, estimated realized USD, and event count. They replace the unexplained yellow dotted outlines. Clicking a zone highlights its price; it does not create an action-plan guardrail. An empty source explicitly shows `아직 표시할 실현 이벤트 없음` instead of rendering empty controls.
 - The rendering default is 68% opacity under the versioned `fce.unifiedHeatmap.opacity.v2` preference. Raw bucket totals are unchanged.
 

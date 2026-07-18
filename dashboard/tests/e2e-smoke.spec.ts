@@ -165,20 +165,36 @@ test("live position cockpit smoke path", async ({ page }) => {
   await expect(page.getByTestId("realized-liquidation-heatmap")).toHaveCount(0);
   await expect(page.getByTestId("chart-layer-liquidation_realized")).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByTestId("chart-layer-liquidation_estimated")).toBeDisabled();
-  await expect(page.getByTestId("unified-heatmap-controls")).toContainText("실제 청산 · 예상 아님");
+  await expect(page.getByTestId("unified-heatmap-controls")).toContainText("과거 발생 · 예측 아님");
   await expect(page.getByTestId("unified-heatmap-controls")).toContainText("N=");
   await expect(page.getByTestId("unified-heatmap-live")).toContainText("LIVE");
-  await expect(page.getByTestId("unified-heatmap-live")).toContainText("청산 5초");
+  await expect(page.getByTestId("unified-heatmap-live")).toContainText("5초 갱신");
   await expect(page.getByTestId("unified-heatmap-live")).toContainText("최근 확정");
-  await expect(page.getByTestId("unified-heatmap-zones")).toContainText("밝은 실선 밴드");
+  await expect(page.getByTestId("unified-heatmap-zones")).toContainText("밝은 실선");
   await expect(page.getByTestId("unified-heatmap-zones")).toContainText(/밀집 1|아직 표시할 실현 이벤트 없음/);
+  await expect(page.getByTestId("unified-heatmap-summary")).toHaveCount(0);
   await expect(page.getByTestId("unified-heatmap-canvas")).toBeVisible();
   await expect(page.getByRole("slider", { name: "청산 히트맵 투명도" })).toHaveValue("0.68");
+  const heatmapControlsBox = await page.getByTestId("unified-heatmap-controls").boundingBox();
+  const zoneGridBox = await page.locator(".unifiedHeatmapZoneGrid").boundingBox();
+  expect(heatmapControlsBox).not.toBeNull();
+  expect(zoneGridBox).not.toBeNull();
+  expect(zoneGridBox!.x + zoneGridBox!.width).toBeLessThanOrEqual(heatmapControlsBox!.x + heatmapControlsBox!.width + 1);
+  const zoneButtons = page.locator(".unifiedHeatmapZoneGrid > button");
+  for (let index = 0; index < await zoneButtons.count(); index += 1) {
+    const zoneBox = await zoneButtons.nth(index).boundingBox();
+    expect(zoneBox).not.toBeNull();
+    expect(zoneBox!.x + zoneBox!.width).toBeLessThanOrEqual(heatmapControlsBox!.x + heatmapControlsBox!.width + 1);
+  }
   const beforeFilterUrl = page.url();
-  await page.getByTestId("unified-heatmap-controls").getByRole("button", { name: "Q4" }).click();
+  const advancedFilters = page.getByTestId("unified-heatmap-advanced");
+  await expect(advancedFilters.getByRole("group", { name: "방향" })).not.toBeVisible();
+  await advancedFilters.locator("summary").click();
+  await expect(advancedFilters.getByRole("group", { name: "방향" })).toBeVisible();
+  await advancedFilters.getByRole("button", { name: "Q4" }).click();
   await expect(page.getByTestId("unified-heatmap-controls").getByRole("button", { name: "Q4" })).toHaveAttribute("aria-pressed", "true");
-  await page.getByTestId("unified-heatmap-controls").getByRole("button", { name: "event", exact: true }).click();
-  await expect(page.getByTestId("unified-heatmap-controls").getByRole("button", { name: "event", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await page.getByTestId("unified-heatmap-controls").getByRole("button", { name: "발생 시점", exact: true }).click();
+  await expect(page.getByTestId("unified-heatmap-controls").getByRole("button", { name: "발생 시점", exact: true })).toHaveAttribute("aria-pressed", "true");
   expect(page.url()).toBe(beforeFilterUrl);
   const proPanelBox = await page.locator(".analysisChartColumn .positionChartPanel").boundingBox();
   const proFrameBox = await page.locator(".analysisChartColumn").getByTestId("chart-canvas-frame").boundingBox();
@@ -235,7 +251,7 @@ test("unified liquidation density is the single live chart surface", async ({ pa
   await expect(page.getByTestId("unified-heatmap-controls")).toBeVisible();
   await expect(page.getByTestId("unified-heatmap-live")).toContainText("LIVE");
   await expect(page.getByTestId("unified-heatmap-live")).toContainText("최근 확정");
-  await expect(page.getByTestId("unified-heatmap-zones")).toContainText("상위 실현 밀집 3구간");
+  await expect(page.getByTestId("unified-heatmap-zones")).toContainText("핵심 밀집 구간");
   await expect(page.getByTestId("unified-heatmap-canvas")).toBeVisible();
   await expect(page.locator("[data-price-flag-kind='mark'] .liveMarkPulse")).toHaveCount(1);
 

@@ -56,7 +56,7 @@ The realized layer combines confirmed OHLC candles, timestamped event cells, and
 
 The main pro chart now has a separate `청산밀집(실현)` layer. It reuses the main candle viewport, price scale, plan lines, EMA series, current-price flag, and crosshair instead of introducing another chart axis. The default combination is `플랜 + 청산밀집(실현)`; ordinary clicks can compose more layers, while shift-click keeps the two-layer comparison cap.
 
-The inline controls expose side, size quartile, range, `persist/event`, and opacity. `N`, low-sample status, `실제 청산 · 예상 아님`, above/below totals, long/short totals, and last event remain visible next to the chart. Crosshair readout shows the unmodified source bucket total.
+The default inline controls expose trust context, range, `누적 잔존/발생 시점`, and opacity. Direction and size quartile remain available under the closed `세부 필터`; above/below totals, long/short totals, and last-event summaries are intentionally omitted from the default surface so the observed price zones remain primary. `N`, low-sample status, `과거 발생 · 예측 아님`, and the latest confirmed candle remain visible. Crosshair readout shows the unmodified source bucket total.
 
 ## WO-FCE-UNIFIED-CHART-02 Single live surface
 
