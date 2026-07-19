@@ -11,6 +11,7 @@ from app.api.router_scout import router as scout_router
 from app.api.router_system import router as system_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging
+from app.backtest.routes import router as backtest_router
 from app.derivatives.routes import router as derivatives_router
 from app.notify.routes import router as notify_router
 from app.onchain.routes import router as onchain_router
@@ -60,6 +61,7 @@ app.include_router(paper_router)
 app.include_router(onchain_router)
 app.include_router(toss_router)
 app.include_router(stock_paper_router)
+app.include_router(backtest_router)
 
 
 @app.middleware("http")

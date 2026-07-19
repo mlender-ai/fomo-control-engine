@@ -1,3 +1,6 @@
+from datetime import datetime, timedelta, timezone
+from typing import cast
+
 import pytest
 
 from app.exchange.bitget.client import BitgetClient
@@ -37,6 +40,30 @@ class FakeContractsClient:
                 }
             ]
         }
+
+
+class FakeHistoryClient:
+    def __init__(self) -> None:
+        base = datetime(2026, 7, 1, tzinfo=timezone.utc)
+        self.rows = [
+            [
+                str(int((base + timedelta(hours=4 * index)).timestamp() * 1000)),
+                str(100 + index),
+                str(102 + index),
+                str(99 + index),
+                str(101 + index),
+                "10",
+                "1000",
+            ]
+            for index in range(7)
+        ]
+
+    async def public_get(self, path: str, params: dict):
+        assert path == "/api/v2/mix/market/history-candles"
+        rows = self.rows
+        if params.get("endTime"):
+            rows = [row for row in rows if int(row[0]) < int(params["endTime"])]
+        return {"data": rows[-int(params["limit"]) :]}
 
 
 def test_bitget_provider_filters_empty_positions() -> None:
@@ -107,3 +134,15 @@ async def test_bitget_contracts_preserve_rwa_asset_class_and_funding_interval() 
             "taker_fee_rate": 0.0006,
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_history_candles_page_dedupe_sort_and_drop_open_bar() -> None:
+    provider = BitgetMarketDataProvider(cast(BitgetClient, FakeHistoryClient()))
+    cutoff = datetime(2026, 7, 2, 2, tzinfo=timezone.utc)
+
+    candles = await provider.get_history_ohlcv_async("BTCUSDT", "4h", 6, now=cutoff)
+
+    assert [candle.close for candle in candles] == [101, 102, 103, 104, 105, 106]
+    assert all(candle.timestamp < cutoff for candle in candles)
+    assert candles[-1].timestamp + timedelta(hours=4) <= cutoff

@@ -427,6 +427,21 @@ class Settings(BaseSettings):
             "WORKER_CANDIDATE_SCORING_INTERVAL_SECONDS",
         ),
     )
+    worker_stance_backtest_enabled: bool = Field(
+        True,
+        validation_alias=AliasChoices(
+            "FCE_WORKER_STANCE_BACKTEST_ENABLED",
+            "WORKER_STANCE_BACKTEST_ENABLED",
+        ),
+    )
+    worker_stance_backtest_interval_seconds: int = Field(
+        86400,
+        ge=3600,
+        validation_alias=AliasChoices(
+            "FCE_WORKER_STANCE_BACKTEST_INTERVAL_SECONDS",
+            "WORKER_STANCE_BACKTEST_INTERVAL_SECONDS",
+        ),
+    )
     worker_user_fill_sync_enabled: bool = Field(
         True,
         validation_alias=AliasChoices(
@@ -666,6 +681,27 @@ class Settings(BaseSettings):
             "FCE_WORKER_UNIVERSE_SCAN_INTERVAL_SECONDS",
             "WORKER_UNIVERSE_SCAN_INTERVAL_SECONDS",
         ),
+    )
+    stance_backtest_symbols: str = Field(
+        "BTCUSDT,ETHUSDT,SOXLUSDT",
+        validation_alias=AliasChoices("FCE_STANCE_BACKTEST_SYMBOLS", "STANCE_BACKTEST_SYMBOLS"),
+    )
+    stance_backtest_history_bars: int = Field(
+        420,
+        ge=120,
+        le=2000,
+        validation_alias=AliasChoices("FCE_STANCE_BACKTEST_HISTORY_BARS", "STANCE_BACKTEST_HISTORY_BARS"),
+    )
+    stance_backtest_horizon_bars: int = Field(
+        6,
+        ge=1,
+        le=48,
+        validation_alias=AliasChoices("FCE_STANCE_BACKTEST_HORIZON_BARS", "STANCE_BACKTEST_HORIZON_BARS"),
+    )
+    stance_backtest_sample_floor: int = Field(
+        30,
+        ge=10,
+        validation_alias=AliasChoices("FCE_STANCE_BACKTEST_SAMPLE_FLOOR", "STANCE_BACKTEST_SAMPLE_FLOOR"),
     )
     universe_crypto_symbol_limit: int = Field(
         40,
@@ -1111,6 +1147,10 @@ class Settings(BaseSettings):
     @property
     def symbol_list(self) -> list[str]:
         return [symbol.strip().upper() for symbol in self.default_symbols.split(",") if symbol.strip()]
+
+    @property
+    def stance_backtest_symbol_list(self) -> list[str]:
+        return [symbol.strip().upper() for symbol in self.stance_backtest_symbols.split(",") if symbol.strip()]
 
     @property
     def telegram_allowed_chat_id_list(self) -> list[int]:

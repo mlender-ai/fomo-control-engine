@@ -16,6 +16,10 @@ from app.analyst.briefing import briefing_summary
 from app.analyst.alignment import build_full_alignment
 from app.backtest.candidate_scoring import score_candidates as _score_legacy_candidates
 from app.backtest.candidate_scoring import score_live_candidate_judgments
+from app.backtest.stance_validation import (
+    refresh_stance_backtests as _refresh_stance_backtests,
+    stance_backtest_dashboard as _stance_backtest_dashboard,
+)
 from app.db.maintenance import (
     enforce_retention,
     run_database_backup,
@@ -231,6 +235,26 @@ def score_candidates() -> dict[str, Any]:
     except Exception as exc:
         result["calibration_cache_error"] = f"{type(exc).__name__}: {exc}"
     return result
+
+
+def refresh_stance_backtests() -> dict[str, Any]:
+    """Collect and score the fixed real-history validation cohort."""
+
+    return _refresh_stance_backtests(
+        runtime.repository,
+        runtime.market_provider,
+        runtime.settings,
+        symbols=runtime.settings.stance_backtest_symbol_list,
+        history_bars=runtime.settings.stance_backtest_history_bars,
+        horizon_bars=runtime.settings.stance_backtest_horizon_bars,
+    )
+
+
+def stance_backtest_dashboard() -> dict[str, Any]:
+    return _stance_backtest_dashboard(
+        runtime.repository,
+        symbols=runtime.settings.stance_backtest_symbol_list,
+    )
 
 
 def tracked_market_pairs() -> list[tuple[str, str]]:

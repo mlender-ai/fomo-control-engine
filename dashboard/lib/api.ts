@@ -2173,6 +2173,47 @@ export type PaperDashboard = {
   live_orders_enabled: false;
 };
 
+export type StanceBacktestItem = {
+  signature_key: string;
+  symbol: string;
+  timeframe: string;
+  source: "bitget_real_history";
+  real_history: true;
+  generated_at: string | null;
+  period?: { from: string; to: string };
+  candle_count?: number;
+  horizon_label?: string;
+  cost_pct?: number;
+  directional_hit_pct?: number | null;
+  directional_hit_ci?: [number, number] | null;
+  sample_size: number;
+  sample_floor?: number;
+  sample_sufficient: boolean;
+  data_quality?: { score: number; gap_count: number; invalid_ohlc_count: number; confirmed_only: boolean };
+  publishable: boolean;
+  decision: "published" | "withheld" | "pending";
+  statement: string;
+  limitations: string[];
+};
+
+export type StanceBacktestDashboard = {
+  status: "ok" | "partial" | "pending" | "error";
+  signature_key: string;
+  synthetic_result_combined: false;
+  items: StanceBacktestItem[];
+  available: number;
+  expected: number;
+  methodology: {
+    source: string;
+    timeframe: string;
+    horizon_label: string;
+    overlap_policy: string;
+    derivative_history: "not_included";
+    derivative_history_note: string;
+  };
+  disclaimer: string;
+};
+
 export type StockPaperTrack = {
   market: "KR" | "US";
   currency: "KRW" | "USD";
@@ -2583,6 +2624,8 @@ export const api = {
     }),
   performance: () => request<PerformanceSummary>("/api/performance"),
   paperDashboard: () => request<PaperDashboard>("/api/paper/dashboard"),
+  stanceBacktest: () => request<StanceBacktestDashboard>("/api/backtest/stance"),
+  refreshStanceBacktest: () => request<StanceBacktestDashboard>("/api/backtest/stance/refresh", { method: "POST" }),
   stockPaperDashboard: () => request<StockPaperDashboard>("/api/stock-paper/dashboard"),
   onchainWhales: () => request<OnchainWhaleDashboard>("/api/onchain/whales"),
   addOnchainWhale: (payload: { address: string; label?: string }) => request<{ wallet: OnchainWhaleWallet }>("/api/onchain/whales", {

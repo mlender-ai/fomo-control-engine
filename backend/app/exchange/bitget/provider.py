@@ -111,6 +111,24 @@ class BitgetMarketDataProvider(MarketDataProvider):
     def list_tickers(self) -> list[dict]:
         return _run(self.get_tickers())
 
+    def get_history_ohlcv(
+        self,
+        symbol: str,
+        timeframe: str = "4h",
+        limit: int = 420,
+        *,
+        now: datetime | None = None,
+    ) -> list[Candle]:
+        """Return paginated, de-duplicated, confirmed public candles.
+
+        Bitget's regular candles endpoint is capped to the most recent page.
+        The validation harness needs a longer immutable prefix, so this path
+        deliberately uses the public history endpoint and never private API
+        credentials.
+        """
+
+        return _run(self.get_history_ohlcv_async(symbol, timeframe, limit, now=now))
+
     async def get_contracts(self) -> list[dict]:
         payload = await self.client.public_get(
             "/api/v2/mix/market/contracts",
@@ -210,29 +228,56 @@ class BitgetMarketDataProvider(MarketDataProvider):
                 "limit": str(limit),
             },
         )
-        rows = payload.get("data")
-        if not isinstance(rows, list):
-            raise BitgetAPIError("invalid_response", "Bitget candle response is missing data.")
+        return _parse_candle_rows(payload.get("data"))
 
-        candles = []
-        for index, row in enumerate(rows):
-            try:
-                if not isinstance(row, list) or len(row) < 6:
-                    raise ValueError("row has insufficient fields")
-                candles.append(
-                    Candle(
-                        timestamp=_timestamp_ms(row[0]),
-                        open=float(row[1]),
-                        high=float(row[2]),
-                        low=float(row[3]),
-                        close=float(row[4]),
-                        volume=float(row[5]),
-                        quote_volume=_optional_float(row[6]) if len(row) > 6 else None,
-                    )
-                )
-            except (TypeError, ValueError) as exc:
-                raise BitgetAPIError("invalid_candle", f"Invalid Bitget candle row at index {index}.") from exc
-        return sorted(candles, key=lambda candle: candle.timestamp)
+    async def get_history_ohlcv_async(
+        self,
+        symbol: str,
+        timeframe: str = "4h",
+        limit: int = 420,
+        *,
+        now: datetime | None = None,
+    ) -> list[Candle]:
+        granularity = TIMEFRAME_MAP.get(timeframe.lower())
+        if granularity is None:
+            raise BitgetAPIError("unsupported_timeframe", f"Unsupported Bitget timeframe: {timeframe}")
+        target = max(1, min(int(limit), 2_000))
+        # The public history page may include the currently open candle. Fetch
+        # one extra row so dropping it does not silently shrink the requested
+        # confirmed history window.
+        fetch_target = min(2_000, target + 1)
+        by_timestamp: dict[datetime, Candle] = {}
+        end_time_ms: int | None = None
+        while len(by_timestamp) < fetch_target:
+            page_limit = min(200, fetch_target - len(by_timestamp))
+            payload = await self.client.public_get(
+                "/api/v2/mix/market/history-candles",
+                {
+                    "symbol": normalize_symbol(symbol),
+                    "productType": self.product_type,
+                    "granularity": granularity,
+                    "limit": str(page_limit),
+                    "endTime": str(end_time_ms) if end_time_ms is not None else None,
+                },
+            )
+            page = _parse_candle_rows(payload.get("data"))
+            if not page:
+                break
+            for candle in page:
+                by_timestamp[candle.timestamp] = candle
+            oldest_ms = int(page[0].timestamp.timestamp() * 1000)
+            if end_time_ms is not None and oldest_ms >= end_time_ms:
+                break
+            end_time_ms = oldest_ms
+            if len(page) < page_limit:
+                break
+
+        cutoff = now or datetime.now(timezone.utc)
+        seconds = timeframe_seconds(timeframe)
+        confirmed = [
+            candle for candle in sorted(by_timestamp.values(), key=lambda item: item.timestamp) if candle.timestamp + timedelta(seconds=seconds) <= cutoff
+        ]
+        return confirmed[-target:]
 
     async def get_funding_rate(self, symbol: str) -> FundingRate | None:
         payload = await self.client.public_get(
@@ -775,6 +820,30 @@ def _first_dict(value: Any) -> dict[str, Any] | None:
 
 def _timestamp_ms(value: Any) -> datetime:
     return datetime.fromtimestamp(int(value) / 1000, tz=timezone.utc)
+
+
+def _parse_candle_rows(value: Any) -> list[Candle]:
+    if not isinstance(value, list):
+        raise BitgetAPIError("invalid_response", "Bitget candle response is missing data.")
+    candles: list[Candle] = []
+    for index, row in enumerate(value):
+        try:
+            if not isinstance(row, list) or len(row) < 6:
+                raise ValueError("row has insufficient fields")
+            candles.append(
+                Candle(
+                    timestamp=_timestamp_ms(row[0]),
+                    open=float(row[1]),
+                    high=float(row[2]),
+                    low=float(row[3]),
+                    close=float(row[4]),
+                    volume=float(row[5]),
+                    quote_volume=_optional_float(row[6]) if len(row) > 6 else None,
+                )
+            )
+        except (TypeError, ValueError) as exc:
+            raise BitgetAPIError("invalid_candle", f"Invalid Bitget candle row at index {index}.") from exc
+    return sorted(candles, key=lambda candle: candle.timestamp)
 
 
 def _optional_timestamp_ms(value: Any) -> datetime | None:

@@ -9,13 +9,14 @@ const START_TIMEOUT_MS = 45_000;
 
 function listenerPids() {
   const result = spawnSync("lsof", ["-tiTCP:8876", "-sTCP:LISTEN"], { encoding: "utf8" });
-  if (result.status !== 0 && !result.stdout.trim()) return [];
-  return [...new Set(result.stdout.split(/\s+/).filter(Boolean).map(Number).filter(Number.isInteger))];
+  const stdout = String(result.stdout ?? "");
+  if (result.status !== 0 && !stdout.trim()) return [];
+  return [...new Set(stdout.split(/\s+/).filter(Boolean).map(Number).filter(Number.isInteger))];
 }
 
 function commandFor(pid) {
   const result = spawnSync("ps", ["-p", String(pid), "-o", "command="], { encoding: "utf8" });
-  return result.stdout.trim();
+  return String(result.stdout ?? "").trim();
 }
 
 function isFceNextServer(command) {

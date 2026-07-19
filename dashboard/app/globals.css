@@ -2518,6 +2518,88 @@ h3 {
 .instrumentMapSources { display: flex; flex-wrap: wrap; gap: 4px; }
 .sourceBadge { border: 1px solid var(--terminal-line); border-radius: 999px; padding: 3px 6px; color: var(--terminal-muted); font-size: 9px; }
 .sourceBadge.bitget { border-color: rgba(80, 210, 130, 0.35); color: var(--terminal-positive); }
+
+/* WO-FCE-88: real-history validation belongs in the engine audit surface,
+   not in the live trading cockpit. Keep the evidence dense but scannable. */
+.engineStanceBacktest {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 12px;
+}
+
+.engineStanceBacktest > header,
+.engineStanceBacktest > header > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.engineStanceBacktest > header > div {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.engineStanceBacktest h2,
+.engineStanceBacktest p { margin: 0; }
+
+.stanceBacktestRows {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.stanceBacktestRows article {
+  display: grid;
+  grid-template-columns: minmax(100px, 1fr) auto auto;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+  border: 1px solid var(--terminal-line);
+  border-left: 3px solid var(--terminal-muted);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+.stanceBacktestRows article.published { border-left-color: var(--terminal-positive); }
+.stanceBacktestRows article.withheld { border-left-color: var(--terminal-amber); }
+
+.stanceBacktestRows article > div,
+.stanceBacktestRows article > p {
+  display: grid;
+  gap: 2px;
+}
+
+.stanceBacktestRows strong,
+.stanceBacktestRows b {
+  color: var(--terminal-text);
+  font-family: var(--fce-font-number);
+}
+
+.stanceBacktestRows b { font-size: 18px; }
+.stanceBacktestRows span { color: var(--terminal-muted); font-size: 10px; }
+.stanceBacktestRows article > div:last-child { text-align: right; }
+
+.engineStanceBacktest > footer {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 6px 16px;
+  color: var(--terminal-muted);
+  font-size: 10px;
+}
+
+@media (max-width: 1100px) {
+  .stanceBacktestRows { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 640px) {
+  .engineStanceBacktest > header { align-items: stretch; flex-direction: column; }
+  .engineStanceBacktest > header .button { width: 100%; justify-content: center; }
+  .stanceBacktestRows article { grid-template-columns: 1fr auto; }
+  .stanceBacktestRows article > p { grid-row: 2; }
+}
 .sourceBadge.toss { border-color: rgba(var(--chart-cyan-rgb), 0.4); color: var(--terminal-cyan); }
 .sourceBadge.pending { color: var(--terminal-amber); }
 .sourceBadge.rejected { color: var(--terminal-negative); }

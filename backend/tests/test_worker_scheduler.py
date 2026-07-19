@@ -161,6 +161,14 @@ def test_candidate_scoring_job_is_registered_as_daily_low_priority(tmp_path) -> 
     assert job.interval_seconds == 86_400
 
 
+def test_real_history_stance_job_is_registered_as_daily_low_priority(tmp_path) -> None:
+    manager = WorkerManager(_settings(tmp_path))
+
+    job = manager.jobs["stance_backtest"]
+    assert job.enabled is True
+    assert job.interval_seconds == 86_400
+
+
 def test_user_fill_sync_job_runs_independently_every_two_minutes(tmp_path) -> None:
     manager = WorkerManager(_settings(tmp_path))
 

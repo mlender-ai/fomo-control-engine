@@ -5,7 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { Activity, Bot, Building2, Plus, Radar, RefreshCw, ShieldCheck, Trash2, Waves } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { TerminalWarning } from "@/components/terminal";
-import { api, type OnchainWhaleDashboard, type PaperDashboard, type PaperGateFunnel, type PaperTrade, type StockPaperDashboard, type StockPaperTrack } from "@/lib/api";
+import { api, type OnchainWhaleDashboard, type PaperDashboard, type PaperGateFunnel, type PaperTrade, type StanceBacktestDashboard, type StockPaperDashboard, type StockPaperTrack } from "@/lib/api";
 
 const tabs = [
   { id: "battle", label: "대결" },
@@ -24,12 +24,15 @@ export function EngineTradingShell() {
   const active = tabs.some((tab) => tab.id === requested) ? requested! : "battle";
   const [data, setData] = useState<PaperDashboard | null>(null);
   const [stockData, setStockData] = useState<StockPaperDashboard | null>(null);
+  const [stanceData, setStanceData] = useState<StanceBacktestDashboard | null>(null);
   const [whales, setWhales] = useState<OnchainWhaleDashboard | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [whaleError, setWhaleError] = useState("");
   const [stockError, setStockError] = useState("");
+  const [stanceError, setStanceError] = useState("");
   const [starting, setStarting] = useState(false);
+  const [refreshingStance, setRefreshingStance] = useState(false);
 
   const loadWhales = useCallback(async () => {
     try {
@@ -45,7 +48,7 @@ export function EngineTradingShell() {
     setError("");
     void loadWhales();
     try {
-      const [crypto, stocks] = await Promise.allSettled([api.paperDashboard(), api.stockPaperDashboard()]);
+      const [crypto, stocks, stance] = await Promise.allSettled([api.paperDashboard(), api.stockPaperDashboard(), api.stanceBacktest()]);
       if (crypto.status === "rejected") throw crypto.reason;
       setData(crypto.value);
       if (stocks.status === "fulfilled") {
@@ -53,6 +56,12 @@ export function EngineTradingShell() {
         setStockError("");
       } else {
         setStockError(stocks.reason instanceof Error ? stocks.reason.message : "주식 페이퍼 트랙을 불러오지 못했습니다.");
+      }
+      if (stance.status === "fulfilled") {
+        setStanceData(stance.value);
+        setStanceError("");
+      } else {
+        setStanceError(stance.reason instanceof Error ? stance.reason.message : "실히스토리 검증 결과를 불러오지 못했습니다.");
       }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "엔진 트레이딩 데이터를 불러오지 못했습니다.");
@@ -82,6 +91,18 @@ export function EngineTradingShell() {
     }
   }
 
+  async function refreshStance() {
+    setRefreshingStance(true);
+    setStanceError("");
+    try {
+      setStanceData(await api.refreshStanceBacktest());
+    } catch (reason) {
+      setStanceError(reason instanceof Error ? reason.message : "실히스토리 검증을 갱신하지 못했습니다.");
+    } finally {
+      setRefreshingStance(false);
+    }
+  }
+
   return (
     <div className="page engineTradingPage" data-testid="engine-trading-page">
       <header className="pageHeader engineTradingHeader">
@@ -100,7 +121,8 @@ export function EngineTradingShell() {
       {error ? <TerminalWarning tone="error">{error}</TerminalWarning> : null}
       {whaleError ? <TerminalWarning tone="warning">고래 관측 갱신 실패 · {whaleError} · 페이퍼 엔진 화면은 계속 사용할 수 있습니다.</TerminalWarning> : null}
       {stockError && active === "stocks" ? <TerminalWarning tone="warning">{stockError}</TerminalWarning> : null}
-      {!data ? <EngineLoading /> : active === "battle" ? <BattleView data={data} whales={whales} starting={starting} onStart={startBenchmark} /> : active === "stocks" ? <StockPaperView data={stockData} /> : active === "positions" ? <PositionsView trades={data.open_trades} funnel={data.gate_funnel} activation={data.activation} /> : active === "journal" ? <JournalView trades={data.closed_trades} /> : active === "onchain" ? <OnchainView data={whales} onReload={loadWhales} /> : <EngineStatusView data={data} />}
+      {stanceError && active === "status" ? <TerminalWarning tone="warning">{stanceError}</TerminalWarning> : null}
+      {!data ? <EngineLoading /> : active === "battle" ? <BattleView data={data} whales={whales} starting={starting} onStart={startBenchmark} /> : active === "stocks" ? <StockPaperView data={stockData} /> : active === "positions" ? <PositionsView trades={data.open_trades} funnel={data.gate_funnel} activation={data.activation} /> : active === "journal" ? <JournalView trades={data.closed_trades} /> : active === "onchain" ? <OnchainView data={whales} onReload={loadWhales} /> : <EngineStatusView data={data} stance={stanceData} refreshingStance={refreshingStance} onRefreshStance={refreshStance} />}
     </div>
   );
 }
@@ -490,7 +512,7 @@ function PaperJournalRow({ trade }: { trade: PaperTrade }) {
   );
 }
 
-function EngineStatusView({ data }: { data: PaperDashboard }) {
+function EngineStatusView({ data, stance, refreshingStance, onRefreshStance }: { data: PaperDashboard; stance: StanceBacktestDashboard | null; refreshingStance: boolean; onRefreshStance: () => void }) {
   const calibration = data.calibration;
   const report = calibration.weekly_report;
   const digest = record(report.improvement_digest);
@@ -498,6 +520,7 @@ function EngineStatusView({ data }: { data: PaperDashboard }) {
   const counts = calibration.signature_state_counts;
   return (
     <div className="engineView engineStatusGrid" data-testid="engine-status-tab">
+      <StanceBacktestCard data={stance} refreshing={refreshingStance} onRefresh={onRefreshStance} />
       <GateFunnel funnel={data.gate_funnel} />
       <section className="engineStatusCard engineDigest"><span className="engineSectionLabel">이번 주 개선</span><h2>{String(digest.headline ?? digest.summary ?? "이번 주 유의미한 개선 없음")}</h2><p>{String(digest.honesty_line ?? report.sample_warning ?? "표본과 조치 이력을 같은 주 단위로 비교합니다.")}</p></section>
       {data.performance_action.poor ? <section className="engineCausalRow"><div><span>페이퍼 부진</span><strong>{data.performance_action.summary}</strong></div><i>→</i><div><span>같은 기간 엔진 조치</span><strong>{actionSummary(data.performance_action.actions)}</strong></div></section> : null}
@@ -505,6 +528,31 @@ function EngineStatusView({ data }: { data: PaperDashboard }) {
       <section className="engineStatusCard"><header><h2>시그니처 상태</h2><span>변동만 추적</span></header><div className="signatureCounts"><div><strong>{counts.validated ?? 0}</strong><span>검증됨</span></div><div><strong>{counts.degraded ?? 0}</strong><span>저하</span></div><div><strong>{counts.quarantined ?? 0}</strong><span>격리</span></div><div><strong>{counts.candidate ?? 0}</strong><span>표본 축적</span></div></div></section>
       <CandidateReviewCard review={calibration.candidate_review} />
     </div>
+  );
+}
+
+function StanceBacktestCard({ data, refreshing, onRefresh }: { data: StanceBacktestDashboard | null; refreshing: boolean; onRefresh: () => void }) {
+  return (
+    <section className="engineStatusCard engineStanceBacktest" data-testid="real-history-stance-backtest">
+      <header>
+        <div><span className="engineSectionLabel">실데이터 검증 · 합성 성적과 분리</span><h2>방향 엔진 v2 · T+24h</h2></div>
+        <button className="button secondary" type="button" onClick={onRefresh} disabled={refreshing}><RefreshCw size={14} />{refreshing ? "재판정 중" : "실데이터 갱신"}</button>
+      </header>
+      <div className="stanceBacktestRows">
+        {(data?.items ?? []).map((item) => (
+          <article className={item.publishable ? "published" : "withheld"} key={item.symbol}>
+            <div><strong>{item.symbol}</strong><span>Bitget 4h · {item.generated_at ? shortDateTime(item.generated_at) : "수집 대기"}</span></div>
+            <p><b>{item.directional_hit_pct === null || item.directional_hit_pct === undefined ? "—" : `${item.directional_hit_pct.toFixed(1)}%`}</b><span>{item.directional_hit_ci ? `95% CI ${item.directional_hit_ci[0]}~${item.directional_hit_ci[1]}%` : "CI 대기"}</span></p>
+            <div><strong>N={item.sample_size}</strong><span>{item.publishable ? "발행" : item.decision === "pending" ? "수집 대기" : "결론 유보"}</span></div>
+          </article>
+        ))}
+        {!data?.items.length ? <p className="engineEmptyLine">실제 히스토리 수집을 기다리는 중입니다.</p> : null}
+      </div>
+      <footer>
+        <span>확정 4h봉만 · 6봉 간격 비중첩 · 수수료/슬리피지 차감 net</span>
+        <span>과거 펀딩·OI·청산 미포함 · 합성 80.8%와 합산 안 함</span>
+      </footer>
+    </section>
   );
 }
 

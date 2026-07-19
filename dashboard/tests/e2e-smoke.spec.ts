@@ -677,6 +677,9 @@ test("engine trading workspace and absorbed calibration route", async ({ page })
   await expect(page.getByTestId("engine-journal-tab")).toBeVisible();
   await page.getByRole("link", { name: "엔진 상태" }).click();
   await expect(page.getByTestId("engine-status-tab")).toBeVisible();
+  await expect(page.getByTestId("real-history-stance-backtest")).toBeVisible();
+  await expect(page.getByTestId("real-history-stance-backtest")).toContainText("합성 성적과 분리");
+  await expect(page.getByTestId("real-history-stance-backtest")).toContainText("합성 80.8%와 합산 안 함");
   await expect(page.getByTestId("paper-gate-funnel")).toBeVisible();
   await expect(page.getByTestId("event-pill-diagnostics")).toBeVisible();
 

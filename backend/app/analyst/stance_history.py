@@ -70,11 +70,37 @@ def clear_stance_history_cache() -> None:
         _CACHE.clear()
 
 
+def replay_confirmed_stance_points(
+    *,
+    symbol: str,
+    timeframe: str,
+    candles: list[MarketCandle],
+    hysteresis_params: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Replay every confirmed prefix for historical validation.
+
+    Unlike the UI helper, this intentionally returns the full replay so the
+    scoring harness can advance hysteresis on every bar before selecting
+    non-overlapping outcome anchors. No future candle is passed to a point.
+    """
+
+    ordered = sorted(candles, key=lambda candle: candle.timestamp)
+    history, _prior = _full_replay(
+        symbol.upper(),
+        timeframe,
+        ordered,
+        hysteresis_params,
+        history_limit=None,
+    )
+    return history
+
+
 def _full_replay(
     symbol: str,
     timeframe: str,
     candles: list[MarketCandle],
     hysteresis_params: dict[str, Any] | None,
+    history_limit: int | None = HISTORY_WINDOW,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     prior: dict[str, Any] | None = None
     history: list[dict[str, Any]] = []
@@ -85,7 +111,7 @@ def _full_replay(
             continue
         prior = point["state"]
         history.append(point)
-    return history[-HISTORY_WINDOW:], prior
+    return (history[-history_limit:] if history_limit is not None else history), prior
 
 
 def _replay_point(

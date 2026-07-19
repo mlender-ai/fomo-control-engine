@@ -305,6 +305,12 @@ class WorkerManager:
                 self.settings.worker_score_candidates_interval_seconds,
                 lambda: asyncio.to_thread(service.score_candidates),
             ),
+            "stance_backtest": WorkerJob(
+                "stance_backtest",
+                self.settings.worker_stance_backtest_interval_seconds,
+                lambda: asyncio.to_thread(service.refresh_stance_backtests),
+                enabled=self.settings.worker_stance_backtest_enabled,
+            ),
             "collect_derivatives": WorkerJob(
                 "collect_derivatives",
                 self.settings.derivative_tracking_interval_seconds,
@@ -485,6 +491,8 @@ class WorkerManager:
             return _next_daily_time(4, 30, self.settings.db_maintenance_timezone)
         if name == "score_candidates":
             return _next_daily_time(3, 30, self.settings.db_maintenance_timezone)
+        if name == "stance_backtest":
+            return _next_daily_time(5, 0, self.settings.db_maintenance_timezone)
         # Starting every network-heavy job on the same second caused duplicate
         # Bitget requests and held SQLite writes long enough to starve API reads.
         # Keep position sync immediate, then spread independent collectors.
@@ -505,6 +513,7 @@ class WorkerManager:
             "scout_scan": 105,
             "universe_scan": 150,
             "score_candidates": 180,
+            "stance_backtest": 210,
         }
         return fallback + timedelta(seconds=startup_offsets.get(name, 0))
 

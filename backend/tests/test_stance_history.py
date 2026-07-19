@@ -144,6 +144,39 @@ def test_live_endpoint_separates_held_stance_from_raw_preview() -> None:
     assert history[-1]["preview_stance"] == "long_leaning"
 
 
+def test_future_price_mutation_cannot_change_earlier_historical_stance(monkeypatch) -> None:
+    monkeypatch.setattr(subject, "MIN_CHART_CANDLES", 3)
+
+    def fake_analysis(snapshot, *_args):
+        return {"last_close": snapshot.candles[-1].close}
+
+    def fake_confluence(*, analysis, prior_state=None, **_kwargs):
+        stance = "long_leaning" if analysis["last_close"] >= 103 else "short_leaning"
+        return {
+            "stance": stance,
+            "stance_state": {
+                "stance": stance,
+                "long_score_ema": 8 if stance == "long_leaning" else 2,
+                "short_score_ema": 2 if stance == "long_leaning" else 8,
+                "transitioning": False,
+                "previous": prior_state.get("stance") if prior_state else None,
+            },
+            "long_evidence": [],
+            "short_evidence": [],
+        }
+
+    monkeypatch.setattr(subject, "build_chart_analysis", fake_analysis)
+    monkeypatch.setattr(subject, "build_confluence", fake_confluence)
+    original = subject._candles(_analysis([100, 101, 102, 103, 104]))
+    future_changed = subject._candles(_analysis([100, 101, 102, 103, 1]))
+
+    before = subject.replay_confirmed_stance_points(symbol="TESTUSDT", timeframe="4h", candles=original)
+    after = subject.replay_confirmed_stance_points(symbol="TESTUSDT", timeframe="4h", candles=future_changed)
+
+    assert before[:-1] == after[:-1]
+    assert before[-1]["stance"] != after[-1]["stance"]
+
+
 def _analysis(closes: list[float]) -> dict[str, Any]:
     candles = []
     for index, close in enumerate(closes):
