@@ -79,6 +79,9 @@ FCE_NEXT_DIST_DIR=.next npm run build:e2e
 
 ## 장애 복구
 
+가장 빠른 로컬 폴백은 `cd dashboard && npm run recover:local`이다. 이 명령은 아래
+수동 절차와 동일한 순서를 강제하며, 8876이 다른 프로세스 소유면 안전하게 중단한다.
+
 1. 실행 중인 프론트 서버를 종료한다.
 2. 8876에 남은 `next start` 프로세스가 없는지 확인한다.
 3. `npm run build`로 완전한 프로덕션 산출물을 만든다.
