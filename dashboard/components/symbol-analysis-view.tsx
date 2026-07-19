@@ -236,14 +236,7 @@ function EvidenceRoomPanel({
 }) {
   const active = activeFocusLayers(layers);
   const focused = focusedLayer && active.includes(focusedLayer) ? focusedLayer : active.at(-1) ?? null;
-  if (!focused) {
-    return (
-      <section className="evidenceRoomPanel" data-testid="evidence-room-panel">
-        <div className="evidenceRoomHeading"><span>근거 검증실</span><small>레이어를 선택하세요</small></div>
-        <p className="evidenceRoomEmpty">차트 상단에서 근거 하나를 선택하면 상세 수치와 검증 기록을 함께 표시합니다.</p>
-      </section>
-    );
-  }
+  if (!focused) return null;
   const definition = CHART_LAYER_DEFS.find((item) => item.id === focused);
   const stats = chartAnalysis?.historical_backtest?.stats ?? [];
   const relevantStats = stats

@@ -113,6 +113,7 @@ export function ScoutShell() {
   const [viewMode, setViewMode] = useState<FceViewMode>("minimal");
   const quickRequestRef = useRef("");
   const autoScanKeyRef = useRef("");
+  const trackingMutationVersionRef = useRef(0);
 
   useEffect(() => {
     setViewMode(new URLSearchParams(window.location.search).get("mode") === "pro" ? "pro" : loadFceViewMode());
@@ -255,6 +256,7 @@ export function ScoutShell() {
   }
 
   async function runScan(force = false) {
+    const trackingMutationVersion = trackingMutationVersionRef.current;
     setScanning(true);
     setError("");
     try {
@@ -262,7 +264,9 @@ export function ScoutShell() {
       setScanRows(response.rows);
       setArmedSetups(response.armed_setups ?? []);
       setEntryIntents((current) => response.entry_intents ?? current);
-      setTrackedItems(response.tracked ?? []);
+      if (trackingMutationVersionRef.current === trackingMutationVersion) {
+        setTrackedItems(response.tracked ?? []);
+      }
       setAlignmentDiscoveries((items) => mergeAlignmentRows(response.alignment_discoveries ?? [], items));
       const scanBestAlignment = response.best_alignment;
       if (scanBestAlignment) {
@@ -309,6 +313,7 @@ export function ScoutShell() {
   async function trackSymbol(symbol: string) {
     try {
       const response = await api.createEntryIntent(symbol, { kind: "watch", timeframe: "4h" });
+      trackingMutationVersionRef.current += 1;
       setEntryIntents((items) => [response.intent, ...items.filter((item) => item.id !== response.intent.id)]);
       setTrackedItems((items) => [
         manualTrackedItem(response.intent),
@@ -327,6 +332,7 @@ export function ScoutShell() {
     try {
       const response = await api.createEntryIntent(item.symbol, { kind: "watch", timeframe: item.timeframe });
       await Promise.all(item.setup_ids.map((id) => api.disarmScoutSetup(id)));
+      trackingMutationVersionRef.current += 1;
       setTrackedItems((items) => [manualTrackedItem(response.intent), ...items.filter((candidate) => candidate.symbol !== item.symbol)]);
       setNotice(`${item.symbol}을 내 추적으로 전환했습니다.`);
       await runScan(true);
@@ -394,16 +400,18 @@ export function ScoutShell() {
   }
 
   async function stopTracking(item: TrackedScoutItem) {
+    trackingMutationVersionRef.current += 1;
+    setTrackedItems((items) => items.filter((candidate) => !(candidate.symbol === item.symbol && candidate.tracking_source === item.tracking_source)));
     try {
       await Promise.all([
         ...item.setup_ids.map((id) => api.disarmScoutSetup(id)),
         ...item.intent_ids.map((id) => api.cancelEntryIntent(id))
       ]);
-      setTrackedItems((items) => items.filter((candidate) => !(candidate.symbol === item.symbol && candidate.tracking_source === item.tracking_source)));
       setArmedSetups((items) => items.map((setup) => item.setup_ids.includes(setup.id) ? { ...setup, status: "disarmed" } : setup));
       setEntryIntents((items) => items.map((intent) => item.intent_ids.includes(intent.id) ? { ...intent, status: "cancelled" } : intent));
       setNotice(`${item.symbol} 추적을 해제했습니다.`);
     } catch (err) {
+      setTrackedItems((items) => items.some((candidate) => candidate.symbol === item.symbol && candidate.tracking_source === item.tracking_source) ? items : [item, ...items]);
       setError(err instanceof Error ? err.message : "추적 해제에 실패했습니다.");
     }
   }

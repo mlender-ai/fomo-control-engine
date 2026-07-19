@@ -80,7 +80,6 @@ export function LivePositionCockpit() {
   const [selectedDeepDiveError, setSelectedDeepDiveError] = useState("");
   const [selectedChartLoading, setSelectedChartLoading] = useState(false);
   const [selectedChartError, setSelectedChartError] = useState("");
-  const [stripChartAnalysis, setStripChartAnalysis] = useState<Record<string, PositionChartAnalysis>>({});
   const [whales, setWhales] = useState<OnchainWhaleDashboard | null>(null);
   const [whaleError, setWhaleError] = useState("");
   const [instrumentMaps, setInstrumentMaps] = useState<InstrumentMapState | null>(null);
@@ -402,40 +401,8 @@ export function LivePositionCockpit() {
     void loadSelectedDeepDive(selected.position.id, true);
   }, [selected?.position.id, selectedDeepDive?.position_id, selectedIsStockUnderlying, viewMode]);
 
-  useEffect(() => {
-    if (viewMode !== "pro" || !positions.length) {
-      setStripChartAnalysis({});
-      return;
-    }
-    let cancelled = false;
-    const ids = positions.slice(0, 10).map((item) => item.position.id);
-    async function loadStripCharts() {
-      const results = await Promise.allSettled(
-        ids.map(async (positionId) => [positionId, await api.positionChartAnalysis(positionId, "4h", true)] as const)
-      );
-      if (cancelled) return;
-      setStripChartAnalysis((current) => {
-        const next: Record<string, PositionChartAnalysis> = {};
-        for (const id of ids) {
-          if (current[id]) next[id] = current[id];
-        }
-        results.forEach((result) => {
-          if (result.status === "fulfilled") {
-            const [positionId, analysis] = result.value;
-            next[positionId] = analysis;
-          }
-        });
-        return next;
-      });
-    }
-    void loadStripCharts();
-    return () => {
-      cancelled = true;
-    };
-  }, [stripChartKey, viewMode]);
-
   return (
-    <div className="page cockpitPage">
+    <div className={`page cockpitPage mode-${viewMode}`}>
       <header className="cockpitToolbar">
         <div>
           <p className="eyebrow">라이브 포지션 관제</p>
@@ -447,12 +414,16 @@ export function LivePositionCockpit() {
             <UploadCloud size={16} />
             {actionLoading === "sync" ? "동기화 중" : "실시간 동기화"}
           </button>
-          <button className="iconButton secondary" onClick={() => void load(false)} disabled={loading} title="화면 새로고침">
-            <RefreshCw size={16} />
-          </button>
-          <button className="iconButton secondary" onClick={testConnection} disabled={actionLoading === "test"} title="Bitget 연결 테스트">
-            <TestTube2 size={16} />
-          </button>
+          {viewMode === "pro" ? (
+            <>
+              <button className="iconButton secondary" onClick={() => void load(false)} disabled={loading} title="화면 새로고침">
+                <RefreshCw size={16} />
+              </button>
+              <button className="iconButton secondary" onClick={testConnection} disabled={actionLoading === "test"} title="Bitget 연결 테스트">
+                <TestTube2 size={16} />
+              </button>
+            </>
+          ) : null}
           <ViewModeToggle mode={viewMode} onChange={updateViewMode} />
         </div>
       </header>
@@ -473,7 +444,6 @@ export function LivePositionCockpit() {
       ) : positions.length ? (
         <>
           <PositionStrip
-            chartAnalysisById={stripChartAnalysis}
             instrumentMaps={instrumentMaps}
             whales={whales}
             positions={positions}
@@ -500,6 +470,7 @@ export function LivePositionCockpit() {
                   direction={selectedPayload.position.direction}
                   error={whaleError}
                   loading={!whales && !whaleError}
+                  mode={viewMode}
                   summary={selectedWhaleSummary}
                 />
               ) : (
@@ -531,8 +502,6 @@ export function LivePositionCockpit() {
                 <>
                   <PositionVerdictBar
                     payload={selectedPayload}
-                    onRefresh={() => void refreshSelected(selectedPayload.position.id)}
-                    refreshing={actionLoading === `refresh:${selectedPayload.position.id}`}
                   />
                   <SymbolAnalysisView
                     chartAnalysis={selectedChartForPayload}
@@ -569,7 +538,6 @@ export function LivePositionCockpit() {
 }
 
 function PositionStrip({
-  chartAnalysisById,
   compact,
   instrumentMaps,
   positions,
@@ -578,7 +546,6 @@ function PositionStrip({
   onSelect,
   whales
 }: {
-  chartAnalysisById: Record<string, PositionChartAnalysis>;
   compact: boolean;
   instrumentMaps: InstrumentMapState | null;
   positions: LivePositionPayload[];
@@ -591,7 +558,6 @@ function PositionStrip({
   return (
     <section className={`positionStrip ${compact ? "compact" : ""}`} aria-label="보유 포지션" data-testid="position-strip">
       {sortedPositions.map((item) => {
-        const trigger = nearestActionTrigger(item);
         const freshness = analysisFreshness(item, referenceTime);
         const whaleSummary = whalePositionSummary(whales, item.position.symbol);
         const sourceMeta = positionSourceMeta(instrumentMaps, item.position.symbol, whaleSummary);
@@ -617,7 +583,7 @@ function PositionStrip({
             data-testid="position-card"
             key={item.position.id}
             onClick={() => onSelect(item.position.id)}
-            title={`${riskRewardSummary(item)} · 분석 ${freshness.title}`}
+            title={`${riskRewardSummary(item)} · ${sourceMeta.label || "기본 관측"} · 분석 ${freshness.title}`}
             type="button"
           >
             <span className="stripSeverityBar" aria-hidden="true" />
@@ -631,7 +597,6 @@ function PositionStrip({
               </div>
               <HealthGaugeRing score={item.state.health_score} severity={item.state.severity_rank} />
             </div>
-            <PositionMiniSparkline payload={item} analysis={chartAnalysisById[item.position.id]} />
             <div className="stripCardMetrics">
               <em className={`pnlFlash ${item.state.pnl_percent >= 0 ? "successText pnlFlashUp" : "dangerText pnlFlashDown"}`}>
                 {signedPercent(item.state.pnl_percent)}
@@ -639,17 +604,6 @@ function PositionStrip({
               </em>
               <StatusPill status={item.state.status} label={item.state.status_label} />
             </div>
-            <span className="stripHeadline">
-              {plainifyTaText(headlineForPayload(item))}
-              {trigger ? <b>{formatDistance(trigger.distance_pct)}</b> : null}
-            </span>
-            {sourceMeta.label ? (
-              <span className={sourceMeta.kind === "underlying" ? "stripUnderlyingMeta" : "stripWhaleMeta"}>
-                {sourceMeta.kind === "underlying" ? <Landmark size={11} /> : <Waves size={11} />}
-                {sourceMeta.label}
-              </span>
-            ) : null}
-            <span className={`analysisAsOfChip ${freshness.stale ? "stale" : ""}`}>{freshness.label}</span>
           </button>
         );
       })}
@@ -698,10 +652,27 @@ function PositionUnderlyingBanner({
   const status = mapping?.verification_status ?? target?.mapping_status ?? "pending";
   const checks = mapping?.verification_evidence.checks ?? {};
   const identityChecks = [checks.official_name, checks.exchange, checks.asset_type].filter(Boolean).length;
-  const basis = Number(join?.basis_pct ?? 0);
 
   if (loading && !mapping && !target) {
     return <PositionSourceStatus error="" loading onRetry={() => undefined} />;
+  }
+
+  if (status === "verified" && join?.status === "joined") {
+    return (
+      <section className="positionUnderlyingBanner compact status-verified" data-testid="position-underlying-banner">
+        <header>
+          <div>
+            <Landmark size={16} />
+            <span>검증된 기초자산</span>
+            <strong>{join.underlying_name || symbol}</strong>
+          </div>
+          <small>
+            <ShieldCheck size={13} /> Bitget 실행 · Toss 구조 · {join.stale ? "기초자산 장 마감" : "기초자산 장중"}
+          </small>
+        </header>
+        {error ? <p className="underlyingBannerAlert"><AlertTriangle size={14} />매핑 갱신 실패 · {error}</p> : null}
+      </section>
+    );
   }
 
   return (
@@ -738,20 +709,6 @@ function PositionUnderlyingBanner({
             <ShieldCheck size={15} />{busy ? "연결 중" : "Toss 조인 승인"}
           </button>
         </div>
-      ) : status === "verified" && join?.status === "joined" ? (
-        <>
-          <div className="underlyingSourceMetrics">
-            <div><span>Bitget 실행가</span><strong>{formatPrice(join.bitget_price)}</strong><small>가격 기준 · {join.bitget_symbol}</small></div>
-            <div><span>Toss 기초자산</span><strong>{formatPrice(join.toss_price)}</strong><small>{join.underlying_name} · {join.toss_exchange}</small></div>
-            <div><span>베이시스</span><strong className={basis > 0 ? "positive" : basis < 0 ? "negative" : ""}>{basis > 0 ? "+" : ""}{basis.toFixed(2)}%</strong><small>차트 구조 정렬 비율</small></div>
-            <div><span>기초자산 세션</span><strong>{join.stale ? "장 마감" : "장중"}</strong><small>{join.toss_price_at ? new Date(join.toss_price_at).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" }) : "기준시각 확인 중"}</small></div>
-          </div>
-          <div className="underlyingSourceNotes">
-            <span><ShieldCheck size={13} />검증된 1:1 매핑 · Toss 일봉 구조가 아래 Bitget 차트 축에 정렬됩니다.</span>
-            {join.flow_note ? <span><Activity size={13} />{join.flow_note}</span> : null}
-            {join.leverage_note ? <em><AlertTriangle size={13} />{join.leverage_note}</em> : null}
-          </div>
-        </>
       ) : status === "verified" ? (
         <div className="underlyingUnavailable">
           {analysis ? <AlertTriangle size={16} /> : <RefreshCw className="spin" size={16} />}
@@ -814,11 +771,13 @@ function PositionWhaleBanner({
   direction,
   error,
   loading,
+  mode,
   summary
 }: {
   direction: "long" | "short";
   error: string;
   loading: boolean;
+  mode: FceViewMode;
   summary: PositionWhaleSummary | null;
 }) {
   if (loading) {
@@ -837,6 +796,28 @@ function PositionWhaleBanner({
   const alignment = dominant === "neutral" ? "중립" : dominant === direction ? "내 포지션과 정렬" : "내 포지션과 반대";
   const latest = summary.recent_events[0] ?? null;
   const topPositions = summary.positions.slice(0, 4);
+
+  if (mode === "minimal") {
+    return (
+      <section className={`positionWhaleBanner compact ${dominant}`} data-testid="position-whale-banner">
+        <div className="positionWhaleCompactHeading">
+          <Waves size={16} />
+          <strong>{summary.symbol} 고래 추적군</strong>
+          <small>{summary.wallet_count}/{summary.tracked_wallet_count}지갑</small>
+        </div>
+        <div className="positionWhaleCompactMetrics">
+          <span><small>롱</small><strong className="long">{compactWhaleMoney(summary.long_usd)}</strong></span>
+          <span><small>숏</small><strong className="short">{compactWhaleMoney(summary.short_usd)}</strong></span>
+          <span><small>내 방향</small><strong className={dominant === direction ? "aligned" : dominant === "neutral" ? "neutral" : "opposed"}>{alignment}</strong></span>
+        </div>
+        <div className="positionWhaleTrack" aria-label={`고래 롱 ${Math.round(longPct)}%, 숏 ${Math.round(100 - longPct)}%`}>
+          <i className="long" style={{ width: `${longPct}%` }} />
+          <i className="short" style={{ width: `${100 - longPct}%` }} />
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className={`positionWhaleBanner ${dominant}`} data-testid="position-whale-banner">
       <header>
@@ -853,28 +834,33 @@ function PositionWhaleBanner({
         <i className="long" style={{ width: `${longPct}%` }} />
         <i className="short" style={{ width: `${100 - longPct}%` }} />
       </div>
-      {latest ? (
-        <div className={`positionWhaleLatest ${latest.side}`}>
-          <b>{latest.wallet_label}</b>
-          <code title={latest.wallet_address}>{shortWallet(latest.wallet_address)}</code>
-          <strong>{latest.side === "long" ? "롱" : "숏"} {whaleEventText(latest.event)} {compactWhaleMoney(latest.size_usd)}</strong>
-          <span>{latest.entry_px ? `@ ${formatPrice(latest.entry_px)}` : "가격 미수신"}</span>
-          <time>{relativeWhaleTime(latest.event_at)}</time>
+      <details className="positionWhaleDetails">
+        <summary>최근 체결·상위 지갑 상세</summary>
+        <div className="positionWhaleDetailsBody">
+          {latest ? (
+            <div className={`positionWhaleLatest ${latest.side}`}>
+              <b>{latest.wallet_label}</b>
+              <code title={latest.wallet_address}>{shortWallet(latest.wallet_address)}</code>
+              <strong>{latest.side === "long" ? "롱" : "숏"} {whaleEventText(latest.event)} {compactWhaleMoney(latest.size_usd)}</strong>
+              <span>{latest.entry_px ? `@ ${formatPrice(latest.entry_px)}` : "가격 미수신"}</span>
+              <time>{relativeWhaleTime(latest.event_at)}</time>
+            </div>
+          ) : <p className="positionWhaleNoEvent">현재 공개 포지션 분포는 확인됐고, 이 심볼의 신규 체결 이벤트는 아직 없습니다.</p>}
+          {topPositions.length ? (
+            <div className="positionWhaleWallets" aria-label="상위 보유 지갑">
+              {topPositions.map((position) => (
+                <span key={`${position.wallet_address}-${position.side}`} title={position.wallet_address}>
+                  <b>{position.leaderboard_rank ? `LB #${position.leaderboard_rank}` : "직접"}{position.selection_rank ? ` · 검증군 #${position.selection_rank}` : ""}</b>
+                  <code>{position.address_short}</code>
+                  <em className={position.side}>{position.side === "long" ? "롱" : "숏"}</em>
+                  <strong>{compactWhaleMoney(position.size_usd)}</strong>
+                </span>
+              ))}
+            </div>
+          ) : null}
+          <p className="positionWhaleDisclosure">상위 추적군 20지갑 기준이며 전체 시장 분포가 아님 · 현재 미결제와 과거 확정 체결을 분리 관측 · 자동 진입 근거로 사용하지 않음</p>
         </div>
-      ) : <p className="positionWhaleNoEvent">현재 공개 포지션 분포는 확인됐고, 이 심볼의 신규 체결 이벤트는 아직 없습니다.</p>}
-      {topPositions.length ? (
-        <div className="positionWhaleWallets" aria-label="상위 보유 지갑">
-          {topPositions.map((position) => (
-            <span key={`${position.wallet_address}-${position.side}`} title={position.wallet_address}>
-              <b>{position.leaderboard_rank ? `LB #${position.leaderboard_rank}` : "직접"}{position.selection_rank ? ` · 검증군 #${position.selection_rank}` : ""}</b>
-              <code>{position.address_short}</code>
-              <em className={position.side}>{position.side === "long" ? "롱" : "숏"}</em>
-              <strong>{compactWhaleMoney(position.size_usd)}</strong>
-            </span>
-          ))}
-        </div>
-      ) : null}
-      <footer>상위 추적군 20지갑 기준이며 전체 시장 분포가 아님 · 배너 = 현재 미결제 · 차트 타임라인 = 과거 확정 체결 · 검증 전 자동 진입 근거로 사용하지 않음</footer>
+      </details>
     </section>
   );
 }
@@ -975,42 +961,6 @@ function HealthGaugeRing({ score, severity }: { score: number; severity: number 
       </svg>
       <strong>{Math.round(score)}</strong>
     </span>
-  );
-}
-
-function PositionMiniSparkline({
-  payload,
-  analysis
-}: {
-  payload: LivePositionPayload;
-  analysis?: PositionChartAnalysis;
-}) {
-  const candles = analysis?.candles.slice(-48) ?? [];
-  const closes = candles.map((candle) => candle.close);
-  const fallbackMark = markPriceForPayload(payload);
-  const values = closes.length >= 2 ? closes : [payload.position.entry_price, fallbackMark ?? payload.position.entry_price];
-  const plan = actionPlanForPayload(payload);
-  const invalidation = numericPlanPrice(plan?.invalidation) ?? numericPlanPrice(plan?.engine_invalidation);
-  const takeProfit = numericPlanPrice(plan?.take_profit?.[0]);
-  const domainValues = values
-    .concat([payload.position.entry_price])
-    .concat(invalidation === null ? [] : [invalidation])
-    .concat(takeProfit === null ? [] : [takeProfit]);
-  const min = Math.min(...domainValues);
-  const max = Math.max(...domainValues);
-  const width = 154;
-  const height = 44;
-  const y = (value: number) => height - 8 - ((value - min) / Math.max(max - min, 1e-12)) * (height - 16);
-  const x = (index: number) => (values.length <= 1 ? 0 : (index / (values.length - 1)) * width);
-  const path = values.map((value, index) => `${index === 0 ? "M" : "L"} ${x(index).toFixed(1)} ${y(value).toFixed(1)}`).join(" ");
-  const entryY = y(payload.position.entry_price);
-  return (
-    <svg className="positionSparkline" data-testid="position-sparkline" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="최근 48캔들 위치 요약">
-      <line className="sparkEntry" x1="0" x2={width} y1={entryY} y2={entryY} />
-      {invalidation !== null ? <line className="sparkTick sparkInvalidation" x1={width - 18} x2={width} y1={y(invalidation)} y2={y(invalidation)} /> : null}
-      {takeProfit !== null ? <line className="sparkTick sparkTakeProfit" x1={width - 18} x2={width} y1={y(takeProfit)} y2={y(takeProfit)} /> : null}
-      <path className={payload.state.pnl_percent >= 0 ? "sparkLine positive" : "sparkLine negative"} d={path} />
-    </svg>
   );
 }
 
@@ -1516,11 +1466,11 @@ function clampSentence(value: string, maxLength: number): string {
 function PositionVerdictBar({
   payload,
   onRefresh,
-  refreshing
+  refreshing = false
 }: {
   payload: LivePositionPayload;
-  onRefresh: () => void;
-  refreshing: boolean;
+  onRefresh?: () => void;
+  refreshing?: boolean;
 }) {
   const { position, state } = payload;
   const plan = actionPlanForPayload(payload);
@@ -1571,10 +1521,12 @@ function PositionVerdictBar({
             <AlertTriangle size={12} /> 청산가 미수신 — {position.leverage}x 포지션은 청산가·증거금을 수동 확인하세요
           </span>
         ) : null}
-        <button className="button secondary" onClick={onRefresh} disabled={refreshing} type="button">
-          <RefreshCw size={14} />
-          {refreshing ? "갱신 중" : "갱신"}
-        </button>
+        {onRefresh ? (
+          <button className="button secondary" onClick={onRefresh} disabled={refreshing} type="button">
+            <RefreshCw size={14} />
+            {refreshing ? "갱신 중" : "갱신"}
+          </button>
+        ) : null}
       </div>
     </section>
   );
@@ -1624,6 +1576,8 @@ function ActionPlanPanel({
 }) {
   const plan = actionPlanForPayload(payload);
   const rows = actionPlanRows(plan, true);
+  const primaryRows = rows.slice(0, 3);
+  const secondaryRows = rows.slice(3);
   const liquidationWarning = typeof plan?.liquidation?.warning === "string" ? plan.liquidation.warning : "";
   return (
     <section className="focusPanel actionPlanPanel" data-testid="action-plan">
@@ -1641,7 +1595,7 @@ function ActionPlanPanel({
       ) : null}
       {rows.length ? (
         <div className="actionPlanRows">
-          {rows.map((row) => (
+          {primaryRows.map((row) => (
             <button
               className={`actionPlanRow tone-${row.tone} ${row.priceValue !== null && row.priceValue === highlightPrice ? "selected" : ""}`}
               disabled={row.priceValue === null}
@@ -1659,8 +1613,34 @@ function ActionPlanPanel({
       ) : (
         <div className="terminalEmpty">액션 플랜을 만들 가격 근거가 부족합니다.</div>
       )}
+      {secondaryRows.length ? (
+        <details className="secondaryActionPlanDetails">
+          <summary>추가 관측 가격 {secondaryRows.length}개</summary>
+          <div className="actionPlanRows">
+            {secondaryRows.map((row) => (
+              <button
+                className={`actionPlanRow tone-${row.tone} ${row.priceValue !== null && row.priceValue === highlightPrice ? "selected" : ""}`}
+                disabled={row.priceValue === null}
+                key={`secondary-${row.kind}-${row.price}-${row.condition}`}
+                onClick={() => onSelectPrice(row.priceValue === highlightPrice ? null : row.priceValue)}
+                type="button"
+              >
+                <span>{row.kind}</span>
+                <strong>{row.price ?? plainifyTaText(row.condition)}</strong>
+                <em>{plainifyTaText(row.action)}</em>
+                <small>{formatBasis(row.basis, density)}</small>
+              </button>
+            ))}
+          </div>
+        </details>
+      ) : null}
       {liquidationWarning ? <div className="actionPlanWarning">{liquidationWarning}</div> : null}
-      <DerivativeEvidenceCards payload={payload} />
+      {payload.state.analysis.derivatives?.latest ? (
+        <details className="derivativeEvidenceDetails">
+          <summary>파생상품 근거 보기</summary>
+          <DerivativeEvidenceCards payload={payload} />
+        </details>
+      ) : null}
       <details className="planInsightDetails">
         <summary>해설 보기 · {insightSummaryHint(payload)}</summary>
         <InsightEvidence payload={payload} onCreateInsight={onCreateInsight} busy={busy} />

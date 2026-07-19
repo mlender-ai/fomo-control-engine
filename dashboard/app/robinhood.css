@@ -4073,3 +4073,295 @@ textarea:focus {
   .positionWhaleLatest time { margin-left: 0; }
   .positionWhaleWallets { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* WO-FCE-LIVE-UI-HIERARCHY-01 — one verdict first, evidence on demand. */
+.compactChartWorkspace {
+  align-items: start;
+}
+
+.compactGaugePanel,
+.positionDeepDivePanel {
+  align-self: start;
+}
+
+.cockpitPage.mode-minimal .cockpitToolbar {
+  min-height: 60px;
+  padding: 11px 14px;
+}
+
+.cockpitPage.mode-minimal .positionStrip.compact {
+  display: grid;
+  grid-auto-columns: minmax(156px, 188px);
+  grid-auto-flow: column;
+  grid-template-columns: none;
+  gap: 7px;
+  overflow-x: auto;
+  overscroll-behavior-inline: contain;
+  scrollbar-width: thin;
+}
+
+.cockpitPage.mode-minimal .positionStripCard.minimal {
+  min-height: 62px;
+  padding: 9px 12px;
+}
+
+.cockpitPage.mode-pro .positionStripCard:not(.minimal) {
+  flex: 0 0 208px;
+  align-content: start;
+  gap: 7px;
+  min-height: 112px;
+  padding: 11px 12px;
+}
+
+.cockpitPage.mode-pro .positionWhaleBanner:not(.compact) {
+  gap: 7px;
+  padding: 10px 12px 8px;
+}
+
+.cockpitPage.mode-pro .positionWhaleSummary > div {
+  gap: 2px;
+  padding: 6px 10px;
+}
+
+.cockpitPage.mode-pro .positionWhaleDetails > summary {
+  padding-top: 6px;
+}
+
+.positionUnderlyingBanner.compact {
+  gap: 0;
+  padding: 10px 13px;
+}
+
+.positionUnderlyingBanner.compact > header {
+  min-height: 24px;
+}
+
+.positionUnderlyingBanner.compact > header small {
+  gap: 5px;
+}
+
+.positionWhaleBanner.compact {
+  display: grid;
+  grid-template-columns: minmax(170px, auto) minmax(0, 1fr);
+  align-items: center;
+  gap: 7px 18px;
+  min-height: 60px;
+  padding: 9px 12px;
+}
+
+.positionWhaleCompactHeading,
+.positionWhaleCompactMetrics,
+.positionWhaleCompactMetrics > span {
+  display: flex;
+  align-items: center;
+}
+
+.positionWhaleCompactHeading {
+  gap: 7px;
+  min-width: 0;
+}
+
+.positionWhaleCompactHeading svg { flex: 0 0 auto; color: var(--rh-teal, #52d5c8); }
+.positionWhaleCompactHeading strong { overflow: hidden; color: var(--rh-white); font: 700 12px/1.2 var(--rh-font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.positionWhaleCompactHeading small { color: var(--rh-muted); font: 500 9px/1.2 var(--rh-font-mono); white-space: nowrap; }
+
+.positionWhaleCompactMetrics {
+  justify-content: flex-end;
+  gap: 18px;
+  min-width: 0;
+}
+
+.positionWhaleCompactMetrics > span {
+  gap: 6px;
+  min-width: 0;
+}
+
+.positionWhaleCompactMetrics small { color: var(--rh-muted); font-size: 9px; }
+.positionWhaleCompactMetrics strong { overflow: hidden; color: var(--rh-white); font: 700 11px/1.2 var(--rh-font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.positionWhaleCompactMetrics strong.long,
+.positionWhaleCompactMetrics strong.aligned { color: var(--rh-green); }
+.positionWhaleCompactMetrics strong.short { color: var(--rh-red); }
+.positionWhaleCompactMetrics strong.opposed { color: var(--rh-orange); }
+.positionWhaleCompactMetrics strong.neutral { color: var(--rh-muted); }
+.positionWhaleBanner.compact .positionWhaleTrack { grid-column: 1 / -1; height: 3px; }
+
+.positionWhaleDetails {
+  border-top: 1px solid var(--rh-border);
+  color: var(--rh-muted);
+}
+
+.positionWhaleDetails > summary {
+  cursor: pointer;
+  padding: 8px 2px 0;
+  font-size: 10px;
+  font-weight: 700;
+  list-style-position: inside;
+}
+
+.positionWhaleDetails[open] > summary { margin-bottom: 10px; }
+.positionWhaleDetailsBody { display: grid; gap: 10px; }
+.positionWhaleDisclosure { margin: 0; color: var(--rh-muted); font-size: 9px; line-height: 1.4; }
+
+.deepDiveCollapsible {
+  display: block;
+  padding: 0;
+}
+
+.deepDiveCollapsible > summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 3px 8px;
+  align-items: center;
+  cursor: pointer;
+  padding: 10px 11px;
+  list-style: none;
+}
+
+.deepDiveCollapsible > summary::-webkit-details-marker { display: none; }
+.deepDiveCollapsible > summary::after { grid-column: 2; grid-row: 1 / span 2; content: "+"; color: var(--rh-muted); font-size: 14px; }
+.deepDiveCollapsible[open] > summary::after { content: "−"; }
+.deepDiveCollapsible > summary span { color: var(--rh-muted); font-size: 9px; font-weight: 800; letter-spacing: .04em; }
+.deepDiveCollapsible > summary strong { overflow: hidden; color: var(--rh-white); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.deepDiveCollapsible > summary em { grid-column: 2; grid-row: 1; padding-right: 18px; color: var(--rh-muted); font: 500 9px/1.2 var(--rh-font-mono); font-style: normal; }
+.deepDiveCollapsibleBody { display: grid; gap: 9px; padding: 0 11px 11px; border-top: 1px solid var(--rh-border); }
+.deepDiveCollapsibleBody > :first-child { margin-top: 10px; }
+
+.derivativeEvidenceDetails,
+.planInsightDetails,
+.secondaryActionPlanDetails {
+  border-top: 1px solid var(--rh-border);
+}
+
+.derivativeEvidenceDetails > summary,
+.planInsightDetails > summary,
+.secondaryActionPlanDetails > summary {
+  cursor: pointer;
+  padding: 9px 2px;
+  color: var(--rh-muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.derivativeEvidenceDetails[open] > summary { margin-bottom: 7px; }
+.secondaryActionPlanDetails[open] > summary { margin-bottom: 7px; }
+
+@media (min-width: 901px) {
+  .cockpitPage.mode-pro .verdictBar {
+    grid-template-columns: minmax(300px, 1fr) minmax(360px, 1.25fr) auto;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 11px;
+  }
+
+  .cockpitPage.mode-pro .verdictHero {
+    grid-template-columns: 38px minmax(0, 1fr);
+    gap: 9px;
+  }
+
+  .cockpitPage.mode-pro .verdictStatusIcon {
+    width: 38px;
+    height: 38px;
+  }
+
+  .cockpitPage.mode-pro .verdictStatusIcon svg {
+    width: 21px;
+    height: 21px;
+  }
+
+  .cockpitPage.mode-pro .verdictSymbol { font-size: 15px; }
+  .cockpitPage.mode-pro .verdictPnl { font-size: 15px; }
+  .cockpitPage.mode-pro .verdictAction { overflow: hidden; margin: 0; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+  .cockpitPage.mode-pro .triggerMeter { gap: 4px; padding: 7px 9px; }
+  .cockpitPage.mode-pro .triggerMeterTrack { height: 7px; }
+  .cockpitPage.mode-pro .triggerMeterLabels { font-size: 9px; }
+  .cockpitPage.mode-pro .verdictMeta { display: grid; justify-items: end; gap: 4px; }
+  .cockpitPage.mode-pro .verdictLiqWarning { max-width: 260px; font-size: 9px; }
+}
+
+.taLayerToggle {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 7px 10px;
+  align-items: center;
+}
+
+.chartLayerPrimary,
+.chartLayerAdvanced > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.chartLayerAdvanced {
+  position: relative;
+}
+
+.chartLayerAdvanced > summary {
+  cursor: pointer;
+  border: 1px solid var(--rh-border);
+  border-radius: 5px;
+  padding: 6px 9px;
+  color: var(--rh-muted);
+  font: 700 10px/1.2 var(--rh-font-mono);
+  list-style: none;
+  white-space: nowrap;
+}
+
+.chartLayerAdvanced > summary::-webkit-details-marker { display: none; }
+.chartLayerAdvanced > summary::after { content: " +"; }
+.chartLayerAdvanced[open] > summary::after { content: " −"; }
+.chartLayerAdvanced > div { grid-column: 1 / -1; justify-content: flex-end; padding-top: 6px; }
+.taLayerToggle > small { grid-column: 1 / -1; margin-left: 0; }
+
+@media (max-width: 820px) {
+  .cockpitPage .cockpitToolbar {
+    align-items: stretch;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 8px;
+    min-height: auto;
+    padding: 11px 12px;
+  }
+
+  .cockpitPage .cockpitToolbar > div:first-child {
+    flex: 1 1 100%;
+  }
+
+  .cockpitPage .cockpitToolbarActions {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: nowrap;
+    width: 100%;
+    align-items: center;
+    gap: 7px;
+    overflow-x: visible;
+  }
+
+  .cockpitPage .cockpitToolbarActions .lastSyncText { display: none; }
+  .cockpitPage .cockpitToolbarActions > .button { flex: 1 1 auto; min-width: 0; }
+  .cockpitPage .viewModeToggle { flex: 0 0 auto; }
+
+  .positionWhaleBanner.compact {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .positionWhaleCompactMetrics {
+    justify-content: flex-start;
+    gap: 12px;
+  }
+
+  .positionWhaleBanner.compact .positionWhaleTrack { grid-column: 1; }
+  .positionUnderlyingBanner.compact > header { align-items: flex-start; }
+  .positionUnderlyingBanner.compact > header small { width: 100%; }
+  .taLayerToggle { grid-template-columns: minmax(0, 1fr); }
+  .chartLayerAdvanced { justify-self: start; }
+  .chartLayerAdvanced > div { justify-content: flex-start; }
+}
+
+@media (max-width: 480px) {
+  .cockpitPage.mode-minimal .positionStrip.compact { grid-auto-columns: minmax(150px, 46vw); }
+  .positionWhaleCompactMetrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
+  .positionWhaleCompactMetrics > span { display: grid; gap: 2px; }
+  .positionWhaleCompactMetrics strong { font-size: 10px; }
+  .deepDiveCollapsible > summary { grid-template-columns: minmax(0, 1fr) auto; }
+}

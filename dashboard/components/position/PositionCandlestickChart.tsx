@@ -826,24 +826,32 @@ function ChartLayerControls({
   onToggleLayer: (id: ChartLayerId, additive: boolean) => void;
 }) {
   const comparisonCount = activeFocusLayers(layers).length;
+  const primaryIds = new Set<ChartLayerId>(["plan", "levels", "liquidation_realized", "liquidity", "volume_profile", "wyckoff"]);
+  const primaryLayers = CHART_LAYER_DEFS.filter((layer) => primaryIds.has(layer.id));
+  const advancedLayers = CHART_LAYER_DEFS.filter((layer) => !primaryIds.has(layer.id));
+  const advancedActiveCount = advancedLayers.filter((layer) => layerActive(layers, layer.id)).length;
+  const layerButton = (layer: (typeof CHART_LAYER_DEFS)[number]) => (
+    <button
+      aria-pressed={layerActive(layers, layer.id)}
+      className={layerActive(layers, layer.id) ? "active" : ""}
+      data-testid={`chart-layer-${layer.id}`}
+      disabled={layer.id === "liquidation_estimated"}
+      key={layer.id}
+      onClick={(event) => onToggleLayer(layer.id, event.shiftKey)}
+      title={layer.id === "liquidation_estimated" ? "미연동 · Coinglass 추정 수집기는 이번 작업 범위 밖입니다." : layer.description}
+      type="button"
+    >
+      {layer.label}{layer.id === "liquidation_estimated" ? <small>미연동</small> : null}
+    </button>
+  );
   return (
     <div className="taLayerToggle" role="group" aria-label="차트 레이어 선택">
-      {CHART_LAYER_DEFS.map((layer) => (
-        <button
-          aria-pressed={layerActive(layers, layer.id)}
-          className={layerActive(layers, layer.id) ? "active" : ""}
-          data-testid={`chart-layer-${layer.id}`}
-          disabled={layer.id === "liquidation_estimated"}
-          key={layer.id}
-          onClick={(event) => onToggleLayer(layer.id, event.shiftKey)}
-          title={layer.id === "liquidation_estimated" ? "미연동 · Coinglass 추정 수집기는 이번 작업 범위 밖입니다." : layer.description}
-          type="button"
-        >
-          {layer.label}{layer.id === "liquidation_estimated" ? <small>미연동</small> : null}
-        </button>
-      ))}
+      <div className="chartLayerPrimary">{primaryLayers.map(layerButton)}</div>
+      <details className="chartLayerAdvanced" data-testid="chart-advanced-layers">
+        <summary>고급 레이어{advancedActiveCount ? ` · ${advancedActiveCount}개 켜짐` : ""}</summary>
+        <div>{advancedLayers.map(layerButton)}</div>
+      </details>
       {comparisonCount === 2 ? <em className="chartCompareBadge" data-testid="chart-compare-badge">비교 중</em> : null}
-      <small>일반 클릭 다중 토글 · shift-클릭 비교 추가(최대 2)</small>
     </div>
   );
 }

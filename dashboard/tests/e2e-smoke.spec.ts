@@ -30,6 +30,9 @@ test("PWA metadata, icons, and same-origin API work on mobile", async ({ page, r
   await page.goto("/");
   await expect(page.locator('link[rel="manifest"]')).toHaveAttribute("href", /manifest\.webmanifest/);
   await expect(page.getByTestId("position-strip")).toBeVisible({ timeout: 30_000 });
+  const toolbarBox = await page.locator(".cockpitToolbar").boundingBox();
+  expect(toolbarBox).not.toBeNull();
+  expect(toolbarBox!.height).toBeLessThanOrEqual(130);
   const horizontalOverflow = await page.evaluate(
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth
   );
@@ -203,6 +206,9 @@ test("live position cockpit smoke path", async ({ page }) => {
   expect(proPanelBox!.height - proFrameBox!.height).toBeLessThan(430);
   await expect(page.getByTestId("chart-layer-flow")).toHaveCount(0);
   await expect(page.getByTestId("chart-layer-indicators")).toHaveCount(0);
+  await expect(page.getByTestId("chart-advanced-layers")).not.toHaveAttribute("open", "");
+  await expect(page.locator(".chartLayerPrimary > button")).toHaveCount(6);
+  await page.getByTestId("chart-advanced-layers").locator("summary").click();
   await page.getByTestId("chart-layer-ema").click();
   await expect(page.getByTestId("chart-layer-ema")).toHaveAttribute("aria-pressed", "true");
   await expect(page.getByTestId("ema-ribbon-hud")).toBeVisible();
@@ -524,12 +530,12 @@ test("stock perpetual position shows Toss source hierarchy instead of crypto wha
   await page.goto("/");
   const sourceBanner = page.getByTestId("position-underlying-banner");
   await expect(sourceBanner).toBeVisible({ timeout: 30_000 });
-  await expect(sourceBanner).toContainText("실행·실시간가 Bitget · 차트·구조 Toss");
-  await expect(sourceBanner).toContainText("Bitget 실행가");
-  await expect(sourceBanner).toContainText("Toss 기초자산");
-  await expect(sourceBanner).toContainText("Toss US 투자자별 수급 미제공");
+  await expect(sourceBanner).toContainText("Bitget 실행 · Toss 구조");
+  await expect(sourceBanner).toContainText(/기초자산 장중|기초자산 장 마감/);
+  await expect(sourceBanner).not.toContainText("Bitget 실행가");
   await expect(page.getByTestId("position-whale-banner")).toHaveCount(0);
   await expect(page.getByTestId("underlying-join-strip")).toBeVisible();
+  await expect(page.getByTestId("underlying-join-strip")).toContainText("Toss 원본");
   await expect(page.getByTestId("position-deepdive-panel")).toBeVisible();
   await expect(page.getByTestId("deepdive-thesis-block")).toContainText("약화");
   await expect(page.getByTestId("deepdive-cross-signal-block")).toContainText("명목 30x");

@@ -11,7 +11,8 @@ test.describe("chart visual regression", () => {
     await expect(page.getByTestId("demo-mode-badge")).toBeVisible({ timeout: 30_000 });
     await page.getByTestId("pro-mode-button").click();
     await expect(page.getByTestId("chart-layer-plan")).toBeVisible({ timeout: 30_000 });
-    await expect(page.getByTestId("chart-layer-ema")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId("chart-advanced-layers").locator("summary")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId("chart-layer-ema")).not.toBeVisible();
     await expect(page.getByTestId("chart-canvas-frame")).toBeVisible({ timeout: 30_000 });
   });
 
@@ -68,8 +69,11 @@ test("minimal neutral market ribbon snapshot", async ({ page }) => {
 
 async function toggleLayer(page: Page, id: string) {
   const button = page.getByTestId(`chart-layer-${id}`);
+  const advanced = page.getByTestId("chart-advanced-layers");
+  if (!(await button.isVisible())) await advanced.locator("summary").click();
   await expect(button).toBeVisible();
   await button.click();
+  if (await advanced.getAttribute("open") !== null) await advanced.locator("summary").click();
 }
 
 async function waitForChartOverlay(page: Page) {

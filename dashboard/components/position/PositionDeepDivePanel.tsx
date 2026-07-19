@@ -80,25 +80,33 @@ export function PositionDeepDivePanel({
         </div>
       </section>
 
-      <section className="deepDiveBlock crossSignalBlock" id="fce-cross-signals" data-testid="deepdive-cross-signal-block">
-        <div className="deepDiveBlockTitle">
+      <details className="deepDiveBlock deepDiveCollapsible crossSignalBlock" id="fce-cross-signals" data-testid="deepdive-cross-signal-block">
+        <summary>
           <span>02 · FCE 교차신호</span>
+          <strong>{activeSignals[0]?.reading || "교차 관측 대기"}</strong>
           <em>{activeSignals.length}/{deepDive.cross_signals.length} 관측</em>
+        </summary>
+        <div className="deepDiveCollapsibleBody">
+          <div className="deepDiveSignalList">
+            {deepDive.cross_signals.map((signal) => <CrossSignalRow key={signal.id} signal={signal} />)}
+          </div>
+          {onOpenEvidence ? <button className="button secondary deepDiveEvidenceLink" onClick={onOpenEvidence} type="button">차트 근거 열기</button> : null}
         </div>
-        <div className="deepDiveSignalList">
-          {deepDive.cross_signals.map((signal) => <CrossSignalRow key={signal.id} signal={signal} />)}
-        </div>
-        {onOpenEvidence ? <button className="button secondary deepDiveEvidenceLink" onClick={onOpenEvidence} type="button">차트 근거 열기</button> : null}
-      </section>
+      </details>
 
-      <section className="deepDiveBlock riskLedgerBlock" data-testid="deepdive-risk-ledger-block">
-        <div className="deepDiveBlockTitle"><span>03 · 리스크 & 판정 기록</span></div>
-        <div className="riskMetricGrid">
+      <details className="deepDiveBlock deepDiveCollapsible riskLedgerBlock" data-testid="deepdive-risk-ledger-block">
+        <summary>
+          <span>03 · 리스크 & 판정 기록</span>
+          <strong>{formatPercent(deepDive.risk.invalidation_distance_pct)} 무효화 거리</strong>
+          <em>N={deepDive.ledger.performance.reduce((sum, item) => sum + item.n, 0)}</em>
+        </summary>
+        <div className="deepDiveCollapsibleBody">
+          <div className="riskMetricGrid">
           <RiskMetric label="청산 거리" value={formatPercent(deepDive.risk.liquidation_distance_pct)} />
           <RiskMetric label="무효화 거리" value={formatPercent(deepDive.risk.invalidation_distance_pct)} />
           <RiskMetric label="다음 구조" value={formatOptionalPrice(deepDive.risk.next_structure_price)} />
           <RiskMetric label="보상/리스크" value={deepDive.risk.reward_risk_r == null ? "-" : `${deepDive.risk.reward_risk_r.toFixed(2)}R`} />
-        </div>
+          </div>
         <div className={`marketReading ${deepDive.risk.market_reading?.position_alignment || "unknown"}`}>
           <strong>{deepDive.risk.market_reading?.label}</strong>
           <ul>{(deepDive.risk.market_reading?.reasons || []).map((item) => <li key={item}>{item}</li>)}</ul>
@@ -127,13 +135,14 @@ export function PositionDeepDivePanel({
             ))}
           </div>
         ) : null}
-        <details className="partialSimulation">
-          <summary>부분 축소 정적 계산</summary>
-          {(deepDive.risk.partial_exit_simulation || []).map((item) => (
-            <p key={item.reduction_pct}>{item.reduction_pct}% 축소 · 잔여 ${item.remaining_notional.toLocaleString()} · 무효화 위험 ${item.invalidation_risk_notional?.toLocaleString() ?? "-"}</p>
-          ))}
-        </details>
-      </section>
+          <details className="partialSimulation">
+            <summary>부분 축소 정적 계산</summary>
+            {(deepDive.risk.partial_exit_simulation || []).map((item) => (
+              <p key={item.reduction_pct}>{item.reduction_pct}% 축소 · 잔여 ${item.remaining_notional.toLocaleString()} · 무효화 위험 ${item.invalidation_risk_notional?.toLocaleString() ?? "-"}</p>
+            ))}
+          </details>
+        </div>
+      </details>
       <footer>{deepDive.truth_policy}</footer>
     </aside>
   );
