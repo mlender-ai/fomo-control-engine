@@ -104,6 +104,33 @@ def test_headline_picks_nearest_trigger_take_profit() -> None:
     assert plan["headline_action"] == "지금 볼 것: 241.37 저항 반응. 도달 시 부분 익절 검토."
 
 
+def test_headline_formats_price_for_display_without_changing_raw_level() -> None:
+    raw_price = 1674.31008598
+    position = Position(
+        symbol="ETHUSDT",
+        direction=Direction.short,
+        entry_price=1710.88,
+        quantity=1.0,
+        leverage=10,
+        mark_price=1867.61,
+    )
+    plan = build_action_plan(
+        position,
+        _snapshot(position, 1867.61),
+        _chart_analysis(
+            1867.61,
+            support=[
+                {"price": 1551.31800896, "score": 70, "touches": 5},
+                {"price": raw_price, "score": 40, "touches": 2},
+            ],
+        ),
+    )
+
+    assert any(item["price"] == raw_price for item in plan["take_profit"])
+    assert plan["headline_action"] == "지금 볼 것: 1,674.31 지지 반응. 도달 시 부분 익절 검토."
+    assert "1674.31008598" not in plan["headline_action"]
+
+
 def test_headline_short_direction_wording() -> None:
     position = Position(
         symbol="ETHUSDT",
@@ -163,6 +190,33 @@ def test_headline_matches_action_plan_rows() -> None:
     headline = plan["headline_action"]
     assert headline is not None
     assert any(f"{price:g}" in headline for price in prices)
+
+
+def test_headline_uses_nearest_target_without_reordering_plan_rows() -> None:
+    position = Position(
+        symbol="ETHUSDT",
+        direction=Direction.short,
+        entry_price=1710.88,
+        quantity=1.0,
+        leverage=10,
+        mark_price=1867.61,
+    )
+    plan = build_action_plan(
+        position,
+        _snapshot(position, 1867.61),
+        _chart_analysis(
+            1867.61,
+            support=[
+                {"price": 1551.31, "score": 70, "touches": 5},
+                {"price": 1674.31, "score": 40, "touches": 2},
+                {"price": 1563.52, "score": 40, "touches": 2},
+            ],
+        ),
+    )
+
+    assert plan["take_profit"][0]["price"] == 1551.31
+    assert any(item["price"] == 1674.31 for item in plan["take_profit"])
+    assert "1,674.31" in plan["headline_action"]
 
 
 def test_headline_falls_back_to_watch_trigger() -> None:

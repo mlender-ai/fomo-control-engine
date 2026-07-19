@@ -1150,6 +1150,15 @@ def _live_position_payload(position: Position, store_snapshot: bool = False) -> 
     position.pnl_source = state["pnl_source"]
     repository.update_position(position)
     snapshot = make_snapshot(position, state)
+    action_plan = build_action_plan(position, snapshot, _action_plan_context_from_report(report, derivatives))
+    snapshot = snapshot.model_copy(
+        update={
+            "analysis_json": {
+                **snapshot.analysis_json,
+                "action_plan": action_plan,
+            }
+        }
+    )
     events: list[PositionEvent] = []
     if store_snapshot:
         previous_snapshot = previous_snapshots[0] if previous_snapshots else None
@@ -1160,7 +1169,6 @@ def _live_position_payload(position: Position, store_snapshot: bool = False) -> 
     latest_events = repository.list_position_events(position.id, limit=5)
     latest_insight = latest_insights[0] if latest_insights else None
     insight_status = _insight_status(latest_insight, snapshot)
-    action_plan = build_action_plan(position, snapshot, _action_plan_context_from_report(report, derivatives))
     return {
         "position": position,
         "state": state,
@@ -1185,10 +1193,25 @@ def _cached_live_position_payload(position: Position) -> dict:
         return _live_position_payload(position, store_snapshot=False)
 
     stored_snapshot = snapshots[0]
+    stored_analysis = stored_snapshot.analysis_json if isinstance(stored_snapshot.analysis_json, dict) else {}
+    stored_action_plan = stored_analysis.get("action_plan") if isinstance(stored_analysis.get("action_plan"), dict) else None
     current_as_of = position.synced_at or stored_snapshot.as_of
     mark_price = position.mark_price or position.current_price or stored_snapshot.mark_price
     compact_analysis = _compact_position_analysis(stored_snapshot.analysis_json)
     compact_score = _compact_score_json(stored_snapshot.score_json)
+    current_liquidation_distance = calculate_liquidation_distance(position, mark_price)
+    pnl_basis_matches = abs(float(position.pnl_percent) - float(stored_snapshot.pnl_percent)) < 0.01
+    liquidation_basis_matches = _optional_numbers_match(current_liquidation_distance, stored_snapshot.liquidation_distance_pct)
+    basis_consistent = pnl_basis_matches and liquidation_basis_matches
+    health_integrity = compact_score.get("health_integrity") if isinstance(compact_score.get("health_integrity"), dict) else {}
+    compact_score["health_integrity"] = {
+        **health_integrity,
+        "score_as_of": stored_snapshot.as_of.isoformat(),
+        "price_as_of": current_as_of.isoformat(),
+        "basis_pnl_percent": stored_snapshot.pnl_percent,
+        "current_pnl_percent": position.pnl_percent,
+        "basis_consistent": basis_consistent,
+    }
     snapshot = stored_snapshot.model_copy(
         update={
             "as_of": current_as_of,
@@ -1197,7 +1220,7 @@ def _cached_live_position_payload(position: Position) -> dict:
             "pnl_amount": position.unrealized_pl if position.unrealized_pl is not None else stored_snapshot.pnl_amount,
             "pnl_source": position.pnl_source,
             "liquidation_price": position.liquidation_price,
-            "liquidation_distance_pct": calculate_liquidation_distance(position, mark_price),
+            "liquidation_distance_pct": current_liquidation_distance,
             "analysis_json": compact_analysis,
             "score_json": compact_score,
         }
@@ -1231,7 +1254,11 @@ def _cached_live_position_payload(position: Position) -> dict:
     latest_insights = repository.list_position_insights(position.id, limit=1)
     latest_insight = latest_insights[0] if latest_insights else None
     insight_status = _insight_status(latest_insight, snapshot)
-    action_plan = build_action_plan(position, snapshot, _action_plan_context_from_snapshot(snapshot))
+    action_plan = (
+        stored_action_plan
+        if stored_action_plan is not None and basis_consistent
+        else build_action_plan(position, snapshot, _action_plan_context_from_snapshot(snapshot))
+    )
     public_snapshot = snapshot.model_copy(update={"analysis_json": {}, "score_json": {}})
     return {
         "position": position,
@@ -1254,12 +1281,21 @@ def _compact_position_analysis(analysis: Any) -> dict[str, Any]:
         "technical": source.get("technical", {}),
         "derivatives": _slim_derivatives(derivatives, metric_limit=0, event_limit=0),
         "risk": source.get("risk", {}),
+        "reason_codes": list(source.get("reason_codes") or []),
     }
 
 
 def _compact_score_json(score_json: Any) -> dict[str, Any]:
     source = score_json if isinstance(score_json, dict) else {}
-    return {key: source.get(key) for key in ("entry_score", "current_score", "score_change", "health_components", "fomo_index") if key in source}
+    return {
+        key: source.get(key) for key in ("entry_score", "current_score", "score_change", "health_components", "health_integrity", "fomo_index") if key in source
+    }
+
+
+def _optional_numbers_match(left: float | None, right: float | None, tolerance: float = 0.01) -> bool:
+    if left is None or right is None:
+        return left is right
+    return abs(float(left) - float(right)) < tolerance
 
 
 def _compact_insight_payload(insight: PositionInsight, status: dict[str, Any]) -> dict[str, Any]:

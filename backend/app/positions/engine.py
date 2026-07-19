@@ -113,6 +113,7 @@ def build_position_state(
         entry_direction_score=entry_direction_score,
         current_direction_score=current_direction_score,
     )
+    health_integrity = health_score_integrity(components)
     health_score = calculate_health_score(components)
     risk_score = calculate_position_risk_score(report.scores.risk, liquidation_distance, drawdown_pct)
     status = classify_status(
@@ -149,6 +150,7 @@ def build_position_state(
             "liquidation_buffer": components.liquidation_buffer,
             "direction_alignment": components.direction_alignment,
             "health_formula_version": components.formula_version,
+            "health_integrity": health_integrity,
             "entry_score": entry_score,
             "current_score": current_score,
             "score_change": score_change,
@@ -200,6 +202,7 @@ def build_position_state(
             "current_score": current_score,
             "score_change": score_change,
             "health_components": components.model_dump(),
+            "health_integrity": health_integrity,
             "entry_breakdown": report.scores.model_dump(),
             "fomo_index": report.scores.fomo,
         },
@@ -207,16 +210,42 @@ def build_position_state(
 
 
 def calculate_health_score(components: PositionHealthComponents) -> int:
+    final_score = health_score_integrity(components).get("final_score")
+    return final_score if isinstance(final_score, int) else 0
+
+
+def health_score_integrity(components: PositionHealthComponents) -> dict[str, int | str | bool | None]:
     weighted = clamp_score(
         components.survival * 0.30 + components.pnl_state * 0.20 + components.thesis_integrity * 0.20 + components.structure * 0.20 + components.flow * 0.10
     )
+    cap_value: int | None = None
+    cap_reason: str | None = None
     if components.pnl_state == 0:
-        weighted = min(weighted, 25)
+        cap_value = 25
+        cap_reason = "pnl_state_zero"
     if components.pnl_state <= 10 and components.survival <= 30:
-        weighted = min(weighted, 25)
+        if cap_value is None or 25 < cap_value:
+            cap_value = 25
+            cap_reason = "pnl_and_survival_low"
     if components.pnl_state <= 10 and components.survival <= 10:
-        weighted = min(weighted, 20)
-    return weighted
+        cap_value = 20
+        cap_reason = "pnl_and_survival_critical"
+    final_score = min(weighted, cap_value) if cap_value is not None else weighted
+    return {
+        "weighted_score_before_cap": weighted,
+        "cap_reason": cap_reason,
+        "cap_value": cap_value,
+        "final_score": final_score,
+        "formula_version": components.formula_version,
+        "score_consistent": final_score == calculate_health_score_unchecked(components, cap_value),
+    }
+
+
+def calculate_health_score_unchecked(components: PositionHealthComponents, cap_value: int | None) -> int:
+    weighted = clamp_score(
+        components.survival * 0.30 + components.pnl_state * 0.20 + components.thesis_integrity * 0.20 + components.structure * 0.20 + components.flow * 0.10
+    )
+    return min(weighted, cap_value) if cap_value is not None else weighted
 
 
 def calculate_position_risk_score(base_risk_score: int, liquidation_distance: float | None, drawdown_from_peak: float) -> int:

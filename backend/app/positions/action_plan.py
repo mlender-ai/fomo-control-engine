@@ -434,6 +434,9 @@ def _take_profit_targets(
                 action="추가 익절 검토",
             )
         )
+    # Preserve source-quality priority: the simulator intentionally consumes
+    # the first row when calculating its setup R:R.  The headline independently
+    # selects the nearest visible trigger in ``_headline_action``.
     return _dedupe_price_items(targets)[:3]
 
 
@@ -741,7 +744,16 @@ def _dedupe_price_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _format_price(value: Any) -> str:
     if isinstance(value, (int, float)):
-        return f"{value:.8f}".rstrip("0").rstrip(".")
+        magnitude = abs(float(value))
+        if magnitude >= 100:
+            rendered = f"{value:,.2f}"
+        elif magnitude >= 1:
+            rendered = f"{value:.2f}"
+        elif magnitude >= 0.01:
+            rendered = f"{value:.4f}"
+        else:
+            rendered = f"{value:.8f}"
+        return rendered.rstrip("0").rstrip(".")
     return str(value)
 
 

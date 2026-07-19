@@ -1,10 +1,40 @@
-from app.db.models import Direction, Position, Report, ScoreBreakdown
+from app.db.models import Direction, Position, PositionHealthComponents, Report, ScoreBreakdown
 from app.positions.engine import (
     build_position_state,
     calculate_liquidation_distance,
+    health_score_integrity,
     make_insight,
     make_snapshot,
 )
+
+
+def test_health_score_integrity_explains_large_loss_cap() -> None:
+    components = PositionHealthComponents(
+        survival=100,
+        pnl_state=0,
+        thesis_integrity=100,
+        structure=69,
+        flow=73,
+        chart_structure=69,
+        risk_safety=100,
+        momentum_volume=73,
+        liquidity_funding=73,
+        pnl_protection=0,
+        liquidation_buffer=100,
+        direction_alignment=74,
+        formula_version="health_v2_derivatives",
+    )
+
+    integrity = health_score_integrity(components)
+
+    assert integrity == {
+        "weighted_score_before_cap": 71,
+        "cap_reason": "pnl_state_zero",
+        "cap_value": 25,
+        "final_score": 25,
+        "formula_version": "health_v2_derivatives",
+        "score_consistent": True,
+    }
 
 
 def _report(entry_score: int = 86, risk: int = 18) -> Report:

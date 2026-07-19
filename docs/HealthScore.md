@@ -149,6 +149,25 @@ Short:
 
 따라서 -75% 이하 포지션이 60점 이상이 되는 경로는 없다.
 
+## 산식 감사 필드
+
+라이브 포지션 응답의 `score_json.health_integrity`는 표시 점수를 역산할 수 있게 아래 값을 함께 보존한다.
+
+- `weighted_score_before_cap`: 5개 컴포넌트 가중합을 반올림한 원점수
+- `cap_reason` / `cap_value`: 극단 손실·생존 조건으로 적용된 상한과 사유
+- `final_score`: 화면의 Health Score와 동일한 최종 값
+- `formula_version`: 수급 데이터 포함 여부를 나타내는 산식 버전
+- `score_consistent`: 같은 컴포넌트 재계산 결과와 최종 점수의 일치 여부
+
+compact 폴링 응답은 `score_as_of`, `price_as_of`, `basis_pnl_percent`,
+`current_pnl_percent`, `basis_consistent`를 추가한다. 실시간 가격/PnL과 마지막 분석
+스냅샷의 점수 기준이 달라지면 `basis_consistent=false`로 표시하며, 저장된 전체
+액션 플랜은 두 기준이 일치할 때만 compact 화면의 정본으로 재사용한다.
+
+Health Score와 Risk Score는 별도 축이다. 예를 들어 ETH 숏의 청산 거리가 충분해
+Risk가 낮더라도 거래소 ROE가 -75% 이하라면 Health는 cap 25, 상태는 critical일 수
+있다. UI는 이를 `건강도 N/100`으로 명시해 Risk 점수와 혼동하지 않는다.
+
 ## 상태 심각도
 
 상태는 숫자 rank를 함께 내려준다.

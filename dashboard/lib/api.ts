@@ -126,6 +126,20 @@ export type PositionHealthComponents = {
   formula_version: string;
 };
 
+export type HealthScoreIntegrity = {
+  weighted_score_before_cap?: number;
+  cap_reason?: string | null;
+  cap_value?: number | null;
+  final_score?: number;
+  formula_version?: string;
+  score_consistent?: boolean;
+  score_as_of?: string;
+  price_as_of?: string;
+  basis_pnl_percent?: number;
+  current_pnl_percent?: number;
+  basis_consistent?: boolean;
+};
+
 export type PositionState = {
   position: Position;
   as_of: string;
@@ -167,6 +181,7 @@ export type PositionState = {
       liquidation_buffer: number;
       direction_alignment: number;
       health_formula_version: string;
+      health_integrity?: HealthScoreIntegrity;
       entry_score: number;
       current_score: number;
       score_change: number;
@@ -227,7 +242,8 @@ export type PositionState = {
     current_score: number;
     score_change: number;
     health_components: PositionHealthComponents;
-    entry_breakdown: ScoreBreakdown;
+    health_integrity?: HealthScoreIntegrity;
+    entry_breakdown?: ScoreBreakdown;
     fomo_index: number;
   };
 };

@@ -162,6 +162,8 @@ test("live position cockpit smoke path", async ({ page }) => {
 
   await page.getByTestId("pro-mode-button").click();
   await expect(page.getByTestId("verdict-bar")).toBeVisible();
+  await expect(page.getByTestId("verdict-bar")).toContainText("건강도");
+  await expect(page.getByTestId("verdict-bar")).not.toContainText(/\d[\d,]*\.\d{3,}/);
   await expect(page.getByTestId("action-plan")).toBeVisible();
   await expect(page.locator(".analysisChartColumn").getByTestId("money-flow-card")).toBeVisible();
   await expect(page.locator(".evidenceRoomRail").getByTestId("money-flow-card")).toHaveCount(0);

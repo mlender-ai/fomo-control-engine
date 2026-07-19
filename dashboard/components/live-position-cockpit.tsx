@@ -36,6 +36,7 @@ import {
   type InstrumentMapItem,
   type InstrumentMapState,
   type InstrumentMapTarget,
+  type HealthScoreIntegrity,
   type OneLinerLine,
   type OneLinerStance,
   type OneLinerSummary,
@@ -259,7 +260,9 @@ export function LivePositionCockpit() {
 
   const positions = data?.positions ?? [];
   const selected = positions.find((item) => item.position.id === selectedId) ?? positions[0];
-  const selectedPayload = selectedDetail?.position.id === selected?.position.id ? selectedDetail : selected;
+  const selectedPayload = selectedDetail?.position.id === selected?.position.id && selected
+    ? mergeSelectedPositionDetail(selectedDetail, selected)
+    : selected;
   const selectedChartForPayload = selectedChartAnalysis?.position_id === selectedPayload?.position.id ? selectedChartAnalysis : null;
   const selectedDeepDiveForPayload = selectedDeepDive?.position_id === selectedPayload?.position.id ? selectedDeepDive : null;
   const selectedWhaleSummary = selectedPayload ? whalePositionSummary(whales, selectedPayload.position.symbol) : null;
@@ -537,6 +540,25 @@ export function LivePositionCockpit() {
   );
 }
 
+function mergeSelectedPositionDetail(detail: LivePositionDetail, compact: LivePositionPayload): LivePositionDetail {
+  return {
+    ...detail,
+    ...compact,
+    state: {
+      ...detail.state,
+      ...compact.state,
+      analysis: { ...detail.state.analysis, ...compact.state.analysis },
+      score_json: { ...detail.state.score_json, ...compact.state.score_json },
+    },
+    latest_snapshot: {
+      ...detail.latest_snapshot,
+      ...compact.latest_snapshot,
+      analysis_json: detail.latest_snapshot.analysis_json,
+      score_json: { ...detail.latest_snapshot.score_json, ...compact.latest_snapshot.score_json },
+    },
+  };
+}
+
 function PositionStrip({
   compact,
   instrumentMaps,
@@ -595,7 +617,7 @@ function PositionStrip({
                 </strong>
                 <span>{directionLabel(item.position.direction)} · {item.position.leverage}x</span>
               </div>
-              <HealthGaugeRing score={item.state.health_score} severity={item.state.severity_rank} />
+              <HealthGaugeRing integrity={item.state.score_json.health_integrity} score={item.state.health_score} severity={item.state.severity_rank} />
             </div>
             <div className="stripCardMetrics">
               <em className={`pnlFlash ${item.state.pnl_percent >= 0 ? "successText pnlFlashUp" : "dangerText pnlFlashDown"}`}>
@@ -942,12 +964,17 @@ function analysisFreshness(payload: LivePositionPayload, referenceTime: string |
   };
 }
 
-function HealthGaugeRing({ score, severity }: { score: number; severity: number }) {
+function HealthGaugeRing({ integrity, score, severity }: { integrity?: HealthScoreIntegrity; score: number; severity: number }) {
   const radius = 15;
   const circumference = 2 * Math.PI * radius;
   const progress = clamp(score, 0, 100);
   return (
-    <span className={`healthGaugeRing severity-${severity}`} aria-label={`건강도 ${score}`} data-testid="health-gauge">
+    <span
+      className={`healthGaugeRing severity-${severity}`}
+      aria-label={`건강도 ${score}`}
+      data-testid="health-gauge"
+      title={healthIntegrityTitle(integrity, score)}
+    >
       <svg viewBox="0 0 40 40" aria-hidden="true">
         <circle cx="20" cy="20" r={radius} className="healthGaugeTrack" />
         <circle
@@ -1506,7 +1533,7 @@ function PositionVerdictBar({
               {state.pnl_source === "exchange" ? <Landmark size={12} /> : <Calculator size={12} />}
               {roeContextLabel(payload) ? <small>{roeContextLabel(payload)}</small> : null}
             </em>
-            <StatusPill status={state.status} label={`${state.status_label} (${state.health_score}/100)`} />
+            <StatusPill status={state.status} label={`${state.status_label} · 건강도 ${state.health_score}/100`} />
           </div>
           <p className="verdictAction">→ {plainifyTaText(headlineForPayload(payload))}</p>
         </div>
@@ -2157,11 +2184,30 @@ function actionPlanForPayload(payload: LivePositionPayload): PositionActionPlan 
 
 function headlineForPayload(payload: LivePositionPayload): string {
   const plan = actionPlanForPayload(payload);
-  return (
-    plan?.headline_action ??
-    deriveHeadlineAction(plan, payload.position.direction) ??
-    "채점 가능한 구조 없음 — 데이터 표본 축적 중. 참조 존 형성 대기."
+  const derived = deriveHeadlineAction(plan, payload.position.direction);
+  if (derived) {
+    return plan?.verdict_state === "danger" ? derived.replace("지금 볼 것:", "긴급 확인:") : derived;
+  }
+  return normalizePriceCopy(
+    plan?.headline_action ?? "채점 가능한 구조 없음 — 데이터 표본 축적 중. 참조 존 형성 대기."
   );
+}
+
+function normalizePriceCopy(value: string): string {
+  return value.replace(/\b\d[\d,]*\.\d{3,}\b/g, (raw) => {
+    const parsed = Number(raw.replace(/,/g, ""));
+    return Number.isFinite(parsed) ? formatPrice(parsed) : raw;
+  });
+}
+
+function healthIntegrityTitle(integrity: HealthScoreIntegrity | undefined, score: number): string {
+  if (!integrity) return `포지션 건강도 ${score}/100`;
+  const weighted = integrity.weighted_score_before_cap;
+  const cap = integrity.cap_value;
+  const capLabel = cap === null || cap === undefined ? "상한 없음" : `손익·생존 상한 ${cap}`;
+  const formula = integrity.formula_version ? ` · ${integrity.formula_version}` : "";
+  const basis = integrity.basis_consistent === false ? " · 가격 기준과 점수 기준 불일치" : " · 기준 일치";
+  return `건강도 ${score}/100${typeof weighted === "number" ? ` · 가중 원점수 ${weighted}` : ""} · ${capLabel}${formula}${basis}`;
 }
 
 function nearestActionTrigger(

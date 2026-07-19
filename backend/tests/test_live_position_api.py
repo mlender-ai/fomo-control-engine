@@ -80,7 +80,10 @@ def test_live_position_analysis_insight_memo_and_exit_flow(client) -> None:
     assert compact_position["state"]["analysis"]["technical"] == analyzed["state"]["analysis"]["technical"]
     assert compact_position["recent_events"] == []
     assert "entry_breakdown" not in compact_position["state"]["score_json"]
-    assert compact_position["action_plan"]["headline_action"]
+    assert compact_position["action_plan"] == analyzed["action_plan"]
+    assert isinstance(compact_position["state"]["analysis"]["reason_codes"], list)
+    assert compact_position["state"]["score_json"]["health_integrity"]["score_consistent"] is True
+    assert compact_position["state"]["score_json"]["health_integrity"]["basis_consistent"] is True
 
     insight_response = client.post(f"/api/live/positions/{position['id']}/insight")
     assert insight_response.status_code == 200
