@@ -21,6 +21,7 @@ from app.notify.telegram import TelegramSender
 from app.services import runtime as service
 from app.worker.heartbeat import HeartbeatRecord, SQLiteHeartbeatStore
 from app.toss.service import collect_market as collect_toss_market
+from app.stock_paper.service import run_stock_paper_engine
 
 logger = logging.getLogger("worker.manager")
 
@@ -257,7 +258,8 @@ class WorkerManager:
             collect_toss_market(self.settings, "KR"),
             collect_toss_market(self.settings, "US"),
         )
-        return {"KR": kr.get("status"), "US": us.get("status")}
+        paper = await asyncio.to_thread(run_stock_paper_engine, self.settings, {"KR": kr, "US": us})
+        return {"KR": kr.get("status"), "US": us.get("status"), "stock_paper": paper}
 
     async def _telegram_bot_loop(self) -> None:
         heartbeat = self.heartbeats["telegram_bot"]

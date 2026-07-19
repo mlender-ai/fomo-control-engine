@@ -16,7 +16,14 @@ from app.toss.signals import (
     price_limit_signal,
     resample_candles,
 )
-from app.toss.service import _candidate_evidence_cache, _load_candidate_evidence, _orderbook_imbalance
+from app.toss.service import (
+    _backfill_next_daily_candle,
+    _candidate_evidence_cache,
+    _daily_backfill_cursor,
+    _daily_backfilled_on,
+    _load_candidate_evidence,
+    _orderbook_imbalance,
+)
 from app.toss.store import TossStockStore
 from app.db.repository import SQLiteRepository
 
@@ -203,6 +210,45 @@ async def test_candidate_evidence_is_collected_and_throttled_to_fifteen_seconds(
     with sqlite3.connect(database_path) as connection:
         assert connection.execute("SELECT COUNT(*) FROM toss_quotes").fetchone()[0] == 3
         assert connection.execute("SELECT COUNT(DISTINCT timeframe) FROM toss_candles").fetchone()[0] == 5
+
+
+@pytest.mark.asyncio
+async def test_daily_backfill_rotates_cold_universe_without_duplicate_daily_calls(tmp_path) -> None:
+    database_path = tmp_path / "daily.db"
+    SQLiteRepository(str(database_path))
+    store = TossStockStore(f"sqlite:///{database_path}")
+    _daily_backfill_cursor["US"] = 0
+    _daily_backfilled_on.clear()
+
+    class StubClient:
+        def __init__(self) -> None:
+            self.symbols: list[str] = []
+
+        async def get(self, path: str, *, params=None):
+            assert path == "/api/v1/candles"
+            self.symbols.append(params["symbol"])
+            return {
+                "result": {
+                    "candles": [
+                        {
+                            "timestamp": "2026-07-18T00:00:00Z",
+                            "openPrice": "100",
+                            "highPrice": "103",
+                            "lowPrice": "99",
+                            "closePrice": "102",
+                            "volume": "1000",
+                        }
+                    ]
+                }
+            }
+
+    client = StubClient()
+    assert await _backfill_next_daily_candle(client, store, "US", ["AAPL", "MSFT"], "2026-07-19T01:00:00Z") == "AAPL"
+    assert await _backfill_next_daily_candle(client, store, "US", ["AAPL", "MSFT"], "2026-07-19T01:00:10Z") == "MSFT"
+    assert await _backfill_next_daily_candle(client, store, "US", ["AAPL", "MSFT"], "2026-07-19T01:00:20Z") is None
+    assert client.symbols == ["AAPL", "MSFT"]
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM toss_candles WHERE timeframe='1d'").fetchone()[0] == 2
 
 
 def test_judgment_snapshot_deduplicates_and_records_t_plus_one(tmp_path) -> None:

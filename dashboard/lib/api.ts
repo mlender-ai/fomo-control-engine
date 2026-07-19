@@ -2173,6 +2173,67 @@ export type PaperDashboard = {
   live_orders_enabled: false;
 };
 
+export type StockPaperTrack = {
+  market: "KR" | "US";
+  currency: "KRW" | "USD";
+  benchmark_index: string;
+  benchmark_proxy_symbol: string;
+  benchmark_method: "unlevered_etf_proxy_close";
+  universe_version: string;
+  started_at: string;
+  ends_at: string;
+  initial_cash: number;
+  cash: number;
+  status: "running" | "stopped" | "completed";
+  stop_reason: string | null;
+  elapsed_days: number;
+  engine_return_pct: number | null;
+  nav: number | null;
+  nav_complete: boolean;
+  benchmark_return_pct: number | null;
+  benchmark_observed_at: string | null;
+  rejection_reasons: Record<string, number>;
+};
+
+export type StockPaperDashboard = {
+  enabled: boolean;
+  ready_to_start: boolean;
+  start_block_reason: string | null;
+  execution_model_complete: boolean;
+  parameter_version: string;
+  as_of: string;
+  tracks: StockPaperTrack[];
+  positions: Array<{ market: "KR" | "US"; symbol: string; quantity: number; average_price: number; current_price: number | null; currency: "KRW" | "USD"; updated_at: string }>;
+  recent_fills: Array<{
+    id: string;
+    order_id: string;
+    market: "KR" | "US";
+    symbol: string;
+    side: "buy" | "sell";
+    currency: "KRW" | "USD";
+    quantity: number;
+    price: number;
+    gross_amount: number;
+    commission: number;
+    transaction_tax: number;
+    filled_at: string;
+    fx_rate_to_krw: number | null;
+    fx_observed_at: string | null;
+  }>;
+  fill_count: number;
+  live_orders_enabled: false;
+  performance_gate: string;
+  sample_note: string;
+  universe: {
+    version: string;
+    effective_at: string;
+    total: number;
+    markets: { KR: number; US: number };
+    sources: Record<string, { source: string; source_as_of: string }>;
+    refresh_policy: "quarterly_manual";
+  };
+};
+
 export type MarketSummary = {
   reports: Report[];
   positions: Position[];
@@ -2522,6 +2583,7 @@ export const api = {
     }),
   performance: () => request<PerformanceSummary>("/api/performance"),
   paperDashboard: () => request<PaperDashboard>("/api/paper/dashboard"),
+  stockPaperDashboard: () => request<StockPaperDashboard>("/api/stock-paper/dashboard"),
   onchainWhales: () => request<OnchainWhaleDashboard>("/api/onchain/whales"),
   addOnchainWhale: (payload: { address: string; label?: string }) => request<{ wallet: OnchainWhaleWallet }>("/api/onchain/whales", {
     method: "POST",

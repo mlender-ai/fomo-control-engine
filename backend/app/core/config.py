@@ -1,5 +1,5 @@
 from functools import lru_cache
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -1049,12 +1049,60 @@ class Settings(BaseSettings):
         "",
         validation_alias=AliasChoices("FCE_TOSS_US_WATCHLIST", "TOSS_US_WATCHLIST"),
     )
+    stock_paper_engine_enabled: bool = Field(
+        True,
+        validation_alias=AliasChoices("FCE_STOCK_PAPER_ENGINE_ENABLED", "STOCK_PAPER_ENGINE_ENABLED"),
+    )
+    stock_live_trading_enabled: bool = Field(
+        False,
+        validation_alias=AliasChoices("FCE_STOCK_LIVE_TRADING_ENABLED", "STOCK_LIVE_TRADING_ENABLED"),
+        description="Sealed until a separate WO approves a stock paper 4-week benchmark; true is invalid while LiveBroker is absent.",
+    )
+    stock_paper_initial_krw: float = Field(
+        100_000_000.0,
+        gt=0,
+        validation_alias=AliasChoices("FCE_STOCK_PAPER_INITIAL_KRW", "STOCK_PAPER_INITIAL_KRW"),
+    )
+    stock_paper_initial_usd: float = Field(
+        100_000.0,
+        gt=0,
+        validation_alias=AliasChoices("FCE_STOCK_PAPER_INITIAL_USD", "STOCK_PAPER_INITIAL_USD"),
+    )
+    stock_paper_max_minute_volume_ratio: float = Field(
+        0.05,
+        gt=0,
+        le=0.25,
+        validation_alias=AliasChoices("FCE_STOCK_PAPER_MAX_MINUTE_VOLUME_RATIO", "STOCK_PAPER_MAX_MINUTE_VOLUME_RATIO"),
+    )
+    stock_paper_kr_commission_rate: float = Field(
+        0.00015,
+        ge=0,
+        validation_alias=AliasChoices("FCE_STOCK_PAPER_KR_COMMISSION_RATE", "STOCK_PAPER_KR_COMMISSION_RATE"),
+    )
+    stock_paper_us_commission_rate: float = Field(
+        0.0007,
+        ge=0,
+        validation_alias=AliasChoices("FCE_STOCK_PAPER_US_COMMISSION_RATE", "STOCK_PAPER_US_COMMISSION_RATE"),
+    )
+    stock_paper_kr_sell_tax_rate: float = Field(
+        0.0015,
+        ge=0,
+        validation_alias=AliasChoices("FCE_STOCK_PAPER_KR_SELL_TAX_RATE", "STOCK_PAPER_KR_SELL_TAX_RATE"),
+    )
 
     model_config = SettingsConfigDict(
         env_file=".env",
         extra="ignore",
         populate_by_name=True,
     )
+
+    @model_validator(mode="after")
+    def reject_unsealed_stock_live_trading(self) -> "Settings":
+        if self.stock_live_trading_enabled:
+            raise ValueError(
+                "FCE_STOCK_LIVE_TRADING_ENABLED=true is sealed: stock paper must beat its benchmark for 4 weeks and a separate WO must implement LiveBroker"
+            )
+        return self
 
     @property
     def cors_origin_list(self) -> list[str]:

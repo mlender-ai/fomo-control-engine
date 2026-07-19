@@ -1,15 +1,16 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowRight, FileClock, LineChart, SlidersHorizontal } from "lucide-react";
+import { ArrowRight, Building2, FileClock, LineChart, SlidersHorizontal } from "lucide-react";
 import { useEffect, useState } from "react";
-import { api, type CalibrationSummary, type PerformanceSummary, type Trade } from "@/lib/api";
+import { api, type CalibrationSummary, type PerformanceSummary, type StockPaperDashboard, type Trade } from "@/lib/api";
 import { ReviewSectionNav } from "./review-section-nav";
 
 export function ReviewOverviewShell() {
   const [trades, setTrades] = useState<Trade[] | null>(null);
   const [performance, setPerformance] = useState<PerformanceSummary | null>(null);
   const [calibration, setCalibration] = useState<CalibrationSummary | null>(null);
+  const [stockPaper, setStockPaper] = useState<StockPaperDashboard | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -20,6 +21,7 @@ export function ReviewOverviewShell() {
     void api.trades().then((value) => { if (!cancelled) setTrades(value); }).catch(recordError);
     void api.performance().then((value) => { if (!cancelled) setPerformance(value); }).catch(recordError);
     void api.reviewCalibration().then((value) => { if (!cancelled) setCalibration(value); }).catch(recordError);
+    void api.stockPaperDashboard().then((value) => { if (!cancelled) setStockPaper(value); }).catch(recordError);
     return () => { cancelled = true; };
   }, []);
 
@@ -35,6 +37,13 @@ export function ReviewOverviewShell() {
       </header>
       {error ? <div className="reviewOverviewNotice">{error}</div> : null}
       <section className="reviewOverviewGrid">
+        <ReviewEntry
+          href="/engine?tab=stocks"
+          icon={Building2}
+          title="주식 페이퍼"
+          value={stockPaper?.tracks.length ? stockPaper.tracks.map((track) => `${track.market} ${track.elapsed_days}/28일`).join(" · ") : "트랙 준비 중"}
+          detail={stockPaper?.sample_note || "나스닥100·코스피100을 독립 시계로 검증합니다."}
+        />
         <ReviewEntry
           href="/trades"
           icon={FileClock}

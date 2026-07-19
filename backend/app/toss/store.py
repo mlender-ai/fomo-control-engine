@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 from app.db.sqlite_utils import connect_sqlite
 
@@ -303,6 +304,94 @@ class TossStockStore:
             return []
         return [dict(row) | {"sample_low": int(row["n"]) < 30} for row in rows]
 
+    def latest_execution_observation(self, market: str, symbol: str, *, session_open: bool) -> dict[str, Any] | None:
+        """Return only directly observed fields needed by the stock PaperBroker.
+
+        Missing bid/ask, limits, candle or opening price stays ``None`` so the
+        execution invariant can reject the fill instead of inventing liquidity.
+        """
+        if not self.enabled:
+            return None
+        symbol = symbol.upper()
+        with self._connect() as connection:
+            candle = connection.execute(
+                """SELECT * FROM toss_candles WHERE market=? AND symbol=? AND timeframe='1m'
+                ORDER BY opened_at DESC LIMIT 1""",
+                (market, symbol),
+            ).fetchone()
+            if candle is None:
+                return None
+            opened = _session_open_utc(market, datetime.now(timezone.utc))
+            session_first = connection.execute(
+                """SELECT open FROM toss_candles WHERE market=? AND symbol=? AND timeframe='1m'
+                AND opened_at>=? ORDER BY opened_at ASC LIMIT 1""",
+                (market, symbol, opened.isoformat()),
+            ).fetchone()
+            raw_rows = connection.execute(
+                """SELECT payload FROM toss_quotes WHERE market=? AND symbol=?
+                ORDER BY observed_at DESC LIMIT 8""",
+                (market, symbol),
+            ).fetchall()
+            warning_row = connection.execute(
+                "SELECT payload FROM toss_warnings WHERE market=? AND symbol=?",
+                (market, symbol),
+            ).fetchone()
+            fx_row = connection.execute(
+                """SELECT rate, observed_at FROM stock_paper_fx_snapshots
+                WHERE base_currency='USD' AND quote_currency='KRW' ORDER BY observed_at DESC LIMIT 1"""
+            ).fetchone()
+        orderbook: dict[str, Any] = {}
+        limits: dict[str, Any] = {}
+        for row in raw_rows:
+            try:
+                envelope = json.loads(row["payload"])
+            except (TypeError, json.JSONDecodeError):
+                continue
+            kind = envelope.get("kind") if isinstance(envelope, dict) else None
+            response = envelope.get("response") if isinstance(envelope, dict) else None
+            result = (response or {}).get("result") if isinstance(response, dict) else None
+            if kind == "orderbook" and not orderbook and isinstance(result, dict):
+                orderbook = result
+            if kind == "price_limits" and not limits and isinstance(result, dict):
+                limits = result
+        warnings: list[str] = []
+        if warning_row:
+            try:
+                warning_payload = json.loads(warning_row["payload"])
+                result = warning_payload.get("result") or warning_payload.get("data") or []
+                if isinstance(result, list):
+                    warnings = [str(item.get("warningType") or item.get("type") or "") for item in result if isinstance(item, dict)]
+            except (TypeError, json.JSONDecodeError):
+                warnings = []
+        bid = _book_price(orderbook.get("bids"))
+        ask = _book_price(orderbook.get("asks"))
+        upper = _optional_float(limits.get("upperLimitPrice"))
+        lower = _optional_float(limits.get("lowerLimitPrice"))
+        close = float(candle["close"])
+        return {
+            "symbol": symbol,
+            "market": market,
+            "observed_at": str(candle["observed_at"]),
+            "session_open": session_open,
+            "session_open_price": float(session_first["open"]) if session_first else None,
+            "minute_open": float(candle["open"]),
+            "minute_high": float(candle["high"]),
+            "minute_low": float(candle["low"]),
+            "minute_close": close,
+            "minute_volume": float(candle["volume"]),
+            "bid": bid,
+            "ask": ask,
+            "upper_limit": upper,
+            "lower_limit": lower,
+            "upper_locked": bool(upper is not None and close >= upper and ask is None),
+            "lower_locked": bool(lower is not None and close <= lower and bid is None),
+            "vi_active": any(value.strip().lower().startswith("vi") or value == "변동성완화장치" for value in warnings),
+            "halted": any(value.strip().lower() in {"halted", "trading_halt", "거래정지"} for value in warnings),
+            "warnings": warnings,
+            "fx_rate_to_krw": float(fx_row["rate"]) if fx_row else None,
+            "fx_observed_at": str(fx_row["observed_at"]) if fx_row else None,
+        }
+
     def record_due_outcomes(self, prices: dict[str, float], now: datetime | None = None) -> int:
         if not self.enabled:
             return 0
@@ -328,11 +417,13 @@ class TossStockStore:
 
 
 def _signal_expected_move(signal: dict[str, Any]) -> str | None:
-    data = signal.get("data") if isinstance(signal.get("data"), dict) else {}
+    raw_data = signal.get("data")
+    data: dict[str, Any] = raw_data if isinstance(raw_data, dict) else {}
     signal_id = signal.get("id")
     if signal_id == "basis_behavior":
         width_change = data.get("width_change_pct_points")
-        sparkline = data.get("sparkline") if isinstance(data.get("sparkline"), list) else []
+        raw_sparkline = data.get("sparkline")
+        sparkline: list[Any] = raw_sparkline if isinstance(raw_sparkline, list) else []
         if len(sparkline) >= 2 and isinstance(sparkline[0], dict) and isinstance(sparkline[-1], dict):
             first = sparkline[0].get("value")
             last = sparkline[-1].get("value")
@@ -351,3 +442,23 @@ def _signal_expected_move(signal: dict[str, Any]) -> str | None:
         if isinstance(net_amount, (int, float)) and net_amount != 0:
             return "up" if net_amount > 0 else "down"
     return None
+
+
+def _book_price(rows: Any) -> float | None:
+    if not isinstance(rows, list) or not rows or not isinstance(rows[0], dict):
+        return None
+    return _optional_float(rows[0].get("price") or rows[0].get("priceValue"))
+
+
+def _optional_float(value: Any) -> float | None:
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _session_open_utc(market: str, now: datetime) -> datetime:
+    zone = ZoneInfo("Asia/Seoul" if market == "KR" else "America/New_York")
+    local = now.astimezone(zone)
+    hour, minute = (9, 0) if market == "KR" else (9, 30)
+    return local.replace(hour=hour, minute=minute, second=0, microsecond=0).astimezone(timezone.utc)

@@ -1,0 +1,46 @@
+{
+  "version": "2026-Q3-seed-1",
+  "effective_at": "2026-07-19",
+  "refresh_policy": "quarterly_manual",
+  "notes": "Company-level 100-name seeds. GOOG is omitted because GOOGL represents Alphabet in the 100-company US universe. Constituents require quarterly operator verification before version promotion.",
+  "markets": {
+    "US": {
+      "index": "NASDAQ100",
+      "currency": "USD",
+      "source": "https://www.nasdaq.com/solutions/global-indexes/nasdaq-100/companies",
+      "source_as_of": "2025-05-19",
+      "tick_rule": "US_CENT",
+      "symbols": [
+        "AAPL", "ABNB", "ADBE", "ADI", "ADP", "ADSK", "AEP", "ALNY", "AMAT", "AMD",
+        "AMGN", "AMZN", "APP", "ARM", "ASML", "AVGO", "AXON", "BKNG", "BKR", "CCEP",
+        "CDNS", "CEG", "CHTR", "CMCSA", "COST", "CPRT", "CRWD", "CSCO", "CSGP", "CSX",
+        "CTAS", "CTSH", "DASH", "DDOG", "DXCM", "EA", "EXC", "FANG", "FAST", "FER",
+        "FTNT", "GEHC", "GILD", "GOOGL", "HON", "IDXX", "INSM", "INTC", "INTU", "ISRG",
+        "KDP", "KHC", "KLAC", "LIN", "LRCX", "MAR", "MCHP", "MDLZ", "MELI", "META",
+        "MNST", "MPWR", "MRVL", "MSFT", "MSTR", "MU", "NFLX", "NVDA", "NXPI", "ODFL",
+        "ORLY", "PANW", "PAYX", "PCAR", "PDD", "PEP", "PLTR", "PYPL", "QCOM", "REGN",
+        "ROP", "ROST", "SBUX", "SHOP", "SNPS", "STX", "TEAM", "TMUS", "TRI", "TSLA",
+        "TTWO", "TXN", "VRSK", "VRTX", "WBD", "WDAY", "WDC", "WMT", "XEL", "ZS"
+      ]
+    },
+    "KR": {
+      "index": "KOSPI100",
+      "currency": "KRW",
+      "source": "https://data.krx.co.kr/contents/MDC/MAIN/main/index.cmd?locale=ko",
+      "source_as_of": "2026-07-19-manual-seed",
+      "tick_rule": "KRX_EQUITY",
+      "symbols": [
+        "005930", "000660", "373220", "207940", "005380", "000270", "068270", "105560", "055550", "035420",
+        "035720", "028260", "012330", "005490", "066570", "051910", "003670", "096770", "032830", "086790",
+        "000810", "015760", "316140", "009150", "017670", "018260", "034730", "033780", "010130", "011200",
+        "024110", "030200", "009540", "010950", "259960", "042700", "034020", "329180", "323410", "003550",
+        "352820", "018880", "090430", "010140", "047050", "000720", "267250", "004020", "011070", "377300",
+        "000100", "271560", "251270", "021240", "097950", "006800", "029780", "008770", "078930", "016360",
+        "036570", "006400", "010120", "005830", "138040", "180640", "128940", "302440", "326030", "011780",
+        "047810", "004170", "071050", "088350", "039490", "028050", "272210", "241560", "000880", "002790",
+        "001040", "161390", "001450", "007070", "008930", "139480", "175330", "204320", "006260", "064350",
+        "020150", "004990", "112610", "001120", "280360", "307950", "030000", "026960", "005940", "051900"
+      ]
+    }
+  }
+}

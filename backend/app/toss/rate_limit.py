@@ -18,6 +18,7 @@ class TokenBucket:
         self._lock = asyncio.Lock()
 
     async def acquire(self) -> None:
+        assert self.updated_at is not None and self.tokens is not None
         while True:
             async with self._lock:
                 now = time.monotonic()

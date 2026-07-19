@@ -20,6 +20,9 @@ from .signals import (
     resample_candles,
 )
 from .store import TossStockStore
+from app.stock_paper.models import Market
+from app.stock_paper.store import StockPaperStore
+from app.stock_paper.universe import load_universe
 
 _RANKING_TYPES = (
     "MARKET_TRADING_AMOUNT",
@@ -37,6 +40,10 @@ _orderbook_imbalance: dict[tuple[str, str], float] = {}
 _maintenance_until: dict[str, float] = {}
 _latest_market: dict[str, dict[str, Any]] = {}
 _authentication_blocked: dict[str, str] = {}
+_BENCHMARK_PROXY = {"KR": "237350", "US": "QQQ"}
+_MAX_CANDIDATES_PER_MARKET = 18
+_daily_backfill_cursor = {"KR": 0, "US": 0}
+_daily_backfilled_on: dict[tuple[str, str], str] = {}
 
 
 def public_status(settings: Settings, market: str, store: TossStockStore) -> dict[str, Any]:
@@ -90,7 +97,9 @@ async def collect_market(settings: Settings, market: str) -> dict[str, Any]:
         rankings = await _load_rankings(client, store, market, now)
         investor_payloads = await _load_investor_flow(client, store, market, now)
         ranked_symbols = {symbol for payload in rankings.values() for symbol in _ranking_rows(payload)}
-        symbols = list(settings.toss_kr_watchlist if market == "KR" else settings.toss_us_watchlist)
+        configured_symbols = list(settings.toss_kr_watchlist if market == "KR" else settings.toss_us_watchlist)
+        universe_symbols = [item.symbol for item in load_universe().for_market(Market(market))]
+        symbols = list(dict.fromkeys([*configured_symbols, *universe_symbols, _BENCHMARK_PROXY[market]]))
         if market == "KR":
             symbols = list(dict.fromkeys([*symbols, *sorted(ranked_symbols)]))[:400]
         if not symbols:
@@ -104,7 +113,41 @@ async def collect_market(settings: Settings, market: str) -> dict[str, Any]:
             store.append_raw("toss_quotes", {"market": market, "symbol": "*", "observed_at": now}, prices_payload)
             price_rows.extend(_result_list(prices_payload))
             stock_rows.extend(_result_list(stocks_payload))
+        if settings.stock_paper_engine_enabled:
+            stock_store = StockPaperStore(settings.database_url)
+            stock_store.update_marks(
+                Market(market),
+                {str(row.get("symbol") or "").upper(): value for row in price_rows if (value := _float(row.get("lastPrice"))) is not None},
+                datetime.fromisoformat(now),
+            )
+            benchmark_row = next((row for row in price_rows if str(row.get("symbol") or "").upper() == _BENCHMARK_PROXY[market]), None)
+            benchmark_price = _float(benchmark_row.get("lastPrice")) if benchmark_row else None
+            if benchmark_price is not None:
+                stock_store.update_benchmark(Market(market), benchmark_price, datetime.fromisoformat(now))
+            if market == "US":
+                try:
+                    exchange_rate = await client.get(
+                        "/api/v1/exchange-rate",
+                        params={"baseCurrency": "USD", "quoteCurrency": "KRW"},
+                    )
+                except Exception:
+                    exchange_rate = None
+                if exchange_rate:
+                    stock_store.record_fx(exchange_rate, datetime.fromisoformat(now))
         candidates = await _build_ranked_candidates(client, store, market, rankings, investor_payloads, price_rows, stock_rows, now)
+        if settings.stock_paper_engine_enabled:
+            stock_store = StockPaperStore(settings.database_url)
+            candidate_symbols = {str(item["symbol"]).upper() for item in candidates}
+            for symbol in stock_store.position_symbols(Market(market)):
+                if symbol not in candidate_symbols:
+                    await _load_candidate_evidence(client, store, market, symbol, now)
+            await _backfill_next_daily_candle(
+                client,
+                store,
+                market,
+                [symbol for symbol in universe_symbols if symbol not in candidate_symbols],
+                now,
+            )
         prices = {str(row.get("symbol")): float(row["lastPrice"]) for row in price_rows if row.get("symbol") and row.get("lastPrice") is not None}
         store.record_due_outcomes(prices)
         response = {
@@ -213,7 +256,8 @@ async def _build_ranked_candidates(
         market_row = market_rows.get(symbol, {})
         retail_row = retail_rows.get(symbol, {})
         price_row = price_by_symbol.get(symbol, {})
-        ranked_price = market_row.get("price") if isinstance(market_row.get("price"), dict) else {}
+        raw_ranked_price = market_row.get("price")
+        ranked_price: dict[str, Any] = raw_ranked_price if isinstance(raw_ranked_price, dict) else {}
         candidate = build_candidate(
             market=market,
             symbol=symbol,
@@ -227,7 +271,7 @@ async def _build_ranked_candidates(
         if candidate:
             preliminary.append(candidate)
     result = []
-    for candidate in preliminary[:20]:
+    for candidate in preliminary[:_MAX_CANDIDATES_PER_MARKET]:
         warnings_payload = await _load_warnings(client, store, market, candidate["symbol"], observed_at)
         warnings = [str(item.get("warningType") or item.get("type") or "") for item in _result_list(warnings_payload)]
         evidence = await _load_candidate_evidence(client, store, market, candidate["symbol"], observed_at)
@@ -329,6 +373,41 @@ async def _load_candidate_evidence(
     }
     _candidate_evidence_cache[key] = (time.monotonic(), evidence)
     return evidence
+
+
+async def _backfill_next_daily_candle(
+    client: TossReadOnlyClient,
+    store: TossStockStore,
+    market: str,
+    symbols: list[str],
+    observed_at: str,
+) -> str | None:
+    """Rotate one non-hot universe member per cycle to stay inside the candle budget."""
+    if not symbols:
+        return None
+    day = observed_at[:10]
+    start = _daily_backfill_cursor[market] % len(symbols)
+    symbol = None
+    for offset in range(len(symbols)):
+        candidate = symbols[(start + offset) % len(symbols)]
+        if _daily_backfilled_on.get((market, candidate)) != day:
+            symbol = candidate
+            _daily_backfill_cursor[market] = (start + offset + 1) % len(symbols)
+            break
+    if symbol is None:
+        return None
+    payload = await client.get(
+        "/api/v1/candles",
+        params={"symbol": symbol, "interval": "1d", "count": 200, "adjusted": "true"},
+    )
+    result = payload.get("result") or {}
+    raw_rows = (result.get("candles") or []) if isinstance(result, dict) else []
+    candles = _normalize_candles(raw_rows)
+    if candles:
+        store.upsert_candles(market, symbol, "1d", "toss_1d_backfill", observed_at, candles)
+        _daily_backfilled_on[(market, symbol)] = day
+        return symbol
+    return None
 
 
 def _normalize_candles(raw_rows: list[Any]) -> list[dict[str, Any]]:

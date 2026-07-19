@@ -1,0 +1,12 @@
+{
+  "version": "stock-v1",
+  "min_evidence": 4,
+  "min_checklist_passed": 5,
+  "min_checklist_total": 5,
+  "min_rr": 1.5,
+  "min_signature_ci_low_pct": 50.0,
+  "max_open_positions": 5,
+  "daily_loss_limit_pct": 3.0,
+  "position_capital_fraction": 0.02,
+  "long_only": true
+}

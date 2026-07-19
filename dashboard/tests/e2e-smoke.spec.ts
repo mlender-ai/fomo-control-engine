@@ -684,6 +684,75 @@ test("engine trading workspace and absorbed calibration route", async ({ page })
   await expect(page).toHaveURL(/\/engine\?tab=status/);
 });
 
+test("stock paper tracks stay separate, sealed, and responsive", async ({ page }) => {
+  await page.route("**/api/stock-paper/dashboard", async (route) => {
+    const track = (market: "KR" | "US") => ({
+      market,
+      currency: market === "KR" ? "KRW" : "USD",
+      benchmark_index: market === "KR" ? "KOSPI100" : "NASDAQ100",
+      benchmark_proxy_symbol: market === "KR" ? "237350" : "QQQ",
+      benchmark_method: "unlevered_etf_proxy_close",
+      universe_version: "2026-q3",
+      started_at: "2026-07-19T00:00:00Z",
+      ends_at: "2026-08-16T00:00:00Z",
+      initial_cash: market === "KR" ? 100_000_000 : 100_000,
+      cash: market === "KR" ? 99_950_000 : 99_950,
+      status: "running",
+      stop_reason: null,
+      elapsed_days: 1,
+      engine_return_pct: -0.05,
+      nav: market === "KR" ? 99_950_000 : 99_950,
+      nav_complete: true,
+      benchmark_return_pct: 0.12,
+      benchmark_observed_at: "2026-07-19T01:00:00Z",
+      rejection_reasons: market === "KR" ? { session_closed: 2, price_limit_locked: 1 } : { liquidity_partial: 3 }
+    });
+    await route.fulfill({ json: {
+      enabled: true,
+      ready_to_start: true,
+      start_block_reason: null,
+      execution_model_complete: true,
+      parameter_version: "stock-v1",
+      as_of: "2026-07-19T01:00:00Z",
+      tracks: [track("KR"), track("US")],
+      positions: [],
+      recent_fills: [],
+      fill_count: 0,
+      live_orders_enabled: false,
+      performance_gate: "Toss 실주문은 주식 페이퍼가 4주간 벤치마크를 초과할 경우에만 재논의",
+      sample_note: "KR/US 원통화 성적이며 크립토 검증과 합산하지 않습니다.",
+      universe: {
+        version: "2026-q3",
+        effective_at: "2026-07-01",
+        total: 200,
+        markets: { KR: 100, US: 100 },
+        sources: {},
+        refresh_policy: "quarterly_manual"
+      }
+    }});
+  });
+
+  await page.goto("/engine?tab=stocks");
+  const view = page.getByTestId("engine-stock-paper-tab");
+  await expect(view).toBeVisible({ timeout: 30_000 });
+  await expect(view).toContainText("실주문 영구 봉인");
+  await expect(view).toContainText("200종목");
+  await expect(view).toContainText("크립토 성적과 합산하지 않습니다");
+  await expect(view).toContainText("미체결 사유 분포");
+  await expect(view.locator(".stockTrackCard")).toHaveCount(2);
+  if (process.env.FCE_CAPTURE_WO_SCREENSHOT === "true") {
+    await page.screenshot({ path: "../docs/assets/WO-FCE-TOSS-PAPER-01-dashboard.png", fullPage: true });
+  }
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  const audit = await page.evaluate(() => ({
+    overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    clipped: [...document.querySelectorAll("[data-testid='engine-stock-paper-tab'] *")]
+      .filter((element) => element.scrollWidth > element.clientWidth + 2).length
+  }));
+  expect(audit).toEqual({ overflow: 0, clipped: 0 });
+});
+
 test("engine core remains usable when optional whale data fails", async ({ page }) => {
   await page.route("**/api/onchain/whales", async (route) => {
     await route.abort("failed");

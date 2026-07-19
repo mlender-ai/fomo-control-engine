@@ -14,6 +14,7 @@ from .errors import TossApiError, TossAuthenticationError, TossEdgeBlocked, Toss
 from .rate_limit import TokenBucket
 
 logger = logging.getLogger("toss.readonly")
+_SHARED_BUCKETS: dict[tuple[str, int, str], TokenBucket] = {}
 
 TOKEN_PATH = "/oauth2/token"
 ALLOWED_PATHS = (
@@ -97,6 +98,21 @@ class TossReadOnlyClient:
             "MARKET_INFO": TokenBucket(3, 3),
         }
 
+    def _bucket(self, group: str) -> TokenBucket:
+        """Share TPS budgets across KR/US clients using the same credential.
+
+        Toss limits are client × API group, not Python-object local. The event
+        loop id keeps test/application loops isolated while concurrent KR and US
+        collectors consume one production budget.
+        """
+        key = (self.client_id, id(asyncio.get_running_loop()), group)
+        bucket = _SHARED_BUCKETS.get(key)
+        if bucket is None:
+            template = self._buckets[group]
+            bucket = TokenBucket(template.rate, template.capacity)
+            _SHARED_BUCKETS[key] = bucket
+        return bucket
+
     @property
     def configured(self) -> bool:
         return bool(self.client_id and self._secret)
@@ -114,7 +130,7 @@ class TossReadOnlyClient:
                 return self._token.value
             response: httpx.Response | None = None
             for attempt in range(5):
-                await self._buckets["AUTH"].acquire()
+                await self._bucket("AUTH").acquire()
                 response = await self._http.post(
                     TOKEN_PATH,
                     data={"grant_type": "client_credentials", "client_id": self.client_id, "client_secret": self._secret},
@@ -141,7 +157,7 @@ class TossReadOnlyClient:
 
     async def _request(self, path: str, *, params: dict[str, Any] | None, auth_retry: bool, attempt: int) -> dict[str, Any]:
         group = _group_for(path)
-        bucket = self._buckets[group]
+        bucket = self._bucket(group)
         await bucket.acquire()
         token = await self._access_token()
         response = await self._http.get(path, params=params, headers={"Authorization": f"Bearer {token}"})

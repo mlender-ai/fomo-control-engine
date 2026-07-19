@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Activity, Bot, Plus, Radar, RefreshCw, Trash2, Waves } from "lucide-react";
+import { Activity, Bot, Building2, Plus, Radar, RefreshCw, ShieldCheck, Trash2, Waves } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { TerminalWarning } from "@/components/terminal";
-import { api, type OnchainWhaleDashboard, type PaperDashboard, type PaperGateFunnel, type PaperTrade } from "@/lib/api";
+import { api, type OnchainWhaleDashboard, type PaperDashboard, type PaperGateFunnel, type PaperTrade, type StockPaperDashboard, type StockPaperTrack } from "@/lib/api";
 
 const tabs = [
   { id: "battle", label: "대결" },
+  { id: "stocks", label: "주식 트랙" },
   { id: "positions", label: "엔진 포지션" },
   { id: "journal", label: "거래 일지" },
   { id: "status", label: "엔진 상태" },
@@ -22,10 +23,12 @@ export function EngineTradingShell() {
   const requested = search.get("tab") as TabId | null;
   const active = tabs.some((tab) => tab.id === requested) ? requested! : "battle";
   const [data, setData] = useState<PaperDashboard | null>(null);
+  const [stockData, setStockData] = useState<StockPaperDashboard | null>(null);
   const [whales, setWhales] = useState<OnchainWhaleDashboard | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [whaleError, setWhaleError] = useState("");
+  const [stockError, setStockError] = useState("");
   const [starting, setStarting] = useState(false);
 
   const loadWhales = useCallback(async () => {
@@ -42,7 +45,15 @@ export function EngineTradingShell() {
     setError("");
     void loadWhales();
     try {
-      setData(await api.paperDashboard());
+      const [crypto, stocks] = await Promise.allSettled([api.paperDashboard(), api.stockPaperDashboard()]);
+      if (crypto.status === "rejected") throw crypto.reason;
+      setData(crypto.value);
+      if (stocks.status === "fulfilled") {
+        setStockData(stocks.value);
+        setStockError("");
+      } else {
+        setStockError(stocks.reason instanceof Error ? stocks.reason.message : "주식 페이퍼 트랙을 불러오지 못했습니다.");
+      }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "엔진 트레이딩 데이터를 불러오지 못했습니다.");
     } finally {
@@ -88,9 +99,87 @@ export function EngineTradingShell() {
 
       {error ? <TerminalWarning tone="error">{error}</TerminalWarning> : null}
       {whaleError ? <TerminalWarning tone="warning">고래 관측 갱신 실패 · {whaleError} · 페이퍼 엔진 화면은 계속 사용할 수 있습니다.</TerminalWarning> : null}
-      {!data ? <EngineLoading /> : active === "battle" ? <BattleView data={data} whales={whales} starting={starting} onStart={startBenchmark} /> : active === "positions" ? <PositionsView trades={data.open_trades} funnel={data.gate_funnel} activation={data.activation} /> : active === "journal" ? <JournalView trades={data.closed_trades} /> : active === "onchain" ? <OnchainView data={whales} onReload={loadWhales} /> : <EngineStatusView data={data} />}
+      {stockError && active === "stocks" ? <TerminalWarning tone="warning">{stockError}</TerminalWarning> : null}
+      {!data ? <EngineLoading /> : active === "battle" ? <BattleView data={data} whales={whales} starting={starting} onStart={startBenchmark} /> : active === "stocks" ? <StockPaperView data={stockData} /> : active === "positions" ? <PositionsView trades={data.open_trades} funnel={data.gate_funnel} activation={data.activation} /> : active === "journal" ? <JournalView trades={data.closed_trades} /> : active === "onchain" ? <OnchainView data={whales} onReload={loadWhales} /> : <EngineStatusView data={data} />}
     </div>
   );
+}
+
+function StockPaperView({ data }: { data: StockPaperDashboard | null }) {
+  if (!data) return <EngineLoading />;
+  return (
+    <div className="engineView stockPaperView" data-testid="engine-stock-paper-tab">
+      <section className="stockPaperGate">
+        <div><ShieldCheck size={18} /><span>PaperBroker only</span><strong>실주문 영구 봉인</strong></div>
+        <p>{data.performance_gate}</p>
+        <small>{data.sample_note}</small>
+      </section>
+      {!data.ready_to_start ? <TerminalWarning tone="warning">{data.start_block_reason || "Toss 관측 준비 대기"}</TerminalWarning> : null}
+      <header className="stockPaperHeader">
+        <div><span className="engineSectionLabel">독립 검증 시계 · 4주</span><h2>나스닥100 · 코스피100</h2><p>같은 판단 게이트, 시장별 실제 체결 제약. 크립토 성적과 합산하지 않습니다.</p></div>
+        <div><Building2 size={17} /><strong>{data.universe.total}종목</strong><span>{data.universe.version} · {data.parameter_version}</span></div>
+      </header>
+      <section className="stockTrackGrid">
+        {data.tracks.map((track) => <StockTrackCard key={track.market} track={track} />)}
+      </section>
+      <section className="stockExecutionAudit">
+        <header><div><span className="engineSectionLabel">체결 모델 감사</span><h3>미체결 사유 분포</h3></div><strong>{data.fill_count} fills</strong></header>
+        <div className="stockRejectionGrid">
+          {data.tracks.flatMap((track) => Object.entries(track.rejection_reasons).map(([reason, count]) => (
+            <div key={`${track.market}-${reason}`}><span>{track.market}</span><strong>{rejectionLabel(reason)}</strong><b>{count.toLocaleString("ko-KR")}</b></div>
+          )))}
+          {!data.tracks.some((track) => Object.keys(track.rejection_reasons).length) ? <p>아직 미체결 관측이 없습니다. 장외·VI·가격제한·유동성·데이터 누락은 발생 즉시 이곳에 누적됩니다.</p> : null}
+        </div>
+      </section>
+      <section className="stockFillAudit">
+        <header><span>최근 체결 원장</span><small>원통화 · 수수료/세금 · 환율 관측 시점 보존</small></header>
+        {data.recent_fills.length ? data.recent_fills.slice(0, 8).map((fill) => (
+          <div key={fill.id}><strong>{fill.symbol}</strong><span>{fill.market} · {fill.side === "buy" ? "매수" : "매도"} {fill.quantity}주</span><b>{stockMoney(fill.price, fill.currency)}</b><small>수수료 {stockMoney(fill.commission, fill.currency)}{fill.transaction_tax ? ` · 세금 ${stockMoney(fill.transaction_tax, fill.currency)}` : ""}</small></div>
+        )) : <p>정직한 체결 조건을 모두 통과한 주문이 아직 없습니다.</p>}
+      </section>
+    </div>
+  );
+}
+
+function StockTrackCard({ track }: { track: StockPaperTrack }) {
+  const rejectionCount = Object.values(track.rejection_reasons).reduce((sum, value) => sum + value, 0);
+  return (
+    <article className={`stockTrackCard ${track.status}`}>
+      <header><div><span>{track.market === "KR" ? "한국" : "미국"}</span><strong>{track.benchmark_index}</strong></div><b>{track.elapsed_days}/28일</b></header>
+      <div className="stockTrackReturns">
+        <p><span>엔진</span><strong className={track.engine_return_pct === null ? "" : track.engine_return_pct >= 0 ? "positive" : "negative"}>{track.engine_return_pct === null ? "시가 데이터 대기" : signedPct(track.engine_return_pct)}</strong></p>
+        <p><span>{track.benchmark_index} · {track.benchmark_proxy_symbol} 프록시</span><strong>{track.benchmark_return_pct === null ? "데이터 대기" : signedPct(track.benchmark_return_pct)}</strong></p>
+      </div>
+      <div className="stockTrackProgress"><i style={{ width: `${Math.min(100, track.elapsed_days / 28 * 100)}%` }} /></div>
+      <footer><span>{shortDate(track.started_at)} → {shortDate(track.ends_at)}</span><b>{stockMoney(track.cash, track.currency)}</b><small>미체결 {rejectionCount}건</small></footer>
+      {track.status === "stopped" ? <em>체결 invariant 정지 · {rejectionLabel(track.stop_reason || "unknown")}</em> : null}
+    </article>
+  );
+}
+
+function rejectionLabel(reason: string): string {
+  const labels: Record<string, string> = {
+    session_closed: "정규장 밖",
+    price_limit_locked: "가격제한 잠김",
+    vi: "VI",
+    trading_halted: "거래정지",
+    warning_hard_gate: "위험종목 경고",
+    liquidity_partial: "유동성 부분체결",
+    liquidity_zero: "1분 유동성 부족",
+    market_data_missing: "관측 데이터 누락",
+    long_only_sell_exceeds_position: "보유 수량 초과 매도 차단",
+    fill_price_outside_observed_range: "체결가 범위 위반",
+    risk_reward: "R/R 근거 누락",
+    validated_signature: "검증 표본 미달",
+    earnings_clear: "실적 일정 미확인",
+    liquidation_safety: "무효화선 근거 누락",
+    confirmed_flip: "확정 전환 미관측"
+  };
+  return labels[reason] || reason.replaceAll("_", " ");
+}
+
+function stockMoney(value: number, currency: "KRW" | "USD"): string {
+  return new Intl.NumberFormat("ko-KR", { style: "currency", currency, maximumFractionDigits: currency === "KRW" ? 0 : 2 }).format(value);
 }
 
 function BattleView({ data, whales, starting, onStart }: { data: PaperDashboard; whales: OnchainWhaleDashboard | null; starting: boolean; onStart: (reset?: boolean) => void }) {
