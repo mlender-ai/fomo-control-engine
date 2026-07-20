@@ -34,6 +34,12 @@ class MemoryLedgerRepositoryMixin:
             reverse=True,
         )[:limit]
 
+    def list_judgments_all(self, since: datetime | None = None, limit: int = 10000) -> list[JudgmentLedgerEntry]:
+        entries = [entry for rows in self.judgments.values() for entry in rows]
+        if since is not None:
+            entries = [entry for entry in entries if _aware_dt(entry.as_of) >= since]
+        return sorted(entries, key=lambda item: item.as_of, reverse=True)[:limit]
+
     def add_judgment_score(self, score: JudgmentScore) -> JudgmentScore:
         self.judgment_scores[score.id] = score
         return score
@@ -204,6 +210,18 @@ class SQLiteLedgerRepositoryMixin:
                 "SELECT payload FROM judgment_ledger WHERE position_id = ? ORDER BY as_of DESC LIMIT ?",
                 (str(position_id), limit),
             ).fetchall()
+        return [JudgmentLedgerEntry.model_validate_json(row["payload"]) for row in rows]
+
+    def list_judgments_all(self, since: datetime | None = None, limit: int = 10000) -> list[JudgmentLedgerEntry]:
+        query = "SELECT payload FROM judgment_ledger"
+        params: list[str | int] = []
+        if since is not None:
+            query += " WHERE as_of >= ?"
+            params.append(since.isoformat())
+        query += " ORDER BY as_of DESC LIMIT ?"
+        params.append(limit)
+        with self._connect() as connection:
+            rows = connection.execute(query, tuple(params)).fetchall()
         return [JudgmentLedgerEntry.model_validate_json(row["payload"]) for row in rows]
 
     def add_judgment_score(self, score: JudgmentScore) -> JudgmentScore:

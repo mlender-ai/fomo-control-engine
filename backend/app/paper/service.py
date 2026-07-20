@@ -32,6 +32,7 @@ from app.paper.user_fills import (
     USER_FILL_SYNC_TIMEFRAME,
     sync_user_fills as _sync_user_fills,
 )
+from app.review.coverage import judgment_coverage
 
 
 AnalysisLoader = Callable[[str, str], dict[str, Any]]
@@ -744,6 +745,7 @@ def paper_dashboard(repo: Any, settings: Any, *, calibration: dict[str, Any] | N
         },
         "gate_funnel": funnel_7d,
         "activation": activation,
+        "judgment_coverage": judgment_coverage(repo),
         "live_orders_enabled": False,
     }
 

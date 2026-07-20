@@ -1,5 +1,7 @@
 # FCE Calibration
 
+판단 표본의 운영 커버리지 정본은 [`JudgmentCoverage.md`](JudgmentCoverage.md)다. 주간 calibration 리포트는 최근 7일의 원장 커버리지 한 줄을 포함하며, 미분류 판단 유형이 있으면 `attention`으로 노출한다. `autonomy_logs`는 거버넌스 정본, `judgment_ledger`/`judgment_scores`는 판단·결과 정본으로 역할을 분리한다.
+
 WO-FCE-22 calibration turns stored judgment scores into a deterministic scorecard. It does not change trading parameters automatically.
 
 ## Sample Floor

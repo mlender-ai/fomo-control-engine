@@ -861,6 +861,7 @@ def record_alert(alert: AlertRecord) -> AlertRecord:
             )
     saved = runtime.repository.add_alert(alert)
     if saved.position_id is not None:
+        params = engine_param_snapshot(runtime.repository)
         runtime.repository.add_judgment(
             JudgmentLedgerEntry(
                 judgment_id=f"alert:{saved.rule_id}:{saved.position_id}:{saved.id}",
@@ -871,10 +872,26 @@ def record_alert(alert: AlertRecord) -> AlertRecord:
                 type="alert_fired",
                 claim=saved.payload,
                 confidence=None,
-                param_version=engine_param_snapshot(runtime.repository),
+                param_version=params,
                 created_at=utc_now(),
             )
         )
+        if saved.rule_id in {"stance_flipped", "verdict_changed"}:
+            semantic_type = "stance_flipped" if saved.rule_id == "stance_flipped" else "position_status_transition"
+            runtime.repository.add_judgment(
+                JudgmentLedgerEntry(
+                    judgment_id=f"judgment:{saved.rule_id}:{saved.position_id}:{saved.id}",
+                    position_id=saved.position_id,
+                    source_type="lifecycle_alert",
+                    source_id=str(saved.id),
+                    as_of=saved.fired_at,
+                    type=semantic_type,
+                    claim={"rule_id": saved.rule_id, **saved.payload},
+                    confidence=None,
+                    param_version=params,
+                    created_at=utc_now(),
+                )
+            )
     return saved
 
 
@@ -1143,13 +1160,22 @@ def improvement_digest(
 
     scores = scores if scores is not None else runtime.repository.list_judgment_scores(limit=5000)
     suggestions = suggestions if suggestions is not None else runtime.repository.list_calibration_suggestions(limit=100)
-    return weekly_improvement_digest(
+    digest = weekly_improvement_digest(
         scores,
         suggestions,
         runtime.repository.list_engine_params(limit=200),
         runtime.repository.list_autonomy_logs(limit=1000),
         state_map(runtime.repository),
     )
+    from app.review.coverage import judgment_coverage
+
+    coverage = judgment_coverage(runtime.repository)
+    digest["judgment_coverage"] = coverage
+    digest["judgment_coverage_line"] = (
+        f"판단 원장 커버리지 {coverage['coverage_pct']}% · 기록 {coverage['recorded']}/"
+        f"{coverage['total'] - coverage['unscorable']} · 채점 불가 {coverage['unscorable']}"
+    )
+    return digest
 
 
 def veto_calibration_suggestion(suggestion_id: str) -> dict[str, Any]:

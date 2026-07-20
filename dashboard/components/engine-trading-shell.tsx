@@ -522,12 +522,24 @@ function EngineStatusView({ data, stance, refreshingStance, onRefreshStance }: {
     <div className="engineView engineStatusGrid" data-testid="engine-status-tab">
       <StanceBacktestCard data={stance} refreshing={refreshingStance} onRefresh={onRefreshStance} />
       <GateFunnel funnel={data.gate_funnel} />
+      <JudgmentCoverageCard coverage={data.judgment_coverage} />
       <section className="engineStatusCard engineDigest"><span className="engineSectionLabel">이번 주 개선</span><h2>{String(digest.headline ?? digest.summary ?? "이번 주 유의미한 개선 없음")}</h2><p>{String(digest.honesty_line ?? report.sample_warning ?? "표본과 조치 이력을 같은 주 단위로 비교합니다.")}</p></section>
       {data.performance_action.poor ? <section className="engineCausalRow"><div><span>페이퍼 부진</span><strong>{data.performance_action.summary}</strong></div><i>→</i><div><span>같은 기간 엔진 조치</span><strong>{actionSummary(data.performance_action.actions)}</strong></div></section> : null}
       <section className="engineStatusCard"><header><h2>파라미터 자율 피드</h2><span>예정 {calibration.suggestion_status_counts.scheduled ?? 0} · 실험 {calibration.suggestion_status_counts.experiment ?? 0}</span></header>{suggestions.length ? suggestions.map((item) => <div className="engineFeedRow" key={item.id}><span>{item.title}</span><b>{statusLabel(item.status)}</b></div>) : <p className="engineEmptyLine">진행 중인 변경이 없습니다.</p>}</section>
       <section className="engineStatusCard"><header><h2>시그니처 상태</h2><span>변동만 추적</span></header><div className="signatureCounts"><div><strong>{counts.validated ?? 0}</strong><span>검증됨</span></div><div><strong>{counts.degraded ?? 0}</strong><span>저하</span></div><div><strong>{counts.quarantined ?? 0}</strong><span>격리</span></div><div><strong>{counts.candidate ?? 0}</strong><span>표본 축적</span></div></div></section>
       <CandidateReviewCard review={calibration.candidate_review} />
     </div>
+  );
+}
+
+function JudgmentCoverageCard({ coverage }: { coverage: PaperDashboard["judgment_coverage"] }) {
+  const unscorable = Object.entries(coverage.unscorable_types).map(([type, count]) => `${type} ${count}`).join(" · ");
+  return (
+    <section className="engineStatusCard" data-testid="judgment-coverage-card">
+      <header><div><span className="engineSectionLabel">최근 {coverage.period_days}일</span><h2>판단 원장 커버리지</h2></div><strong>{coverage.coverage_pct.toFixed(1)}%</strong></header>
+      <div className="signatureCounts"><div><strong>{coverage.total}</strong><span>전체 판단</span></div><div><strong>{coverage.recorded}</strong><span>원장 기록</span></div><div><strong>{coverage.pending}</strong><span>채점 대기</span></div><div><strong>{coverage.unscorable}</strong><span>채점 불가</span></div></div>
+      <p className="engineEmptyLine">{unscorable || "채점 불가 유형 없음"}{coverage.unclassified_types.length ? ` · 미분류 ${coverage.unclassified_types.join(", ")}` : " · 기록 누락 유형 0"}</p>
+    </section>
   );
 }
 

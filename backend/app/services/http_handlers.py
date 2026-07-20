@@ -1164,7 +1164,9 @@ def _live_position_payload(position: Position, store_snapshot: bool = False) -> 
         previous_snapshot = previous_snapshots[0] if previous_snapshots else None
         snapshot = repository.add_position_snapshot(snapshot)
         for event in build_events(position, snapshot, previous_snapshot):
-            events.append(repository.add_position_event(event))
+            saved_event = repository.add_position_event(event)
+            events.append(saved_event)
+            _record_position_event_judgment(position, snapshot, saved_event)
     latest_insights = repository.list_position_insights(position.id, limit=1)
     latest_events = repository.list_position_events(position.id, limit=5)
     latest_insight = latest_insights[0] if latest_insights else None
@@ -1178,6 +1180,35 @@ def _live_position_payload(position: Position, store_snapshot: bool = False) -> 
         "insight_status": insight_status,
         "recent_events": latest_events if latest_events else events,
     }
+
+
+def _record_position_event_judgment(position: Position, snapshot: PositionSnapshot, event: PositionEvent) -> None:
+    type_map = {
+        "status_change": "position_status_transition",
+        "health_score_change": "position_health_change",
+    }
+    judgment_type = type_map.get(event.event_type)
+    if judgment_type is None:
+        return
+    repository.add_judgment(
+        JudgmentLedgerEntry(
+            judgment_id=str(uuid5(NAMESPACE_URL, f"fce:position-event:{event.id}")),
+            position_id=position.id,
+            source_type="position_event",
+            source_id=str(event.id),
+            as_of=snapshot.as_of,
+            type=judgment_type,
+            claim={
+                "symbol": position.symbol,
+                "direction": position.direction.value,
+                "mark_price": snapshot.mark_price,
+                "event_type": event.event_type,
+                "severity": event.severity,
+                **event.data,
+            },
+            param_version=engine_param_snapshot(repository),
+        )
+    )
 
 
 def _cached_live_position_payload(position: Position) -> dict:

@@ -2160,6 +2160,19 @@ export type PaperDashboard = {
   };
   performance_action: { poor: boolean; summary: string; actions: Array<Record<string, unknown>> };
   gate_funnel: PaperGateFunnel;
+  judgment_coverage: {
+    status: "ok" | "attention";
+    period_days: number;
+    total: number;
+    recorded: number;
+    pending: number;
+    scored: number;
+    unscorable: number;
+    coverage_pct: number;
+    unscorable_types: Record<string, number>;
+    unclassified_types: string[];
+    definition: string;
+  };
   activation: {
     running: boolean;
     target_count: number;
