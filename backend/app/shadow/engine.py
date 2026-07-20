@@ -7,6 +7,7 @@ from app.db.models import (
     ShadowRule,
     Trade,
 )
+from app.shadow.fomo import FOMO_INDEX_THRESHOLD
 
 
 class ShadowSampleError(ValueError):
@@ -39,7 +40,8 @@ def extract_shadow_profile(trades: list[Trade], request: ShadowExtractRequest) -
         ),
     ]
     rules = [rule for rule in rules if rule.support_count > 0]
-    fomo_trades = [trade for trade in completed if (trade.entry_score or 100) < 65 and trade.pnl_percent < 0]
+    fomo_trades = [trade for trade in completed if trade.fomo_index is not None and trade.fomo_index >= FOMO_INDEX_THRESHOLD and trade.pnl_percent < 0]
+    legacy_proxy_trades = [trade for trade in completed if (trade.entry_score or 100) < 65 and trade.pnl_percent < 0]
     attribution = ShadowAttribution(
         noise_trades_pnl=round(
             sum(trade.pnl_amount for trade in completed if not _matches_any_rule(trade, rules)),
@@ -59,7 +61,7 @@ def extract_shadow_profile(trades: list[Trade], request: ShadowExtractRequest) -
                 "trade_id": str(trade.id),
                 "symbol": trade.symbol,
                 "pnl_amount": trade.pnl_amount,
-                "reason": "low_entry_score_loss",
+                "reason": "entry_fomo_index_loss",
             }
             for trade in fomo_trades[:5]
         ],
@@ -78,13 +80,15 @@ def extract_shadow_profile(trades: list[Trade], request: ShadowExtractRequest) -
         rules=rules,
         fomo_patterns=[
             {
-                "pattern": "low_entry_score_loss",
+                "pattern": "entry_fomo_index_loss",
                 "count": len(fomo_trades),
                 "pnl": attribution.fomo_trades_pnl,
+                "threshold": FOMO_INDEX_THRESHOLD,
+                "legacy_proxy_count": len(legacy_proxy_trades),
             }
         ],
         common_mistakes=[
-            {"mistake": "entry_score_below_65", "count": len(fomo_trades)},
+            {"mistake": "fomo_index_at_or_above_threshold", "count": len(fomo_trades)},
             {
                 "mistake": "late_exit_after_score_drop",
                 "count": len([trade for trade in losing if trade.exit_score and trade.entry_score and trade.exit_score < trade.entry_score - 20]),

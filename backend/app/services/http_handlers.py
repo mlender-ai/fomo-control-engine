@@ -44,6 +44,7 @@ from app.exchange.bitget.errors import (
     BitgetNotConfiguredError,
     BitgetPermissionError,
 )
+from app.shadow.fomo import build_entry_fomo_snapshot
 from app.exchange.bitget.provider import BitgetMarketDataProvider
 from app.exchange.bitget.schemas import BitgetPosition
 from app.exchange.errors import MarketDataError
@@ -819,6 +820,7 @@ def _exit_price_for_missing_position(position: Position) -> float | None:
 
 def _position_from_bitget(exchange_position: BitgetPosition) -> Position:
     direction = Direction(exchange_position.hold_side)
+    detected_at = utc_now()
     position = Position(
         symbol=exchange_position.symbol,
         direction=direction,
@@ -837,8 +839,21 @@ def _position_from_bitget(exchange_position: BitgetPosition) -> Position:
         break_even_price=exchange_position.break_even_price,
         source="bitget",
         detected_source="bitget",
-        synced_at=utc_now(),
-        opened_at=exchange_position.created_at or utc_now(),
+        synced_at=detected_at,
+        opened_at=exchange_position.created_at or detected_at,
+        entry_fomo_snapshot={
+            "plan_price": None,
+            "chase_pct": None,
+            "report_to_entry_minutes": None,
+            "scout_originated": None,
+            "stance_alignment": None,
+            "entry_state_label": None,
+            "fomo_index": None,
+            "components": {},
+            "complete": False,
+            "captured_at": detected_at.isoformat(),
+            "policy": "unavailable_exchange_position_observed_after_entry",
+        },
         memo="Synced from Bitget read-only position API",
     )
     if exchange_position.mark_price:
@@ -1876,6 +1891,7 @@ def _pct_delta(current: float | None, previous: float | None) -> float | None:
 
 def create_position(request: PositionCreate):
     report = repository.get_report(request.entry_report_id) if request.entry_report_id else repository.latest_report(request.symbol)
+    opened_at = utc_now()
     entry_direction_score = request.entry_direction_score
     if entry_direction_score is None and report is not None:
         entry_direction_score = direction_aware_score(
@@ -1883,6 +1899,19 @@ def create_position(request: PositionCreate):
             report.raw_json.get("structure", {}),
             report.raw_json.get("indicators", {}),
         )
+    directional_state = repository.get_directional_state(request.symbol, report.timeframe if report else "4h") or {}
+    plan_price = request.plan_price if request.plan_price is not None else report.price if report else None
+    scout_originated = request.scout_originated if request.scout_originated is not None else bool(request.scenario_id)
+    fomo_snapshot = build_entry_fomo_snapshot(
+        direction=request.direction,
+        entry_price=request.entry_price,
+        plan_price=plan_price,
+        report_created_at=report.created_at if report else None,
+        entered_at=opened_at,
+        scout_originated=scout_originated,
+        held_stance=str(directional_state.get("stance")) if directional_state.get("stance") else None,
+        entry_state_label=report.state_label if report else None,
+    )
     position = Position(
         symbol=request.symbol.upper(),
         direction=request.direction,
@@ -1899,8 +1928,29 @@ def create_position(request: PositionCreate):
         planned_stop_price=request.planned_stop_price,
         planned_take_profit_price=request.planned_take_profit_price,
         thesis_text=request.thesis_text,
+        scenario_id=request.scenario_id,
+        entry_fomo_snapshot=fomo_snapshot,
+        opened_at=opened_at,
     )
     saved = repository.add_position(position)
+    repository.add_judgment(
+        JudgmentLedgerEntry(
+            judgment_id=f"fomo:entry:{saved.id}",
+            position_id=saved.id,
+            source_type="entry_fomo_snapshot",
+            source_id=str(saved.entry_report_id) if saved.entry_report_id else None,
+            as_of=opened_at,
+            type="fomo_entry",
+            claim={
+                "symbol": saved.symbol,
+                "direction": saved.direction.value,
+                "price": saved.entry_price,
+                **fomo_snapshot,
+            },
+            confidence=int(round(float(fomo_snapshot["component_coverage_pct"]))),
+            param_version=engine_param_snapshot(repository),
+        )
+    )
     _clear_watchlist_for_open_positions([saved])
     return saved
 
@@ -1953,6 +2003,14 @@ def _record_exit(position_id: UUID, request: ExitRequest, allow_missing: bool = 
         exit_reason=request.exit_reason,
         review_text="",
         memo=request.memo,
+        plan_price=position.entry_fomo_snapshot.get("plan_price"),
+        chase_pct=position.entry_fomo_snapshot.get("chase_pct"),
+        report_to_entry_minutes=position.entry_fomo_snapshot.get("report_to_entry_minutes"),
+        scout_originated=position.entry_fomo_snapshot.get("scout_originated"),
+        stance_alignment=position.entry_fomo_snapshot.get("stance_alignment"),
+        entry_state_label=position.entry_fomo_snapshot.get("entry_state_label"),
+        fomo_index=position.entry_fomo_snapshot.get("fomo_index"),
+        fomo_components=position.entry_fomo_snapshot,
     )
     position.status = PositionStatus.closed
     position.closed_at = datetime.now(timezone.utc)
@@ -2041,7 +2099,7 @@ def _build_performance_summary() -> dict:
 
 def performance_summary() -> dict:
     cached = repository.get_calibration_report_cache("performance")
-    if cached is not None:
+    if cached is not None and "fomo_attribution" in cached["payload"]:
         return {**cached["payload"], "computed_at": cached["computed_at"], "cache_status": "ready"}
     return {**_build_performance_summary(), "cache_status": "live_fallback"}
 

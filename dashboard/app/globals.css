@@ -7181,6 +7181,17 @@ button.actionPlanRow:not(:disabled):hover {
   gap: 12px;
 }
 
+.fomoComponentList {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+  border-top: 1px solid var(--terminal-line);
+  padding-top: 10px;
+}
+
+.fomoComponentList strong { font-size: 12px; }
+.fomoComponentList span { color: var(--terminal-muted); font-size: 10px; }
+
 .mddGuard {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }

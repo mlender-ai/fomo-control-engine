@@ -118,6 +118,9 @@ class PositionCreate(BaseModel):
     planned_take_profit_price: float | None = None
     thesis_text: str = ""
     entry_direction_score: int | None = None
+    plan_price: float | None = None
+    scout_originated: bool | None = None
+    scenario_id: UUID | None = None
 
 
 class Position(BaseModel):
@@ -154,6 +157,7 @@ class Position(BaseModel):
     planned_take_profit_price: float | None = None
     thesis_text: str = ""
     scenario_id: UUID | None = None
+    entry_fomo_snapshot: dict = Field(default_factory=dict)
     opened_at: datetime = Field(default_factory=utc_now)
     closed_at: datetime | None = None
 
@@ -426,6 +430,14 @@ class Trade(BaseModel):
     review_v2: dict = Field(default_factory=dict)
     judgment_scorecard: dict = Field(default_factory=dict)
     memo: str = ""
+    plan_price: float | None = None
+    chase_pct: float | None = None
+    report_to_entry_minutes: float | None = None
+    scout_originated: bool | None = None
+    stance_alignment: Literal["aligned", "against", "conflicted", "unknown"] | None = None
+    entry_state_label: str | None = None
+    fomo_index: float | None = None
+    fomo_components: dict = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=utc_now)
 
 

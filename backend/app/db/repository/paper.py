@@ -132,14 +132,23 @@ class SQLitePaperRepositoryMixin:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO trades
-                    (id, position_id, symbol, created_at, payload)
-                VALUES (?, ?, ?, ?, ?)
+                    (id, position_id, symbol, created_at, plan_price, chase_pct,
+                     report_to_entry_minutes, scout_originated, stance_alignment,
+                     entry_state_label, fomo_index, payload)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     str(trade.id),
                     str(trade.position_id),
                     trade.symbol.upper(),
                     trade.created_at.isoformat(),
+                    trade.plan_price,
+                    trade.chase_pct,
+                    trade.report_to_entry_minutes,
+                    1 if trade.scout_originated else 0 if trade.scout_originated is not None else None,
+                    trade.stance_alignment,
+                    trade.entry_state_label,
+                    trade.fomo_index,
                     _dump_model(trade),
                 ),
             )

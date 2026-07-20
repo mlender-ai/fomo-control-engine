@@ -2029,6 +2029,21 @@ export type PerformanceSummary = {
   breakdowns: Record<string, Record<string, PerformanceMetrics>>;
   mdd_guard: Record<string, unknown>;
   scoreboard_cross_view: Record<string, unknown>;
+  fomo_attribution: {
+    month: string;
+    threshold: number;
+    eligible_trades: number;
+    excluded_legacy_trades: number;
+    fomo_loss_trades: number;
+    fomo_cost_usdt: number | null;
+    loss_share_pct: number | null;
+    sample_floor: number;
+    sample_sufficient: boolean;
+    statement: string;
+    recent_entry: { trade_id: string; symbol: string; fomo_index: number; components: Record<string, unknown> } | null;
+    legacy_proxy_comparison: Record<string, unknown>;
+    policy: string;
+  };
 };
 
 export type PaperTrade = {

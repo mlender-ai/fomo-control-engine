@@ -616,6 +616,8 @@ def _score_one_judgment(trade: Trade, judgment: JudgmentLedgerEntry, price_path:
         outcome, detail, metrics = _score_entry_checklist(trade, judgment, path)
     elif judgment.type == "alert_fired":
         outcome, detail, metrics = _score_alert_fired(judgment, path)
+    elif judgment.type == "fomo_entry":
+        outcome, detail, metrics = _score_fomo_entry(trade, judgment)
     else:
         outcome, detail, metrics = (
             "untested",
@@ -645,6 +647,27 @@ def _score_one_judgment(trade: Trade, judgment: JudgmentLedgerEntry, price_path:
         detail=detail,
         metrics=metrics,
         param_version=judgment.param_version,
+    )
+
+
+def _score_fomo_entry(trade: Trade, judgment: JudgmentLedgerEntry) -> tuple[str, str, dict[str, Any]]:
+    index = _optional_float(judgment.claim.get("fomo_index"))
+    threshold = _optional_float(judgment.claim.get("threshold"))
+    if index is None or threshold is None or not judgment.claim.get("complete"):
+        return "untested", "진입 시점 FOMO 구성요소가 완전하지 않아 결과를 유보합니다.", {"net_pnl_usdt": trade.pnl_amount}
+    predicted_fomo_loss = index >= threshold
+    realized_loss = trade.pnl_amount < 0
+    correct = predicted_fomo_loss == realized_loss
+    return (
+        "correct" if correct else "wrong",
+        "진입 시점 FOMO 분류와 종료 손익 부호를 대조했습니다.",
+        {
+            "fomo_index": index,
+            "threshold": threshold,
+            "predicted_fomo_loss": predicted_fomo_loss,
+            "realized_loss": realized_loss,
+            "net_pnl_usdt": trade.pnl_amount,
+        },
     )
 
 

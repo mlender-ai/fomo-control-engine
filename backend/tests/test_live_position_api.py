@@ -50,6 +50,8 @@ def test_live_position_analysis_insight_memo_and_exit_flow(client) -> None:
             "quantity": 0.02,
             "leverage": 2,
             "entry_report_id": report["id"],
+            "plan_price": report["price"] * 0.99,
+            "scout_originated": True,
             "memo": "initial memo",
             "entry_memo": "상승 구조 지지 확인 후 진입",
             "planned_stop_price": report["price"] * 0.96,
@@ -59,6 +61,14 @@ def test_live_position_analysis_insight_memo_and_exit_flow(client) -> None:
     )
     assert position_response.status_code == 200
     position = position_response.json()
+    entry_fomo = position["entry_fomo_snapshot"]
+    assert entry_fomo["plan_price"] == report["price"] * 0.99
+    assert entry_fomo["chase_pct"] > 0
+    assert entry_fomo["report_to_entry_minutes"] >= 0
+    assert entry_fomo["scout_originated"] is True
+    assert entry_fomo["stance_alignment"] in {"aligned", "against", "conflicted", "unknown"}
+    assert entry_fomo["entry_state_label"] == report["state_label"]
+    assert any(item.type == "fomo_entry" for item in routes.repository.list_judgments(UUID(position["id"])))
 
     live_response = client.get("/api/live/positions")
     assert live_response.status_code == 200
@@ -127,6 +137,8 @@ def test_live_position_analysis_insight_memo_and_exit_flow(client) -> None:
     trade = exit_response.json()
     assert trade["memo"] == "거래소 주문이 아닌 내부 기록"
     assert trade["pnl_percent"] > 0
+    assert trade["plan_price"] == entry_fomo["plan_price"]
+    assert trade["fomo_index"] == entry_fomo["fomo_index"]
 
     trade_response = client.get(f"/api/trades/{trade['id']}")
     assert trade_response.status_code == 200

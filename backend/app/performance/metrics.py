@@ -10,6 +10,7 @@ from uuid import UUID
 
 from app.backtest.statistics import bootstrap_ci_from_counts
 from app.db.models import Position, PositionSnapshot, Trade
+from app.shadow.fomo import monthly_fomo_attribution
 
 SAMPLE_FLOOR = 10
 CALMAR_MIN_DAYS = 180
@@ -54,6 +55,7 @@ def build_performance_report(
         "breakdowns": breakdowns,
         "mdd_guard": mdd_guard,
         "scoreboard_cross_view": _scoreboard_cross_view(ordered),
+        "fomo_attribution": monthly_fomo_attribution(ordered, min_trades=cfg.sample_floor),
     }
 
 

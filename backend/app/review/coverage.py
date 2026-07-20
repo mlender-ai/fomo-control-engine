@@ -45,7 +45,7 @@ def judgment_coverage(repo: Any, *, now: datetime | None = None, days: int = 7) 
     since = now - timedelta(days=days)
     judgments = repo.list_judgments_all(since=since, limit=10000)
     scores = repo.list_judgment_scores(limit=20000)
-    scored_ids = {score.judgment_id for score in scores}
+    scored_ids = {score.judgment_id for score in scores if score.outcome != "untested"}
     autonomy = repo.list_autonomy_logs(since=since, limit=10000)
     type_counts = Counter(entry.type for entry in judgments)
     unknown = sorted(set(type_counts) - SCOREABLE_TYPES - set(UNSCORABLE_TYPES))

@@ -76,6 +76,7 @@ export function PerformanceShell() {
           ) : null}
 
           <section className="grid two">
+            <FomoAttributionCard data={performance.fomo_attribution} />
             <TerminalPanel title="3성적표 교차 뷰" subtitle="엔진 판단, 내 대응, 계좌 결과를 같은 거래 단위로 대조합니다" status="ok">
               <CrossScorecard data={performance.scoreboard_cross_view} />
             </TerminalPanel>
@@ -106,6 +107,22 @@ export function PerformanceShell() {
         </TerminalPanel>
       )}
     </div>
+  );
+}
+
+function FomoAttributionCard({ data }: { data: PerformanceSummary["fomo_attribution"] }) {
+  const componentRows = Object.entries((data.recent_entry?.components?.components as Record<string, Record<string, unknown>> | undefined) ?? {});
+  return (
+    <TerminalPanel title="이번 달 FOMO 비용" subtitle={data.policy} status={data.sample_sufficient ? "accent" : "neutral"}>
+      <div className="crossScorecard" data-testid="fomo-attribution-card">
+        <div><strong>{data.fomo_cost_usdt === null ? "유보" : `${fmtMoney(data.fomo_cost_usdt)} USDT`}</strong><span>귀속 손실</span></div>
+        <div><strong>{data.fomo_loss_trades}</strong><span>FOMO 손실 거래</span></div>
+        <div><strong>{data.eligible_trades}</strong><span>스냅샷 N</span></div>
+        <div><strong>{data.excluded_legacy_trades}</strong><span>과거 기록 제외</span></div>
+        <p>{data.statement}</p>
+      </div>
+      {data.recent_entry ? <div className="fomoComponentList"><strong>{data.recent_entry.symbol} · Index {data.recent_entry.fomo_index}</strong>{componentRows.map(([key, value]) => <span key={key}>{key} · 기여 {String(value.contribution ?? "—")} / 가중 {String(value.weight ?? "—")}</span>)}</div> : null}
+    </TerminalPanel>
   );
 }
 

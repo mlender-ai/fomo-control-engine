@@ -105,6 +105,36 @@ PARAM_REGISTRY: dict[str, ParamDefinition] = {
         hard_min=1.0,
         hard_max=4.0,
     ),
+    "fomo_index_threshold": ParamDefinition(
+        name="fomo_index_threshold",
+        tighten_when="increase",
+        hard_min=40.0,
+        hard_max=90.0,
+    ),
+    "fomo_weight_chase": ParamDefinition(
+        name="fomo_weight_chase",
+        tighten_when="increase",
+        hard_min=10.0,
+        hard_max=60.0,
+    ),
+    "fomo_weight_speed": ParamDefinition(
+        name="fomo_weight_speed",
+        tighten_when="increase",
+        hard_min=0.0,
+        hard_max=40.0,
+    ),
+    "fomo_weight_unscouted": ParamDefinition(
+        name="fomo_weight_unscouted",
+        tighten_when="increase",
+        hard_min=0.0,
+        hard_max=30.0,
+    ),
+    "fomo_weight_stance": ParamDefinition(
+        name="fomo_weight_stance",
+        tighten_when="increase",
+        hard_min=5.0,
+        hard_max=50.0,
+    ),
 }
 
 

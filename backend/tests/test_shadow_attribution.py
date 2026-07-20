@@ -21,6 +21,8 @@ def test_shadow_attribution_breakdown_calculates_fomo_pnl() -> None:
                 holding_minutes=60,
                 exit_reason="test",
                 review_text="",
+                fomo_index=20 if profitable else 80,
+                fomo_components={"complete": True},
             )
         )
 
