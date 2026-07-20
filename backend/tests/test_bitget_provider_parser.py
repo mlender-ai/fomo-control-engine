@@ -43,7 +43,7 @@ class FakeContractsClient:
 
 
 class FakeHistoryClient:
-    def __init__(self) -> None:
+    def __init__(self, count: int = 7) -> None:
         base = datetime(2026, 7, 1, tzinfo=timezone.utc)
         self.rows = [
             [
@@ -55,7 +55,7 @@ class FakeHistoryClient:
                 "10",
                 "1000",
             ]
-            for index in range(7)
+            for index in range(count)
         ]
 
     async def public_get(self, path: str, params: dict):
@@ -146,3 +146,14 @@ async def test_history_candles_page_dedupe_sort_and_drop_open_bar() -> None:
     assert [candle.close for candle in candles] == [101, 102, 103, 104, 105, 106]
     assert all(candle.timestamp < cutoff for candle in candles)
     assert candles[-1].timestamp + timedelta(hours=4) <= cutoff
+
+
+@pytest.mark.asyncio
+async def test_history_candles_pagination_keeps_every_boundary_candle() -> None:
+    provider = BitgetMarketDataProvider(cast(BitgetClient, FakeHistoryClient(402)))
+    cutoff = datetime(2026, 9, 6, tzinfo=timezone.utc)
+
+    candles = await provider.get_history_ohlcv_async("BTCUSDT", "4h", 401, now=cutoff)
+
+    assert len(candles) == 401
+    assert all(right.timestamp - left.timestamp == timedelta(hours=4) for left, right in zip(candles, candles[1:]))

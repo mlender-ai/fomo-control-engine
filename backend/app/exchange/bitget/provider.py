@@ -268,7 +268,12 @@ class BitgetMarketDataProvider(MarketDataProvider):
             oldest_ms = int(page[0].timestamp.timestamp() * 1000)
             if end_time_ms is not None and oldest_ms >= end_time_ms:
                 break
-            end_time_ms = oldest_ms - 1
+            # Bitget aligns endTime to the candle bucket. Subtracting 1 ms can
+            # be rounded down to the preceding bucket and silently skip one
+            # confirmed candle at every page boundary. Reuse the oldest bucket
+            # timestamp; the next response walks earlier and dedupe handles an
+            # inclusive boundary if the exchange returns it.
+            end_time_ms = oldest_ms
             if len(page) < page_limit:
                 break
 

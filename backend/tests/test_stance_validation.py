@@ -170,10 +170,7 @@ def test_quality_gate_uses_longest_contiguous_segment_and_records_exclusion(monk
     monkeypatch.setattr(
         subject,
         "replay_confirmed_stance_points",
-        lambda **kwargs: [
-            {"time": int(candle.timestamp.timestamp()), "stance": "long_leaning", "transitioning": False}
-            for candle in kwargs["candles"][99:]
-        ],
+        lambda **kwargs: [{"time": int(candle.timestamp.timestamp()), "stance": "long_leaning", "transitioning": False} for candle in kwargs["candles"][99:]],
     )
 
     result = subject.evaluate_stance_history(
