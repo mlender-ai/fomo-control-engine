@@ -87,6 +87,39 @@ class TossStockStore:
                 written += 1
         return written
 
+    def candles_around(
+        self,
+        market: str,
+        symbol: str,
+        timeframe: str,
+        anchor: datetime,
+        *,
+        before: int = 90,
+        after: int = 90,
+    ) -> list[dict[str, Any]]:
+        """Return only persisted candles surrounding an observed event time."""
+        if not self.enabled:
+            return []
+        anchor_value = anchor.astimezone(timezone.utc).isoformat()
+        columns = "opened_at, open, high, low, close, volume, source, observed_at"
+        with self._connect() as connection:
+            earlier = connection.execute(
+                f"""SELECT {columns} FROM toss_candles
+                WHERE market=? AND symbol=? AND timeframe=?
+                AND julianday(opened_at)<=julianday(?)
+                ORDER BY julianday(opened_at) DESC LIMIT ?""",
+                (market, symbol.upper(), timeframe, anchor_value, before),
+            ).fetchall()
+            later = connection.execute(
+                f"""SELECT {columns} FROM toss_candles
+                WHERE market=? AND symbol=? AND timeframe=?
+                AND julianday(opened_at)>julianday(?)
+                ORDER BY julianday(opened_at) ASC LIMIT ?""",
+                (market, symbol.upper(), timeframe, anchor_value, after),
+            ).fetchall()
+        rows = [dict(row) for row in reversed(earlier)] + [dict(row) for row in later]
+        return rows
+
     def record_judgment(self, candidate: dict[str, Any], signal: dict[str, Any]) -> str | None:
         price = candidate.get("price")
         if price is None:

@@ -5,9 +5,10 @@ import sqlite3
 
 from app.core.config import Settings
 from app.db.migrations import run_migrations
-from app.stock_paper.models import Market
-from app.stock_paper.service import run_stock_paper_engine, stock_paper_dashboard
+from app.stock_paper.models import Currency, Market, PaperFill, Side
+from app.stock_paper.service import run_stock_paper_engine, stock_paper_dashboard, stock_paper_entry_chart
 from app.stock_paper.store import StockPaperStore
+from app.toss.store import TossStockStore
 
 
 def settings_for(tmp_path) -> Settings:
@@ -82,3 +83,55 @@ def test_benchmark_and_fx_keep_real_observation_metadata(tmp_path) -> None:
     us = next(track for track in dashboard["tracks"] if track["market"] == "US")
     assert us["benchmark_return_pct"] == 1.0
     assert us["benchmark_proxy_symbol"] == "QQQ"
+
+
+def test_entry_chart_joins_only_persisted_fill_and_observed_candles(tmp_path) -> None:
+    settings = settings_for(tmp_path)
+    stock_store = StockPaperStore(settings.database_url)
+    stock_store.ensure_tracks(universe_version="test", initial_krw=100_000_000, initial_usd=100_000)
+    filled_at = datetime(2026, 7, 20, 14, 31, 20, tzinfo=timezone.utc)
+    stock_store.save_fill(
+        PaperFill(
+            order_id="order-aapl",
+            symbol="AAPL",
+            market=Market.US,
+            currency=Currency.USD,
+            side=Side.BUY,
+            quantity=3,
+            price=205.25,
+            filled_at=filled_at,
+            gross_amount=615.75,
+            commission=0.15,
+            transaction_tax=0,
+            fx_rate_to_krw=None,
+            fx_observed_at=None,
+        )
+    )
+    candles = [
+        {
+            "opened_at": datetime(2026, 7, 20, 14, minute, tzinfo=timezone.utc).isoformat(),
+            "open": 204 + minute / 100,
+            "high": 206,
+            "low": 203,
+            "close": 205 + minute / 100,
+            "volume": 1_000,
+        }
+        for minute in (29, 30, 31, 32)
+    ]
+    TossStockStore(settings.database_url).upsert_candles("US", "AAPL", "1m", "toss", filled_at.isoformat(), candles)
+
+    result = stock_paper_entry_chart(settings, Market.US, "aapl")
+
+    assert result["timeframe"] == "1m"
+    assert result["source"] == "toss"
+    assert [item["opened_at"] for item in result["candles"]] == [item["opened_at"] for item in candles]
+    assert result["fills"] == [stock_store.list_fills()[0].payload()]
+    assert result["empty_reason"] is None
+
+
+def test_entry_chart_does_not_invent_data_for_unfilled_symbol(tmp_path) -> None:
+    settings = settings_for(tmp_path)
+    result = stock_paper_entry_chart(settings, Market.KR, "005930")
+    assert result["candles"] == []
+    assert result["fills"] == []
+    assert result["empty_reason"] == "paper_fill_missing"

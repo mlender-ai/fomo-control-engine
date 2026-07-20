@@ -687,6 +687,32 @@ test("engine trading workspace contains the absorbed calibration surface", async
 });
 
 test("stock paper tracks stay separate, sealed, and responsive", async ({ page }) => {
+  const fill = {
+    id: "fill-aapl-entry",
+    order_id: "order-aapl-entry",
+    market: "US" as const,
+    symbol: "AAPL",
+    side: "buy" as const,
+    currency: "USD" as const,
+    quantity: 3,
+    price: 205.25,
+    gross_amount: 615.75,
+    commission: 0.15,
+    transaction_tax: 0,
+    filled_at: "2026-07-20T14:31:20Z",
+    fx_rate_to_krw: null,
+    fx_observed_at: null
+  };
+  const exitFill = {
+    ...fill,
+    id: "fill-aapl-exit",
+    order_id: "order-aapl-exit",
+    side: "sell" as const,
+    quantity: 1,
+    price: 205.8,
+    gross_amount: 205.8,
+    filled_at: "2026-07-20T14:32:10Z"
+  };
   await page.route("**/api/stock-paper/dashboard", async (route) => {
     const track = (market: "KR" | "US") => ({
       market,
@@ -718,8 +744,8 @@ test("stock paper tracks stay separate, sealed, and responsive", async ({ page }
       as_of: "2026-07-19T01:00:00Z",
       tracks: [track("KR"), track("US")],
       positions: [],
-      recent_fills: [],
-      fill_count: 0,
+      recent_fills: [exitFill, fill],
+      fill_count: 2,
       live_orders_enabled: false,
       performance_gate: "Toss 실주문은 주식 페이퍼가 4주간 벤치마크를 초과할 경우에만 재논의",
       sample_note: "KR/US 원통화 성적이며 크립토 검증과 합산하지 않습니다.",
@@ -733,6 +759,26 @@ test("stock paper tracks stay separate, sealed, and responsive", async ({ page }
       }
     }});
   });
+  await page.route("**/api/stock-paper/entry-chart?**", async (route) => {
+    await route.fulfill({ json: {
+      market: "US",
+      symbol: "AAPL",
+      timeframe: "1m",
+      source: "toss",
+      candles: [29, 30, 31, 32].map((minute) => ({
+        opened_at: `2026-07-20T14:${minute}:00Z`,
+        open: 204 + minute / 100,
+        high: 206,
+        low: 203,
+        close: 205 + minute / 100,
+        volume: 1_000,
+        source: "toss",
+        observed_at: "2026-07-20T14:33:00Z"
+      })),
+      fills: [fill, exitFill],
+      empty_reason: null
+    }});
+  });
 
   await page.goto("/engine?tab=stocks");
   const view = page.getByTestId("engine-stock-paper-tab");
@@ -741,6 +787,10 @@ test("stock paper tracks stay separate, sealed, and responsive", async ({ page }
   await expect(view).toContainText("200종목");
   await expect(view).toContainText("크립토 성적과 합산하지 않습니다");
   await expect(view).toContainText("미체결 사유 분포");
+  await expect(page.getByTestId("stock-paper-entry-chart")).toContainText("언제 진입했나");
+  await expect(page.getByTestId("stock-paper-entry-chart")).toContainText("2026. 07. 20.");
+  await expect(page.getByTestId("stock-paper-entry-chart")).toContainText("청산");
+  await expect(page.getByTestId("stock-paper-entry-chart").locator(".stockEntryChartCanvas")).toBeVisible();
   await expect(view.locator(".stockTrackCard")).toHaveCount(2);
   if (process.env.FCE_CAPTURE_WO_SCREENSHOT === "true") {
     await page.screenshot({ path: "../docs/assets/WO-FCE-TOSS-PAPER-01-dashboard.png", fullPage: true });

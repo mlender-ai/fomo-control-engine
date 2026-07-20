@@ -236,6 +236,15 @@ class StockPaperStore:
             ).fetchall()
         return [_fill_from_payload(json.loads(row["payload"])) for row in rows]
 
+    def list_instrument_fills(self, market: Market, symbol: str, limit: int = 100) -> list[PaperFill]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT payload FROM stock_paper_fills
+                WHERE market=? AND symbol=? ORDER BY filled_at DESC LIMIT ?""",
+                (market.value, symbol.upper(), limit),
+            ).fetchall()
+        return [_fill_from_payload(json.loads(row["payload"])) for row in rows]
+
     def dashboard(self) -> dict[str, Any]:
         with self._connect() as connection:
             tracks = [dict(row) for row in connection.execute("SELECT * FROM stock_paper_tracks ORDER BY market").fetchall()]

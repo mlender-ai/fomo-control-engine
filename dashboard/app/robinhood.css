@@ -2175,6 +2175,7 @@ textarea:focus {
 
 .stockPaperGate,
 .stockPaperHeader,
+.stockEntryAudit,
 .stockExecutionAudit,
 .stockFillAudit,
 .stockTrackCard {
@@ -2366,6 +2367,179 @@ textarea:focus {
 .stockExecutionAudit,
 .stockFillAudit {
   padding: 20px;
+}
+
+.stockEntryAudit {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.stockEntryAudit > header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 20px;
+  border-bottom: 1px solid var(--rh-border);
+}
+
+.stockEntryAudit h3 {
+  margin: 4px 0 5px;
+  color: var(--rh-white);
+  font-size: 20px;
+}
+
+.stockEntryAudit header p,
+.stockEntryAudit header span,
+.stockEntryAudit header small {
+  margin: 0;
+  color: var(--rh-muted);
+  font-size: 11px;
+}
+
+.stockEntryAudit nav {
+  display: flex;
+  max-width: 58%;
+  gap: 6px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.stockEntryAudit nav button {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  gap: 7px;
+  min-height: 36px;
+  padding: 8px 11px;
+  border: 1px solid var(--rh-border);
+  color: var(--rh-text);
+  background: transparent;
+  cursor: pointer;
+}
+
+.stockEntryAudit nav button.active {
+  border-color: var(--rh-green);
+  color: var(--rh-white);
+  background: color-mix(in srgb, var(--rh-green) 8%, transparent);
+}
+
+.stockEntryAudit nav button strong {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.stockEntryChartBody {
+  min-width: 0;
+  padding: 16px 18px 18px;
+}
+
+.stockEntryChartMeta {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  min-width: 0;
+  padding: 0 3px 12px;
+}
+
+.stockEntryChartMeta strong {
+  color: var(--rh-white);
+  font-family: var(--font-mono);
+  font-size: 15px;
+}
+
+.stockEntryChartMeta span,
+.stockEntryChartMeta small {
+  color: var(--rh-muted);
+  font-size: 11px;
+}
+
+.stockEntryChartMeta small {
+  margin-left: auto;
+}
+
+.stockEntryChartCanvas {
+  width: 100%;
+  min-width: 0;
+  height: 340px;
+  border: 1px solid var(--rh-border);
+  background: var(--rh-black);
+}
+
+.stockEntryFillList {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1px;
+  margin-top: 12px;
+  background: var(--rh-border);
+}
+
+.stockEntryFillList article {
+  display: grid;
+  grid-template-columns: 4px minmax(0, 1fr) auto;
+  gap: 3px 10px;
+  min-width: 0;
+  padding: 12px;
+  background: var(--rh-panel);
+}
+
+.stockEntryFillList article i {
+  grid-row: 1 / 3;
+  width: 3px;
+  background: var(--rh-green);
+}
+
+.stockEntryFillList article.sell i {
+  background: var(--rh-muted);
+}
+
+.stockEntryFillList article div {
+  display: flex;
+  min-width: 0;
+  gap: 7px;
+}
+
+.stockEntryFillList strong,
+.stockEntryFillList b {
+  color: var(--rh-white);
+  font-size: 12px;
+}
+
+.stockEntryFillList b {
+  font-family: var(--font-mono);
+}
+
+.stockEntryFillList time,
+.stockEntryFillList span {
+  overflow: hidden;
+  color: var(--rh-muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stockEntryFillList span {
+  grid-column: 2 / 4;
+}
+
+.stockEntryEmpty {
+  display: grid;
+  gap: 7px;
+  min-height: 118px;
+  place-content: center;
+  padding: 24px;
+  color: var(--rh-muted);
+  text-align: center;
+  font-size: 12px;
+}
+
+.stockEntryEmpty strong {
+  color: var(--rh-text);
+  font-size: 14px;
+}
+
+.stockEntryEmpty.error {
+  color: var(--rh-red);
 }
 
 .stockExecutionAudit > header > strong {
@@ -3954,6 +4128,38 @@ textarea:focus {
   .stockPaperHeader {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .stockEntryAudit > header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .stockEntryAudit nav {
+    width: 100%;
+    max-width: none;
+  }
+
+  .stockEntryChartBody {
+    padding: 12px 8px 10px;
+  }
+
+  .stockEntryChartMeta {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .stockEntryChartMeta small {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .stockEntryChartCanvas {
+    height: 300px;
+  }
+
+  .stockEntryFillList {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .stockFillAudit > header,

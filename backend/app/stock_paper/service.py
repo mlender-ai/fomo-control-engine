@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import math
 from typing import Any
 
@@ -141,6 +141,53 @@ def stock_paper_dashboard(settings: Settings) -> dict[str, Any]:
     }
 
 
+def stock_paper_entry_chart(settings: Settings, market: Market, symbol: str) -> dict[str, Any]:
+    """Join persisted paper fills to observed Toss candles for audit display."""
+    stock_store = StockPaperStore(settings.database_url)
+    fills = stock_store.list_instrument_fills(market, symbol) if stock_store.enabled else []
+    if not fills:
+        return {
+            "market": market.value,
+            "symbol": symbol.upper(),
+            "timeframe": None,
+            "source": None,
+            "candles": [],
+            "fills": [],
+            "empty_reason": "paper_fill_missing",
+        }
+
+    anchor = fills[0].filled_at
+    toss_store = TossStockStore(settings.database_url)
+    timeframe = "1m"
+    candles = toss_store.candles_around(market.value, symbol, timeframe, anchor)
+    if len(candles) < 2:
+        timeframe = "1d"
+        candles = toss_store.candles_around(market.value, symbol, timeframe, anchor, before=60, after=60)
+    if len(candles) < 2:
+        return {
+            "market": market.value,
+            "symbol": symbol.upper(),
+            "timeframe": None,
+            "source": None,
+            "candles": [],
+            "fills": [fill.payload() for fill in reversed(fills)],
+            "empty_reason": "observed_candles_missing",
+        }
+
+    first_open = datetime.fromisoformat(str(candles[0]["opened_at"]).replace("Z", "+00:00"))
+    last_open = datetime.fromisoformat(str(candles[-1]["opened_at"]).replace("Z", "+00:00"))
+    visible_fills = [fill for fill in reversed(fills) if first_open <= fill.filled_at <= last_open + _timeframe_span(timeframe)]
+    return {
+        "market": market.value,
+        "symbol": symbol.upper(),
+        "timeframe": timeframe,
+        "source": candles[-1]["source"],
+        "candles": candles,
+        "fills": [fill.payload() for fill in visible_fills],
+        "empty_reason": None,
+    }
+
+
 def universe_payload() -> dict[str, Any]:
     universe = load_universe()
     return {
@@ -150,6 +197,10 @@ def universe_payload() -> dict[str, Any]:
         "symbols": {market.value: [item.symbol for item in universe.for_market(market)] for market in Market},
         "sources": universe.sources,
     }
+
+
+def _timeframe_span(timeframe: str) -> timedelta:
+    return timedelta(minutes=1) if timeframe == "1m" else timedelta(days=1)
 
 
 def _execution_policy(settings: Settings) -> ExecutionPolicy:

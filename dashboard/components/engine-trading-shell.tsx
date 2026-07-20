@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { Activity, Bot, Building2, Plus, Radar, RefreshCw, ShieldCheck, Trash2, Waves } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { TerminalWarning } from "@/components/terminal";
+import { StockPaperEntryChart } from "@/components/StockPaperEntryChart";
 import { api, type OnchainWhaleDashboard, type PaperDashboard, type PaperGateFunnel, type PaperTrade, type StanceBacktestDashboard, type StockPaperDashboard, type StockPaperTrack } from "@/lib/api";
 
 const tabs = [
@@ -144,6 +145,7 @@ function StockPaperView({ data }: { data: StockPaperDashboard | null }) {
       <section className="stockTrackGrid">
         {data.tracks.map((track) => <StockTrackCard key={track.market} track={track} />)}
       </section>
+      <StockPaperEntryChart fills={data.recent_fills} />
       <section className="stockExecutionAudit">
         <header><div><span className="engineSectionLabel">체결 모델 감사</span><h3>미체결 사유 분포</h3></div><strong>{data.fill_count} fills</strong></header>
         <div className="stockRejectionGrid">

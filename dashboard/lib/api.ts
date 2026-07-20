@@ -2277,22 +2277,7 @@ export type StockPaperDashboard = {
   as_of: string;
   tracks: StockPaperTrack[];
   positions: Array<{ market: "KR" | "US"; symbol: string; quantity: number; average_price: number; current_price: number | null; currency: "KRW" | "USD"; updated_at: string }>;
-  recent_fills: Array<{
-    id: string;
-    order_id: string;
-    market: "KR" | "US";
-    symbol: string;
-    side: "buy" | "sell";
-    currency: "KRW" | "USD";
-    quantity: number;
-    price: number;
-    gross_amount: number;
-    commission: number;
-    transaction_tax: number;
-    filled_at: string;
-    fx_rate_to_krw: number | null;
-    fx_observed_at: string | null;
-  }>;
+  recent_fills: StockPaperFill[];
   fill_count: number;
   live_orders_enabled: false;
   performance_gate: string;
@@ -2305,6 +2290,42 @@ export type StockPaperDashboard = {
     sources: Record<string, { source: string; source_as_of: string }>;
     refresh_policy: "quarterly_manual";
   };
+};
+
+export type StockPaperFill = {
+  id: string;
+  order_id: string;
+  market: "KR" | "US";
+  symbol: string;
+  side: "buy" | "sell";
+  currency: "KRW" | "USD";
+  quantity: number;
+  price: number;
+  gross_amount: number;
+  commission: number;
+  transaction_tax: number;
+  filled_at: string;
+  fx_rate_to_krw: number | null;
+  fx_observed_at: string | null;
+};
+
+export type StockPaperEntryChart = {
+  market: "KR" | "US";
+  symbol: string;
+  timeframe: "1m" | "1d" | null;
+  source: string | null;
+  candles: Array<{
+    opened_at: string;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+    volume: number;
+    source: string;
+    observed_at: string;
+  }>;
+  fills: StockPaperFill[];
+  empty_reason: "paper_fill_missing" | "observed_candles_missing" | null;
 };
 
 export type MarketSummary = {
@@ -2659,6 +2680,8 @@ export const api = {
   stanceBacktest: () => request<StanceBacktestDashboard>("/api/backtest/stance"),
   refreshStanceBacktest: () => request<StanceBacktestDashboard>("/api/backtest/stance/refresh", { method: "POST" }),
   stockPaperDashboard: () => request<StockPaperDashboard>("/api/stock-paper/dashboard"),
+  stockPaperEntryChart: (market: "KR" | "US", symbol: string) =>
+    request<StockPaperEntryChart>(`/api/stock-paper/entry-chart?market=${market}&symbol=${encodeURIComponent(symbol)}`),
   onchainWhales: () => request<OnchainWhaleDashboard>("/api/onchain/whales"),
   addOnchainWhale: (payload: { address: string; label?: string }) => request<{ wallet: OnchainWhaleWallet }>("/api/onchain/whales", {
     method: "POST",
