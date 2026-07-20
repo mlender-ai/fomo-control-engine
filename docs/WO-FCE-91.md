@@ -31,13 +31,13 @@
 - [x] 판정표·유일 기능 대조 문서화
 - [x] `npm run build` + `npm run check:local-assets`
 - [x] HARNESS.md 전체 게이트
-- [ ] origin/main 반영 + CI success
+- [x] origin/main 반영 + CI success
 
 ## HANDOFF
 
 - 목표: 화면 정본을 하나로 줄이고 감사 데이터는 보존한다.
 - 한 일: 레거시 route/page/shell 제거, 정본 route QA 목록 갱신.
 - 안 한 일/막힌 곳: 없음.
-- 다음 액션: main 반영 후 CI success 확인.
+- 다음 액션: 정본 route에 신규 기능을 흡수할 때 route count·자산 검사를 함께 갱신.
 - 검증: backend 570 tests·coverage 77.02%, frontend lint/typecheck/build, E2E 21/21, 정본 자산 28개 2xx, 레거시 7개 404.
-- 머지: origin/main 반영 대기.
+- 머지: origin/main 반영 완료 · CI 29711584136 success.

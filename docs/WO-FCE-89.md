@@ -40,7 +40,7 @@
 ## 완료 정의 (공통)
 - [x] HARNESS.md 게이트 통과
 - [x] docs 갱신
-- [ ] origin/main 반영 + CI success 확인 (불변 규칙 1·3)
+- [x] origin/main 반영 + CI success 확인 (불변 규칙 1·3)
 
 ## HANDOFF
 
@@ -49,4 +49,4 @@
 - 안 한 일/막힌 곳: 결과 미도래와 구조적 채점 불가는 pending/unscorable로 유지.
 - 다음 액션: 새 판단 유형 추가 시 registry와 outcome 정의를 같은 변경에 포함한다.
 - 검증: HARNESS 백엔드·프론트·E2E 통과.
-- 머지: origin/main 반영 대기.
+- 머지: origin/main 반영 완료 · CI 29711584136 success.

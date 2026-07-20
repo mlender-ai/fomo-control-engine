@@ -40,7 +40,7 @@
 ## 완료 정의 (공통)
 - [x] HARNESS.md 게이트 통과
 - [x] docs 갱신
-- [ ] origin/main 반영 + CI success 확인 (불변 규칙 1·3)
+- [x] origin/main 반영 + CI success 확인 (불변 규칙 1·3)
 
 ## HANDOFF
 
@@ -49,4 +49,4 @@
 - 안 한 일/막힌 곳: 과거 거래는 소급 추정하지 않아 귀속 표본에서 제외.
 - 다음 액션: 신규 complete 표본이 10건 이상 누적된 뒤 귀속 분포를 해석한다.
 - 검증: HARNESS 백엔드·프론트·E2E 통과.
-- 머지: origin/main 반영 대기.
+- 머지: origin/main 반영 완료 · CI 29711584136 success.
