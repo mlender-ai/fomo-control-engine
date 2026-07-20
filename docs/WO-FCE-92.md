@@ -51,7 +51,7 @@
 ## 완료 정의 (공통)
 - [x] HARNESS.md 게이트 통과
 - [x] docs 갱신
-- [ ] origin/main 반영 + CI success 확인 (불변 규칙 1·3)
+- [x] origin/main 반영 + CI success 확인 (불변 규칙 1·3)
 
 ## HANDOFF
 - 목표: 실제 주식 페이퍼 체결 시점·가격을 Toss 캔들 위에서 감사 가능하게 표시
@@ -59,4 +59,4 @@
 - 안 한 일/막힌 곳: 실데이터 fill 0건이므로 운영 화면은 정직한 빈 상태이며, E2E·저장소 테스트에서 실제 fill 스키마 1사이클을 검증
 - 다음 액션: 실제 PaperBroker fill 발생 후 운영 차트의 소스·시간봉·마커를 확인
 - 검증: 백엔드 572 passed, E2E 21 passed, 빌드·asset 2xx, 데스크톱/모바일 overflow 0·console error 0
-- 머지: origin/main 반영 전
+- 머지: `8b6aa618` origin/main 반영, CI `29715876139` success
