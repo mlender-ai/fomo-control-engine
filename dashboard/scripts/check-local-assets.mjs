@@ -4,16 +4,9 @@ const productRoutes = [
   "/scout",
   "/review",
   "/engine",
-  "/journal",
-  "/markets",
   "/performance",
-  "/positions",
-  "/research",
   "/settings",
-  "/shadow",
-  "/trades",
-  "/validation",
-  "/calibration"
+  "/trades"
 ];
 const assetPaths = new Set();
 

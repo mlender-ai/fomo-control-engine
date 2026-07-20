@@ -57,7 +57,8 @@ Closed trades are still the primary scoring source. Open positions are also scor
 
 ## Product Surface
 
-The dedicated `/calibration` dashboard contains four modules:
+WO-FCE-91 removed the duplicate `/calibration` route. The canonical `/engine?tab=status`
+surface contains the calibration and validation modules alongside their operational context:
 
 - Judgment scorecard
 - Confidence curve

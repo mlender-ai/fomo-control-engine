@@ -33,10 +33,7 @@ def build_entry_fomo_snapshot(
         "stance": 0.0 if alignment == "aligned" else 1.0 if alignment == "against" else 0.5 if alignment == "conflicted" else None,
     }
     available_weight = sum(WEIGHTS[key] for key, value in severities.items() if value is not None)
-    contribution = {
-        key: round(WEIGHTS[key] * value, 2) if value is not None else None
-        for key, value in severities.items()
-    }
+    contribution = {key: round(WEIGHTS[key] * value, 2) if value is not None else None for key, value in severities.items()}
     index = round(sum(value or 0.0 for value in contribution.values()) / available_weight * 100, 1) if available_weight else None
     complete = available_weight == sum(WEIGHTS.values())
     return {
@@ -99,9 +96,7 @@ def monthly_fomo_attribution(
             else f"표본 부족 — 결론 유보 (FOMO 스냅샷 N={len(eligible)}, 최소 {min_trades})"
         ),
         "recent_entry": (
-            {"trade_id": str(recent.id), "symbol": recent.symbol, "fomo_index": recent.fomo_index, "components": recent.fomo_components}
-            if recent
-            else None
+            {"trade_id": str(recent.id), "symbol": recent.symbol, "fomo_index": recent.fomo_index, "components": recent.fomo_components} if recent else None
         ),
         "legacy_proxy_comparison": {
             "method": "entry_score_below_65_and_loss",

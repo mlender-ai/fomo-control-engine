@@ -528,6 +528,11 @@ def format_scout_stopped(payload: dict[str, Any]) -> str:
 
 def format_improvement_digest(payload: dict[str, Any]) -> str:
     totals = _dump(payload.get("totals"))
+    moat_h1 = _dump(payload.get("moat_h1"))
+    real_history = _dump(moat_h1.get("real_history"))
+    ledger = _dump(moat_h1.get("ledger"))
+    fomo = _dump(moat_h1.get("fomo"))
+    routes = _dump(moat_h1.get("routes"))
     highlights = [str(item) for item in payload.get("highlights", []) if item]
     tested = int(totals.get("tested") or 0)
     accuracy = _nullable_pct(totals.get("accuracy_pct"))
@@ -546,15 +551,24 @@ def format_improvement_digest(payload: dict[str, Any]) -> str:
         scheduled = len(payload.get("scheduled_suggestions", []) or [])
     if experiments is None:
         experiments = len(payload.get("experiment_suggestions", []) or [])
-    return "\n".join(
-        [
-            "<b>개선 카드</b>",
-            f"• {escape(headline)}",
-            f"• {escape(reason)}",
-            f"• 자율 예정 {scheduled}건 · 섀도 실험 {experiments}건",
-            "• 표본 부족 구간은 결론을 보류합니다.",
-        ]
-    )
+    lines = [
+        "<b>개선 카드</b>",
+        f"• {escape(headline)}",
+        f"• {escape(reason)}",
+        f"• 자율 예정 {scheduled}건 · 섀도 실험 {experiments}건",
+        "• 표본 부족 구간은 결론을 보류합니다.",
+    ]
+    if moat_h1:
+        lines.extend(
+            [
+                "",
+                f"<b>{escape(str(moat_h1.get('batch') or 'H1'))} 현황</b>",
+                f"• 실이력 {int(real_history.get('available') or 0)}/{int(real_history.get('expected') or 0)} · 원장 {ledger.get('coverage_pct', 0)}%",
+                f"• FOMO 진입 표본 {int(fomo.get('eligible_trades') or 0)}/{int(fomo.get('sample_floor') or 0)} · 레거시 page {int(routes.get('removed_legacy_pages') or 0)}개 제거",
+                f"• {escape(str(moat_h1.get('honesty') or '현재 관측값만 발행'))}",
+            ]
+        )
+    return "\n".join(lines)
 
 
 def format_simulation(result: dict[str, Any]) -> str:

@@ -65,7 +65,7 @@ export function TerminalTopBar({
 }
 
 function extractSymbol(pathname: string): string {
-  const match = pathname.match(/\/(?:dashboard|markets)\/([^/?]+)/);
+  const match = pathname.match(/\/dashboard\/([^/?]+)/);
   return match?.[1]?.toUpperCase() ?? "";
 }
 

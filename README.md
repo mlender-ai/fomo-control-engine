@@ -15,7 +15,8 @@ FOMO Control Engine is a personal live position intelligence cockpit. It does no
 - Position State labels: healthy, watch, risk rising, thesis weakening, critical, unknown
 - Deterministic Korean AI-style insight text generated from stored JSON only
 - Astryx-based Next.js terminal dashboard focused on Live Positions, Trade History, and Settings
-- Older market/research/shadow/validation routes remain available but are hidden from the main MVP navigation
+- Legacy market/research/shadow/validation pages were consolidated into the canonical MVP surfaces; their audit APIs remain available
+- Canonical route inventory and absorption audit: [`docs/RouteConsolidation.md`](docs/RouteConsolidation.md)
 - pytest coverage for scoring, reports, mock provider, persistence, position flow, live position APIs, research runs, shadow extraction, liquidity analysis, validation, and memory
 
 ## Run Locally

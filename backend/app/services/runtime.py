@@ -1175,6 +1175,33 @@ def improvement_digest(
         f"판단 원장 커버리지 {coverage['coverage_pct']}% · 기록 {coverage['recorded']}/"
         f"{coverage['total'] - coverage['unscorable']} · 채점 불가 {coverage['unscorable']}"
     )
+    stance = stance_backtest_dashboard()
+    fomo = performance_summary().get("fomo_attribution", {})
+    digest["moat_h1"] = {
+        "batch": "WO-FCE-88~91",
+        "real_history": {
+            "status": stance.get("status", "pending"),
+            "available": int(stance.get("available") or 0),
+            "expected": int(stance.get("expected") or 0),
+        },
+        "ledger": {
+            "coverage_pct": coverage["coverage_pct"],
+            "recorded": coverage["recorded"],
+            "eligible": coverage["total"] - coverage["unscorable"],
+        },
+        "fomo": {
+            "sample_sufficient": bool(fomo.get("sample_sufficient")),
+            "eligible_trades": int(fomo.get("eligible_trades") or 0),
+            "sample_floor": int(fomo.get("sample_floor") or 0),
+            "statement": str(fomo.get("statement") or "표본 없음"),
+        },
+        "routes": {
+            "status": "consolidated",
+            "canonical_page_routes": 9,
+            "removed_legacy_pages": 15,
+        },
+        "honesty": "구현 완료와 성과 달성을 구분하며 현재 실데이터·표본만 발행",
+    }
     return digest
 
 

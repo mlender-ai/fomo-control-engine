@@ -77,7 +77,7 @@ export function TerminalSideNav({ pathname, status }: { pathname: string; status
 }
 
 function isSelected(pathname: string, href: string): boolean {
-  if (href === "/") return pathname === "/" || pathname.startsWith("/positions");
+  if (href === "/") return pathname === "/";
   if (href === "/review") return pathname === "/review";
   return pathname === href || pathname.startsWith(`${href}/`);
 }

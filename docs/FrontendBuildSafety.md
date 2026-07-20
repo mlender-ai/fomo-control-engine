@@ -32,7 +32,7 @@ JavaScript가 깨지는 사고를 방지한다. 차트, 포지션, 스카우트 
 | `prebuild` | 8876 서버가 살아 있으면 기본 `.next` 빌드 차단 | 기존 서버를 먼저 종료해야 함 |
 | `FCE_NEXT_DIST_DIR=.next-e2e` | E2E 산출물을 프로덕션과 분리 | 테스트가 로컬 화면을 덮어쓰면 안 됨 |
 | `build:e2e` | Next가 자동 변경한 타입 설정을 빌드 후 원복 | E2E 후 워킹트리가 흔들리면 안 됨 |
-| `check:local-assets` | 제품 14개 라우트의 CSS/JS 청크 전수 2xx 확인 | 서버·HTML·청크 중 하나가 불일치 |
+| `check:local-assets` | 정본 고정 route 7개의 CSS/JS 청크 전수 2xx 확인 | 서버·HTML·청크 중 하나가 불일치 |
 | Playwright 전 라우트 회귀 | 스타일시트 수, 가로 넘침, 거대 SVG/버튼 검사 | 화면 구조 또는 CSS 로딩 회귀 |
 
 ## 정상 갱신 절차
@@ -56,7 +56,7 @@ npm run test:e2e
 
 완료 조건:
 
-- `check:local-assets`가 제품 14개 라우트와 모든 발견 자산의 2xx를 보고한다.
+- `check:local-assets`가 정본 고정 route 7개와 모든 발견 자산의 2xx를 보고한다.
 - 프론트 변경이면 lint, typecheck, build가 통과한다.
 - 화면·플로우 변경이면 E2E가 통과한다.
 - `git status --short`가 비어 있고 main CI가 성공한다.
@@ -94,7 +94,7 @@ FCE_NEXT_DIST_DIR=.next npm run build:e2e
 
 ## 회귀 수용 기준
 
-- 제품 14개 라우트가 HTTP 2xx 또는 의도된 내부 리다이렉트를 반환한다.
+- 정본 고정 route 7개가 HTTP 2xx를 반환하고 동적 deep link는 E2E 상위 흐름에서 검증된다.
 - 각 라우트 HTML이 참조하는 CSS/JS 청크가 전부 2xx다.
 - 데스크톱·모바일에서 가로 넘침이 없다.
 - 누락된 CSS로 인해 버튼·SVG·캔버스가 화면 대부분을 덮지 않는다.

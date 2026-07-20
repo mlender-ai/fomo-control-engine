@@ -1,5 +1,11 @@
 import { expect, test } from "@playwright/test";
 
+test.afterEach(async ({ page }) => {
+  // Some panels refresh in the background. Let the test finish without a
+  // late route.fetch callback leaking into the next isolated page fixture.
+  await page.unrouteAll({ behavior: "ignoreErrors" });
+});
+
 test("PWA metadata, icons, and same-origin API work on mobile", async ({ page, request }) => {
   const manifestResponse = await request.get("/manifest.webmanifest");
   expect(manifestResponse.ok()).toBe(true);
@@ -65,16 +71,9 @@ test("all product routes keep production CSS and bounded controls", async ({ pag
     "/scout",
     "/review",
     "/engine",
-    "/journal",
-    "/markets",
     "/performance",
-    "/positions",
-    "/research",
     "/settings",
-    "/shadow",
-    "/trades",
-    "/validation",
-    "/calibration"
+    "/trades"
   ];
 
   for (const route of routes) {
@@ -664,7 +663,7 @@ test("manual scout tracking is one click and stays separate from engine detectio
   await expect(manualCard).toHaveCount(0);
 });
 
-test("engine trading workspace and absorbed calibration route", async ({ page }) => {
+test("engine trading workspace contains the absorbed calibration surface", async ({ page }) => {
   await page.goto("/engine");
   await expect(page.getByTestId("engine-trading-page")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("engine-battle-tab")).toBeVisible();
@@ -683,8 +682,8 @@ test("engine trading workspace and absorbed calibration route", async ({ page })
   await expect(page.getByTestId("paper-gate-funnel")).toBeVisible();
   await expect(page.getByTestId("event-pill-diagnostics")).toBeVisible();
 
-  await page.goto("/calibration");
-  await expect(page).toHaveURL(/\/engine\?tab=status/);
+  await page.goto("/engine?tab=status");
+  await expect(page.getByTestId("engine-status-tab")).toBeVisible();
 });
 
 test("stock paper tracks stay separate, sealed, and responsive", async ({ page }) => {
