@@ -158,6 +158,7 @@ def format_stat_line(
     sample_floor: int = 10,
     current_regime: str | None = None,
     label: str | None = None,
+    metric_label: str = "net 1R",
 ) -> str:
     """표기 표준 (docs/Statistics.md): `net 승률 (CI, N, 기간, 레짐, unstable 여부)`.
 
@@ -173,7 +174,7 @@ def format_stat_line(
     regime_n = int(regime_stat.get("sample_size") or 0)
     if win is None or not ci:
         return f"{stat_label} CI 미산출 (N={regime_n}) — 발행 보류"
-    parts = [f"{stat_label} net 1R {win}% (CI {ci[0]}~{ci[1]}%, N={regime_n}"]
+    parts = [f"{stat_label} {metric_label} {win}% (CI {ci[0]}~{ci[1]}%, N={regime_n}"]
     period = stat.get("period")
     if isinstance(period, dict) and period.get("label"):
         parts.append(f", {period['label']}")

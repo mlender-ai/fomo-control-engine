@@ -535,15 +535,15 @@ function StanceBacktestCard({ data, refreshing, onRefresh }: { data: StanceBackt
   return (
     <section className="engineStatusCard engineStanceBacktest" data-testid="real-history-stance-backtest">
       <header>
-        <div><span className="engineSectionLabel">실데이터 검증 · 합성 성적과 분리</span><h2>방향 엔진 v2 · T+24h</h2></div>
+        <div><span className="engineSectionLabel">실데이터 검증 · 합성 성적과 분리</span><h2>방향 엔진 v1 ↔ v2 · 동일 표본 T+24h</h2></div>
         <button className="button secondary" type="button" onClick={onRefresh} disabled={refreshing}><RefreshCw size={14} />{refreshing ? "재판정 중" : "실데이터 갱신"}</button>
       </header>
       <div className="stanceBacktestRows">
         {(data?.items ?? []).map((item) => (
           <article className={item.publishable ? "published" : "withheld"} key={item.symbol}>
             <div><strong>{item.symbol}</strong><span>Bitget 4h · {item.generated_at ? shortDateTime(item.generated_at) : "수집 대기"}</span></div>
-            <p><b>{item.directional_hit_pct === null || item.directional_hit_pct === undefined ? "—" : `${item.directional_hit_pct.toFixed(1)}%`}</b><span>{item.directional_hit_ci ? `95% CI ${item.directional_hit_ci[0]}~${item.directional_hit_ci[1]}%` : "CI 대기"}</span></p>
-            <div><strong>N={item.sample_size}</strong><span>{item.publishable ? "발행" : item.decision === "pending" ? "수집 대기" : "결론 유보"}</span></div>
+            <p><b>{formatVariantRate(item.v1?.directional_hit_pct)} → {formatVariantRate(item.v2?.directional_hit_pct)}</b><span>v1 → v2 · {item.directional_hit_ci ? `v2 CI ${item.directional_hit_ci[0]}~${item.directional_hit_ci[1]}%` : "CI 대기"}</span></p>
+            <div><strong>N={item.sample_size}</strong><span>{item.comparison?.claim ?? (item.publishable ? "발행" : item.decision === "pending" ? "수집 대기" : "결론 유보")}</span></div>
           </article>
         ))}
         {!data?.items.length ? <p className="engineEmptyLine">실제 히스토리 수집을 기다리는 중입니다.</p> : null}
@@ -554,6 +554,10 @@ function StanceBacktestCard({ data, refreshing, onRefresh }: { data: StanceBackt
       </footer>
     </section>
   );
+}
+
+function formatVariantRate(value: number | null | undefined) {
+  return value === null || value === undefined ? "—" : `${value.toFixed(1)}%`;
 }
 
 function CandidateReviewCard({ review }: { review: PaperDashboard["calibration"]["candidate_review"] }) {

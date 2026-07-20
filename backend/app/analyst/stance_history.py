@@ -10,6 +10,7 @@ from app.positions.chart_analysis import MIN_CHART_CANDLES, build_chart_analysis
 
 
 HISTORY_WINDOW = 72
+REPLAY_ANALYSIS_WINDOW = 200
 _CACHE: dict[tuple[str, str], dict[str, Any]] = {}
 _CACHE_LOCK = RLock()
 
@@ -76,6 +77,7 @@ def replay_confirmed_stance_points(
     timeframe: str,
     candles: list[MarketCandle],
     hysteresis_params: dict[str, Any] | None = None,
+    directional_v2: bool = True,
 ) -> list[dict[str, Any]]:
     """Replay every confirmed prefix for historical validation.
 
@@ -91,6 +93,7 @@ def replay_confirmed_stance_points(
         ordered,
         hysteresis_params,
         history_limit=None,
+        directional_v2=directional_v2,
     )
     return history
 
@@ -101,12 +104,20 @@ def _full_replay(
     candles: list[MarketCandle],
     hysteresis_params: dict[str, Any] | None,
     history_limit: int | None = HISTORY_WINDOW,
+    directional_v2: bool = True,
 ) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
     prior: dict[str, Any] | None = None
     history: list[dict[str, Any]] = []
     for end in range(MIN_CHART_CANDLES, len(candles) + 1):
         try:
-            point = _replay_point(symbol, timeframe, candles[:end], prior, hysteresis_params)
+            point = _replay_point(
+                symbol,
+                timeframe,
+                candles[:end],
+                prior,
+                hysteresis_params,
+                directional_v2=directional_v2,
+            )
         except ValueError:
             continue
         prior = point["state"]
@@ -120,6 +131,8 @@ def _replay_point(
     candles: list[MarketCandle],
     prior: dict[str, Any] | None,
     hysteresis_params: dict[str, Any] | None,
+    *,
+    directional_v2: bool = True,
 ) -> dict[str, Any]:
     current = candles[-1]
     snapshot = MarketSnapshot(
@@ -132,6 +145,7 @@ def _replay_point(
         candles=candles,
         provider="stance_replay",
     )
+    snapshot = snapshot.model_copy(update={"candles": candles[-REPLAY_ANALYSIS_WINDOW:]})
     prefix_analysis = build_chart_analysis(snapshot, None, None)
     generated_at = current.timestamp + timedelta(minutes=_timeframe_minutes(timeframe), seconds=1)
     confluence = build_confluence(
@@ -141,6 +155,7 @@ def _replay_point(
         generated_at=generated_at,
         prior_state=prior,
         hysteresis_params=hysteresis_params,
+        directional_v2=directional_v2,
     )
     return _point(current.timestamp, confluence)
 

@@ -35,19 +35,21 @@ The same conversion code is used for live analysis and replay output.
 
 ## Rate Budget
 
-Setup 시그니처 리플레이는 기존 scout 캔들 창을 사용한다. WO-FCE-88의 방향 stance 검증만 별도 고정 코호트(BTCUSDT·ETHUSDT·SOXLUSDT)에 대해 Bitget 공개 `history-candles`를 페이지 수집한다. 매일 05:00 KST 저부하 잡과 수동 갱신만 허용하며 전 유니버스로 확장하지 않는다.
+Setup 시그니처 리플레이는 기존 scout 캔들 창을 사용한다. WO-FCE-88의 방향 stance 검증만 별도 고정 코호트(BTCUSDT·ETHUSDT·SOXLUSDT)에 대해 Bitget 공개 `history-candles`를 페이지 수집한다. 기본 2,196개 4h봉(약 1년)을 영속 캐시에 누적한다. 매일 저부하 잡과 수동 갱신만 허용하며 전 유니버스로 확장하지 않는다.
 
 ## WO-FCE-88 · 실제 히스토리 stance 검증
 
-- 입력: Bitget 퍼페추얼 4시간봉 420개, 중복 제거·시간 정렬·미확정 마지막 봉 제거.
+- 입력: Bitget 퍼페추얼 4시간봉 기본 2,196개, 중복 제거·시간 정렬·미확정 마지막 봉 제거. 캐시는 심볼·타임프레임·시작시각 키로 upsert한다.
 - 판정: 매 확정봉마다 해당 봉까지의 prefix만 `build_chart_analysis → build_confluence`에 전달. 히스테리시스 상태도 봉 순서대로만 전진한다.
 - 결과: 6봉 뒤 종가(T+24h). 6봉 stride로 비중첩 표본만 채점한다.
 - 성과: 방향 수익에서 자산군별 왕복 수수료·슬리피지를 차감한 net 방향 적중률.
 - 표기: 95% bootstrap CI·N·기간·데이터 품질을 항상 병기. N<30 또는 품질<70이면 수치는 보존하되 결론 유보.
-- 분리: signature는 `directional_v2_real_history_24h`. WO-54 합성 80.8% 및 라이브 calibration과 합산하지 않는다.
+- 비교: v1과 v2를 같은 봉·같은 비용·같은 T+24h anchor로 재생한다. CI가 겹치면 개선을 주장하지 않는다.
+- 분리: signature는 `directional_v1_real_history_24h`와 `directional_v2_real_history_24h`. WO-54 합성 80.8% 및 라이브 calibration과 합산하지 않는다.
+- 품질: gap/비정상 OHLC 이유를 남기고 가장 긴 정상 연속 구간만 판정에 사용한다. 모든 공개 통계 문구는 `format_stat_line`을 경유한다.
 - 데이터 한계: 과거 펀딩·OI·청산 히스토리는 없는 값을 0이나 현재값으로 채우지 않고 제외한다.
 
-2026-07-20 최초 실데이터 사이클(2026-05-10~07-19, 품질 100/100):
+2026-07-20 최초 420봉 실데이터 사이클(2026-05-10~07-19, 품질 100/100):
 
 | 심볼 | T+24h net 방향 적중 | 95% CI | N |
 |---|---:|---:|---:|

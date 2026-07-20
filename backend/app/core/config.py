@@ -687,9 +687,9 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("FCE_STANCE_BACKTEST_SYMBOLS", "STANCE_BACKTEST_SYMBOLS"),
     )
     stance_backtest_history_bars: int = Field(
-        420,
+        2196,
         ge=120,
-        le=2000,
+        le=5000,
         validation_alias=AliasChoices("FCE_STANCE_BACKTEST_HISTORY_BARS", "STANCE_BACKTEST_HISTORY_BARS"),
     )
     stance_backtest_horizon_bars: int = Field(

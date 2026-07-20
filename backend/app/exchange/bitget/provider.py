@@ -115,7 +115,7 @@ class BitgetMarketDataProvider(MarketDataProvider):
         self,
         symbol: str,
         timeframe: str = "4h",
-        limit: int = 420,
+        limit: int = 2_196,
         *,
         now: datetime | None = None,
     ) -> list[Candle]:
@@ -234,18 +234,18 @@ class BitgetMarketDataProvider(MarketDataProvider):
         self,
         symbol: str,
         timeframe: str = "4h",
-        limit: int = 420,
+        limit: int = 2_196,
         *,
         now: datetime | None = None,
     ) -> list[Candle]:
         granularity = TIMEFRAME_MAP.get(timeframe.lower())
         if granularity is None:
             raise BitgetAPIError("unsupported_timeframe", f"Unsupported Bitget timeframe: {timeframe}")
-        target = max(1, min(int(limit), 2_000))
+        target = max(1, min(int(limit), 5_000))
         # The public history page may include the currently open candle. Fetch
         # one extra row so dropping it does not silently shrink the requested
         # confirmed history window.
-        fetch_target = min(2_000, target + 1)
+        fetch_target = min(5_000, target + 1)
         by_timestamp: dict[datetime, Candle] = {}
         end_time_ms: int | None = None
         while len(by_timestamp) < fetch_target:
@@ -268,7 +268,7 @@ class BitgetMarketDataProvider(MarketDataProvider):
             oldest_ms = int(page[0].timestamp.timestamp() * 1000)
             if end_time_ms is not None and oldest_ms >= end_time_ms:
                 break
-            end_time_ms = oldest_ms
+            end_time_ms = oldest_ms - 1
             if len(page) < page_limit:
                 break
 

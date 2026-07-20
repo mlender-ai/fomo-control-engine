@@ -27,6 +27,7 @@ from app.db.models import (
     JudgmentScore,
     InstrumentMap,
     LiquidationEvent,
+    MarketCandle,
     MarketSnapshotRecord,
     MonitoringLog,
     Position,
@@ -102,6 +103,20 @@ class Repository(Protocol):
         signature_key: str | None = None,
         limit: int = 100,
     ) -> list[BacktestStat]: ...
+    def upsert_stance_history_candles(
+        self,
+        symbol: str,
+        timeframe: str,
+        candles: list[MarketCandle],
+        source: str,
+        observed_at: datetime,
+    ) -> int: ...
+    def list_stance_history_candles(
+        self,
+        symbol: str,
+        timeframe: str,
+        limit: int = 5000,
+    ) -> list[MarketCandle]: ...
     def upsert_universe_discovery(self, discovery: UniverseDiscovery) -> UniverseDiscovery: ...
     def list_universe_discoveries(
         self,
@@ -243,6 +258,7 @@ class MemoryRepositoryBase:
         self.armed_setups: dict[UUID, ArmedSetup] = {}
         self.entry_intents: dict[UUID, EntryIntent] = {}
         self.backtest_stats: dict[UUID, BacktestStat] = {}
+        self.stance_history_candles: dict[tuple[str, str, datetime], MarketCandle] = {}
         self.universe_discoveries: dict[UUID, UniverseDiscovery] = {}
         self.trades: dict[UUID, Trade] = {}
         self.paper_trades: dict[UUID, PaperTrade] = {}

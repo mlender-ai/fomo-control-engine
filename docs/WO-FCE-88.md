@@ -22,20 +22,24 @@
 
 - Bitget 공개 `/api/v2/mix/market/history-candles`를 페이지 처리한다.
 - 중복 제거·시간 정렬 후 미확정 마지막 봉을 제거한다.
-- BTCUSDT·ETHUSDT·SOXLUSDT 4시간봉을 기본 검증 집합으로 고정한다.
+- BTCUSDT·ETHUSDT·SOXLUSDT 4시간봉 최소 1년(기본 2,196봉)을 기본 검증 집합으로 고정한다.
+- 공개 수집 결과는 `stance_history_candles` 캐시에 upsert해 중단 뒤에도 이어 받고, 저우선순위 일일 작업의 페이지·요청량 감사 정보를 남긴다.
 
 ### 2. 무룩어헤드 stance 재생·채점
 
 - 각 확정 시점에는 해당 시점까지의 prefix만 `build_chart_analysis → build_confluence`에 전달한다.
 - 히스테리시스 상태는 매 봉 순서대로 전진한다.
+- v1(`directional_v2=False`)과 v2를 같은 확정봉·같은 비용·같은 outcome anchor로 각각 재생한다.
 - 4시간봉 6개 뒤(24시간) 종가를 결과로 사용하고 표본 중첩을 막기 위해 6봉 stride로 채점한다.
 - 롱/숏 방향 수익에서 왕복 수수료·슬리피지를 뺀 net 결과가 양수일 때만 적중으로 본다.
 
 ### 3. 통계 원장·API·화면
 
-- 합성 성적과 다른 `directional_v2_real_history_24h` signature로 `BacktestStat`에 저장한다.
+- 합성 성적과 다른 `directional_v1_real_history_24h`·`directional_v2_real_history_24h` signature로 `BacktestStat`에 저장한다.
 - 적중률·95% CI·N·기간·원본 해시·비용·결측·파생 히스토리 미포함 한계를 함께 발행한다.
+- 모든 공개 문장은 `format_stat_line`을 경유하고, v2 개선은 두 CI가 겹치지 않을 때만 주장한다.
 - N<30 또는 데이터 품질 하한 미달이면 결과 수치는 보존하되 결론은 유보한다.
+- 결측·비정상 OHLC는 이유를 기록하고 가장 긴 정상 연속 구간만 판정 입력에 사용한다.
 - 엔진 상태 화면에 3심볼 실데이터 카드와 수동 갱신을 제공한다.
 - 매일 저부하 작업으로 갱신한다.
 
@@ -47,6 +51,8 @@
 - [x] 24시간 비중첩 채점·비용 차감 테스트
 - [x] N<30 결론 유보와 데이터 한계 문구 테스트
 - [x] 엔진 상태 화면에서 실제/합성 결과가 혼합되지 않음
+- [x] 1년 기본 수집량·영속 캐시·저우선순위 호출 감사 테스트
+- [x] 동일 표본 v1/v2 비교와 CI 비중첩 개선 주장 게이트
 
 ## 금지
 

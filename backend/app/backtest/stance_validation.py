@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 from datetime import datetime
 from statistics import mean, median
 from typing import Any
@@ -11,22 +12,26 @@ from typing import Any
 from app.analyst.briefing import hysteresis_params_from_settings
 from app.analyst.stance_history import replay_confirmed_stance_points
 from app.backtest.costs import roundtrip_cost_pct
-from app.backtest.statistics import DISCLAIMER_NET, bootstrap_win_ci
+from app.backtest.statistics import DISCLAIMER_NET, bootstrap_win_ci, format_stat_line
 from app.db.models import BacktestStat, MarketCandle, utc_now
 from app.exchange.bitget.schemas import Candle
 from app.exchange.bitget.trades import timeframe_seconds
 from app.positions.chart_analysis import MIN_CHART_CANDLES
 
 
+SIGNATURE_KEY_V1 = "directional_v1_real_history_24h"
 SIGNATURE_KEY = "directional_v2_real_history_24h"
+SIGNATURE_KEYS = {False: SIGNATURE_KEY_V1, True: SIGNATURE_KEY}
 DEFAULT_SYMBOLS = ("BTCUSDT", "ETHUSDT", "SOXLUSDT")
+LOGGER = logging.getLogger(__name__)
 METHODOLOGY = {
-    "engine": "directional_v2",
+    "engine": "directional_v1_vs_v2_same_history",
     "source": "Bitget public history-candles",
     "timeframe": "4h",
     "horizon_bars": 6,
     "horizon_label": "T+24h",
     "stride_bars": 6,
+    "analysis_window_bars": 200,
     "lookahead_policy": "각 판정은 해당 확정봉까지의 prefix만 입력; 미래 가격은 결과 채점에만 사용",
     "overlap_policy": "6봉 간격 비중첩 표본",
     "derivative_history": "not_included",
@@ -45,7 +50,7 @@ def refresh_stance_backtests(
     *,
     symbols: list[str] | tuple[str, ...] | None = None,
     timeframe: str = "4h",
-    history_bars: int = 420,
+    history_bars: int = 2_196,
     horizon_bars: int = 6,
     now: datetime | None = None,
 ) -> dict[str, Any]:
@@ -59,23 +64,47 @@ def refresh_stance_backtests(
     for symbol in requested:
         try:
             raw = loader(symbol, timeframe, history_bars, now=generated_at)
-            candles = [_market_candle(candle) for candle in raw]
-            result = evaluate_stance_history(
-                symbol=symbol,
-                timeframe=timeframe,
-                candles=candles,
-                settings=settings,
-                horizon_bars=horizon_bars,
-                generated_at=generated_at,
+            fetched = [_market_candle(candle) for candle in raw]
+            repo.upsert_stance_history_candles(
+                symbol,
+                timeframe,
+                fetched,
+                "bitget_public_history-candles",
+                generated_at,
             )
-            repo.upsert_backtest_stat(_as_stat(result, candles))
-            refreshed.append(result)
+            candles = repo.list_stance_history_candles(symbol, timeframe, limit=5_000)
+            variants = {
+                version: evaluate_stance_history(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    candles=candles,
+                    settings=settings,
+                    horizon_bars=horizon_bars,
+                    generated_at=generated_at,
+                    directional_v2=directional_v2,
+                )
+                for directional_v2, version in ((False, "v1"), (True, "v2"))
+            }
+            for result in variants.values():
+                repo.upsert_backtest_stat(_as_stat(result, candles))
+            collection = {
+                "symbol": symbol,
+                "requested_bars": history_bars,
+                "fetched_bars": len(fetched),
+                "cached_bars": len(candles),
+                "estimated_pages": (len(fetched) + 199) // 200,
+                "endpoint": "/api/v2/mix/market/history-candles",
+                "schedule": "daily_low_priority",
+                "private_rate_budget_used": False,
+            }
+            LOGGER.info("stance history collection audit: %s", collection)
+            refreshed.append({"symbol": symbol, "collection": collection, **variants})
         except Exception as exc:
             errors.append({"symbol": symbol, "error": f"{type(exc).__name__}: {exc}"})
     payload = stance_backtest_dashboard(repo, symbols=requested)
     payload["refresh"] = {
         "requested": requested,
-        "refreshed": [item["symbol"] for item in refreshed],
+        "refreshed": refreshed,
         "errors": errors,
     }
     payload["status"] = "ok" if not errors else "partial" if refreshed else "error"
@@ -90,16 +119,22 @@ def evaluate_stance_history(
     settings: Any,
     horizon_bars: int = 6,
     generated_at: datetime | None = None,
+    directional_v2: bool = True,
 ) -> dict[str, Any]:
     ordered = sorted(candles, key=lambda item: item.timestamp)
-    if len(ordered) < MIN_CHART_CANDLES + horizon_bars:
+    quality = _data_quality(ordered, timeframe)
+    quality_floor = int(getattr(settings, "backtest_data_quality_floor", 70))
+    usable = _quality_filtered_segment(ordered, timeframe)
+    if len(usable) < MIN_CHART_CANDLES + horizon_bars:
         raise ValueError(f"confirmed history requires at least {MIN_CHART_CANDLES + horizon_bars} candles")
+    ordered = usable
     horizon = max(1, int(horizon_bars))
     points = replay_confirmed_stance_points(
         symbol=symbol,
         timeframe=timeframe,
         candles=ordered,
         hysteresis_params=hysteresis_params_from_settings(settings),
+        directional_v2=directional_v2,
     )
     points_by_time = {int(point["time"]): point for point in points}
     asset_class = "stock" if symbol.upper() == "SOXLUSDT" else "crypto"
@@ -144,26 +179,35 @@ def evaluate_stance_history(
     )
     sample_size = len(cases)
     hit_rate = round(sum(wins) / sample_size * 100, 1) if sample_size else None
-    quality = _data_quality(ordered, timeframe)
     expected_replay_points = max(1, len(ordered) - MIN_CHART_CANDLES + 1)
     replay_coverage_pct = round(len(points) / expected_replay_points * 100, 1)
     sample_floor = int(getattr(settings, "stance_backtest_sample_floor", 30))
-    quality_floor = int(getattr(settings, "backtest_data_quality_floor", 70))
     sample_sufficient = sample_size >= sample_floor
     quality_sufficient = quality["score"] >= quality_floor
     publishable = sample_sufficient and quality_sufficient and ci is not None
-    period = {"from": ordered[0].timestamp.isoformat(), "to": ordered[-1].timestamp.isoformat()}
-    if hit_rate is None or ci is None:
-        statement = f"{symbol.upper()} T+24h net 방향 적중 CI 미산출 (N={sample_size}) — 결론 유보"
-    elif not sample_sufficient:
-        statement = f"{symbol.upper()} T+24h net 방향 적중 {hit_rate}% (95% CI {ci[0]}~{ci[1]}%, N={sample_size}) · 표본 부족 — 결론 유보"
-    elif not quality_sufficient:
+    period = {
+        "from": ordered[0].timestamp.isoformat(),
+        "to": ordered[-1].timestamp.isoformat(),
+        "label": f"{ordered[0].timestamp.date()}~{ordered[-1].timestamp.date()}",
+    }
+    engine_version = "v2" if directional_v2 else "v1"
+    statement = format_stat_line(
+        {
+            "sample_size": sample_size,
+            "win_1r_pct": hit_rate,
+            "win_1r_ci": list(ci) if ci else None,
+            "period": period,
+        },
+        sample_floor=sample_floor,
+        label=f"{symbol.upper()} {engine_version} T+24h",
+        metric_label="net 방향 적중",
+    )
+    if not quality_sufficient:
         statement = f"{symbol.upper()} 데이터 품질 {quality['score']}/100 — 통계 발행 보류"
-    else:
-        statement = f"{symbol.upper()} T+24h net 방향 적중 {hit_rate}% (95% CI {ci[0]}~{ci[1]}%, N={sample_size})"
     net_returns = [float(case["net_directional_return_pct"]) for case in cases]
     return {
-        "signature_key": SIGNATURE_KEY,
+        "signature_key": SIGNATURE_KEYS[directional_v2],
+        "engine_version": engine_version,
         "symbol": symbol.upper(),
         "timeframe": timeframe,
         "source": "bitget_real_history",
@@ -171,6 +215,7 @@ def evaluate_stance_history(
         "generated_at": (generated_at or utc_now()).isoformat(),
         "period": period,
         "candle_count": len(ordered),
+        "raw_candle_count": len(candles),
         "candle_sha256": _candle_hash(ordered),
         "horizon_bars": horizon,
         "horizon_label": f"T+{round(horizon * timeframe_seconds(timeframe) / 3600)}h",
@@ -192,7 +237,13 @@ def evaluate_stance_history(
         "median_net_directional_return_pct": round(median(net_returns), 4) if net_returns else None,
         "skipped": skipped,
         "cases": cases,
-        "methodology": {**METHODOLOGY, "timeframe": timeframe, "horizon_bars": horizon, "stride_bars": horizon},
+        "methodology": {
+            **METHODOLOGY,
+            "engine": f"directional_{engine_version}",
+            "timeframe": timeframe,
+            "horizon_bars": horizon,
+            "stride_bars": horizon,
+        },
         "limitations": [
             "과거 펀딩·OI·청산 데이터는 포함하지 않음; 없는 값을 0이나 현재값으로 대체하지 않음",
             "Bitget 퍼페추얼 4시간봉 종가 기반이며 장중 경로를 재구성하지 않음",
@@ -206,9 +257,12 @@ def stance_backtest_dashboard(repo: Any, *, symbols: list[str] | tuple[str, ...]
     requested = [str(symbol).upper() for symbol in (symbols or DEFAULT_SYMBOLS)]
     items: list[dict[str, Any]] = []
     for symbol in requested:
-        rows = repo.list_backtest_stats(symbol=symbol, signature_key=SIGNATURE_KEY, limit=1)
-        if rows:
-            items.append(_dashboard_item(rows[0].payload))
+        v1_rows = repo.list_backtest_stats(symbol=symbol, signature_key=SIGNATURE_KEY_V1, limit=1)
+        v2_rows = repo.list_backtest_stats(symbol=symbol, signature_key=SIGNATURE_KEY, limit=1)
+        if v2_rows:
+            v2 = _dashboard_item(v2_rows[0].payload)
+            v1 = _dashboard_item(v1_rows[0].payload) if v1_rows else None
+            items.append({**v2, "v1": v1, "v2": v2, "comparison": _compare_variants(v1, v2)})
         else:
             items.append(
                 {
@@ -224,12 +278,16 @@ def stance_backtest_dashboard(repo: Any, *, symbols: list[str] | tuple[str, ...]
                     "decision": "pending",
                     "statement": "실제 히스토리 검증 대기",
                     "limitations": [],
+                    "v1": None,
+                    "v2": None,
+                    "comparison": {"ci_nonoverlap": False, "v2_improvement_proven": False, "claim": "동일 표본 비교 대기"},
                 }
             )
     available = sum(1 for item in items if item.get("generated_at"))
     return {
         "status": "ok" if available == len(requested) else "pending" if available == 0 else "partial",
         "signature_key": SIGNATURE_KEY,
+        "comparison_signature_key": SIGNATURE_KEY_V1,
         "synthetic_result_combined": False,
         "items": items,
         "available": available,
@@ -241,12 +299,12 @@ def stance_backtest_dashboard(repo: Any, *, symbols: list[str] | tuple[str, ...]
 
 def _as_stat(result: dict[str, Any], candles: list[MarketCandle]) -> BacktestStat:
     return BacktestStat(
-        signature_key=SIGNATURE_KEY,
+        signature_key=str(result["signature_key"]),
         symbol=str(result["symbol"]),
         timeframe=str(result["timeframe"]),
         asset_class="stock" if result["symbol"] == "SOXLUSDT" else "crypto",
         scope="symbol",
-        engine="directional_v2",
+        engine=f"directional_{result['engine_version']}",
         event_type="forward_close_24h",
         strength_class="real_history",
         direction="neutral",
@@ -264,6 +322,20 @@ def _dashboard_item(payload: dict[str, Any]) -> dict[str, Any]:
     """Keep per-case audit rows in the ledger, not in the status poll payload."""
 
     return {key: value for key, value in payload.items() if key not in {"cases", "candle_sha256"}}
+
+
+def _compare_variants(v1: dict[str, Any] | None, v2: dict[str, Any]) -> dict[str, Any]:
+    v1_ci = v1.get("directional_hit_ci") if v1 else None
+    v2_ci = v2.get("directional_hit_ci")
+    if not (isinstance(v1_ci, list) and len(v1_ci) == 2 and isinstance(v2_ci, list) and len(v2_ci) == 2):
+        return {"ci_nonoverlap": False, "v2_improvement_proven": False, "claim": "CI 비교 불가"}
+    nonoverlap = float(v2_ci[0]) > float(v1_ci[1]) or float(v1_ci[0]) > float(v2_ci[1])
+    improved = float(v2_ci[0]) > float(v1_ci[1])
+    return {
+        "ci_nonoverlap": nonoverlap,
+        "v2_improvement_proven": improved,
+        "claim": "v2 개선 입증" if improved else "v1/v2 차이 유의하지 않음" if not nonoverlap else "v2 열위 관측",
+    }
 
 
 def _market_candle(candle: Candle | MarketCandle) -> MarketCandle:
@@ -284,8 +356,32 @@ def _data_quality(candles: list[MarketCandle], timeframe: str) -> dict[str, Any]
         "score": score,
         "gap_count": gaps,
         "invalid_ohlc_count": invalid_ohlc,
+        "excluded_reasons": [
+            *([f"timeframe_gap:{gaps}"] if gaps else []),
+            *([f"invalid_ohlc:{invalid_ohlc}"] if invalid_ohlc else []),
+        ],
         "confirmed_only": True,
     }
+
+
+def _quality_filtered_segment(candles: list[MarketCandle], timeframe: str) -> list[MarketCandle]:
+    """Use the longest valid, contiguous segment; never bridge corrupt history."""
+
+    expected = timeframe_seconds(timeframe)
+    segments: list[list[MarketCandle]] = []
+    current: list[MarketCandle] = []
+    for candle in candles:
+        valid = candle.low <= min(candle.open, candle.close) and candle.high >= max(candle.open, candle.close) and candle.low <= candle.high
+        contiguous = not current or int((candle.timestamp - current[-1].timestamp).total_seconds()) == expected
+        if not valid or not contiguous:
+            if current:
+                segments.append(current)
+            current = []
+        if valid:
+            current.append(candle)
+    if current:
+        segments.append(current)
+    return max(segments, key=len, default=[])
 
 
 def _candle_hash(candles: list[MarketCandle]) -> str:

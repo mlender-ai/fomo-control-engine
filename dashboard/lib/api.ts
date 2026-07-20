@@ -2180,7 +2180,7 @@ export type StanceBacktestItem = {
   source: "bitget_real_history";
   real_history: true;
   generated_at: string | null;
-  period?: { from: string; to: string };
+  period?: { from: string; to: string; label?: string };
   candle_count?: number;
   horizon_label?: string;
   cost_pct?: number;
@@ -2189,16 +2189,20 @@ export type StanceBacktestItem = {
   sample_size: number;
   sample_floor?: number;
   sample_sufficient: boolean;
-  data_quality?: { score: number; gap_count: number; invalid_ohlc_count: number; confirmed_only: boolean };
+  data_quality?: { score: number; gap_count: number; invalid_ohlc_count: number; excluded_reasons?: string[]; confirmed_only: boolean };
   publishable: boolean;
   decision: "published" | "withheld" | "pending";
   statement: string;
   limitations: string[];
+  v1?: { directional_hit_pct?: number | null; directional_hit_ci?: [number, number] | null; sample_size: number; statement: string } | null;
+  v2?: { directional_hit_pct?: number | null; directional_hit_ci?: [number, number] | null; sample_size: number; statement: string } | null;
+  comparison?: { ci_nonoverlap: boolean; v2_improvement_proven: boolean; claim: string };
 };
 
 export type StanceBacktestDashboard = {
   status: "ok" | "partial" | "pending" | "error";
   signature_key: string;
+  comparison_signature_key?: string;
   synthetic_result_combined: false;
   items: StanceBacktestItem[];
   available: number;
