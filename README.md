@@ -132,6 +132,7 @@ npm run astryx -- component --list --detail brief
 
 See:
 
+- `docs/FCE-MOAT-STRATEGY-01.md`
 - `docs/UXUIDesignSystem.md`
 - `docs/AstryxIntegration.md`
 - `docs/TerminalUX.md`

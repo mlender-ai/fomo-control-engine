@@ -58,7 +58,7 @@
 
 ## 문서
 
-- `docs/FceMoatStrategy.md`
+- `docs/FCE-MOAT-STRATEGY-01.md`
 - `docs/DirectionalEngine.md`
 - `docs/Backtest.md`
 
