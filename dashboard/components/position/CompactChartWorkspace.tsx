@@ -13,8 +13,18 @@ export type CompactNextPrice = {
   detail: string;
 };
 
+const COMPACT_TIMEFRAMES = [
+  { value: "15m", label: "15분" },
+  { value: "1h", label: "1시간" },
+  { value: "4h", label: "4시간" },
+  { value: "12h", label: "12시간" },
+  { value: "1d", label: "일봉" }
+] as const;
+
 export function CompactChartWorkspace({
   analysis,
+  selectedTimeframe,
+  onSelectTimeframe,
   loading,
   error,
   onRetry,
@@ -31,6 +41,8 @@ export function CompactChartWorkspace({
   onOpenEvidence
 }: {
   analysis: PositionChartAnalysis | null;
+  selectedTimeframe?: string;
+  onSelectTimeframe?: (timeframe: string) => void;
   loading: boolean;
   error: string;
   onRetry: () => void;
@@ -51,6 +63,29 @@ export function CompactChartWorkspace({
   return (
     <section className="compactChartWorkspace" data-testid="compact-chart-workspace">
       <div className="compactChartMain">
+        {selectedTimeframe && onSelectTimeframe ? (
+          <div className="compactChartTimeframeBar" data-testid="minimal-timeframe-selector">
+            <div role="group" aria-label="미니멀 차트 시간봉 선택">
+              {COMPACT_TIMEFRAMES.map((item) => (
+                <button
+                  aria-pressed={selectedTimeframe === item.value}
+                  className={selectedTimeframe === item.value ? "active" : ""}
+                  data-testid={`minimal-timeframe-${item.value}`}
+                  key={item.value}
+                  onClick={() => onSelectTimeframe(item.value)}
+                  type="button"
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+            <p>
+              <span>현재가</span>
+              <strong>{analysis ? formatPrice(analysis.mark_price) : "-"}</strong>
+              <small>{loading ? `${compactTimeframeLabel(selectedTimeframe)} 불러오는 중` : "확정 캔들만 표시"}</small>
+            </p>
+          </div>
+        ) : null}
         <PositionChart
           analysis={analysis}
           loading={loading}
@@ -88,6 +123,10 @@ export function CompactChartWorkspace({
       )}
     </section>
   );
+}
+
+function compactTimeframeLabel(timeframe: string): string {
+  return COMPACT_TIMEFRAMES.find((item) => item.value === timeframe)?.label ?? timeframe;
 }
 
 export function CompactGaugePanel({

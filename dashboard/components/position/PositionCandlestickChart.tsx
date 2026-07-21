@@ -14,7 +14,15 @@ import {
   type SeriesMarker,
   type Time
 } from "lightweight-charts";
-import { useEffect, useMemo, useRef, useState, type PointerEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent
+} from "react";
 import {
   api,
   type ChartCandle,
@@ -120,6 +128,7 @@ export function PositionCandlestickChart({
   const [heatmapFilters, setHeatmapFilters] = useState<HeatmapFilters>(loadHeatmapFilters);
   const [heatmapOpacity, setHeatmapOpacity] = useState(loadHeatmapOpacity);
   const [heatmapHighlightPrice, setHeatmapHighlightPrice] = useState<number | null>(null);
+  const [selectedWhaleMarkerKey, setSelectedWhaleMarkerKey] = useState("");
   const showSecondaryTaRows = useSecondaryTaRows();
   const validation = useMemo(() => validateCandles(analysis.candles), [analysis.candles]);
   const visibleCandles = useMemo(
@@ -141,8 +150,20 @@ export function PositionCandlestickChart({
     [effectiveLayers.flow, effectiveLayers.ta]
   );
   const priceLines = useMemo(
-    () => (validation.valid ? priceLinesForAnalysis(analysis) : []),
-    [analysis, validation.valid]
+    () => (validation.valid && layerMode === "pro" ? priceLinesForAnalysis(analysis) : []),
+    [analysis, layerMode, validation.valid]
+  );
+  const visibleWhaleMarkers = useMemo(
+    () => (
+      analysis.asset_class === "stock" || (layerMode === "pro" && !effectiveLayers.ta.includes("onchain"))
+        ? []
+        : (analysis.onchain?.markers ?? []).slice(0, 8)
+    ),
+    [analysis.asset_class, analysis.onchain?.markers, effectiveLayers.ta, layerMode]
+  );
+  const selectedWhaleMarker = useMemo(
+    () => visibleWhaleMarkers.find((marker) => onchainMarkerKey(marker) === selectedWhaleMarkerKey) ?? null,
+    [selectedWhaleMarkerKey, visibleWhaleMarkers]
   );
   const lastCandle = validation.candles.at(-1);
   const averageVolume = validation.valid ? average(visibleCandles.map((candle) => candle.volume)) : 0;
@@ -249,6 +270,7 @@ export function PositionCandlestickChart({
 
   useEffect(() => {
     setHarmonicIndex(0);
+    setSelectedWhaleMarkerKey("");
   }, [analysis.position_id, analysis.timeframe]);
 
   useEffect(() => {
@@ -679,6 +701,25 @@ export function PositionCandlestickChart({
     intentZoneSelector.onComplete(lower, upper);
   }
 
+  function selectWhaleMarkerFromTarget(target: EventTarget | null): boolean {
+    if (!(target instanceof Element)) return false;
+    const markerNode = target.closest<SVGGElement>("[data-whale-marker-key]");
+    const key = markerNode?.dataset.whaleMarkerKey;
+    if (!key) return false;
+    setSelectedWhaleMarkerKey((current) => current === key ? "" : key);
+    return true;
+  }
+
+  function handleOverlayClick(event: ReactMouseEvent<SVGSVGElement>) {
+    selectWhaleMarkerFromTarget(event.target);
+  }
+
+  function handleOverlayKeyDown(event: ReactKeyboardEvent<SVGSVGElement>) {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    if (!selectWhaleMarkerFromTarget(event.target)) return;
+    event.preventDefault();
+  }
+
   if (!validation.valid) {
     return (
       <div className="chartErrorState">
@@ -780,7 +821,13 @@ export function PositionCandlestickChart({
       <div className={`positionChartCanvasFrame ${guideOpen ? "showOverlayGuides" : ""}`} data-testid="chart-canvas-frame">
         <div className="positionChartCanvas" data-testid="chart-canvas" ref={containerRef} />
         <canvas className="unifiedHeatmapCanvas" data-testid="unified-heatmap-canvas" ref={heatmapCanvasRef} />
-        <svg className="volumeProfileOverlay" data-testid="chart-overlay" ref={overlayRef} />
+        <svg
+          className="volumeProfileOverlay"
+          data-testid="chart-overlay"
+          onClick={handleOverlayClick}
+          onKeyDown={handleOverlayKeyDown}
+          ref={overlayRef}
+        />
         {realizedHeatmapActive && heatmap ? <HeatmapLegend heatmap={heatmap} /> : null}
         {seriesLayerState.ema && emaRibbon ? <EmaRibbonHud ribbon={emaRibbon} /> : null}
         {zoneBand ? (
@@ -806,6 +853,12 @@ export function PositionCandlestickChart({
         ) : null}
         {guideOpen ? <ChartGuideLayer layer={guideLayer} /> : null}
       </div>
+      {visibleWhaleMarkers.length ? (
+        <WhaleMarkerLegend hasValidated={visibleWhaleMarkers.some((marker) => marker.emphasized)} />
+      ) : null}
+      {selectedWhaleMarker ? (
+        <WhaleMarkerDetails marker={selectedWhaleMarker} onClose={() => setSelectedWhaleMarkerKey("")} />
+      ) : null}
       {effectiveLayers.flow ? <VolumePanel analysis={analysis} averageVolume={averageVolume} /> : null}
     </>
   );
@@ -2207,25 +2260,33 @@ function onchainMarkerNodes(context: OverlayContext, marker: OnchainChartMarker)
   const y = clamp(priceY + (above ? -stem : stem), 16, context.height - 18);
   const green = context.palette.color("green", marker.emphasized || marker.live ? 0.98 : 0.78);
   const red = context.palette.color("red", marker.emphasized || marker.live ? 0.98 : 0.78);
-  const strokeWidth = marker.emphasized || marker.live ? 2 : 1.5;
+  const strokeWidth = marker.emphasized ? 2.4 : 1.2;
   const title = onchainMarkerTitle(marker);
   const shapes: string[] = [];
   shapes.push(`<line x1="${x}" x2="${x}" y1="${priceY}" y2="${y}" stroke="${marker.side === "long" ? green : red}" stroke-width="1" stroke-dasharray="2 3" opacity="0.72" />`);
   const color = marker.side === "long" ? green : red;
-  const fill = marker.kind === "exit" ? context.palette.color("panel", 0.88) : color;
+  const fill = color;
   const triangle = marker.side === "long"
     ? `M ${x} ${y - radius} L ${x - radius} ${y + radius} L ${x + radius} ${y + radius} Z`
     : `M ${x - radius} ${y - radius} L ${x + radius} ${y - radius} L ${x} ${y + radius} Z`;
+  const markerKey = onchainMarkerKey(marker);
+  const action = marker.kind === "entry" ? "+" : "−";
   shapes.push(
-    `<g class="onchainMarker ${marker.emphasized ? "validated" : "candidate"}" data-testid="onchain-marker" data-shape="triangle" data-side="${marker.side}" data-live="${marker.live ? "true" : "false"}"><path d="${triangle}" fill="${fill}" stroke="${color}" stroke-width="${strokeWidth}" /><title>${escapeSvgText(title)}</title></g>`
+    `<g class="onchainMarker ${marker.emphasized ? "validated" : "candidate"}" data-testid="onchain-marker" data-shape="triangle" data-side="${marker.side}" data-kind="${marker.kind}" data-live="${marker.live ? "true" : "false"}" data-whale-marker-key="${escapeSvgText(markerKey)}" role="button" tabindex="0" aria-label="${escapeSvgText(title)}"><path d="${triangle}" fill="${fill}" stroke="${marker.emphasized ? context.palette.color("text", 0.98) : color}" stroke-width="${strokeWidth}" />${marker.emphasized ? `<path d="${triangle}" fill="none" stroke="${color}" stroke-width="4.5" opacity="0.42" />` : ""}<text x="${x + radius + 2}" y="${y + 3}" fill="${color}" font-size="9" font-weight="800" font-family="SF Mono, Monaco, Consolas, monospace">${action}</text><title>${escapeSvgText(title)}</title></g>`
   );
   const label = onchainOperationLabel(marker);
-  const labelX = clamp(x + radius + 4, 8, context.right - 54);
+  const labelX = marker.live
+    ? clamp(x - 68, 8, context.right - 66)
+    : clamp(x + radius + 10, 8, context.right - 54);
   const labelY = clamp(y + 3, 10, context.height - 10);
   const badges = context.minimal && !marker.live ? [] : [
-    `<g class="onchainMarkerLabel ${marker.emphasized ? "validated" : "candidate"}"><title>${escapeSvgText(title)}</title><text x="${labelX}" y="${labelY}" fill="${marker.side === "long" ? green : red}" font-size="9" font-weight="700" font-family="SF Mono, Monaco, Consolas, monospace">${escapeSvgText(marker.live ? `LIVE ${label}` : label)}</text></g>`
+    `<g class="onchainMarkerLabel ${marker.emphasized ? "validated" : "candidate"}"><title>${escapeSvgText(title)}</title><text x="${labelX}" y="${labelY}" fill="${marker.side === "long" ? green : red}" font-size="9" font-weight="700" font-family="SF Mono, Monaco, Consolas, monospace">${escapeSvgText(marker.live ? `실시간 ${marker.side === "long" ? "롱" : "숏"}${action}` : label)}</text></g>`
   ];
   return { shapes, badges };
+}
+
+function onchainMarkerKey(marker: OnchainChartMarker): string {
+  return `${marker.event_time ?? marker.time}:${marker.side}:${marker.kind}:${marker.event}`;
 }
 
 function onchainMarkerTitle(marker: OnchainChartMarker): string {
@@ -2250,6 +2311,65 @@ function onchainOperationLabel(marker: OnchainChartMarker): string {
   const side = marker.side === "long" ? "L" : "S";
   const operation = marker.kind === "entry" ? "+" : "−";
   return `${side}${operation}${marker.count > 1 ? `×${marker.count}` : ""}`;
+}
+
+function WhaleMarkerLegend({ hasValidated }: { hasValidated: boolean }) {
+  return (
+    <div className="whaleMarkerLegend" data-testid="whale-marker-legend">
+      <span className="long">▲ 롱 체결</span>
+      <span className="short">▼ 숏 체결</span>
+      <span><b>+</b> 진입·증액</span>
+      <span><b>−</b> 감액·청산</span>
+      {hasValidated ? <span className="validated">외곽 링 · 검증 통과 지갑 포함</span> : null}
+      <small>삼각형을 눌러 지갑과 체결 금액 확인</small>
+    </div>
+  );
+}
+
+function WhaleMarkerDetails({ marker, onClose }: { marker: OnchainChartMarker; onClose: () => void }) {
+  const side = marker.side === "long" ? "롱" : "숏";
+  const action = marker.kind === "entry" ? "진입·증액" : "감액·청산";
+  return (
+    <section className={`whaleMarkerDetails ${marker.side}`} data-testid="whale-marker-details" aria-live="polite">
+      <header>
+        <div>
+          <span>{marker.live ? "실시간 확정 체결" : "확정 체결"}</span>
+          <strong>{side} {action} · {formatUsd(marker.size_usd)}</strong>
+          <small>{formatOnchainEventTime(new Date((marker.event_time ?? marker.time) * 1000).toISOString())} · {marker.count}건</small>
+        </div>
+        <button aria-label="고래 체결 상세 닫기" onClick={onClose} type="button">×</button>
+      </header>
+      <div className="whaleMarkerEventList">
+        {marker.items.map((item) => (
+          <article key={item.id || `${item.wallet_address}-${item.event_at}-${item.event}`}>
+            <div>
+              <strong>{item.wallet_label}</strong>
+              <code>{item.wallet_address.slice(0, 7)}…{item.wallet_address.slice(-5)}</code>
+              <em className={item.validation_state === "validated" ? "validated" : "candidate"}>
+                {item.validation_state === "validated" ? "검증 통과" : "검증 중"}
+              </em>
+            </div>
+            <dl>
+              <div><dt>행동</dt><dd>{item.side === "long" ? "롱" : "숏"} · {onchainEventAction(item.event)}</dd></div>
+              <div><dt>금액</dt><dd>{formatUsd(item.size_usd)}</dd></div>
+              <div><dt>체결가</dt><dd>{item.entry_px ? formatPrice(item.entry_px) : item.mark_px ? formatPrice(item.mark_px) : "-"}</dd></div>
+              <div><dt>시각</dt><dd>{formatOnchainEventTime(item.event_at)}</dd></div>
+            </dl>
+            <p>{item.accuracy_label} · 별칭은 공개 주소 기반 추정</p>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function onchainEventAction(event: string): string {
+  if (event === "open") return "진입";
+  if (event === "increase") return "증액";
+  if (event === "reduce") return "감액";
+  if (event === "close") return "청산";
+  if (event === "flip") return "방향 전환";
+  return event;
 }
 
 

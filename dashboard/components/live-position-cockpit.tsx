@@ -320,7 +320,6 @@ export function LivePositionCockpit() {
       setSelectedChartAnalysis(analysis);
     } catch (err) {
       if (selectedChartRequestRef.current !== requestId) return;
-      if (showSpinner) setSelectedChartAnalysis(null);
       setSelectedChartError(err instanceof Error ? err.message : "차트 분석 데이터를 불러오지 못했습니다.");
     } finally {
       if (selectedChartRequestRef.current === requestId && showSpinner) setSelectedChartLoading(false);
@@ -415,9 +414,6 @@ export function LivePositionCockpit() {
       selectedChartAnalysis?.position_id === selected.position.id &&
       selectedChartAnalysis.detail_level === desiredDetailLevel &&
       selectedChartAnalysis.timeframe === chartTimeframe;
-    if (!hasCurrentChart) {
-      setSelectedChartAnalysis(null);
-    }
     void loadSelectedChart(selected.position.id, !hasCurrentChart, viewMode === "minimal");
   }, [chartTimeframe, loadSelectedChart, selected?.position.id, selectedChartAnalysis?.detail_level, selectedChartAnalysis?.position_id, selectedChartAnalysis?.timeframe, viewMode]);
 
@@ -531,12 +527,14 @@ export function LivePositionCockpit() {
                 <MinimalPositionWorkspace
                   payload={selectedPayload}
                   chartAnalysis={selectedChartForPayload}
+                  chartTimeframe={chartTimeframe}
                   chartLoading={selectedChartLoading}
                   chartError={selectedChartError}
                   deepDive={selectedDeepDiveForPayload}
                   deepDiveLoading={selectedDeepDiveLoading}
                   deepDiveError={selectedDeepDiveError}
                   onRetryChart={() => void loadSelectedChart(selectedPayload.position.id)}
+                  onSelectTimeframe={setChartTimeframe}
                   onRetryDeepDive={() => void loadSelectedDeepDive(selectedPayload.position.id)}
                   onSaveThesis={(value) => saveEntryThesis(selectedPayload.position.id, value)}
                   onRefresh={() => void refreshSelected(selectedPayload.position.id, selectedIsStockUnderlying)}
@@ -1140,12 +1138,14 @@ function ViewModeToggle({ mode, onChange }: { mode: FceViewMode; onChange: (mode
 function MinimalPositionWorkspace({
   payload,
   chartAnalysis,
+  chartTimeframe,
   chartLoading,
   chartError,
   deepDive,
   deepDiveLoading,
   deepDiveError,
   onRetryChart,
+  onSelectTimeframe,
   onRetryDeepDive,
   onSaveThesis,
   onRefresh,
@@ -1156,12 +1156,14 @@ function MinimalPositionWorkspace({
 }: {
   payload: LivePositionPayload;
   chartAnalysis: PositionChartAnalysis | null;
+  chartTimeframe: string;
   chartLoading: boolean;
   chartError: string;
   deepDive: PositionDeepDive | null;
   deepDiveLoading: boolean;
   deepDiveError: string;
   onRetryChart: () => void;
+  onSelectTimeframe: (timeframe: string) => void;
   onRetryDeepDive: () => void;
   onSaveThesis: (value: string) => Promise<void>;
   onRefresh: () => void;
@@ -1188,6 +1190,8 @@ function MinimalPositionWorkspace({
       </div>
       <CompactChartWorkspace
         analysis={chartAnalysis}
+        selectedTimeframe={chartTimeframe}
+        onSelectTimeframe={onSelectTimeframe}
         loading={chartLoading}
         error={chartError}
         onRetry={onRetryChart}

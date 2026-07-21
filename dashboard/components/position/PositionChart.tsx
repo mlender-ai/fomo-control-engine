@@ -57,7 +57,7 @@ export function PositionChart({
     );
   }
 
-  if (error || !analysis) {
+  if (!analysis) {
     return (
       <section className="positionChartPanel" data-testid="position-chart">
         <div className="chartErrorState">
@@ -85,6 +85,7 @@ export function PositionChart({
   return (
     <section className="positionChartPanel" data-testid="position-chart">
       {loading ? <div className="chartRefreshingBadge">차트 갱신 중</div> : null}
+      {error ? <div className="chartStaleWarning">새 시간봉을 불러오지 못해 직전 차트를 유지합니다. · {error}</div> : null}
       {analysis.underlying_join ? <UnderlyingJoinStrip analysis={analysis} /> : null}
       <PositionCandlestickChart
         analysis={analysis}
@@ -205,7 +206,7 @@ function OnchainFlowTimeline({
       </div>
       <footer>
         <span>{formatTimelineTime(start)}</span>
-        <span>진입·증액은 채움 / 감액·청산은 빈 원</span>
+        <span>+ 진입·증액 / − 감액·청산 · 차트 삼각형 클릭 시 상세</span>
         <span>{formatTimelineTime(end)}</span>
       </footer>
     </section>

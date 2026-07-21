@@ -28,8 +28,10 @@ The relevant settings are `FCE_HYPERLIQUID_WHALE_TRACKING_ENABLED`, `FCE_HYPERLI
 
 - Events are derived only after a fill appears in `userFillsByTime`.
 - Historical chart markers are anchored to the closed FCE candle that contains the confirmed fill and never moved to a later candle.
-- A confirmed fill in the still-open chart window is rendered at its observed fill price on the chart's right edge with a `LIVE` label. Its actual event timestamp is retained in the marker and tooltip; it is not assigned to the unfinished candle as if that candle were final.
-- The minimal chart refreshes its confirmed-fill overlay every 30 seconds for pure crypto symbols. Long fills use upward triangles, short fills use downward triangles; entries/increases are filled and reductions/closes are hollow.
+- A confirmed fill in the still-open chart window is rendered at its observed fill price on the chart's right edge with a `실시간` label. Its actual event timestamp is retained in the marker and click detail; it is not assigned to the unfinished candle as if that candle were final.
+- The minimal chart refreshes its confirmed-fill overlay every 30 seconds for pure crypto symbols. Long fills use green upward triangles and short fills use red downward triangles. Every triangle is filled consistently; `+` means entry/increase and `−` means reduce/close. A surrounding ring means that the group contains a wallet that passed the 28-day validation gate.
+- Selecting a chart marker shows the contributing wallet aliases and shortened public addresses, event actions, observed notionals, fill prices, event times, and validation state. Aliases remain explicitly unverified.
+- The minimal chart exposes 15-minute, 1-hour, 4-hour, 12-hour, and daily confirmed-candle views. The opaque current-price line is intentionally omitted there so it cannot be confused with a whale fill. Current mark price remains a numeric readout; no unfinished OHLC candle is fabricated from a single mark price.
 - The chart selects the most recent eight event groups by event time, not the eight largest notionals.
 - Coins that cannot map to a plain FCE `*USDT` symbol are stored but not rendered on an FCE chart.
 - Every wallet starts as a candidate. Its events are observation data, not a follow signal.

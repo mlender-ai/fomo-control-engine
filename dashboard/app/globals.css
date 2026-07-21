@@ -2913,7 +2913,12 @@ h3 {
 .volumeProfileOverlay .onchainMarker,
 .volumeProfileOverlay .onchainMarkerLabel {
   pointer-events: auto;
-  cursor: help;
+  cursor: pointer;
+}
+
+.volumeProfileOverlay .onchainMarker:focus {
+  outline: none;
+  filter: drop-shadow(0 0 5px currentColor);
 }
 
 .volumeProfileOverlay .onchainMarker.candidate,
@@ -7361,6 +7366,205 @@ button.actionPlanRow:not(:disabled):hover {
   gap: 12px;
   min-width: 0;
   align-items: stretch;
+}
+
+.compactChartTimeframeBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid var(--terminal-line);
+  border-radius: 8px;
+  background: var(--fce-surface-panel);
+  padding: 7px 9px;
+}
+
+.compactChartTimeframeBar > div {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.compactChartTimeframeBar button {
+  min-height: 30px;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--terminal-muted);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 800;
+  padding: 0 9px;
+}
+
+.compactChartTimeframeBar button:hover,
+.compactChartTimeframeBar button.active {
+  border-color: rgba(var(--chart-green-rgb), 0.52);
+  background: rgba(var(--chart-green-rgb), 0.11);
+  color: var(--terminal-positive);
+}
+
+.compactChartTimeframeBar > p {
+  display: inline-flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 6px;
+  margin: 0;
+  color: var(--terminal-muted);
+  white-space: nowrap;
+}
+
+.compactChartTimeframeBar > p span,
+.compactChartTimeframeBar > p small { font-size: 9px; }
+.compactChartTimeframeBar > p strong {
+  color: var(--terminal-text);
+  font-family: var(--fce-font-number);
+  font-size: 12px;
+}
+
+.chartStaleWarning {
+  border-bottom: 1px solid rgba(var(--chart-red-rgb), 0.38);
+  background: rgba(var(--chart-red-rgb), 0.09);
+  color: var(--terminal-negative);
+  padding: 7px 12px;
+  font-size: 9px;
+}
+
+.whaleMarkerLegend {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px 12px;
+  border-top: 1px solid var(--terminal-line);
+  background: var(--fce-surface-inset);
+  padding: 8px 12px;
+  color: var(--terminal-muted);
+  font-size: 9px;
+}
+
+.whaleMarkerLegend span { white-space: nowrap; }
+.whaleMarkerLegend .long { color: var(--terminal-positive); }
+.whaleMarkerLegend .short { color: var(--terminal-negative); }
+.whaleMarkerLegend .validated {
+  border: 1px solid rgba(var(--chart-neutral-rgb), 0.56);
+  border-radius: 999px;
+  padding: 2px 6px;
+  color: var(--terminal-text);
+}
+.whaleMarkerLegend small {
+  margin-left: auto;
+  color: var(--terminal-muted);
+  font-size: 9px;
+}
+
+.whaleMarkerDetails {
+  display: grid;
+  gap: 9px;
+  border-top: 2px solid var(--terminal-line);
+  background: var(--fce-surface-panel);
+  padding: 11px 12px 12px;
+}
+
+.whaleMarkerDetails.long { border-top-color: var(--terminal-positive); }
+.whaleMarkerDetails.short { border-top-color: var(--terminal-negative); }
+
+.whaleMarkerDetails > header,
+.whaleMarkerDetails > header > div,
+.whaleMarkerEventList,
+.whaleMarkerEventList article {
+  display: grid;
+}
+
+.whaleMarkerDetails > header {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 10px;
+}
+
+.whaleMarkerDetails > header > div { gap: 2px; }
+.whaleMarkerDetails > header span,
+.whaleMarkerDetails > header small {
+  color: var(--terminal-muted);
+  font-size: 9px;
+}
+.whaleMarkerDetails > header strong {
+  color: var(--terminal-text);
+  font-size: 12px;
+}
+.whaleMarkerDetails > header button {
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--terminal-line);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--terminal-muted);
+  cursor: pointer;
+  font-size: 18px;
+}
+
+.whaleMarkerEventList {
+  gap: 6px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.whaleMarkerEventList article {
+  gap: 6px;
+  border: 1px solid var(--terminal-line);
+  border-radius: 6px;
+  background: var(--fce-surface-inset);
+  padding: 8px;
+}
+
+.whaleMarkerEventList article > div {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.whaleMarkerEventList article strong { color: var(--terminal-text); font-size: 10px; }
+.whaleMarkerEventList article code { color: var(--terminal-muted); font-size: 9px; }
+.whaleMarkerEventList article em {
+  border-radius: 999px;
+  background: rgba(var(--chart-neutral-rgb), 0.12);
+  color: var(--terminal-muted);
+  font-size: 8px;
+  font-style: normal;
+  padding: 2px 5px;
+}
+.whaleMarkerEventList article em.validated {
+  background: rgba(var(--chart-green-rgb), 0.12);
+  color: var(--terminal-positive);
+}
+.whaleMarkerEventList dl {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0;
+}
+.whaleMarkerEventList dl > div { display: grid; gap: 1px; }
+.whaleMarkerEventList dt { color: var(--terminal-muted); font-size: 8px; }
+.whaleMarkerEventList dd {
+  margin: 0;
+  color: var(--terminal-text);
+  font-family: var(--fce-font-number);
+  font-size: 9px;
+  overflow-wrap: anywhere;
+}
+.whaleMarkerEventList article p {
+  margin: 0;
+  color: var(--terminal-muted);
+  font-size: 8px;
+}
+
+@media (max-width: 760px) {
+  .compactChartTimeframeBar { align-items: stretch; flex-direction: column; }
+  .compactChartTimeframeBar > div { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); }
+  .compactChartTimeframeBar button { padding: 0 4px; }
+  .compactChartTimeframeBar > p { justify-content: flex-start; }
+  .whaleMarkerLegend small { flex-basis: 100%; margin-left: 0; }
+  .whaleMarkerEventList dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 .positionDeepDivePanel {

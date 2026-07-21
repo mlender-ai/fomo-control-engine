@@ -240,16 +240,18 @@ test("minimal crypto chart renders confirmed whale long and short fills as trian
     const response = await route.fetch();
     const body = await response.json();
     const candles = body.candles ?? [];
-    expect(candles.length).toBeGreaterThanOrEqual(3);
+    expect(candles.length).toBeGreaterThanOrEqual(4);
+    const reduced = candles.at(-4);
     const historical = candles.at(-3);
     const liveAnchor = candles.at(-2);
-    const item = (side: "long" | "short", eventAt: string, price: number) => ({
+    const item = (side: "long" | "short", eventAt: string, price: number, event = "open") => ({
+      id: `${side}-${event}-${eventAt}`,
       wallet_address: "0x1111111111111111111111111111111111111111",
       wallet_label: "E2E 고래",
       coin: body.symbol?.replace("USDT", "") ?? "BTC",
       symbol: body.symbol ?? "BTCUSDT",
       side,
-      event: "open",
+      event,
       size_usd: 250_000,
       entry_px: price,
       mark_px: price,
@@ -268,6 +270,21 @@ test("minimal crypto chart renders confirmed whale long and short fills as trian
       policy: "확정 체결 관측 전용",
       validated_evidence: [],
       markers: [
+        {
+          time: reduced.time,
+          event_time: reduced.time + 60,
+          kind: "exit",
+          side: "long",
+          event: "reduce",
+          count: 1,
+          size_usd: 180_000,
+          size_tier: 1,
+          price: reduced.close,
+          label: "롱 감액",
+          emphasized: false,
+          live: false,
+          items: [item("long", new Date((reduced.time + 60) * 1000).toISOString(), reduced.close, "reduce")]
+        },
         {
           time: historical.time,
           event_time: historical.time + 60,
@@ -305,13 +322,31 @@ test("minimal crypto chart renders confirmed whale long and short fills as trian
 
   await page.goto("/");
   await expect(page.getByTestId("compact-chart-workspace")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("minimal-timeframe-selector")).toBeVisible();
+  await expect(page.getByTestId("minimal-timeframe-4h")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("minimal-timeframe-selector")).toContainText("확정 캔들만 표시");
   const markers = page.locator('[data-testid="onchain-marker"][data-shape="triangle"]');
-  await expect(markers).toHaveCount(2);
+  await expect(markers).toHaveCount(3);
   await expect(markers.filter({ has: page.locator("path") }).first()).toBeVisible();
-  await expect(page.locator('[data-testid="onchain-marker"][data-side="long"]')).toHaveCount(1);
+  await expect(page.locator('[data-testid="onchain-marker"][data-side="long"]')).toHaveCount(2);
   await expect(page.locator('[data-testid="onchain-marker"][data-side="short"][data-live="true"]')).toHaveCount(1);
-  await expect(page.locator(".onchainMarkerLabel")).toContainText("LIVE S+");
+  await expect(page.locator(".onchainMarkerLabel")).toContainText("실시간 숏+");
   await expect(page.locator('[data-testid="onchain-marker"][data-live="true"] title')).toContainText("체결");
+  await expect(page.getByTestId("whale-marker-legend")).toContainText("+ 진입·증액");
+  await expect(page.getByTestId("whale-marker-legend")).toContainText("− 감액·청산");
+  const markerFills = await markers.locator("path:first-of-type").evaluateAll((paths) => paths.map((path) => path.getAttribute("fill")));
+  expect(markerFills.every((fill) => Boolean(fill) && fill !== "none")).toBe(true);
+
+  await markers.filter({ has: page.locator("title") }).first().click();
+  await expect(page.getByTestId("whale-marker-details")).toContainText("E2E 고래");
+  await expect(page.getByTestId("whale-marker-details")).toContainText("$180.00K");
+  await expect(page.getByTestId("whale-marker-details")).toContainText("검증 중");
+
+  const oneHourRequest = page.waitForRequest((request) => request.url().includes("chart-analysis") && request.url().includes("timeframe=1h"));
+  await page.getByTestId("minimal-timeframe-1h").click();
+  await oneHourRequest;
+  await expect(page.getByTestId("minimal-timeframe-1h")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.getByTestId("position-chart")).toContainText("1시간봉");
 });
 
 test("unified liquidation density is the single live chart surface", async ({ page }) => {
