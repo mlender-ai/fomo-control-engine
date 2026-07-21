@@ -120,7 +120,7 @@ def run_stock_paper_engine(settings: Settings, market_payloads: dict[str, dict[s
                     "entry_gate_rejected",
                     symbol=symbol,
                     reason=reason,
-                    payload={"all_reasons": list(decision.rejection_reasons), "source": "stock-v2-shared-analysis"},
+                    payload={"all_reasons": list(decision.rejection_reasons), "source": f"{parameters.version}-shared-analysis"},
                 )
                 rejected += 1
                 continue
@@ -146,6 +146,7 @@ def run_stock_paper_engine(settings: Settings, market_payloads: dict[str, dict[s
                     "candidate": candidate,
                     "decision_gates": decision.gate_results,
                     "analysis_source": analysis.get("source"),
+                    "stance_state": ((analysis.get("confluence") or {}).get("stance_state") if isinstance(analysis.get("confluence"), dict) else None),
                     "signature_status": analysis.get("signature_status"),
                     "earnings_gate": analysis.get("earnings_gate"),
                 },

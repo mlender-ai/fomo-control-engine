@@ -29,11 +29,22 @@ def evaluate_stock_entry(analysis: dict[str, Any], *, data_fresh: bool, paramete
         results[gate] = {"status": "passed" if passed else "rejected", "measured_value": measured, "threshold": threshold, "required": True}
 
     required("analysis_available", analysis.get("status"), "analyzed", analysis.get("status") == "analyzed")
+    stance_measurement = {
+        "stance": state.get("stance"),
+        "flipped": state.get("flipped"),
+        "transitioning": state.get("transitioning"),
+    }
+    if parameters.stance_gate_mode == "stable_long":
+        stance_threshold = {"stance": ["long_leaning", "long"], "transitioning": False, "flipped": "record_only"}
+        stance_passed = state.get("stance") in {"long_leaning", "long"} and state.get("transitioning") is not True
+    else:
+        stance_threshold = {"stance": "long_leaning", "flipped": True, "transitioning": False}
+        stance_passed = state.get("stance") == "long_leaning" and state.get("flipped") is True and state.get("transitioning") is not True
     required(
         "confirmed_flip",
-        {"stance": state.get("stance"), "flipped": state.get("flipped"), "transitioning": state.get("transitioning")},
-        {"stance": "long", "flipped": True, "transitioning": False},
-        state.get("stance") == "long_leaning" and state.get("flipped") is True and state.get("transitioning") is not True,
+        stance_measurement,
+        stance_threshold,
+        stance_passed,
     )
     required("evidence", len(long_evidence), parameters.min_evidence, len(long_evidence) >= parameters.min_evidence)
     required(

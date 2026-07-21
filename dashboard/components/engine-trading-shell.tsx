@@ -208,7 +208,7 @@ function rejectionLabel(reason: string): string {
     validated_signature: "검증 표본 미달",
     earnings_clear: "실적 일정 미확인",
     liquidation_safety: "무효화선 근거 누락",
-    confirmed_flip: "확정 전환 미관측",
+    confirmed_flip: "안정 롱 스탠스 미충족",
     analysis_available: "공용 분석 캔들 부족",
     entry_score: "진입 점수 미달",
     checklist: "합류 체크 미달",

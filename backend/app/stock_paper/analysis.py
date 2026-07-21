@@ -79,6 +79,12 @@ def analyze_stock_candidate(
     return {
         "status": "analyzed",
         "source": "toss_observed+shared_chart_analysis+shared_confluence",
+        "asset_class": "equity",
+        "signal_availability": {
+            "ohlcv": {"available": True, "used_by_evidence": True},
+            "funding_rate": {"available": False, "used_by_evidence": False},
+            "open_interest": {"available": False, "used_by_evidence": False},
+        },
         "timeframe": timeframe,
         "chart_analysis": chart,
         "confluence": confluence,

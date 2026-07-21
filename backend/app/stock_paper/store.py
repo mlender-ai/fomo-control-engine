@@ -63,16 +63,27 @@ class StockPaperStore:
     def activate_clock(self, market: Market, *, parameter_version: str, observed_at: datetime) -> bool:
         now = observed_at.isoformat()
         ends = (observed_at + timedelta(weeks=4)).isoformat()
+        event = "validation_clock_started"
+        reason = "first_authenticated_observation"
         with self._connect() as connection:
-            row = connection.execute("SELECT clock_valid FROM stock_paper_tracks WHERE market=?", (market.value,)).fetchone()
-            if row is None or bool(row["clock_valid"]):
+            row = connection.execute(
+                "SELECT clock_valid, parameter_version FROM stock_paper_tracks WHERE market=?",
+                (market.value,),
+            ).fetchone()
+            if row is None:
                 return False
+            current_version = str(row["parameter_version"])
+            if bool(row["clock_valid"]) and current_version == parameter_version:
+                return False
+            if bool(row["clock_valid"]):
+                event = "validation_clock_restarted"
+                reason = f"parameter_version_changed:{current_version}->{parameter_version}"
             connection.execute(
                 """UPDATE stock_paper_tracks SET started_at=?, ends_at=?, clock_valid=1,
                 clock_invalidation_reason=NULL, parameter_version=?, status='running', updated_at=? WHERE market=?""",
                 (now, ends, parameter_version, now, market.value),
             )
-        self.record_event(market, "validation_clock_started", reason="first_authenticated_observation", observed_at=observed_at)
+        self.record_event(market, event, reason=reason, observed_at=observed_at)
         return True
 
     def save_analysis_snapshot(self, market: Market, symbol: str, *, observed_at: datetime, parameter_version: str, payload: dict[str, Any]) -> None:

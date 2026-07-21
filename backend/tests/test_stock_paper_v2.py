@@ -2,12 +2,16 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import asyncio
+from pathlib import Path
 import sqlite3
+from types import SimpleNamespace
 
 import httpx
 import pytest
 
 from app.db.migrations import run_migrations
+from app.stock_paper import analysis as stock_analysis
+from app.stock_paper.audit import audit_entry_gates
 from app.stock_paper.models import Market
 from app.stock_paper.parameters import load_stock_parameters
 from app.stock_paper.policy import evaluate_stock_entry
@@ -16,6 +20,9 @@ from app.stock_paper.universe import load_universe
 from app.toss.client import TossReadOnlyClient
 from app.toss.errors import TossAuthenticationError
 from app.toss.signals import build_candidate, group_candidates
+
+
+PARAMS_DIR = Path(__file__).parents[1] / "app" / "stock_paper" / "params"
 
 
 def _store(tmp_path) -> StockPaperStore:
@@ -75,6 +82,109 @@ def test_signature_and_earnings_are_recorded_not_silent_passes() -> None:
     assert decision.gate_results["earnings_gate"]["status"] == "not_evaluable"
 
 
+def test_stock_v3_replaces_momentary_flip_with_stable_long_without_lowering_thresholds() -> None:
+    v2 = load_stock_parameters(PARAMS_DIR / "stock-v2.json")
+    v3 = load_stock_parameters(PARAMS_DIR / "stock-v3.json")
+    assert v2.stance_gate_mode == "confirmed_flip"
+    assert v3.stance_gate_mode == "stable_long"
+    assert (
+        v3.min_evidence,
+        v3.min_checklist_passed,
+        v3.min_checklist_total,
+        v3.min_rr,
+        v3.min_entry_score,
+    ) == (
+        v2.min_evidence,
+        v2.min_checklist_passed,
+        v2.min_checklist_total,
+        v2.min_rr,
+        v2.min_entry_score,
+    )
+
+    analysis = {
+        "status": "analyzed",
+        "entry_score": 90,
+        "rr_ratio": 2,
+        "invalidation": {"price": 100},
+        "confluence": {
+            "stance_state": {"stance": "long_leaning", "flipped": False, "transitioning": False},
+            "long_evidence": [{"id": index} for index in range(5)],
+            "short_evidence": [],
+        },
+    }
+    assert evaluate_stock_entry(analysis, data_fresh=True, parameters=v2).gate_results["confirmed_flip"]["status"] == "rejected"
+    v3_decision = evaluate_stock_entry(analysis, data_fresh=True, parameters=v3)
+    assert v3_decision.enter is True
+    assert v3_decision.gate_results["confirmed_flip"]["measured_value"]["flipped"] is False
+    analysis["confluence"]["stance_state"]["transitioning"] = True
+    assert evaluate_stock_entry(analysis, data_fresh=True, parameters=v3).gate_results["confirmed_flip"]["status"] == "rejected"
+
+
+def test_stock_v3_replay_keeps_entry_score_as_remaining_hard_gate(tmp_path) -> None:
+    store = _store(tmp_path)
+    observed_at = datetime(2026, 7, 21, 10, 0, tzinfo=timezone.utc)
+    store.save_analysis_snapshot(
+        Market.US,
+        "MU",
+        observed_at=observed_at,
+        parameter_version="stock-v2",
+        payload={
+            "status": "analyzed",
+            "entry_score": 56,
+            "rr_ratio": 6.2,
+            "invalidation": {"price": 87},
+            "confluence": {
+                "stance_state": {"stance": "long_leaning", "flipped": False, "transitioning": False},
+                "long_evidence": [{"engine": "structure"} for _ in range(9)],
+                "short_evidence": [{"engine": "volume"} for _ in range(3)],
+            },
+        },
+    )
+    audit = audit_entry_gates(
+        Path(store.path),
+        source_version="stock-v2",
+        policy_paths=(PARAMS_DIR / "stock-v2.json", PARAMS_DIR / "stock-v3.json"),
+    )
+    before, after = audit["policies"]
+    assert before["gates"]["confirmed_flip"]["rejected"] == 1
+    assert after["gates"]["confirmed_flip"]["passed"] == 1
+    assert after["gates"]["entry_score"]["rejected"] == 1
+    assert after["entered"] == 0
+
+
+def test_equity_signal_availability_never_claims_derivatives_evidence(monkeypatch) -> None:
+    rows = [
+        {
+            "opened_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+            "open": 100,
+            "high": 102,
+            "low": 99,
+            "close": 101,
+            "volume": 1_000,
+        }
+        for _ in range(100)
+    ]
+    store = SimpleNamespace(latest_candles=lambda *_args: rows)
+    chart = {
+        "scenarios": {"long": {"invalidation": {"price": 95, "distance_pct": -5}, "take_profit": [{"price": 111, "distance_pct": 10}]}},
+    }
+    confluence = {
+        "stance_state": {"stance": "long_leaning", "flipped": False, "transitioning": False},
+        "long_evidence": [{"engine": "structure"}],
+        "short_evidence": [{"engine": "volume"}],
+    }
+    monkeypatch.setattr(stock_analysis, "build_chart_analysis", lambda _snapshot: chart)
+    monkeypatch.setattr(stock_analysis, "build_analyst_briefing", lambda **_kwargs: {"confluence": confluence})
+    monkeypatch.setattr(stock_analysis, "generate_report", lambda _snapshot: SimpleNamespace(entry_score=80))
+
+    result = stock_analysis.analyze_stock_candidate(store, Market.US, "NVDA", current_price=101)
+    evidence = [*result["confluence"]["long_evidence"], *result["confluence"]["short_evidence"]]
+    assert all(item["engine"] != "derivatives" for item in evidence)
+    assert result["asset_class"] == "equity"
+    assert result["signal_availability"]["funding_rate"] == {"available": False, "used_by_evidence": False}
+    assert result["signal_availability"]["open_interest"] == {"available": False, "used_by_evidence": False}
+
+
 def test_validation_clock_starts_only_after_authenticated_observation(tmp_path) -> None:
     store = _store(tmp_path)
     before = store.dashboard()
@@ -86,6 +196,21 @@ def test_validation_clock_starts_only_after_authenticated_observation(tmp_path) 
     kr = next(track for track in after["tracks"] if track["market"] == "KR")
     assert us["clock_valid"] == 1 and us["started_at"] == now.isoformat()
     assert kr["clock_valid"] == 0
+
+
+def test_validation_clock_restarts_once_when_policy_version_changes(tmp_path) -> None:
+    store = _store(tmp_path)
+    v2_at = datetime(2026, 7, 21, 1, 0, tzinfo=timezone.utc)
+    v3_at = datetime(2026, 7, 22, 1, 0, tzinfo=timezone.utc)
+    assert store.activate_clock(Market.US, parameter_version="stock-v2", observed_at=v2_at) is True
+    assert store.activate_clock(Market.US, parameter_version="stock-v3", observed_at=v3_at) is True
+    assert store.activate_clock(Market.US, parameter_version="stock-v3", observed_at=v3_at) is False
+    us = next(track for track in store.dashboard()["tracks"] if track["market"] == "US")
+    assert us["parameter_version"] == "stock-v3"
+    assert us["started_at"] == v3_at.isoformat()
+    with sqlite3.connect(store.path) as connection:
+        restart = connection.execute("SELECT reason FROM stock_paper_events WHERE market='US' AND event_type='validation_clock_restarted'").fetchone()
+    assert restart == ("parameter_version_changed:stock-v2->stock-v3",)
 
 
 def test_rejection_ledger_keeps_every_failed_gate(tmp_path) -> None:

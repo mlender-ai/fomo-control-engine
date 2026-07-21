@@ -28,7 +28,7 @@ WO-FCE-89 정본. 해자의 단위는 화면 기능이 아니라 **당시 가격
 | 고래 추종 관측 | `candidate_signature(engine=whale)` | 기록 중 | T+24h 방향; 미검증 고래는 자동 진입에 사용하지 않음 |
 | 교차 심화신호 (`position_deepdive`) | Bitget×Toss×포지션 | 기록 중 | Toss outcome T+1·5·20; 표본 N<30 유보 |
 | analyst briefing | 포지션 보고서 | 기록 중 | 종료 가격경로로 expected move 채점 |
-| 페이퍼 진입/청산 (`paper_trade_entry`) | paper engine | 기록 중 | 청산 net PnL 및 R 결과 |
+| 페이퍼 진입/청산 (`paper_trade_entry`) | paper engine | 기록 중 | 청산 net PnL 및 R 결과; stock-v3는 진입 evidence의 `stance_state.flipped`로 전환 직후/안정 후를 분리하고 N<30이면 유보 |
 | FOMO 진입 판정 (`fomo_entry`) | WO-FCE-90 entry snapshot | 기록 중 | 청산 시 FOMO 귀속 손실 여부 |
 | 알림 전달 (`alert_fired`) | alert store | 채점 불가 | 전달 envelope; 의미 판단은 별도 semantic row |
 | 진입 스냅샷 (`position_entry_snapshot`) | position deepdive | 채점 불가 | 당시 사실 기준점; 방향 주장이 아님 |
@@ -36,6 +36,11 @@ WO-FCE-89 정본. 해자의 단위는 화면 기능이 아니라 **당시 가격
 | 자율 강등·격리·승격 제안 | `autonomy_logs` | 채점 불가 | 거버넌스 결정 이력; 효과는 주간 ImprovementProof가 별도 평가 |
 
 와이코프·유동성 sweep·하모닉 PRZ는 기존 `wyckoff_event`, `liquidity_sweep`, `harmonic_prz`로 원장과 종료 scorecard에 이미 연결돼 있다. 신규 감지기 추가 모라토리엄은 `AGENTS.md`를 따른다.
+
+`flipped 시점 진입`은 별도 판단 행을 복제하지 않는다. stock-v3 PaperBroker의
+`paper_trade_entry` 근거에 stance·flipped·transitioning을 함께 고정하고, 종료 시 기존
+net PnL/R 결과를 flipped 여부로 분할 집계한다. 이것은 새로운 방향 신호가 아니라 기존
+페이퍼 진입 판단의 설명 변수다.
 
 ## 운영 표면
 
