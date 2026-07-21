@@ -1097,6 +1097,21 @@ def _scout_confluence(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _scout_tilt_label(summary: dict[str, Any], one_liners: dict[str, Any], confluence: dict[str, Any]) -> str:
+    stance_state = _dump(confluence.get("stance_state"))
+    if stance_state.get("transitioning"):
+        target = str(stance_state.get("target") or stance_state.get("pending_stance") or "")
+        target_label = {
+            "long_leaning": ("숏 ◀━━━○▶ 롱", "상방"),
+            "short_leaning": ("숏 ◀○━━━▶ 롱", "하방"),
+            "conflicted": ("숏 ◀━━○━━▶ 롱", "균형"),
+            "insufficient": ("숏 ◀━━○━━▶ 롱", "판단 유보"),
+        }.get(target)
+        if target_label:
+            try:
+                progress = round(float(stance_state.get("flip_threshold_progress") or 0) * 100)
+            except (TypeError, ValueError):
+                progress = 0
+            return f"{target_label[0]} ({target_label[1]} 전환 관찰 · 확정 {progress}%)"
     confluence_stance = str(confluence.get("stance") or "")
     stance = {
         "long_leaning": "상방",
@@ -1104,7 +1119,6 @@ def _scout_tilt_label(summary: dict[str, Any], one_liners: dict[str, Any], confl
         "conflicted": "충돌",
         "insufficient": "판단불가",
     }.get(confluence_stance, str(one_liners.get("overall_stance") or ""))
-    stance_state = _dump(confluence.get("stance_state"))
     candles = int(stance_state.get("candles_in_state") or 0)
     held = f" 유지 · {candles}캔들째" if candles > 0 else ""
     if stance == "상방":

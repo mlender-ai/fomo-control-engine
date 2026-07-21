@@ -77,6 +77,12 @@ For a verified map, the current Bitget mark is always the price of record. Toss 
 
 This decoration occurs after the existing Bitget analysis and gauges have been computed. It does not mutate cached analysis, Entry Score, paper-engine decisions, candidate promotion, or any order path. A pending/rejected map, missing Toss data, or a join error leaves the original Bitget chart intact.
 
+The scout direction is anchored only to confirmed Bitget candles at the requested timeframe. Toss `1d` candles decorate the verified underlying chart and remain a separately labelled observation; they do not advance the requested-timeframe directional state. An unfinished candle may explain a live price move but cannot advance hysteresis, judgment scoring, or a paper-entry gate. Telegram therefore surfaces a pending directional transition as `전환 관찰 · 확정 n%` instead of hiding it under the held `근거 충돌` label.
+
+Persisted directional state carries a scoring-semantics version. When evidence semantics change, an older EMA/hysteresis state is ignored and replaced from the latest confirmed candle so corrected evidence cannot remain contaminated by a score the current engine would no longer produce.
+
+`/scout` is read-only observation and never creates an order. The stock paper track is a separate Toss-underlying engine restricted to the versioned NASDAQ100/KOSPI100 universe; a tracked Bitget stock perpetual such as NBISUSDT is not automatically a stock-paper candidate unless its underlying is present in that universe through a separately approved change.
+
 ### Live-position source hierarchy (WO-FCE-BITGET-TOSS-MAP-02)
 
 The position cockpit is source-aware. For a stock-underlying perpetual, the summary panel names Bitget as the execution and live-price source and Toss as the read-only chart and structure source. It exposes the verification state, both source prices, basis, underlying session freshness, leverage context, and the explicit absence of US investor-category flow. A pending identity match can be approved from this panel and the chart is reloaded immediately.

@@ -292,10 +292,41 @@ def test_scout_quick_answer_uses_weighted_confluence_over_module_majority() -> N
     )
 
     assert "기준 00:24 KST" in text
-    assert "하방 우세 유지 · 31캔들째" in text
+    assert "균형 전환 관찰 · 확정 50%" in text
     assert "가중 판정: 롱 10.22 · 숏 41.31 · 상위 추세 하락" in text
     assert "전환 관찰: 순간 균형 시도 · 전환 문턱 50%" in text
     assert "상방 우세" not in text
+
+
+def test_scout_quick_answer_surfaces_pending_long_before_held_conflict() -> None:
+    text = format_scout_quick_answer(
+        {
+            "symbol": "NBISUSDT",
+            "timeframe": "4h",
+            "as_of": "2026-07-21T14:15:00+00:00",
+            "analysis": {"one_liners": {"lines": [], "counts": {}}},
+            "summary": {},
+            "analyst_briefing": {
+                "confluence": {
+                    "stance": "conflicted",
+                    "long_score": 26.3,
+                    "short_score": 20.44,
+                    "htf_context": {"htf_trend": "neutral_to_bullish"},
+                    "stance_state": {
+                        "stance": "conflicted",
+                        "transitioning": True,
+                        "target": "long_leaning",
+                        "pending_count": 1,
+                        "flip_threshold_progress": 0.5,
+                    },
+                }
+            },
+        }
+    )
+
+    assert "상방 전환 관찰 · 확정 50%" in text
+    assert "가중 근거 충돌" not in text
+    assert "전환 관찰: 순간 상방 시도 · 전환 문턱 50%" in text
 
 
 def test_scout_tracking_formatter_and_callbacks() -> None:

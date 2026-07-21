@@ -173,8 +173,12 @@ def crowding_score(latest: DerivativeMetric, history: list[DerivativeMetric]) ->
 def percentile_rank(value: float, samples: list[float]) -> float:
     if not samples:
         return 0.0
-    below_or_equal = sum(1 for sample in samples if sample <= value)
-    return round((below_or_equal / len(samples)) * 100, 2)
+    below = sum(1 for sample in samples if sample < value)
+    equal = sum(1 for sample in samples if sample == value)
+    # Mid-rank ties instead of treating every equal observation as strictly
+    # below the current value.  A flat zero-funding history must be the 50th
+    # percentile, not the 100th percentile ("extreme").
+    return round(((below + equal * 0.5) / len(samples)) * 100, 2)
 
 
 def _ratio_pressure(ratio: float | None) -> float:

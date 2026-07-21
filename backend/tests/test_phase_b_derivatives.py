@@ -27,7 +27,7 @@ from app.db.sqlite_utils import connect_sqlite
 from app.derivatives.engine import flow_summary
 from app.exchange.mock import MockMarketDataProvider
 from app.marketdata.coinglass import CoinglassProvider
-from app.marketdata.signals import build_derivative_signals
+from app.marketdata.signals import build_derivative_signals, funding_state, percentile_rank
 from app.notify.alerts import AlertEngine
 from app.notify.state import NotificationState
 from app.services import runtime as service
@@ -545,6 +545,30 @@ def test_derivative_signals_use_percentile_and_four_quadrant_classification() ->
     assert signals["oi_price_divergence"]["state"] == "price_up_oi_down"
     assert signals["funding_state"]["state"] in {"overheated", "extreme"}
     assert signals["crowding_score"]["score"] > 0
+
+
+def test_flat_zero_funding_history_is_neutral_not_extreme() -> None:
+    base = datetime(2026, 7, 21, tzinfo=timezone.utc)
+    history = [
+        DerivativeMetric(
+            symbol="NBISUSDT",
+            source="bitget",
+            tier="bitget_public",
+            as_of=base - timedelta(minutes=index * 5),
+            funding=0.0,
+            funding_interval_hours=8,
+        )
+        for index in range(20)
+    ]
+
+    state = funding_state(history[0], history)
+    signals = build_derivative_signals(history)
+
+    assert percentile_rank(0.0, [0.0] * 20) == 50.0
+    assert state is not None
+    assert state["abs_percentile_30d"] == 50.0
+    assert state["state"] == "neutral"
+    assert signals["crowding_score"]["components"]["funding_percentile"] == 50.0
 
 
 def test_coinglass_rate_budget_supports_twenty_symbols_at_five_minute_interval() -> None:

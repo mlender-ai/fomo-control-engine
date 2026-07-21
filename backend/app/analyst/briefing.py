@@ -8,6 +8,7 @@ from app.backtest.statistics import bootstrap_ci_from_counts, format_stat_line
 from app.db.models import JudgmentScore
 
 logger = logging.getLogger(__name__)
+DIRECTIONAL_SCORING_VERSION = "directional-v3"
 
 
 def build_analyst_briefing(
@@ -283,7 +284,14 @@ def load_directional_prior(repo: Any, symbol: str, timeframe: str) -> dict[str, 
         state = repo.get_directional_state(symbol, timeframe)
     except Exception:
         return None
-    return state if isinstance(state, dict) else None
+    if not isinstance(state, dict):
+        return None
+    # A directional evidence semantics change must not inherit the previous
+    # EMA/hysteresis state.  Otherwise corrected inputs can remain biased for
+    # several confirmed candles by a score that the current code cannot emit.
+    if state.get("scoring_version") != DIRECTIONAL_SCORING_VERSION:
+        return None
+    return state
 
 
 def persist_directional_state(repo: Any, symbol: str, timeframe: str, briefing: dict[str, Any]) -> bool:
@@ -296,8 +304,9 @@ def persist_directional_state(repo: Any, symbol: str, timeframe: str, briefing: 
     state = confluence.get("stance_state") if isinstance(confluence.get("stance_state"), dict) else None
     if not isinstance(state, dict) or not state.get("last_bar_at"):
         return False
+    versioned_state = {**state, "scoring_version": DIRECTIONAL_SCORING_VERSION}
     try:
-        return bool(repo.upsert_directional_state(symbol, timeframe, state))
+        return bool(repo.upsert_directional_state(symbol, timeframe, versioned_state))
     except Exception:
         logger.exception("failed to persist directional state", extra={"symbol": symbol.upper(), "timeframe": timeframe})
         return False

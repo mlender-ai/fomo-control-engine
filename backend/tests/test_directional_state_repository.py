@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app.analyst.briefing import load_directional_prior, persist_directional_state
+from app.analyst.briefing import DIRECTIONAL_SCORING_VERSION, load_directional_prior, persist_directional_state
 from app.db.repository import MemoryRepository, SQLiteRepository
 
 
@@ -44,6 +44,21 @@ def test_same_confirmed_candle_does_not_write_again() -> None:
     assert persist_directional_state(repo, "BTCUSDT", "4h", first) is True
     assert persist_directional_state(repo, "BTCUSDT", "4h", same_bar_with_new_preview) is False
     assert load_directional_prior(repo, "BTCUSDT", "4h")["stance"] == "long_leaning"
+
+
+def test_scoring_version_change_replaces_stale_state_on_same_bar() -> None:
+    repo = MemoryRepository()
+    last_bar_at = "2026-07-21T08:00:00+00:00"
+    legacy_state = _briefing(last_bar_at)["confluence"]["stance_state"]
+
+    assert repo.upsert_directional_state("NBISUSDT", "4h", legacy_state) is True
+    assert load_directional_prior(repo, "NBISUSDT", "4h") is None
+    assert persist_directional_state(repo, "NBISUSDT", "4h", _briefing(last_bar_at, stance="conflicted")) is True
+
+    current = load_directional_prior(repo, "NBISUSDT", "4h")
+    assert current is not None
+    assert current["stance"] == "conflicted"
+    assert current["scoring_version"] == DIRECTIONAL_SCORING_VERSION
 
 
 def test_sqlite_directional_state_migration_and_reopen(tmp_path) -> None:

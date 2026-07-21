@@ -326,7 +326,8 @@ def _same_directional_bar(current: dict | None, candidate: dict) -> bool:
         return False
     current_bar = current.get("last_bar_at")
     candidate_bar = candidate.get("last_bar_at")
-    return bool(current_bar and candidate_bar and current_bar == candidate_bar)
+    same_scoring_version = current.get("scoring_version") == candidate.get("scoring_version")
+    return bool(current_bar and candidate_bar and current_bar == candidate_bar and same_scoring_version)
 
 
 def _aware_dt(value: datetime) -> datetime:

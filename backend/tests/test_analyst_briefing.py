@@ -86,6 +86,22 @@ def test_conflicted_case_does_not_force_direction() -> None:
     assert confluence["counter_evidence"]
 
 
+def test_zero_funding_never_adds_directional_evidence() -> None:
+    analysis = _balanced_analysis()
+    analysis["derivatives"] = {
+        "signals": {
+            "as_of": _recent_iso(0.1),
+            "funding_state": {"state": "extreme", "funding": 0.0, "label": "펀딩 극단"},
+            "crowding_score": {"score": 100},
+        }
+    }
+
+    confluence = build_confluence(symbol="NBISUSDT", timeframe="4h", analysis=analysis)
+
+    assert all(item["engine"] != "derivatives" for item in confluence["long_evidence"])
+    assert all(item["engine"] != "derivatives" for item in confluence["short_evidence"])
+
+
 def test_calibration_weight_adjustment_only_applies_after_sample_floor() -> None:
     analysis = _balanced_analysis()
 

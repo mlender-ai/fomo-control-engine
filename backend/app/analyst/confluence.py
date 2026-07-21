@@ -420,7 +420,9 @@ def _derivative_evidence(analysis: dict[str, Any], as_of: str | None) -> list[di
     crowding = signals.get("crowding_score") if isinstance(signals.get("crowding_score"), dict) else None
     funding_value = _optional_float(funding.get("funding")) if funding else None
     crowd_score = _optional_float(crowding.get("score")) if crowding else None
-    if funding and funding.get("state") == "extreme" and funding_value is not None:
+    # Zero has no directional sign.  Keep this guard even if an upstream
+    # percentile payload is malformed so 0% funding can never vote long/short.
+    if funding and funding.get("state") == "extreme" and funding_value is not None and funding_value != 0:
         direction = "short" if funding_value > 0 else "long"
         confidence = min(80, 58 + (crowd_score or 0) * 0.2)
         result.append(
