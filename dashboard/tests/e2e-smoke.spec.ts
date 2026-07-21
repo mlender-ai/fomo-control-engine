@@ -912,12 +912,14 @@ test("stock paper tracks stay separate, sealed, and responsive", async ({ page }
   }
 
   await page.setViewportSize({ width: 390, height: 844 });
-  const audit = await page.evaluate(() => ({
-    overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
-    clipped: [...document.querySelectorAll("[data-testid='engine-stock-paper-tab'] *")]
-      .filter((element) => element.scrollWidth > element.clientWidth + 2).length
-  }));
-  expect(audit).toEqual({ overflow: 0, clipped: 0 });
+  await expect.poll(
+    () => page.evaluate(() => ({
+      overflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      clipped: [...document.querySelectorAll("[data-testid='engine-stock-paper-tab'] *")]
+        .filter((element) => element.scrollWidth > element.clientWidth + 2).length
+    })),
+    { message: "responsive chart reflow should finish without page overflow or clipped controls" }
+  ).toEqual({ overflow: 0, clipped: 0 });
 });
 
 test("engine core remains usable when optional whale data fails", async ({ page }) => {
