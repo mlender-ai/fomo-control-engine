@@ -28,6 +28,10 @@ test.describe("chart visual regression", () => {
         await toggleLayer(page, layer);
       }
       await waitForChartOverlay(page);
+      // The live chart can start a background refresh after the canvas first
+      // becomes visible. Snapshot only the settled frame; otherwise CI may
+      // capture the loading badge and a half-updated time scale.
+      await expect(page.getByTestId("position-chart").locator(".chartRefreshingBadge")).toHaveCount(0, { timeout: 30_000 });
       await expect(page.locator('[data-price-flag-kind="mark"]')).toHaveCount(1);
       if (state.name === "wyckoff") {
         await expect(page.getByTestId("wyckoff-layer-status")).toBeVisible();
