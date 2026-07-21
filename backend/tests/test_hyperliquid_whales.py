@@ -480,6 +480,79 @@ def test_whale_dashboard_compacts_bursts_balances_instruments_and_preserves_flip
     assert btc_actions == {"숏→롱 전환", "롱→숏 전환"}
     assert dashboard["flow_by_instrument"]["XYZ:SNDK"]["event_count_24h"] == 4
     assert dashboard["flow_by_instrument"]["BTCUSDT"]["event_count_24h"] == 2
+    assert dashboard["recent_events_by_instrument"]["XYZ:SNDK"][0]["fill_count"] == 4
+
+
+def test_instrument_history_is_not_truncated_by_global_tape_limit() -> None:
+    repo = MemoryRepository()
+    repo.upsert_whale_wallet(WhaleWallet(address=ADDRESS, label="테스트 고래"))
+    now = utc_now()
+    for index in range(22):
+        coin = f"XYZ:T{index:02d}"
+        repo.add_whale_event(
+            WhaleEvent(
+                wallet_address=ADDRESS,
+                wallet_label="테스트 고래",
+                coin=coin,
+                symbol="",
+                side="long",
+                event="open",
+                size=1,
+                size_usd=100_000 + index,
+                entry_px=100 + index,
+                event_at=now - timedelta(minutes=index),
+            )
+        )
+
+    dashboard = whale_dashboard(repo, Settings())
+
+    assert len(dashboard["recent_events"]) == 20
+    assert "XYZ:T21" not in {event["instrument"] for event in dashboard["recent_events"]}
+    assert dashboard["recent_events_by_instrument"]["XYZ:T21"][0]["coin"] == "XYZ:T21"
+
+
+def test_raw_instrument_can_be_queried_and_rendered_on_chart(tmp_path) -> None:
+    repo = create_repository(f"sqlite:///{tmp_path / 'raw-instrument.db'}")
+    repo.upsert_whale_wallet(WhaleWallet(address=ADDRESS, label="테스트 고래"))
+    event_at = utc_now() - timedelta(minutes=10)
+    event = WhaleEvent(
+        wallet_address=ADDRESS,
+        wallet_label="테스트 고래",
+        coin="XYZ:SNDK",
+        symbol="",
+        side="short",
+        event="open",
+        size=10,
+        size_usd=200_000,
+        entry_px=210,
+        event_at=event_at,
+    )
+    assert repo.add_whale_event(event) is True
+    repo.upsert_whale_position_state(
+        ADDRESS,
+        "XYZ:SNDK",
+        {
+            "wallet_address": ADDRESS,
+            "wallet_label": "테스트 고래",
+            "coin": "XYZ:SNDK",
+            "symbol": "",
+            "side": "short",
+            "size_usd": 200_000,
+            "entry_px": 210,
+            "as_of": utc_now().isoformat(),
+        },
+    )
+    candle_time = int((event_at - timedelta(minutes=5)).timestamp())
+
+    queried = repo.list_whale_events(symbol="XYZ:SNDK")
+    context = chart_onchain_context(repo, "XYZ:SNDK", "15m", [{"time": candle_time}])
+    activity = whale_dashboard(repo, Settings())["symbol_activity"]["XYZ:SNDK"]
+
+    assert queried[0].id == event.id
+    assert context["supported"] is True
+    assert context["markers"][0]["items"][0]["coin"] == "XYZ:SNDK"
+    assert activity["short_usd"] == 200_000
+    assert activity["recent_events"][0]["coin"] == "XYZ:SNDK"
 
 
 def test_whale_dashboard_exposes_four_week_follow_performance() -> None:

@@ -109,13 +109,20 @@ def whale_dashboard(repo: Any, settings: Any) -> dict[str, Any]:
         item["symbol"]: _flow_dashboard(repo, wallets, states, source_events=raw_events, instrument=item["symbol"]) for item in flow["symbols"]
     }
     active_addresses = {wallet.address.lower() for wallet in wallets}
+    event_bursts = _event_burst_payloads(raw_events, active_addresses, review_context)
+    recent_events_by_instrument: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for payload in event_bursts:
+        instrument = str(payload["instrument"])
+        if len(recent_events_by_instrument[instrument]) < 10:
+            recent_events_by_instrument[instrument].append(payload)
     return {
         "enabled": bool(settings.hyperliquid_whale_tracking_enabled),
         "wallet_count": len(wallets),
         "max_wallets": int(settings.hyperliquid_whale_max_wallets),
         "minimum_event_size_usd": float(settings.hyperliquid_whale_min_size_usd),
         "wallets": rows,
-        "recent_events": _recent_event_feed(raw_events, active_addresses, review_context),
+        "recent_events": _round_robin_event_feed(event_bursts),
+        "recent_events_by_instrument": dict(recent_events_by_instrument),
         "discovery": cached_discovery(repo),
         "flow": flow,
         "flow_by_instrument": flow_by_instrument,
@@ -143,7 +150,7 @@ def _symbol_activity(
     positions: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for state in states:
         address = str(state.get("wallet_address") or "").lower()
-        symbol = str(state.get("symbol") or "").upper()
+        symbol = _state_instrument(state)
         wallet = active.get(address)
         if wallet is None or not symbol:
             continue
@@ -166,7 +173,7 @@ def _symbol_activity(
 
     events: dict[str, list[WhaleEvent]] = defaultdict(list)
     for event in repo.list_whale_events(limit=2000):
-        symbol = event.symbol.upper()
+        symbol = _event_instrument(event)
         if event.wallet_address.lower() in active and symbol and len(events[symbol]) < 8:
             events[symbol].append(event)
 
@@ -323,6 +330,15 @@ def _recent_event_feed(
     limit: int = 20,
 ) -> list[dict[str, Any]]:
     """Compact display bursts and round-robin instruments without mutating the raw ledger."""
+    return _round_robin_event_feed(_event_burst_payloads(events, active_addresses, review_context), limit=limit)
+
+
+def _event_burst_payloads(
+    events: list[WhaleEvent],
+    active_addresses: set[str],
+    review_context: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Build newest-first display bursts while preserving every raw ledger event."""
     cutoff = utc_now() - timedelta(hours=72)
     bursts: list[list[WhaleEvent]] = []
     open_bursts: dict[tuple[str, str, str, str], tuple[Any, list[WhaleEvent]]] = {}
@@ -359,8 +375,13 @@ def _recent_event_feed(
         )
         payloads.append(payload)
 
+    return sorted(payloads, key=lambda item: str(item["event_at"]), reverse=True)
+
+
+def _round_robin_event_feed(payloads: list[dict[str, Any]], *, limit: int = 20) -> list[dict[str, Any]]:
+    """Balance the global tape across instruments without truncating per-instrument history."""
     by_instrument: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for payload in sorted(payloads, key=lambda item: str(item["event_at"]), reverse=True):
+    for payload in payloads:
         by_instrument[str(payload["instrument"])].append(payload)
     ordered_instruments = sorted(by_instrument, key=lambda key: str(by_instrument[key][0]["event_at"]), reverse=True)
     result: list[dict[str, Any]] = []
@@ -391,9 +412,9 @@ def chart_onchain_context(repo: Any, symbol: str, timeframe: str, candles: list[
     catalog_cache = repo.get_calibration_report_cache("hyperliquid_symbol_catalog")
     catalog_payload = catalog_cache.get("payload") if isinstance(catalog_cache, dict) and isinstance(catalog_cache.get("payload"), dict) else {}
     catalog = {str(item).upper() for item in catalog_payload.get("symbols") or []}
-    observed_symbols = {str(state.get("symbol") or "").upper() for state in repo.list_whale_position_states(limit=1000)}
-    observed_symbols.update(event.symbol.upper() for event in events)
-    supported = normalized in catalog if catalog else normalized in observed_symbols
+    observed_symbols = {_state_instrument(state) for state in repo.list_whale_position_states(limit=1000)}
+    observed_symbols.update(_event_instrument(event) for event in events)
+    supported = normalized in catalog or normalized in observed_symbols
     duration = _timeframe_seconds(timeframe)
     review_context = _wallet_review_context(repo)
     now_s = int(utc_now().timestamp())
@@ -450,7 +471,7 @@ def chart_onchain_context(repo: Any, symbol: str, timeframe: str, candles: list[
 
 
 def _validated_consensus(repo: Any, symbol: str, review_context: dict[str, Any]) -> list[dict[str, Any]]:
-    states = [state for state in repo.list_whale_position_states(limit=1000) if str(state.get("symbol") or "").upper() == symbol]
+    states = [state for state in repo.list_whale_position_states(limit=1000) if _state_instrument(state) == symbol]
     rows = []
     for state in states:
         review = _wallet_review(str(state.get("wallet_address") or ""), review_context)

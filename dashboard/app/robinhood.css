@@ -3175,6 +3175,13 @@ textarea:focus {
   color: var(--terminal-positive);
 }
 
+.onchainFilterError {
+  margin: 0;
+  color: var(--terminal-negative);
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+
 .whaleFlowMetrics {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

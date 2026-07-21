@@ -445,15 +445,18 @@ function WhaleReviewMetrics({ review }: { review: OnchainWhaleDashboard["wallets
 function WhaleFlowOverview({ data }: { data: OnchainWhaleDashboard }) {
   const [selectedInstrument, setSelectedInstrument] = useState("ALL");
   const [instrumentQuery, setInstrumentQuery] = useState("");
+  const [filterError, setFilterError] = useState("");
   const instruments = useMemo(() => Object.keys(data.flow_by_instrument ?? {}).sort((left, right) => left.localeCompare(right)), [data.flow_by_instrument]);
-  const flow = selectedInstrument === "ALL" ? data.flow : data.flow_by_instrument[selectedInstrument] ?? data.flow;
-  const visibleEvents = selectedInstrument === "ALL" ? data.recent_events : data.recent_events.filter((event) => event.instrument === selectedInstrument);
+  const selectedFlow = data.flow_by_instrument[selectedInstrument];
+  const flow = selectedInstrument === "ALL" ? data.flow : selectedFlow ?? emptyWhaleFlow(selectedInstrument, data.flow);
+  const visibleEvents = selectedInstrument === "ALL" ? data.recent_events : data.recent_events_by_instrument?.[selectedInstrument] ?? [];
   const visibleSymbols = flow.symbols.slice(0, 12);
   const filterLabel = selectedInstrument === "ALL" ? "전체 종목" : selectedInstrument;
 
   function selectInstrument(value: string) {
     setSelectedInstrument(value);
     setInstrumentQuery(value === "ALL" ? "" : value);
+    setFilterError("");
   }
 
   function submitInstrument(event: FormEvent<HTMLFormElement>) {
@@ -461,7 +464,8 @@ function WhaleFlowOverview({ data }: { data: OnchainWhaleDashboard }) {
     const normalized = instrumentQuery.trim().toUpperCase();
     if (!normalized) return selectInstrument("ALL");
     const matched = instruments.find((item) => item === normalized) ?? instruments.find((item) => item.includes(normalized));
-    if (matched) selectInstrument(matched);
+    if (matched) return selectInstrument(matched);
+    setFilterError(`추적 중인 종목에서 ${normalized}을 찾지 못했습니다.`);
   }
 
   return (
@@ -474,6 +478,7 @@ function WhaleFlowOverview({ data }: { data: OnchainWhaleDashboard }) {
           <button type="submit">보기</button>
           <button aria-pressed={selectedInstrument === "ALL"} onClick={() => selectInstrument("ALL")} type="button">전체</button>
         </form>
+        {filterError ? <p className="onchainFilterError" role="status">{filterError}</p> : null}
       </section>
       <section className="whaleFlowMetrics" aria-label="고래 현재 노출">
         <div><span>현재 롱 노출</span><strong className="positive">{compactMoney(flow.current_long_usd)}</strong></div>
@@ -500,6 +505,21 @@ function WhaleFlowOverview({ data }: { data: OnchainWhaleDashboard }) {
       </div>
     </div>
   );
+}
+
+function emptyWhaleFlow(instrument: string, reference: OnchainWhaleDashboard["flow"]): OnchainWhaleDashboard["flow"] {
+  return {
+    instrument,
+    window_hours: reference.window_hours,
+    bucket_hours: reference.bucket_hours,
+    current_long_usd: 0,
+    current_short_usd: 0,
+    current_net_usd: 0,
+    flow_24h_usd: 0,
+    event_count_24h: 0,
+    timeline: reference.timeline.map((point) => ({ ...point, long_in_usd: 0, short_in_usd: 0, long_out_usd: 0, short_out_usd: 0, net_usd: 0, event_count: 0 })),
+    symbols: [],
+  };
 }
 
 function WhaleFlowChart({ points }: { points: OnchainWhaleDashboard["flow"]["timeline"] }) {

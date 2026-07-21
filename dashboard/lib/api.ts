@@ -1822,6 +1822,7 @@ export type OnchainWhaleDashboard = {
   minimum_event_size_usd: number;
   wallets: OnchainWhaleWallet[];
   recent_events: OnchainWhaleEvent[];
+  recent_events_by_instrument: Record<string, OnchainWhaleEvent[]>;
   discovery: {
     enabled: boolean;
     status: string;

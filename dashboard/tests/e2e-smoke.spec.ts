@@ -1011,6 +1011,10 @@ test("onchain flow keeps flip meaning and filters balanced events by instrument"
         alias_disclaimer: "공개 계정"
       }
     ];
+    body.recent_events_by_instrument = {
+      "XYZ:SNDK": [body.recent_events[0]],
+      BTCUSDT: [body.recent_events[1]],
+    };
     await route.fulfill({ response, json: body });
   });
 
@@ -1030,6 +1034,11 @@ test("onchain flow keeps flip meaning and filters balanced events by instrument"
   await expect(view.locator(".whaleSymbolExposure")).not.toContainText("BTC");
   await expect(view.locator(".whaleEventTape")).toContainText("4체결 합산");
   await expect(view.locator(".whaleEventTape")).not.toContainText("롱→숏 전환");
+
+  await filter.getByLabel("고래 종목 검색").fill("NOT-TRACKED");
+  await filter.getByRole("button", { name: "보기" }).click();
+  await expect(filter.getByRole("status")).toContainText("찾지 못했습니다");
+  await expect(view.locator(".whaleFlowChartSection")).toContainText("XYZ:SNDK");
 
   await page.setViewportSize({ width: 390, height: 844 });
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(2);

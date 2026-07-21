@@ -35,7 +35,8 @@ class MemoryMarketdataRepositoryMixin:
     ) -> list[WhaleEvent]:
         events = list(self.whale_events.values())
         if symbol:
-            events = [event for event in events if event.symbol.upper() == symbol.upper()]
+            normalized = symbol.upper()
+            events = [event for event in events if str(event.symbol or event.coin or "UNKNOWN").upper() == normalized]
         if wallet_address:
             events = [event for event in events if event.wallet_address.lower() == wallet_address.lower()]
         if since:
@@ -190,7 +191,7 @@ class SQLiteMarketdataRepositoryMixin:
         clauses: list[str] = []
         params: list[object] = []
         if symbol:
-            clauses.append("symbol = ?")
+            clauses.append("UPPER(COALESCE(NULLIF(symbol, ''), json_extract(payload, '$.coin'), 'UNKNOWN')) = ?")
             params.append(symbol.upper())
         if wallet_address:
             clauses.append("wallet_address = ?")

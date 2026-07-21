@@ -10,7 +10,7 @@ This integration is read-only. It calls only Hyperliquid's unauthenticated `POST
 - Monthly turnover above 250 times account value is excluded to reduce market-maker and high-frequency flow contamination.
 - Discovery wallets that leave the selected set are deactivated. Their events, judgments, and candidate statistics are retained.
 - The engine dashboard exposes current long/short notional, 24-hour signed flow, a 72-hour two-hour-bucket histogram, symbol exposure, and the latest large fills. The flow, metrics, and fill tape share one instrument filter; raw Hyperliquid coins such as `XYZ:SNDK` remain searchable even when they cannot map to an FCE `*USDT` chart symbol.
-- The latest-fill tape is a presentation view over the append-only event ledger. It combines only same-wallet, same-instrument, same-action fills observed inside a 60-second window, retains the raw event IDs and fill count, and round-robins instruments so one fragmented execution cannot hide every other symbol. The raw ledger is never rewritten or deleted by this compaction.
+- The latest-fill tape is a presentation view over the append-only event ledger. It combines only same-wallet, same-instrument, same-action fills observed inside a 60-second window, retains the raw event IDs and fill count, and round-robins instruments so one fragmented execution cannot hide every other symbol. The API also retains a separate latest-ten tape per instrument, so a symbol outside the global twenty-row tape is not mistaken for having no fills. The raw ledger is never rewritten or deleted by this compaction.
 
 Manual `/whale add` registration remains available only as an override for a known public master or sub-account address. No API key, agent key, private key, or transaction hash is accepted as tracking input.
 
@@ -35,7 +35,7 @@ The relevant settings are `FCE_HYPERLIQUID_WHALE_TRACKING_ENABLED`, `FCE_HYPERLI
 - Selecting a chart marker shows the contributing wallet aliases and shortened public addresses, event actions, observed notionals, fill prices, event times, and validation state. Aliases remain explicitly unverified.
 - The minimal chart exposes 15-minute, 1-hour, 4-hour, 12-hour, and daily confirmed-candle views. The opaque current-price line is intentionally omitted there so it cannot be confused with a whale fill. Current mark price remains a numeric readout; no unfinished OHLC candle is fabricated from a single mark price.
 - The chart selects the most recent eight event groups by event time, not the eight largest notionals.
-- Coins that cannot map to a plain FCE `*USDT` symbol are stored but not rendered on an FCE chart.
+- Raw coins that cannot map to a plain FCE `*USDT` symbol retain `coin` as their instrument identity for repository queries, current exposure, recent fills, and chart context. A live position chart still requires an explicit FCE position/symbol route; the service does not fabricate a crypto mapping for stock-like raw coins.
 - Every wallet starts as a candidate. Its events are observation data, not a follow signal.
 - Recent-fill rows always publish the wallet label, validation state, sample size, and compacted fill count. Candidate events remain visible for audit but are not direction-eligible.
 - Discovery first filters the public leaderboard by account size, 30-day PnL/ROI, volume, and turnover. It then inspects current BTC/ETH positions for the top scan cohort and reserves directional slots across BTC/ETH long and short before filling the remaining slots by quality.
