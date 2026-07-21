@@ -53,4 +53,4 @@
 ## 완료 정의 (공통)
 - [x] HARNESS.md 게이트 통과
 - [x] docs 갱신
-- [ ] origin/main 반영 + CI success 확인 (불변 규칙 1·3)
+- [x] origin/main 반영 + CI success 확인 (불변 규칙 1·3, run `29844811490`)
