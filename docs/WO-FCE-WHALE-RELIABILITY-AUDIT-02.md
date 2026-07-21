@@ -51,9 +51,10 @@
 ## 완료 정의 (공통)
 - [x] HARNESS.md 게이트 통과
 - [x] docs 갱신
-- [ ] origin/main 반영 + CI success 확인 (불변 규칙 1·3)
+- [x] origin/main 반영 + CI success 확인 (불변 규칙 1·3)
 
 ## 검증 결과
 - 백엔드: ruff, format, import cycle, mypy baseline, 전체 테스트 598건, 품질 baseline 통과.
 - 프론트: lint 0 errors(기존 warning 13), typecheck 통과.
 - E2E: 최초 샌드박스 실행은 Chromium Mach 포트 권한으로 실행 전 실패, 동일 커밋을 정상 브라우저 권한으로 재실행해 23건 전부 통과. 첫 원격 CI에서 차트 백그라운드 갱신 중간 프레임을 캡처하는 기존 스냅샷 레이스를 발견해, 로딩 배지 소멸을 기다리는 결정론 게이트를 추가했다.
+- 원격: CI run `29878530703`의 backend/frontend/e2e 전 작업 success.
