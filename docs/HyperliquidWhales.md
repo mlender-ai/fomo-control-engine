@@ -9,7 +9,8 @@ This integration is read-only. It calls only Hyperliquid's unauthenticated `POST
 - Default discovery hygiene requires a 30-day profit of at least 100,000 USDT, ROI of at least 2%, account value of at least 1,000,000 USDT, and volume of at least 10,000,000 USDT.
 - Monthly turnover above 250 times account value is excluded to reduce market-maker and high-frequency flow contamination.
 - Discovery wallets that leave the selected set are deactivated. Their events, judgments, and candidate statistics are retained.
-- The engine dashboard exposes current long/short notional, 24-hour signed flow, a 72-hour two-hour-bucket histogram, symbol exposure, and the latest large fills.
+- The engine dashboard exposes current long/short notional, 24-hour signed flow, a 72-hour two-hour-bucket histogram, symbol exposure, and the latest large fills. The flow, metrics, and fill tape share one instrument filter; raw Hyperliquid coins such as `XYZ:SNDK` remain searchable even when they cannot map to an FCE `*USDT` chart symbol.
+- The latest-fill tape is a presentation view over the append-only event ledger. It combines only same-wallet, same-instrument, same-action fills observed inside a 60-second window, retains the raw event IDs and fill count, and round-robins instruments so one fragmented execution cannot hide every other symbol. The raw ledger is never rewritten or deleted by this compaction.
 
 Manual `/whale add` registration remains available only as an override for a known public master or sub-account address. No API key, agent key, private key, or transaction hash is accepted as tracking input.
 
@@ -27,6 +28,7 @@ The relevant settings are `FCE_HYPERLIQUID_WHALE_TRACKING_ENABLED`, `FCE_HYPERLI
 ## Data and decision boundaries
 
 - Events are derived only after a fill appears in `userFillsByTime`.
+- Position flips retain their transition meaning everywhere: a fill that crosses a short position through zero is shown as `숏→롱 전환`, and the inverse is shown as `롱→숏 전환`. A later opposite flip from the same wallet is sequential position history, not proof of simultaneous long and short exposure.
 - Historical chart markers are anchored to the closed FCE candle that contains the confirmed fill and never moved to a later candle.
 - A confirmed fill in the still-open chart window is rendered at its observed fill price on the chart's right edge with a `실시간` label. Its actual event timestamp is retained in the marker and click detail; it is not assigned to the unfinished candle as if that candle were final.
 - The minimal chart refreshes its confirmed-fill overlay every 30 seconds for pure crypto symbols. Long fills use green upward triangles and short fills use red downward triangles. Every triangle is filled consistently; `+` means entry/increase and `−` means reduce/close. A surrounding ring means that the group contains a wallet that passed the 28-day validation gate.
@@ -35,6 +37,7 @@ The relevant settings are `FCE_HYPERLIQUID_WHALE_TRACKING_ENABLED`, `FCE_HYPERLI
 - The chart selects the most recent eight event groups by event time, not the eight largest notionals.
 - Coins that cannot map to a plain FCE `*USDT` symbol are stored but not rendered on an FCE chart.
 - Every wallet starts as a candidate. Its events are observation data, not a follow signal.
+- Recent-fill rows always publish the wallet label, validation state, sample size, and compacted fill count. Candidate events remain visible for audit but are not direction-eligible.
 - Discovery first filters the public leaderboard by account size, 30-day PnL/ROI, volume, and turnover. It then inspects current BTC/ETH positions for the top scan cohort and reserves directional slots across BTC/ETH long and short before filling the remaining slots by quality.
 - The discovery audit surface publishes rows scanned, eligible candidates, position-inspected candidates, selected direction coverage, and the reason each wallet entered the validation cohort. This prevents a profitable-long-only leaderboard slice from being presented as the whole whale market.
 - Only a promotion approved through the existing veto-window flow can make a wallet `validated`.

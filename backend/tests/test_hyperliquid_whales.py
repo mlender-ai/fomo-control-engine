@@ -421,6 +421,67 @@ def test_whale_dashboard_rate_budget_covers_configured_wallet_capacity() -> None
     assert dashboard["rate_budget"]["within_official_budget"] is True
 
 
+def test_whale_dashboard_compacts_bursts_balances_instruments_and_preserves_flip_meaning() -> None:
+    repo = MemoryRepository()
+    repo.upsert_whale_wallet(WhaleWallet(address=ADDRESS, label="리더보드 고래 #151", source="discovery"))
+    now = utc_now()
+    for index in range(4):
+        repo.add_whale_event(
+            WhaleEvent(
+                wallet_address=ADDRESS,
+                wallet_label="리더보드 고래 #151",
+                coin="XYZ:SNDK",
+                symbol="",
+                side="short",
+                event="increase",
+                size=1,
+                size_usd=100_000 + index,
+                entry_px=210 + index,
+                event_at=now - timedelta(seconds=index * 5),
+            )
+        )
+    repo.add_whale_event(
+        WhaleEvent(
+            wallet_address=ADDRESS,
+            wallet_label="리더보드 고래 #151",
+            coin="BTC",
+            symbol="BTCUSDT",
+            side="short",
+            event="flip",
+            size=3,
+            size_usd=208_000,
+            entry_px=65_651,
+            event_at=now - timedelta(minutes=2),
+        )
+    )
+    repo.add_whale_event(
+        WhaleEvent(
+            wallet_address=ADDRESS,
+            wallet_label="리더보드 고래 #151",
+            coin="BTC",
+            symbol="BTCUSDT",
+            side="long",
+            event="flip",
+            size=2,
+            size_usd=142_000,
+            entry_px=64_005,
+            event_at=now - timedelta(minutes=3),
+        )
+    )
+
+    dashboard = whale_dashboard(repo, Settings())
+
+    assert len(repo.list_whale_events(limit=20)) == 6
+    assert [event["instrument"] for event in dashboard["recent_events"][:2]] == ["XYZ:SNDK", "BTCUSDT"]
+    sndk = next(event for event in dashboard["recent_events"] if event["instrument"] == "XYZ:SNDK")
+    assert sndk["fill_count"] == 4
+    assert sndk["size_usd"] == 400_006
+    btc_actions = {event["action_label"] for event in dashboard["recent_events"] if event["instrument"] == "BTCUSDT"}
+    assert btc_actions == {"숏→롱 전환", "롱→숏 전환"}
+    assert dashboard["flow_by_instrument"]["XYZ:SNDK"]["event_count_24h"] == 4
+    assert dashboard["flow_by_instrument"]["BTCUSDT"]["event_count_24h"] == 2
+
+
 def test_whale_dashboard_exposes_four_week_follow_performance() -> None:
     repo = MemoryRepository()
     repo.upsert_whale_wallet(WhaleWallet(address=ADDRESS, label="테스트 고래"))
@@ -604,7 +665,7 @@ def test_sqlite_repository_persists_whale_data(tmp_path) -> None:
         coin="BTC",
         symbol="BTCUSDT",
         side="short",
-        event="open",
+        event="flip",
         size=1,
         size_usd=100_000,
         entry_px=60_000,
@@ -636,7 +697,7 @@ async def test_whale_alert_uses_existing_state_machine_and_candidate_tone() -> N
         coin="BTC",
         symbol="BTCUSDT",
         side="long",
-        event="open",
+        event="flip",
         size=2,
         size_usd=2_000_000,
         entry_px=63_000,
@@ -662,6 +723,7 @@ async def test_whale_alert_uses_existing_state_machine_and_candidate_tone() -> N
     assert await engine.evaluate_whale_events([event], dashboard) == 1
     assert await engine.evaluate_whale_events([event], dashboard) == 0
     assert "미검증 관측" in sender.messages[0]
+    assert "숏→롱 전환" in sender.messages[0]
     assert "추종 승률 50.0%" in sender.messages[0]
     assert "누적 +0.50R" in sender.messages[0]
     assert "따라가기 신호가 아닙니다" in sender.messages[0]

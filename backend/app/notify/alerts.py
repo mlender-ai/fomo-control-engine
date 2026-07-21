@@ -204,6 +204,10 @@ class AlertEngine:
             review: dict[str, Any] = review_value if isinstance(review_value, dict) else {}
             validated = review.get("trust_status") == "trusted" or review.get("state") == "validated"
             side = "롱" if event.get("side") == "long" else "숏"
+            if event.get("event") == "flip":
+                action = "숏→롱 전환" if event.get("side") == "long" else "롱→숏 전환"
+            else:
+                action = f"{side} 신규"
             size = _compact_usd(float(event.get("size_usd") or 0.0))
             entry = float(event.get("entry_px") or 0.0)
             sample_size = int(review.get("sample_size") or 0)
@@ -222,14 +226,14 @@ class AlertEngine:
                 position_id=None,
                 symbol=str(event.get("symbol") or event.get("coin") or "HL"),
                 identity=str(event.get("id") or event.get("fill_id") or "whale"),
-                title=f"{event.get('wallet_label')} {event.get('coin')} {side} 관측",
+                title=f"{event.get('wallet_label')} {event.get('coin')} {action}",
                 message=(
-                    f"🐋 <b>{event.get('wallet_label')} {event.get('coin')} {side} {size}</b> @ {entry:,.2f}\n"
+                    f"🐋 <b>{event.get('wallet_label')} {event.get('coin')} {action} {size}</b> @ {entry:,.2f}\n"
                     f"{level} · {accuracy}\n"
                     f"{performance}\n"
                     "관측 정보이며 따라가기 신호가 아닙니다. 별칭은 사용자 지정 추정입니다."
                 ),
-                payload={**event, "validation_state": review.get("state"), "summary": f"{side} {size} · {accuracy}"},
+                payload={**event, "validation_state": review.get("state"), "summary": f"{action} {size} · {accuracy}"},
             )
             sent += await self._fire_if_allowed(candidate)
         return sent

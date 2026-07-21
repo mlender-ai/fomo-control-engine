@@ -1703,11 +1703,46 @@ export type OnchainWhaleEvent = {
   mark_px: number | null;
   unrealized_pnl: number | null;
   event_at: string;
+  instrument: string;
+  action_label: string;
+  fill_count: number;
+  raw_event_ids: string[];
+  burst_started_at?: string;
   validation_state: string;
+  trust_status: "trusted" | "review_ready" | "validating" | "excluded" | string;
   sample_size: number;
   win_1r_pct: number | null;
   accuracy_label: string;
   alias_disclaimer: string;
+};
+
+export type OnchainWhaleFlow = {
+  instrument: string | null;
+  window_hours: number;
+  bucket_hours: number;
+  current_long_usd: number;
+  current_short_usd: number;
+  current_net_usd: number;
+  flow_24h_usd: number;
+  event_count_24h: number;
+  timeline: Array<{
+    time: number;
+    long_in_usd: number;
+    short_in_usd: number;
+    long_out_usd: number;
+    short_out_usd: number;
+    net_usd: number;
+    event_count: number;
+  }>;
+  symbols: Array<{
+    symbol: string;
+    long_usd: number;
+    short_usd: number;
+      net_usd: number;
+      wallet_count: number;
+      event_count_24h: number;
+      event_volume_24h_usd: number;
+    }>;
 };
 
 export type OnchainChartMarker = {
@@ -1811,32 +1846,8 @@ export type OnchainWhaleDashboard = {
     };
     selected_coverage?: Record<string, OnchainWhaleCoverage>;
   };
-  flow: {
-    window_hours: number;
-    bucket_hours: number;
-    current_long_usd: number;
-    current_short_usd: number;
-    current_net_usd: number;
-    flow_24h_usd: number;
-    event_count_24h: number;
-    timeline: Array<{
-      time: number;
-      long_in_usd: number;
-      short_in_usd: number;
-      long_out_usd: number;
-      short_out_usd: number;
-      net_usd: number;
-      event_count: number;
-    }>;
-    symbols: Array<{
-      symbol: string;
-      long_usd: number;
-      short_usd: number;
-      net_usd: number;
-      wallet_count: number;
-      event_count_24h: number;
-    }>;
-  };
+  flow: OnchainWhaleFlow;
+  flow_by_instrument: Record<string, OnchainWhaleFlow>;
   symbol_activity: Record<string, {
     symbol: string;
     long_usd: number;

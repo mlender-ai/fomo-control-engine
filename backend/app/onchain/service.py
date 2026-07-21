@@ -77,6 +77,7 @@ def discover(
 def whale_dashboard(repo: Any, settings: Any) -> dict[str, Any]:
     wallets = repo.list_whale_wallets(active=True, limit=max(1, int(settings.hyperliquid_whale_max_wallets)))
     states = repo.list_whale_position_states(limit=1000)
+    raw_events = repo.list_whale_events(limit=2000)
     review_context = _wallet_review_context(repo)
     by_wallet: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for state in states:
@@ -103,15 +104,21 @@ def whale_dashboard(repo: Any, settings: Any) -> dict[str, Any]:
     polls_per_minute = max(1, (60 + poll_interval - 1) // poll_interval)
     configured_wallet_limit = max(1, int(settings.hyperliquid_whale_max_wallets))
     estimated_max_weight = polls_per_minute * configured_wallet_limit * (position_weight_per_wallet + fill_base_weight_per_wallet)
+    flow = _flow_dashboard(repo, wallets, states, source_events=raw_events)
+    flow_by_instrument = {
+        item["symbol"]: _flow_dashboard(repo, wallets, states, source_events=raw_events, instrument=item["symbol"]) for item in flow["symbols"]
+    }
+    active_addresses = {wallet.address.lower() for wallet in wallets}
     return {
         "enabled": bool(settings.hyperliquid_whale_tracking_enabled),
         "wallet_count": len(wallets),
         "max_wallets": int(settings.hyperliquid_whale_max_wallets),
         "minimum_event_size_usd": float(settings.hyperliquid_whale_min_size_usd),
         "wallets": rows,
-        "recent_events": [_event_payload(event, review_context) for event in repo.list_whale_events(limit=100)],
+        "recent_events": _recent_event_feed(raw_events, active_addresses, review_context),
         "discovery": cached_discovery(repo),
-        "flow": _flow_dashboard(repo, wallets, states),
+        "flow": flow,
+        "flow_by_instrument": flow_by_instrument,
         "symbol_activity": _symbol_activity(repo, wallets, states, review_context),
         "rate_budget": {
             "poll_interval_seconds": poll_interval,
@@ -186,13 +193,27 @@ def _symbol_activity(
     return result
 
 
-def _flow_dashboard(repo: Any, wallets: list[WhaleWallet], states: list[dict[str, Any]]) -> dict[str, Any]:
+def _flow_dashboard(
+    repo: Any,
+    wallets: list[WhaleWallet],
+    states: list[dict[str, Any]],
+    *,
+    source_events: list[WhaleEvent] | None = None,
+    instrument: str | None = None,
+) -> dict[str, Any]:
     now = utc_now()
     window_hours = 72
     bucket_hours = 2
     start = now - timedelta(hours=window_hours)
     active_addresses = {wallet.address.lower() for wallet in wallets}
-    events = [event for event in repo.list_whale_events(limit=2000) if event.wallet_address.lower() in active_addresses and event.event_at >= start]
+    normalized_instrument = instrument.upper() if instrument else None
+    events = [
+        event
+        for event in (source_events if source_events is not None else repo.list_whale_events(limit=2000))
+        if event.wallet_address.lower() in active_addresses
+        and event.event_at >= start
+        and (normalized_instrument is None or _event_instrument(event) == normalized_instrument)
+    ]
 
     bucket_seconds = bucket_hours * 3600
     start_epoch = int(start.timestamp()) // bucket_seconds * bucket_seconds
@@ -220,10 +241,15 @@ def _flow_dashboard(repo: Any, wallets: list[WhaleWallet], states: list[dict[str
         point["net_usd"] += signed
         point["event_count"] += 1
 
-    active_states = [state for state in states if str(state.get("wallet_address") or "").lower() in active_addresses]
-    symbol_rows: dict[str, dict[str, Any]] = defaultdict(lambda: {"long_usd": 0.0, "short_usd": 0.0, "wallets": set()})
+    active_states = [
+        state
+        for state in states
+        if str(state.get("wallet_address") or "").lower() in active_addresses
+        and (normalized_instrument is None or _state_instrument(state) == normalized_instrument)
+    ]
+    symbol_rows: dict[str, dict[str, Any]] = defaultdict(lambda: {"long_usd": 0.0, "short_usd": 0.0, "event_volume_24h_usd": 0.0, "wallets": set()})
     for state in active_states:
-        symbol = str(state.get("symbol") or state.get("coin") or "").upper()
+        symbol = _state_instrument(state)
         if not symbol:
             continue
         side = "long" if state.get("side") == "long" else "short"
@@ -233,7 +259,9 @@ def _flow_dashboard(repo: Any, wallets: list[WhaleWallet], states: list[dict[str
     event_counts: dict[str, int] = defaultdict(int)
     for event in events:
         if event.event_at >= event_cutoff:
-            event_counts[event.symbol.upper()] += 1
+            event_counts[_event_instrument(event)] += 1
+            symbol_rows[_event_instrument(event)]["event_volume_24h_usd"] += event.size_usd
+        symbol_rows[_event_instrument(event)]
     symbols = []
     for symbol, values in symbol_rows.items():
         long_usd = float(values["long_usd"])
@@ -246,13 +274,15 @@ def _flow_dashboard(repo: Any, wallets: list[WhaleWallet], states: list[dict[str
                 "net_usd": round(long_usd - short_usd, 2),
                 "wallet_count": len(values["wallets"]),
                 "event_count_24h": event_counts.get(symbol, 0),
+                "event_volume_24h_usd": round(float(values["event_volume_24h_usd"]), 2),
             }
         )
-    symbols.sort(key=lambda item: float(item["long_usd"]) + float(item["short_usd"]), reverse=True)
+    symbols.sort(key=lambda item: float(item["long_usd"]) + float(item["short_usd"]) + float(item["event_volume_24h_usd"]), reverse=True)
     current_long = sum(float(item.get("size_usd") or 0) for item in active_states if item.get("side") == "long")
     current_short = sum(float(item.get("size_usd") or 0) for item in active_states if item.get("side") == "short")
     flow_24h = sum(_event_signed_flow(event) for event in events if event.event_at >= event_cutoff)
     return {
+        "instrument": normalized_instrument,
         "window_hours": window_hours,
         "bucket_hours": bucket_hours,
         "current_long_usd": round(current_long, 2),
@@ -261,8 +291,93 @@ def _flow_dashboard(repo: Any, wallets: list[WhaleWallet], states: list[dict[str
         "flow_24h_usd": round(flow_24h, 2),
         "event_count_24h": sum(1 for event in events if event.event_at >= event_cutoff),
         "timeline": [{**point, **{key: round(float(value), 2) for key, value in point.items() if key.endswith("_usd")}} for point in buckets.values()],
-        "symbols": symbols[:12],
+        "symbols": symbols,
     }
+
+
+def _event_instrument(event: WhaleEvent) -> str:
+    return str(event.symbol or event.coin or "UNKNOWN").upper()
+
+
+def _state_instrument(state: dict[str, Any]) -> str:
+    return str(state.get("symbol") or state.get("coin") or "UNKNOWN").upper()
+
+
+def _event_action_label(event: WhaleEvent) -> str:
+    if event.event == "flip":
+        return "숏→롱 전환" if event.side == "long" else "롱→숏 전환"
+    labels = {
+        "open": "롱 신규" if event.side == "long" else "숏 신규",
+        "increase": "롱 증액" if event.side == "long" else "숏 증액",
+        "reduce": "롱 감액" if event.side == "long" else "숏 감액",
+        "close": "롱 청산" if event.side == "long" else "숏 청산",
+    }
+    return labels.get(event.event, event.event)
+
+
+def _recent_event_feed(
+    events: list[WhaleEvent],
+    active_addresses: set[str],
+    review_context: dict[str, Any],
+    *,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """Compact display bursts and round-robin instruments without mutating the raw ledger."""
+    cutoff = utc_now() - timedelta(hours=72)
+    bursts: list[list[WhaleEvent]] = []
+    open_bursts: dict[tuple[str, str, str, str], tuple[Any, list[WhaleEvent]]] = {}
+    for event in sorted(events, key=lambda item: item.event_at, reverse=True):
+        if event.wallet_address.lower() not in active_addresses or event.event_at < cutoff:
+            continue
+        key = (event.wallet_address.lower(), _event_instrument(event), event.event, event.side)
+        current = open_bursts.get(key)
+        if current is not None and (current[0] - event.event_at).total_seconds() <= 60:
+            current[1].append(event)
+            continue
+        group = [event]
+        bursts.append(group)
+        open_bursts[key] = (event.event_at, group)
+
+    payloads: list[dict[str, Any]] = []
+    for group in bursts:
+        latest = group[0]
+        payload = _event_payload(latest, review_context)
+        total_size = sum(item.size_usd for item in group)
+        priced = [(item.entry_px, item.size_usd) for item in group if item.entry_px is not None and item.size_usd > 0]
+        entry_px = sum(float(value) * weight for value, weight in priced) / sum(weight for _, weight in priced) if priced else latest.entry_px
+        payload.update(
+            {
+                "id": f"burst:{latest.id}",
+                "instrument": _event_instrument(latest),
+                "action_label": _event_action_label(latest),
+                "size_usd": round(total_size, 2),
+                "entry_px": round(entry_px, 8) if entry_px is not None else None,
+                "fill_count": len(group),
+                "raw_event_ids": [str(item.id) for item in group],
+                "burst_started_at": min(item.event_at for item in group).isoformat(),
+            }
+        )
+        payloads.append(payload)
+
+    by_instrument: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for payload in sorted(payloads, key=lambda item: str(item["event_at"]), reverse=True):
+        by_instrument[str(payload["instrument"])].append(payload)
+    ordered_instruments = sorted(by_instrument, key=lambda key: str(by_instrument[key][0]["event_at"]), reverse=True)
+    result: list[dict[str, Any]] = []
+    index = 0
+    while len(result) < limit:
+        added = False
+        for key in ordered_instruments:
+            rows = by_instrument[key]
+            if index < len(rows):
+                result.append(rows[index])
+                added = True
+                if len(result) >= limit:
+                    break
+        if not added:
+            break
+        index += 1
+    return result
 
 
 def _event_signed_flow(event: WhaleEvent) -> float:
@@ -363,6 +478,7 @@ def _event_payload(event: WhaleEvent, review_context: dict[str, Any]) -> dict[st
     return {
         **event.model_dump(mode="json"),
         "validation_state": review["state"],
+        "trust_status": review["trust_status"],
         "sample_size": review["sample_size"],
         "win_1r_pct": review["win_1r_pct"],
         "win_1r_ci": review["win_1r_ci"],
@@ -370,6 +486,10 @@ def _event_payload(event: WhaleEvent, review_context: dict[str, Any]) -> dict[st
         if review["sample_size"] >= 30 and review["win_1r_pct"] is not None
         else f"적중률 축적 중 (N={review['sample_size']})",
         "alias_disclaimer": "사용자 지정 추정 별칭 · 신원 확정 아님",
+        "instrument": _event_instrument(event),
+        "action_label": _event_action_label(event),
+        "fill_count": 1,
+        "raw_event_ids": [str(event.id)],
     }
 
 

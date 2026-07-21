@@ -3121,6 +3121,60 @@ textarea:focus {
   background: #090c11;
 }
 
+.whaleInstrumentFilter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--terminal-line);
+  background: rgba(255, 255, 255, 0.012);
+}
+
+.whaleInstrumentFilter > div {
+  display: grid;
+  gap: 3px;
+}
+
+.whaleInstrumentFilter span,
+.whaleInstrumentFilter small {
+  color: var(--terminal-muted);
+  font-size: 10px;
+}
+
+.whaleInstrumentFilter form {
+  display: flex;
+  gap: 6px;
+}
+
+.whaleInstrumentFilter input {
+  width: min(260px, 34vw);
+  min-height: 34px;
+  border: 1px solid var(--terminal-line-strong);
+  background: #090c11;
+  color: var(--terminal-text);
+  padding: 0 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.whaleInstrumentFilter button {
+  min-height: 34px;
+  border: 1px solid var(--terminal-line-strong);
+  background: transparent;
+  color: var(--terminal-muted);
+  padding: 0 12px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.whaleInstrumentFilter button:hover,
+.whaleInstrumentFilter button[aria-pressed="true"] {
+  border-color: var(--terminal-positive);
+  color: var(--terminal-positive);
+}
+
 .whaleFlowMetrics {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -3264,9 +3318,20 @@ textarea:focus {
 
 .whaleSymbolRow {
   display: grid;
+  width: 100%;
   gap: 6px;
   padding: 9px 0;
+  border: 0;
   border-top: 1px solid rgba(255, 255, 255, 0.05);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.whaleSymbolRow:hover,
+.whaleSymbolRow[aria-pressed="true"] {
+  background: rgba(46, 211, 142, 0.055);
 }
 
 .whaleSymbolRow > div:first-child {
@@ -3297,11 +3362,42 @@ textarea:focus {
 
 .whaleEventTape > div {
   display: grid;
-  grid-template-columns: 7px 44px minmax(0, 1fr) auto;
+  grid-template-columns: 7px minmax(74px, 0.8fr) minmax(110px, 1.2fr) auto;
   align-items: center;
   gap: 8px;
   min-height: 34px;
   border-top: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.whaleEventIdentity,
+.whaleEventAction {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.whaleEventIdentity strong,
+.whaleEventIdentity span,
+.whaleEventAction strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.whaleEventAction > span {
+  width: max-content;
+  padding: 1px 4px;
+  border: 1px solid var(--terminal-line-strong);
+  font-size: 9px;
+}
+
+.whaleEventAction > span.trusted {
+  border-color: color-mix(in srgb, var(--terminal-positive) 55%, transparent);
+  color: var(--terminal-positive);
+}
+
+.whaleEventAction > span.validating {
+  color: var(--terminal-warning);
 }
 
 .whaleEventTape > div > i {
@@ -3676,9 +3772,15 @@ textarea:focus {
   .onchainToolbar,
   .onchainWalletRow header,
   .whaleValidationBoard,
-  .whaleDiscoveryAudit > header {
+  .whaleDiscoveryAudit > header,
+  .whaleInstrumentFilter {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .whaleInstrumentFilter form,
+  .whaleInstrumentFilter input {
+    width: 100%;
   }
 
   .whaleValidationFilters {

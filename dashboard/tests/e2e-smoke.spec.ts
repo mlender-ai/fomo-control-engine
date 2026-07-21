@@ -933,3 +933,104 @@ test("engine core remains usable when optional whale data fails", async ({ page 
   await expect(page.getByText(/고래 관측 갱신 실패/)).toBeVisible();
   await expect(page.getByText(/페이퍼 엔진 화면은 계속 사용할 수 있습니다/)).toBeVisible();
 });
+
+test("onchain flow keeps flip meaning and filters balanced events by instrument", async ({ page }) => {
+  await page.route("**/api/onchain/whales", async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    const now = new Date().toISOString();
+    const sndk = {
+      ...body.flow,
+      instrument: "XYZ:SNDK",
+      current_long_usd: 0,
+      current_short_usd: 707_000,
+      current_net_usd: -707_000,
+      flow_24h_usd: -707_000,
+      event_count_24h: 4,
+      symbols: [{ symbol: "XYZ:SNDK", long_usd: 0, short_usd: 707_000, net_usd: -707_000, wallet_count: 1, event_count_24h: 4 }]
+    };
+    const btc = {
+      ...body.flow,
+      instrument: "BTCUSDT",
+      current_long_usd: 0,
+      current_short_usd: 11_000_000,
+      current_net_usd: -11_000_000,
+      flow_24h_usd: -66_000,
+      event_count_24h: 2,
+      symbols: [{ symbol: "BTCUSDT", long_usd: 0, short_usd: 11_000_000, net_usd: -11_000_000, wallet_count: 1, event_count_24h: 2 }]
+    };
+    body.flow.symbols = [...sndk.symbols, ...btc.symbols];
+    body.flow_by_instrument = { "XYZ:SNDK": sndk, BTCUSDT: btc };
+    body.recent_events = [
+      {
+        id: "burst:sndk",
+        wallet_address: "0x1111111111111111111111111111111111111111",
+        wallet_label: "리더보드 고래 #25",
+        coin: "XYZ:SNDK",
+        symbol: "",
+        instrument: "XYZ:SNDK",
+        side: "short",
+        event: "increase",
+        action_label: "숏 증액",
+        size_usd: 707_000,
+        entry_px: 210,
+        mark_px: null,
+        unrealized_pnl: null,
+        event_at: now,
+        fill_count: 4,
+        raw_event_ids: ["1", "2", "3", "4"],
+        validation_state: "candidate",
+        trust_status: "validating",
+        sample_size: 0,
+        win_1r_pct: null,
+        accuracy_label: "적중률 축적 중 (N=0)",
+        alias_disclaimer: "공개 계정"
+      },
+      {
+        id: "burst:btc",
+        wallet_address: "0x2222222222222222222222222222222222222222",
+        wallet_label: "리더보드 고래 #151",
+        coin: "BTC",
+        symbol: "BTCUSDT",
+        instrument: "BTCUSDT",
+        side: "short",
+        event: "flip",
+        action_label: "롱→숏 전환",
+        size_usd: 208_000,
+        entry_px: 65_651,
+        mark_px: null,
+        unrealized_pnl: null,
+        event_at: now,
+        fill_count: 1,
+        raw_event_ids: ["5"],
+        validation_state: "candidate",
+        trust_status: "validating",
+        sample_size: 0,
+        win_1r_pct: null,
+        accuracy_label: "적중률 축적 중 (N=0)",
+        alias_disclaimer: "공개 계정"
+      }
+    ];
+    await route.fulfill({ response, json: body });
+  });
+
+  await page.goto("/engine?tab=onchain");
+  const view = page.getByTestId("engine-onchain-tab");
+  await expect(view).toBeVisible({ timeout: 30_000 });
+  await expect(view).toContainText("XYZ:SNDK");
+  await expect(view).toContainText("롱→숏 전환");
+  await expect(view).toContainText("검증중 N=0");
+
+  const filter = view.locator(".whaleInstrumentFilter");
+  await filter.getByLabel("고래 종목 검색").fill("SNDK");
+  await filter.getByRole("button", { name: "보기" }).click();
+  await expect(filter).toContainText("XYZ:SNDK");
+  await expect(view.locator(".whaleFlowChartSection")).toContainText("XYZ:SNDK");
+  await expect(view.locator(".whaleSymbolExposure")).toContainText("XYZ:SNDK 현재 쏠림");
+  await expect(view.locator(".whaleSymbolExposure")).not.toContainText("BTC");
+  await expect(view.locator(".whaleEventTape")).toContainText("4체결 합산");
+  await expect(view.locator(".whaleEventTape")).not.toContainText("롱→숏 전환");
+
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(2);
+});

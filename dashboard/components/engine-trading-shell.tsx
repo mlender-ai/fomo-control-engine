@@ -443,9 +443,38 @@ function WhaleReviewMetrics({ review }: { review: OnchainWhaleDashboard["wallets
 }
 
 function WhaleFlowOverview({ data }: { data: OnchainWhaleDashboard }) {
-  const flow = data.flow;
+  const [selectedInstrument, setSelectedInstrument] = useState("ALL");
+  const [instrumentQuery, setInstrumentQuery] = useState("");
+  const instruments = useMemo(() => Object.keys(data.flow_by_instrument ?? {}).sort((left, right) => left.localeCompare(right)), [data.flow_by_instrument]);
+  const flow = selectedInstrument === "ALL" ? data.flow : data.flow_by_instrument[selectedInstrument] ?? data.flow;
+  const visibleEvents = selectedInstrument === "ALL" ? data.recent_events : data.recent_events.filter((event) => event.instrument === selectedInstrument);
+  const visibleSymbols = flow.symbols.slice(0, 12);
+  const filterLabel = selectedInstrument === "ALL" ? "전체 종목" : selectedInstrument;
+
+  function selectInstrument(value: string) {
+    setSelectedInstrument(value);
+    setInstrumentQuery(value === "ALL" ? "" : value);
+  }
+
+  function submitInstrument(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const normalized = instrumentQuery.trim().toUpperCase();
+    if (!normalized) return selectInstrument("ALL");
+    const matched = instruments.find((item) => item === normalized) ?? instruments.find((item) => item.includes(normalized));
+    if (matched) selectInstrument(matched);
+  }
+
   return (
     <div className="whaleFlowOverview">
+      <section className="whaleInstrumentFilter" aria-label="고래 순체결 종목 필터">
+        <div><span>종목별 검증</span><strong>{filterLabel}</strong><small>현재 노출·72시간 흐름·최근 체결을 같은 종목 기준으로 봅니다.</small></div>
+        <form onSubmit={submitInstrument}>
+          <input aria-label="고래 종목 검색" list="whale-instrument-options" onChange={(event) => setInstrumentQuery(event.target.value)} placeholder="BTC, ETH, SNDK 검색" value={instrumentQuery} />
+          <datalist id="whale-instrument-options">{instruments.map((item) => <option key={item} value={item} />)}</datalist>
+          <button type="submit">보기</button>
+          <button aria-pressed={selectedInstrument === "ALL"} onClick={() => selectInstrument("ALL")} type="button">전체</button>
+        </form>
+      </section>
       <section className="whaleFlowMetrics" aria-label="고래 현재 노출">
         <div><span>현재 롱 노출</span><strong className="positive">{compactMoney(flow.current_long_usd)}</strong></div>
         <div><span>현재 숏 노출</span><strong className="negative">{compactMoney(flow.current_short_usd)}</strong></div>
@@ -453,20 +482,20 @@ function WhaleFlowOverview({ data }: { data: OnchainWhaleDashboard }) {
         <div><span>24시간 순체결</span><strong className={flow.flow_24h_usd >= 0 ? "positive" : "negative"}>{signedCompactMoney(flow.flow_24h_usd)}</strong><small>{flow.event_count_24h}건</small></div>
       </section>
       <section className="whaleFlowChartSection">
-        <header><div><Activity size={16} /><strong>고래 순체결 흐름</strong><span>2시간 단위 · 최근 {flow.window_hours}시간</span></div><div className="whaleLegend"><span><i className="long" />롱 유입·숏 청산</span><span><i className="short" />숏 유입·롱 청산</span></div></header>
+        <header><div><Activity size={16} /><strong>고래 순체결 흐름 · {filterLabel}</strong><span>2시간 단위 · 최근 {flow.window_hours}시간</span></div><div className="whaleLegend"><span><i className="long" />롱 유입·숏 청산</span><span><i className="short" />숏 유입·롱 청산</span></div></header>
         <WhaleFlowChart points={flow.timeline} />
       </section>
       <div className="whaleFlowLower">
         <section className="whaleSymbolExposure">
-          <header><strong>종목별 현재 쏠림</strong><span>공개 포지션 명목가</span></header>
-          {flow.symbols.length ? flow.symbols.slice(0, 8).map((item) => {
+          <header><strong>{selectedInstrument === "ALL" ? "종목별 현재 쏠림" : `${selectedInstrument} 현재 쏠림`}</strong><span>공개 포지션 명목가</span></header>
+          {visibleSymbols.length ? visibleSymbols.map((item) => {
             const total = Math.max(1, item.long_usd + item.short_usd);
-            return <div className="whaleSymbolRow" key={item.symbol}><div><strong>{item.symbol.replace("USDT", "")}</strong><span>{item.wallet_count}지갑 · 24h {item.event_count_24h}건</span><b className={item.net_usd >= 0 ? "positive" : "negative"}>{signedCompactMoney(item.net_usd)}</b></div><div className="whaleExposureTrack"><i className="long" style={{ width: `${item.long_usd / total * 100}%` }} /><i className="short" style={{ width: `${item.short_usd / total * 100}%` }} /></div><small><span>롱 {compactMoney(item.long_usd)}</span><span>숏 {compactMoney(item.short_usd)}</span></small></div>;
+            return <button aria-pressed={selectedInstrument === item.symbol} className="whaleSymbolRow" key={item.symbol} onClick={() => selectInstrument(item.symbol)} type="button"><div><strong>{item.symbol.replace("USDT", "")}</strong><span>{item.wallet_count}지갑 · 24h {item.event_count_24h}건</span><b className={item.net_usd >= 0 ? "positive" : "negative"}>{signedCompactMoney(item.net_usd)}</b></div><div className="whaleExposureTrack"><i className="long" style={{ width: `${item.long_usd / total * 100}%` }} /><i className="short" style={{ width: `${item.short_usd / total * 100}%` }} /></div><small><span>롱 {compactMoney(item.long_usd)}</span><span>숏 {compactMoney(item.short_usd)}</span></small></button>;
           }) : <p className="onchainEmptyInline">자동 추적군의 공개 포지션을 수집 중입니다.</p>}
         </section>
         <section className="whaleEventTape">
-          <header><strong>최근 체결 이벤트</strong><span>10만 USDT 이상</span></header>
-          {data.recent_events.length ? data.recent_events.slice(0, 10).map((event) => <div key={event.id}><i className={event.side} /><strong>{event.coin}</strong><span>{whaleEventLabel(event.event)} · {event.side === "long" ? "롱" : "숏"}</span><b>{compactMoney(event.size_usd)}</b><time>{shortDateTime(event.event_at)}</time></div>) : <p className="onchainEmptyInline">새 추적군의 확정 체결을 기다리고 있습니다.</p>}
+          <header><strong>최근 체결 · {filterLabel}</strong><span>원장 보존 · 60초 burst 합산</span></header>
+          {visibleEvents.length ? visibleEvents.slice(0, 10).map((event) => <div key={event.id}><i className={event.side} /><div className="whaleEventIdentity"><strong>{event.coin}</strong><span>{event.wallet_label}</span></div><div className="whaleEventAction"><strong>{event.action_label || whaleEventLabel(event.event)}</strong><span className={event.trust_status === "trusted" ? "trusted" : "validating"}>{event.trust_status === "trusted" ? "엄선" : "검증중"} N={event.sample_size}</span></div><b>{compactMoney(event.size_usd)}</b><time>{shortDateTime(event.event_at)}{event.fill_count > 1 ? ` · ${event.fill_count}체결 합산` : ""}</time></div>) : <p className="onchainEmptyInline">선택한 종목의 최근 72시간 확정 체결이 없습니다.</p>}
         </section>
       </div>
     </div>
