@@ -125,6 +125,8 @@ def build_candidate(
     market_rank: int | None,
     retail_rank: int | None,
     warnings: Iterable[str],
+    tradable: bool = False,
+    role: str = "observation_only",
     extra_signals: Iterable[dict[str, Any]] = (),
 ) -> dict[str, Any] | None:
     excluded, badges = warning_gate(warnings)
@@ -145,6 +147,9 @@ def build_candidate(
         "signals": signals,
         "market_rank": market_rank,
         "retail_rank": retail_rank,
+        "tradable": tradable,
+        "role": role,
+        "trade_exclusion_reason": None if tradable else role,
     }
 
 

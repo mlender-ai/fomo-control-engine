@@ -25,11 +25,19 @@ class StockInstrument:
 
 
 @dataclass(frozen=True)
+class StockBenchmarkProxy:
+    symbol: str
+    market: Market
+    role: str = "benchmark_proxy"
+
+
+@dataclass(frozen=True)
 class StockUniverse:
     version: str
     effective_at: str
     instruments: tuple[StockInstrument, ...]
     sources: dict[str, dict[str, str]]
+    benchmark_proxies: tuple[StockBenchmarkProxy, ...]
 
     def for_market(self, market: Market) -> tuple[StockInstrument, ...]:
         return tuple(item for item in self.instruments if item.market == market)
@@ -45,17 +53,28 @@ class StockUniverse:
             return False, "vi"
         return True, None
 
+    def classify(self, market: Market, symbol: str) -> tuple[bool, str]:
+        normalized = symbol.upper()
+        if any(item.market == market and item.symbol == normalized for item in self.benchmark_proxies):
+            return False, "benchmark_proxy"
+        if any(item.market == market and item.symbol == normalized and item.active_for_entry for item in self.instruments):
+            return True, "universe_member"
+        return False, "observation_only"
+
 
 def load_universe(path: Path = DEFAULT_UNIVERSE_PATH) -> StockUniverse:
     payload: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
     instruments: list[StockInstrument] = []
     sources: dict[str, dict[str, str]] = {}
+    benchmark_proxies: list[StockBenchmarkProxy] = []
     for market_name, config in payload["markets"].items():
         market = Market(market_name)
         symbols = [str(value).strip().upper() for value in config["symbols"]]
         if len(symbols) != 100 or len(set(symbols)) != 100:
             raise ValueError(f"{market.value} universe must contain 100 unique symbols")
         sources[market.value] = {"source": str(config["source"]), "source_as_of": str(config["source_as_of"])}
+        proxy = config.get("benchmark_proxy") or {}
+        benchmark_proxies.append(StockBenchmarkProxy(symbol=str(proxy["symbol"]).upper(), market=market, role=str(proxy.get("role") or "benchmark_proxy")))
         instruments.extend(
             StockInstrument(
                 symbol=symbol,
@@ -74,4 +93,5 @@ def load_universe(path: Path = DEFAULT_UNIVERSE_PATH) -> StockUniverse:
         effective_at=str(payload["effective_at"]),
         instruments=tuple(instruments),
         sources=sources,
+        benchmark_proxies=tuple(benchmark_proxies),
     )

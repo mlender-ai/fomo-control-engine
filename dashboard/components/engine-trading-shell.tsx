@@ -130,6 +130,7 @@ export function EngineTradingShell() {
 
 function StockPaperView({ data }: { data: StockPaperDashboard | null }) {
   if (!data) return <EngineLoading />;
+  const rejectionLedger = data.entry_rejection_distribution ?? { period_days: 7, total: 0, gates: [] };
   return (
     <div className="engineView stockPaperView" data-testid="engine-stock-paper-tab">
       <section className="stockPaperGate">
@@ -146,6 +147,15 @@ function StockPaperView({ data }: { data: StockPaperDashboard | null }) {
         {data.tracks.map((track) => <StockTrackCard key={track.market} track={track} />)}
       </section>
       <StockPaperEntryChart fills={data.recent_fills} />
+      <section className="stockExecutionAudit" data-testid="stock-entry-rejection-ledger">
+        <header><div><span className="engineSectionLabel">판단 원장 · 최근 {rejectionLedger.period_days}일</span><h3>진입 거부 게이트 분포</h3></div><strong>{rejectionLedger.total}건</strong></header>
+        <div className="stockRejectionGrid">
+          {rejectionLedger.gates.map((item) => (
+            <div key={`${item.market}-${item.gate}`}><span>{item.market}</span><strong>{rejectionLabel(item.gate)}</strong><b>{item.count.toLocaleString("ko-KR")}</b></div>
+          ))}
+          {!rejectionLedger.total ? <p>인증 후 정상 관측이 시작되면 필수 게이트별 측정값과 임계가 이 원장에 기록됩니다.</p> : null}
+        </div>
+      </section>
       <section className="stockExecutionAudit">
         <header><div><span className="engineSectionLabel">체결 모델 감사</span><h3>미체결 사유 분포</h3></div><strong>{data.fill_count} fills</strong></header>
         <div className="stockRejectionGrid">
@@ -175,6 +185,7 @@ function StockTrackCard({ track }: { track: StockPaperTrack }) {
         <p><span>{track.benchmark_index} · {track.benchmark_proxy_symbol} 프록시</span><strong>{track.benchmark_return_pct === null ? "데이터 대기" : signedPct(track.benchmark_return_pct)}</strong></p>
       </div>
       <div className="stockTrackProgress"><i style={{ width: `${Math.min(100, track.elapsed_days / 28 * 100)}%` }} /></div>
+      {!track.clock_valid ? <em>검증 시계 대기 · {track.clock_invalidation_reason || "인증 후 첫 정상 관측 필요"}</em> : null}
       <footer><span>{shortDate(track.started_at)} → {shortDate(track.ends_at)}</span><b>{stockMoney(track.cash, track.currency)}</b><small>미체결 {rejectionCount}건</small></footer>
       {track.status === "stopped" ? <em>체결 invariant 정지 · {rejectionLabel(track.stop_reason || "unknown")}</em> : null}
     </article>
@@ -197,7 +208,12 @@ function rejectionLabel(reason: string): string {
     validated_signature: "검증 표본 미달",
     earnings_clear: "실적 일정 미확인",
     liquidation_safety: "무효화선 근거 누락",
-    confirmed_flip: "확정 전환 미관측"
+    confirmed_flip: "확정 전환 미관측",
+    analysis_available: "공용 분석 캔들 부족",
+    entry_score: "진입 점수 미달",
+    checklist: "합류 체크 미달",
+    data_fresh: "관측 신선도 초과",
+    universe_entry_blocked: "거래 유니버스 밖"
   };
   return labels[reason] || reason.replaceAll("_", " ");
 }

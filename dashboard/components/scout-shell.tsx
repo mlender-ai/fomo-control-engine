@@ -862,7 +862,7 @@ function StockScoutSurface({ surface, onChange }: { surface: Exclude<ScoutSurfac
               <div className="stockCandidateGrid">
                 {candidates.map((candidate) => (
                   <article key={`${signalType}:${candidate.symbol}`}>
-                    <header><div><strong>{candidate.name}</strong><span>{candidate.symbol}</span></div>{candidate.warning_badges.map((badge) => <em key={badge}>{badge}</em>)}</header>
+                    <header><div><strong>{candidate.name}</strong><span>{candidate.symbol}</span></div>{!candidate.tradable ? <em>관측 전용 · {candidate.role === "benchmark_proxy" ? "벤치마크" : "유니버스 밖"}</em> : null}{candidate.warning_badges.map((badge) => <em key={badge}>{badge}</em>)}</header>
                     <b>{candidate.price == null ? "가격 없음" : formatPrice(candidate.price)}</b>
                     {candidate.signals.filter((signal) => signal.type === signalType).map((signal) => <p key={signal.type}>{signal.label}</p>)}
                     <dl><div><dt>시장 순위</dt><dd>{candidate.market_rank ?? "-"}</dd></div><div><dt>토스 체결 순위</dt><dd>{candidate.retail_rank ?? "-"}</dd></div></dl>

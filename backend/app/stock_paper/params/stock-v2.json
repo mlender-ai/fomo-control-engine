@@ -1,0 +1,15 @@
+{
+  "version": "stock-v2",
+  "min_evidence": 4,
+  "min_checklist_passed": 5,
+  "min_checklist_total": 5,
+  "min_rr": 1.5,
+  "min_entry_score": 75,
+  "min_signature_ci_low_pct": 50.0,
+  "signature_gate_mode": "record_only",
+  "earnings_gate_mode": "not_evaluable",
+  "max_open_positions": 5,
+  "daily_loss_limit_pct": 3.0,
+  "position_capital_fraction": 0.02,
+  "long_only": true
+}

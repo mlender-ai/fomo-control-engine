@@ -3,7 +3,7 @@
 import { RefreshCw, Send, TestTube2, UploadCloud } from "lucide-react";
 import { useEffect, useState } from "react";
 import { TerminalMetric, TerminalPanel, TerminalTable, TerminalWarning } from "@/components/terminal";
-import { api, type AlertSettings, type BitgetConnectionTest, type SystemStatus } from "@/lib/api";
+import { api, type AlertSettings, type BitgetConnectionTest, type SystemStatus, type TossAuthDiagnosis } from "@/lib/api";
 import { DEFAULT_DENSITY, loadDensity, saveDensity, type Density } from "@/lib/density";
 import { readSecondaryTaRows, writeSecondaryTaRows } from "@/lib/taDisplayPreferences";
 
@@ -35,6 +35,7 @@ export function SettingsShell() {
   const [busy, setBusy] = useState("");
   const [density, setDensity] = useState<Density>(DEFAULT_DENSITY);
   const [secondaryTaRows, setSecondaryTaRows] = useState(false);
+  const [tossDiagnosis, setTossDiagnosis] = useState<TossAuthDiagnosis | null>(null);
 
   useEffect(() => {
     setDensity(loadDensity());
@@ -71,6 +72,18 @@ export function SettingsShell() {
       setConnection(await api.testBitgetConnection());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to test Bitget connection");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function diagnoseToss() {
+    setBusy("toss-diagnosis");
+    setError("");
+    try {
+      setTossDiagnosis(await api.tossAuthDiagnosis());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Toss 인증 진단에 실패했습니다.");
     } finally {
       setBusy("");
     }
@@ -320,6 +333,26 @@ export function SettingsShell() {
       </TerminalPanel>
 
       <section className="grid two">
+        <TerminalPanel
+          title="Toss 인증 진단"
+          subtitle="토큰은 노출하지 않고 API 그룹별 권한·환경 오류를 분리합니다"
+          status={tossDiagnosis?.stages.every((stage) => stage.status === "ok") ? "ok" : "warning"}
+          actions={<button className="button secondary" onClick={diagnoseToss} disabled={busy === "toss-diagnosis"}><TestTube2 size={16} />진단 실행</button>}
+        >
+          <div className="statusGrid" id="toss-auth">
+            <StatusItem label="Configured" value={tossDiagnosis ? String(tossDiagnosis.configured) : "진단 전"} tone="muted" />
+            <StatusItem label="Base URL" value={tossDiagnosis?.base_url ?? "-"} tone="muted" />
+            {tossDiagnosis?.stages.map((stage) => (
+              <StatusItem
+                key={stage.stage}
+                label={stage.stage}
+                value={stage.status === "ok" ? "ok" : `${stage.status_code ?? "-"} · ${stage.error_code ?? stage.error_message ?? "unknown"}${stage.request_id ? ` · ${stage.request_id}` : ""}`}
+                tone={stage.status === "ok" ? "ok" : "muted"}
+              />
+            ))}
+          </div>
+          <TerminalWarning tone="info">실패 단계별 콘솔 확인 순서는 docs/TossAuthRunbook.md에 기록됩니다. Client ID·Secret·access token은 응답과 로그에 포함하지 않습니다.</TerminalWarning>
+        </TerminalPanel>
         <TerminalPanel
           title="Read-only Exchange Boundary"
           subtitle="Bitget credentials are used only for data collection and position read sync"

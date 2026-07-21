@@ -44,6 +44,88 @@ class StockPaperStore:
                     (market, currency, benchmark, proxy, universe_version, started, ends, capital, capital, started, started),
                 )
 
+    def activate_clock(self, market: Market, *, parameter_version: str, observed_at: datetime) -> bool:
+        now = observed_at.isoformat()
+        ends = (observed_at + timedelta(weeks=4)).isoformat()
+        with self._connect() as connection:
+            row = connection.execute("SELECT clock_valid FROM stock_paper_tracks WHERE market=?", (market.value,)).fetchone()
+            if row is None or bool(row["clock_valid"]):
+                return False
+            connection.execute(
+                """UPDATE stock_paper_tracks SET started_at=?, ends_at=?, clock_valid=1,
+                clock_invalidation_reason=NULL, parameter_version=?, status='running', updated_at=? WHERE market=?""",
+                (now, ends, parameter_version, now, market.value),
+            )
+        self.record_event(market, "validation_clock_started", reason="first_authenticated_observation", observed_at=observed_at)
+        return True
+
+    def save_analysis_snapshot(self, market: Market, symbol: str, *, observed_at: datetime, parameter_version: str, payload: dict[str, Any]) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """INSERT INTO stock_paper_analysis_snapshots
+                (market, symbol, observed_at, parameter_version, payload) VALUES (?, ?, ?, ?, ?)""",
+                (market.value, symbol.upper(), observed_at.isoformat(), parameter_version, json.dumps(payload, ensure_ascii=False)),
+            )
+
+    def latest_analysis_snapshot(self, market: Market, symbol: str) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """SELECT payload FROM stock_paper_analysis_snapshots WHERE market=? AND symbol=?
+                ORDER BY observed_at DESC LIMIT 1""",
+                (market.value, symbol.upper()),
+            ).fetchone()
+        return json.loads(row["payload"]) if row else None
+
+    def record_entry_rejection(
+        self,
+        market: Market,
+        symbol: str,
+        *,
+        gate: str,
+        measured_value: Any,
+        threshold: Any,
+        payload: dict[str, Any] | None = None,
+        observed_at: datetime | None = None,
+        stale_seconds: int = 300,
+    ) -> bool:
+        now = observed_at or datetime.now(timezone.utc)
+        with self._connect() as connection:
+            row = connection.execute(
+                """SELECT ts FROM stock_paper_entry_rejections WHERE market=? AND symbol=? AND gate=?
+                ORDER BY ts DESC LIMIT 1""",
+                (market.value, symbol.upper(), gate),
+            ).fetchone()
+            if row:
+                previous = datetime.fromisoformat(str(row["ts"]).replace("Z", "+00:00"))
+                if (now - previous).total_seconds() < stale_seconds:
+                    return False
+            connection.execute(
+                """INSERT INTO stock_paper_entry_rejections
+                (market, symbol, ts, gate, measured_value, threshold, payload) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    market.value,
+                    symbol.upper(),
+                    now.isoformat(),
+                    gate,
+                    json.dumps(measured_value, ensure_ascii=False),
+                    json.dumps(threshold, ensure_ascii=False),
+                    json.dumps(payload or {}, ensure_ascii=False),
+                ),
+            )
+        return True
+
+    def rejection_distribution(self, days: int = 7) -> dict[str, Any]:
+        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT market, gate, COUNT(*) AS count, MAX(ts) AS latest_at
+                FROM stock_paper_entry_rejections WHERE ts>=?
+                GROUP BY market, gate ORDER BY count DESC, gate""",
+                (since,),
+            ).fetchall()
+        gates = [dict(row) for row in rows]
+        return {"period_days": days, "total": sum(int(row["count"]) for row in rows), "gates": gates}
+
     def update_benchmark(self, market: Market, price: float, observed_at: datetime) -> None:
         if price <= 0:
             return
@@ -249,7 +331,9 @@ class StockPaperStore:
         with self._connect() as connection:
             tracks = [dict(row) for row in connection.execute("SELECT * FROM stock_paper_tracks ORDER BY market").fetchall()]
             events = connection.execute(
-                "SELECT market, reason, COUNT(*) AS count FROM stock_paper_events WHERE reason IS NOT NULL GROUP BY market, reason"
+                """SELECT market, reason, COUNT(*) AS count FROM stock_paper_events
+                WHERE reason IS NOT NULL AND event_type NOT IN ('validation_clock_started', 'validation_clock_invalidated')
+                GROUP BY market, reason"""
             ).fetchall()
             fills = [
                 json.loads(row["payload"]) for row in connection.execute("SELECT payload FROM stock_paper_fills ORDER BY filled_at DESC LIMIT 100").fetchall()
@@ -283,7 +367,7 @@ class StockPaperStore:
             result_tracks.append(
                 {
                     **track,
-                    "elapsed_days": max(0, min(28, (now - start).days)),
+                    "elapsed_days": max(0, min(28, (now - start).days)) if bool(track.get("clock_valid")) else 0,
                     "benchmark_return_pct": round(benchmark_return, 4) if benchmark_return is not None else None,
                     "nav": round(nav, 4) if marks_complete else None,
                     "nav_complete": marks_complete,
@@ -300,6 +384,7 @@ class StockPaperStore:
             "live_orders_enabled": False,
             "performance_gate": "Toss 실주문은 주식 페이퍼가 4주간 벤치마크를 초과할 경우에만 재논의",
             "sample_note": "KR/US 원통화 성적이며 크립토 검증과 합산하지 않습니다.",
+            "entry_rejection_distribution": self.rejection_distribution(7),
         }
 
 

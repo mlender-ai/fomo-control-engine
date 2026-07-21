@@ -10,6 +10,7 @@
       "source": "https://www.nasdaq.com/solutions/global-indexes/nasdaq-100/companies",
       "source_as_of": "2025-05-19",
       "tick_rule": "US_CENT",
+      "benchmark_proxy": {"symbol": "QQQ", "role": "benchmark_proxy"},
       "symbols": [
         "AAPL", "ABNB", "ADBE", "ADI", "ADP", "ADSK", "AEP", "ALNY", "AMAT", "AMD",
         "AMGN", "AMZN", "APP", "ARM", "ASML", "AVGO", "AXON", "BKNG", "BKR", "CCEP",
@@ -29,6 +30,7 @@
       "source": "https://data.krx.co.kr/contents/MDC/MAIN/main/index.cmd?locale=ko",
       "source_as_of": "2026-07-19-manual-seed",
       "tick_rule": "KRX_EQUITY",
+      "benchmark_proxy": {"symbol": "237350", "role": "benchmark_proxy"},
       "symbols": [
         "005930", "000660", "373220", "207940", "005380", "000270", "068270", "105560", "055550", "035420",
         "035720", "028260", "012330", "005490", "066570", "051910", "003670", "096770", "032830", "086790",

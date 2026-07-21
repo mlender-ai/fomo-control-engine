@@ -39,11 +39,15 @@ _candidate_evidence_cache: dict[tuple[str, str], tuple[float, dict[str, Any]]] =
 _orderbook_imbalance: dict[tuple[str, str], float] = {}
 _maintenance_until: dict[str, float] = {}
 _latest_market: dict[str, dict[str, Any]] = {}
-_authentication_blocked: dict[str, str] = {}
+_authentication_blocked: dict[str, dict[str, Any]] = {}
 _BENCHMARK_PROXY = {"KR": "237350", "US": "QQQ"}
 _MAX_CANDIDATES_PER_MARKET = 18
 _daily_backfill_cursor = {"KR": 0, "US": 0}
 _daily_backfilled_on: dict[tuple[str, str], str] = {}
+
+
+def clear_authentication_blocks() -> None:
+    _authentication_blocked.clear()
 
 
 def public_status(settings: Settings, market: str, store: TossStockStore) -> dict[str, Any]:
@@ -72,7 +76,8 @@ async def collect_market(settings: Settings, market: str) -> dict[str, Any]:
         return {
             **public_status(settings, market, store),
             "status": "authentication_failed",
-            "message": _authentication_blocked[market],
+            **_authentication_blocked[market],
+            "diagnosis_url": "/api/system/toss/auth-diagnosis",
         }
     pause_seconds = math.ceil(_maintenance_until.get(market, 0) - time.monotonic())
     if pause_seconds > 0:
@@ -100,8 +105,7 @@ async def collect_market(settings: Settings, market: str) -> dict[str, Any]:
         configured_symbols = list(settings.toss_kr_watchlist if market == "KR" else settings.toss_us_watchlist)
         universe_symbols = [item.symbol for item in load_universe().for_market(Market(market))]
         symbols = list(dict.fromkeys([*configured_symbols, *universe_symbols, _BENCHMARK_PROXY[market]]))
-        if market == "KR":
-            symbols = list(dict.fromkeys([*symbols, *sorted(ranked_symbols)]))[:400]
+        symbols = list(dict.fromkeys([*symbols, *sorted(ranked_symbols)]))[:400]
         if not symbols:
             return {**public_status(settings, market, store), "status": "empty_universe", "market_state": "open"}
         price_rows: list[dict[str, Any]] = []
@@ -156,18 +160,26 @@ async def collect_market(settings: Settings, market: str) -> dict[str, Any]:
             "market_state": "open",
             "observed_at": now,
             "groups": group_candidates(candidates),
+            "trade_groups": group_candidates(item for item in candidates if item.get("tradable") is True),
         }
         _latest_market[market] = response
+        _authentication_blocked.pop(market, None)
         return response
     except TossEdgeBlocked as exc:
         return {**public_status(settings, market, store), "status": "edge_blocked", "message": str(exc), "request_id": exc.request_id}
     except TossAuthenticationError as exc:
-        _authentication_blocked[market] = str(exc)
+        details = {
+            "message": str(exc),
+            "request_id": exc.request_id,
+            "error_code": exc.error_code,
+            "error_message": exc.error_message,
+            "diagnosis_url": "/api/system/toss/auth-diagnosis",
+        }
+        _authentication_blocked[market] = details
         response = {
             **public_status(settings, market, store),
             "status": "authentication_failed",
-            "message": str(exc),
-            "request_id": exc.request_id,
+            **details,
         }
         _latest_market[market] = response
         return response
@@ -246,6 +258,7 @@ async def _build_ranked_candidates(
     stock_rows: list[dict[str, Any]],
     observed_at: str,
 ) -> list[dict[str, Any]]:
+    universe = load_universe()
     market_rows = _ranking_rows(rankings.get("MARKET_TRADING_AMOUNT", {}))
     retail_rows = _ranking_rows(rankings.get("TOSS_SECURITIES_TRADING_AMOUNT", {}))
     price_by_symbol = {str(row.get("symbol")): row for row in price_rows}
@@ -253,6 +266,7 @@ async def _build_ranked_candidates(
     symbols = (set(market_rows) | set(retail_rows)) & set(price_by_symbol)
     preliminary = []
     for symbol in symbols:
+        tradable, role = universe.classify(Market(market), symbol)
         market_row = market_rows.get(symbol, {})
         retail_row = retail_rows.get(symbol, {})
         price_row = price_by_symbol.get(symbol, {})
@@ -267,11 +281,20 @@ async def _build_ranked_candidates(
             market_rank=_int(market_row.get("rank")),
             retail_rank=_int(retail_row.get("rank")),
             warnings=[],
+            tradable=tradable,
+            role=role,
         )
         if candidate:
             preliminary.append(candidate)
-    result = []
-    for candidate in preliminary[:_MAX_CANDIDATES_PER_MARKET]:
+    preliminary.sort(key=lambda item: (item.get("market_rank") is None, item.get("market_rank") or 10_000, item["symbol"]))
+    observation_only = [item for item in preliminary if item.get("tradable") is not True][:_MAX_CANDIDATES_PER_MARKET]
+    for candidate in observation_only:
+        for signal in candidate["signals"]:
+            if signal.get("tone") == "candidate":
+                store.record_judgment(candidate, signal)
+    result = list(observation_only)
+    tradable_candidates = [item for item in preliminary if item.get("tradable") is True][:_MAX_CANDIDATES_PER_MARKET]
+    for candidate in tradable_candidates:
         warnings_payload = await _load_warnings(client, store, market, candidate["symbol"], observed_at)
         warnings = [str(item.get("warningType") or item.get("type") or "") for item in _result_list(warnings_payload)]
         evidence = await _load_candidate_evidence(client, store, market, candidate["symbol"], observed_at)
@@ -290,6 +313,8 @@ async def _build_ranked_candidates(
             market_rank=candidate["market_rank"],
             retail_rank=candidate["retail_rank"],
             warnings=warnings,
+            tradable=bool(candidate.get("tradable")),
+            role=str(candidate.get("role") or "observation_only"),
             extra_signals=[signal for signal in extra_signals if signal],
         )
         if checked:
@@ -361,6 +386,7 @@ async def _load_candidate_evidence(
                 observed_at,
                 resample_candles(one_minute, minutes),
             )
+    await _backfill_candidate_daily(client, store, market, symbol, observed_at)
     current_imbalance = _orderbook_ratio(orderbook_payload)
     orderbook_signal = orderbook_change_signal(_orderbook_imbalance.get(key), current_imbalance)
     if current_imbalance is not None:
@@ -373,6 +399,30 @@ async def _load_candidate_evidence(
     }
     _candidate_evidence_cache[key] = (time.monotonic(), evidence)
     return evidence
+
+
+async def _backfill_candidate_daily(
+    client: TossReadOnlyClient,
+    store: TossStockStore,
+    market: str,
+    symbol: str,
+    observed_at: str,
+) -> bool:
+    day = observed_at[:10]
+    if _daily_backfilled_on.get((market, symbol)) == day:
+        return False
+    payload = await client.get(
+        "/api/v1/candles",
+        params={"symbol": symbol, "interval": "1d", "count": 200, "adjusted": "true"},
+    )
+    result = payload.get("result") or {}
+    rows = (result.get("candles") or []) if isinstance(result, dict) else []
+    candles = _normalize_candles(rows)
+    if not candles:
+        return False
+    store.upsert_candles(market, symbol, "1d", "toss_1d", observed_at, candles)
+    _daily_backfilled_on[(market, symbol)] = day
+    return True
 
 
 async def _backfill_next_daily_candle(

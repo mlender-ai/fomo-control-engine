@@ -120,6 +120,18 @@ class TossStockStore:
         rows = [dict(row) for row in reversed(earlier)] + [dict(row) for row in later]
         return rows
 
+    def latest_candles(self, market: str, symbol: str, timeframe: str, limit: int = 240) -> list[dict[str, Any]]:
+        if not self.enabled:
+            return []
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT opened_at, open, high, low, close, volume, source, observed_at
+                FROM toss_candles WHERE market=? AND symbol=? AND timeframe=?
+                ORDER BY julianday(opened_at) DESC LIMIT ?""",
+                (market, symbol.upper(), timeframe, limit),
+            ).fetchall()
+        return [dict(row) for row in reversed(rows)]
+
     def record_judgment(self, candidate: dict[str, Any], signal: dict[str, Any]) -> str | None:
         price = candidate.get("price")
         if price is None:

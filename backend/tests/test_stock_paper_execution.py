@@ -200,5 +200,7 @@ def test_versioned_universe_has_two_independent_100_name_tracks() -> None:
     assert len(universe.for_market(Market.US)) == 100
     assert universe.entry_allowed(Market.KR, "005930", ["investment_risk"]) == (False, "warning_hard_gate")
     parameters = load_stock_parameters()
-    assert parameters.version == "stock-v1"
+    assert parameters.version == "stock-v2"
+    assert parameters.signature_gate_mode == "record_only"
+    assert parameters.earnings_gate_mode == "not_evaluable"
     assert parameters.long_only is True

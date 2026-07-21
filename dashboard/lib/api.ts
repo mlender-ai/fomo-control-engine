@@ -28,6 +28,9 @@ export type StockScoutCandidate = {
   signals: StockScoutSignal[];
   market_rank: number | null;
   retail_rank: number | null;
+  tradable: boolean;
+  role: "universe_member" | "benchmark_proxy" | "observation_only" | string;
+  trade_exclusion_reason: string | null;
 };
 
 export type StockScoutResponse = {
@@ -37,9 +40,14 @@ export type StockScoutResponse = {
   status: string;
   market_state?: string;
   message?: string | null;
+  diagnosis_url?: string;
+  error_code?: string | null;
+  error_message?: string | null;
+  request_id?: string | null;
   read_only_label: string;
   source: string;
   groups: Record<string, StockScoutCandidate[]>;
+  trade_groups?: Record<string, StockScoutCandidate[]>;
   performance: Array<{
     signal_type: string;
     horizon_days: number;
@@ -2266,6 +2274,9 @@ export type StockPaperTrack = {
   benchmark_return_pct: number | null;
   benchmark_observed_at: string | null;
   rejection_reasons: Record<string, number>;
+  clock_valid: 0 | 1;
+  clock_invalidation_reason: string | null;
+  parameter_version: string;
 };
 
 export type StockPaperDashboard = {
@@ -2282,6 +2293,11 @@ export type StockPaperDashboard = {
   live_orders_enabled: false;
   performance_gate: string;
   sample_note: string;
+  entry_rejection_distribution: {
+    period_days: number;
+    total: number;
+    gates: Array<{ market: "KR" | "US"; gate: string; count: number; latest_at: string }>;
+  };
   universe: {
     version: string;
     effective_at: string;
@@ -2290,6 +2306,21 @@ export type StockPaperDashboard = {
     sources: Record<string, { source: string; source_as_of: string }>;
     refresh_policy: "quarterly_manual";
   };
+};
+
+export type TossAuthDiagnosis = {
+  observed_at: string;
+  configured: boolean;
+  base_url: string;
+  credentials_exposed: false;
+  stages: Array<{
+    stage: string;
+    status: "ok" | "failed";
+    status_code?: number | null;
+    error_code?: string | null;
+    error_message?: string | null;
+    request_id?: string | null;
+  }>;
 };
 
 export type StockPaperFill = {
@@ -2516,6 +2547,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   systemStatus: () => request<SystemStatus>("/api/system/status"),
+  tossAuthDiagnosis: () => request<TossAuthDiagnosis>("/api/system/toss/auth-diagnosis"),
   testBitgetConnection: () =>
     request<BitgetConnectionTest>("/api/system/bitget/test-connection", {
       method: "POST"

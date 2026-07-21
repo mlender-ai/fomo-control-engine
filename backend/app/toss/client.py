@@ -15,6 +15,8 @@ from .rate_limit import TokenBucket
 
 logger = logging.getLogger("toss.readonly")
 _SHARED_BUCKETS: dict[tuple[str, int, str], TokenBucket] = {}
+_SHARED_TOKENS: dict[tuple[str, int], _Token] = {}
+_SHARED_TOKEN_LOCKS: dict[tuple[str, int], asyncio.Lock] = {}
 
 TOKEN_PATH = "/oauth2/token"
 ALLOWED_PATHS = (
@@ -84,8 +86,6 @@ class TossReadOnlyClient:
         self.client_id = client_id
         self._secret = client_secret
         self._http = httpx.AsyncClient(base_url=base_url.rstrip("/"), timeout=timeout_seconds, transport=transport)
-        self._token: _Token | None = None
-        self._token_lock = asyncio.Lock()
         self._buckets = {
             "AUTH": TokenBucket(5, 5),
             "MARKET_DATA": TokenBucket(10, 10),
@@ -120,14 +120,24 @@ class TossReadOnlyClient:
     async def close(self) -> None:
         await self._http.aclose()
 
-    async def _access_token(self, *, force: bool = False) -> str:
+    async def verify_access_token(self) -> None:
+        """Verify issuance without exposing the token to diagnostic callers."""
+        await self._access_token()
+
+    async def _access_token(self, *, force: bool = False, rejected_token: str | None = None) -> str:
         if not self.configured:
             raise TossAuthenticationError("토스 API 인증값이 설정되지 않았습니다.")
-        if not force and self._token and self._token.expires_at - time.time() > 60:
-            return self._token.value
-        async with self._token_lock:
-            if not force and self._token and self._token.expires_at - time.time() > 60:
-                return self._token.value
+        key = (self.client_id, id(asyncio.get_running_loop()))
+        token = _SHARED_TOKENS.get(key)
+        if not force and token and token.expires_at - time.time() > 60:
+            return token.value
+        lock = _SHARED_TOKEN_LOCKS.setdefault(key, asyncio.Lock())
+        async with lock:
+            token = _SHARED_TOKENS.get(key)
+            # Another market may have refreshed while this request was in flight.
+            # Reuse that newer token instead of issuing again and invalidating it.
+            if token and token.expires_at - time.time() > 60 and (not force or (rejected_token is not None and token.value != rejected_token)):
+                return token.value
             response: httpx.Response | None = None
             for attempt in range(5):
                 await self._bucket("AUTH").acquire()
@@ -142,13 +152,20 @@ class TossReadOnlyClient:
                     await asyncio.sleep(max(retry_after, min(30.0, 2**attempt + random.random())))
             assert response is not None
             if response.status_code >= 400:
-                raise TossAuthenticationError("토스 인증 토큰 발급에 실패했습니다.", status_code=response.status_code)
+                details = _error_details(response)
+                raise TossAuthenticationError(
+                    "토스 인증 토큰 발급에 실패했습니다.",
+                    status_code=response.status_code,
+                    request_id=details["request_id"],
+                    error_code=details["error_code"],
+                    error_message=details["error_message"],
+                )
             payload = response.json()
             value = str(payload.get("access_token") or payload.get("accessToken") or "")
             if not value:
                 raise TossAuthenticationError("토스 인증 응답에 access token이 없습니다.")
             expires_in = max(60, int(payload.get("expires_in") or payload.get("expiresIn") or 3600))
-            self._token = _Token(value=value, expires_at=time.time() + expires_in)
+            _SHARED_TOKENS[key] = _Token(value=value, expires_at=time.time() + expires_in)
             return value
 
     async def get(self, path: str, *, params: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -172,14 +189,16 @@ class TossReadOnlyClient:
         if response.status_code >= 400:
             logger.warning("toss request failed path=%s status=%s request_id=%s", path, response.status_code, request_id)
         if response.status_code == 401 and auth_retry:
-            self._token = None
-            await self._access_token(force=True)
+            await self._access_token(force=True, rejected_token=token)
             return await self._request(path, params=params, auth_retry=False, attempt=attempt)
         if response.status_code == 401:
+            details = _error_details(response)
             raise TossAuthenticationError(
                 "토스 인증이 반복 실패해 수집을 중지합니다.",
                 status_code=401,
                 request_id=request_id,
+                error_code=details["error_code"],
+                error_message=details["error_message"],
             )
         if response.status_code == 429 and attempt < 5:
             retry_after = float(response.headers.get("Retry-After") or 0)
@@ -209,3 +228,23 @@ def _request_id(response: httpx.Response) -> str | None:
     error = payload.get("error") if isinstance(payload, dict) else None
     value = error.get("requestId") if isinstance(error, dict) else None
     return str(value) if value else None
+
+
+def _error_details(response: httpx.Response) -> dict[str, str | None]:
+    """Extract only server diagnostic fields; credentials/tokens are never returned."""
+    request_id = _request_id(response)
+    try:
+        payload = response.json()
+    except ValueError:
+        text = response.text.strip()
+        return {"request_id": request_id, "error_code": None, "error_message": text[:500] or None}
+    error = payload.get("error") if isinstance(payload, dict) else None
+    source = error if isinstance(error, dict) else payload if isinstance(payload, dict) else {}
+    code = source.get("code") or source.get("errorCode") or source.get("error_code")
+    message = source.get("message") or source.get("errorMessage") or source.get("error_description")
+    nested_request_id = source.get("requestId") or source.get("request_id")
+    return {
+        "request_id": str(nested_request_id or request_id) if nested_request_id or request_id else None,
+        "error_code": str(code) if code is not None else None,
+        "error_message": str(message)[:500] if message is not None else None,
+    }

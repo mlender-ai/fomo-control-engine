@@ -206,10 +206,10 @@ async def test_candidate_evidence_is_collected_and_throttled_to_fifteen_seconds(
     first = await _load_candidate_evidence(client, store, "KR", "005930", "2026-07-18T00:01:00+00:00")
     second = await _load_candidate_evidence(client, store, "KR", "005930", "2026-07-18T00:01:05+00:00")
     assert first == second
-    assert sorted(client.paths) == sorted(["/api/v1/orderbook", "/api/v1/trades", "/api/v1/price-limits", "/api/v1/candles"])
+    assert sorted(client.paths) == sorted(["/api/v1/orderbook", "/api/v1/trades", "/api/v1/price-limits", "/api/v1/candles", "/api/v1/candles"])
     with sqlite3.connect(database_path) as connection:
         assert connection.execute("SELECT COUNT(*) FROM toss_quotes").fetchone()[0] == 3
-        assert connection.execute("SELECT COUNT(DISTINCT timeframe) FROM toss_candles").fetchone()[0] == 5
+        assert connection.execute("SELECT COUNT(DISTINCT timeframe) FROM toss_candles").fetchone()[0] == 6
 
 
 @pytest.mark.asyncio
