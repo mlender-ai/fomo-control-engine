@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from statistics import mean
 from typing import Any
 
 from app.analyst.oneliner import build_one_liners
 from app.core.config import get_settings
 from app.db.models import MarketCandle, MarketSnapshot, Position
+from app.exchange.bitget.trades import timeframe_seconds
 from app.marketdata.assets import classify_asset_class
 from app.marketdata.sessions import filter_analysis_candles, session_info_for_symbol
 from app.positions.scenarios import build_direction_scenarios
@@ -61,7 +62,9 @@ def build_chart_analysis(
     *,
     derivatives: dict | None = None,
 ) -> dict:
-    candles = sorted(snapshot.candles, key=lambda candle: candle.timestamp)
+    source_candles = sorted(snapshot.candles, key=lambda candle: candle.timestamp)
+    candles = confirmed_chart_candles(source_candles, snapshot.timeframe)
+    unconfirmed_candles_excluded = len(source_candles) - len(candles)
     if len(candles) < MIN_CHART_CANDLES:
         raise ValueError("차트 분석에 필요한 캔들 데이터가 부족합니다.")
 
@@ -135,6 +138,7 @@ def build_chart_analysis(
         "data_quality": {
             "candles": len(recent),
             "analysis_candles": len(analysis_recent),
+            "unconfirmed_candles_excluded": unconfirmed_candles_excluded,
             "session_excluded_candles": session_excluded,
             "source": snapshot.provider,
             "estimated_volume_profile": profile["method"] != "trade_fills",
@@ -156,6 +160,30 @@ def build_chart_analysis(
             mark_price=mark_price,
         )
     return payload
+
+
+def confirmed_chart_candles(
+    candles: list[MarketCandle],
+    timeframe: str,
+    *,
+    now: datetime | None = None,
+) -> list[MarketCandle]:
+    """Return only candles whose full interval has elapsed.
+
+    Bitget's recent-candle endpoint includes the currently forming bucket. The
+    structure engines must never treat that mutable bucket as a confirmed
+    Wyckoff event or harmonic pivot.
+    """
+
+    cutoff = now or datetime.now(timezone.utc)
+    if cutoff.tzinfo is None:
+        cutoff = cutoff.replace(tzinfo=timezone.utc)
+    duration = timedelta(seconds=timeframe_seconds(timeframe))
+    return [candle for candle in sorted(candles, key=lambda item: item.timestamp) if _aware_datetime(candle.timestamp) + duration <= cutoff]
+
+
+def _aware_datetime(value: datetime) -> datetime:
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
 
 
 def apply_position_context(analysis: dict[str, Any], context: PositionContext) -> dict[str, Any]:

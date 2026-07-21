@@ -68,6 +68,7 @@ from app.positions.engine import (
     make_snapshot,
 )
 from app.positions.insight import build_position_insight_input, make_ai_position_insight
+from app.positions.pattern_matrix import build_pattern_matrix
 from app.positions.pnl import resolve_position_pnl_percent
 from app.positions.deepdive import build_entry_snapshot_claim, build_position_deepdive, deepdive_judgment_claim
 from app.onchain.service import chart_onchain_context
@@ -974,6 +975,16 @@ def get_position_chart_analysis(position_id: UUID, timeframe: str = "4h", compac
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except MarketDataError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+def get_position_pattern_matrix(position_id: UUID) -> dict:
+    position = repository.get_position(position_id)
+    if position is None:
+        raise HTTPException(status_code=404, detail="Position not found")
+    return {
+        **build_pattern_matrix(position.symbol, market_provider.get_snapshot),
+        "position_id": str(position.id),
+    }
 
 
 def get_position_deepdive(position_id: UUID) -> dict:

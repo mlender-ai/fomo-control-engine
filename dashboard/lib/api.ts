@@ -1586,6 +1586,7 @@ export type PositionChartAnalysis = {
   data_quality: {
     candles: number;
     analysis_candles?: number;
+    unconfirmed_candles_excluded?: number;
     session_excluded_candles?: number;
     source: string;
     estimated_volume_profile: boolean;
@@ -1630,6 +1631,41 @@ export type PositionChartAnalysis = {
     disclaimer?: string;
     reason?: string;
   };
+};
+
+export type PositionPatternMatrixRow = {
+  timeframe: string;
+  status: "ok" | "unavailable";
+  reason: string | null;
+  candles: number;
+  last_confirmed_at: string | null;
+  wyckoff: {
+    detected: boolean;
+    range_detected: boolean;
+    phase: string;
+    side: string;
+    event_count: number;
+    events: Array<{ label?: string | null; type?: string | null; confidence?: number | null; time?: number | null }>;
+  };
+  harmonic: {
+    detected: boolean;
+    pattern_count: number;
+    best_pattern: {
+      label?: string | null;
+      direction?: string | null;
+      status?: string | null;
+      confidence?: number | null;
+    } | null;
+  };
+};
+
+export type PositionPatternMatrix = {
+  position_id: string;
+  symbol: string;
+  generated_at: string;
+  policy: "independent_timeframes_confirmed_candles_only";
+  timeframes: PositionPatternMatrixRow[];
+  found_timeframes: string[];
 };
 
 export type OnchainWhaleReview = {
@@ -2580,6 +2616,8 @@ export const api = {
     request<PositionChartAnalysis>(
       `/api/live/positions/${positionId}/chart-analysis?timeframe=${encodeURIComponent(timeframe)}${compact ? "&compact=true" : ""}`
     ),
+  positionPatternMatrix: (positionId: string) =>
+    request<PositionPatternMatrix>(`/api/live/positions/${positionId}/pattern-matrix`),
   positionDeepDive: (positionId: string) =>
     request<PositionDeepDive>(`/api/live/positions/${positionId}/deepdive`),
   analyzeLivePosition: (positionId: string) =>

@@ -21,6 +21,11 @@ router.add_api_route(
     methods=["GET"],
 )
 router.add_api_route(
+    "/api/live/positions/{position_id}/pattern-matrix",
+    handlers.get_position_pattern_matrix,
+    methods=["GET"],
+)
+router.add_api_route(
     "/api/live/positions/{position_id}/deepdive",
     handlers.get_position_deepdive,
     methods=["GET"],

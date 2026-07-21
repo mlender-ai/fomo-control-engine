@@ -44,6 +44,7 @@ import {
   type OnchainWhaleEvent,
   type PositionActionPlan,
   type PositionChartAnalysis,
+  type PositionPatternMatrix,
   type PositionDeepDive,
   type ScenarioMatchResponse
 } from "@/lib/api";
@@ -76,6 +77,10 @@ export function LivePositionCockpit() {
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [selectedChartAnalysis, setSelectedChartAnalysis] = useState<PositionChartAnalysis | null>(null);
+  const [selectedPatternMatrix, setSelectedPatternMatrix] = useState<PositionPatternMatrix | null>(null);
+  const [selectedPatternMatrixLoading, setSelectedPatternMatrixLoading] = useState(false);
+  const [selectedPatternMatrixError, setSelectedPatternMatrixError] = useState("");
+  const [chartTimeframe, setChartTimeframe] = useState("4h");
   const [selectedDetail, setSelectedDetail] = useState<LivePositionDetail | null>(null);
   const [selectedDeepDive, setSelectedDeepDive] = useState<PositionDeepDive | null>(null);
   const [selectedDeepDiveLoading, setSelectedDeepDiveLoading] = useState(false);
@@ -89,6 +94,7 @@ export function LivePositionCockpit() {
   const [instrumentMapError, setInstrumentMapError] = useState("");
   const [viewMode, setViewMode] = useState<FceViewMode>("minimal");
   const selectedChartRequestRef = useRef(0);
+  const selectedPatternMatrixRequestRef = useRef(0);
   const selectedDetailRequestRef = useRef(0);
   const selectedDeepDiveRequestRef = useRef(0);
   const hasPositionDataRef = useRef(false);
@@ -244,6 +250,7 @@ export function LivePositionCockpit() {
     try {
       await api.analyzeLivePosition(positionId);
       const requests: Array<Promise<unknown>> = [loadSelectedChart(positionId, false), load(false)];
+      if (viewMode === "pro") requests.push(loadSelectedPatternMatrix(positionId, false));
       if (includeDeepDive) requests.push(loadSelectedDeepDive(positionId, false));
       requests.push(
         api.livePosition(positionId).then((detail) => {
@@ -279,6 +286,7 @@ export function LivePositionCockpit() {
 
   function selectPosition(positionId: string) {
     setSelectedId(positionId);
+    setChartTimeframe("4h");
     const url = new URL(window.location.href);
     if (url.searchParams.get("position") !== positionId) {
       url.searchParams.set("position", positionId);
@@ -307,7 +315,7 @@ export function LivePositionCockpit() {
     if (showSpinner) setSelectedChartLoading(true);
     setSelectedChartError("");
     try {
-      const analysis = await api.positionChartAnalysis(positionId, "4h", compact);
+      const analysis = await api.positionChartAnalysis(positionId, chartTimeframe, compact);
       if (selectedChartRequestRef.current !== requestId) return;
       setSelectedChartAnalysis(analysis);
     } catch (err) {
@@ -317,7 +325,25 @@ export function LivePositionCockpit() {
     } finally {
       if (selectedChartRequestRef.current === requestId && showSpinner) setSelectedChartLoading(false);
     }
-  }, [viewMode]);
+  }, [chartTimeframe, viewMode]);
+
+  const loadSelectedPatternMatrix = useCallback(async (positionId: string, showSpinner = true) => {
+    const requestId = selectedPatternMatrixRequestRef.current + 1;
+    selectedPatternMatrixRequestRef.current = requestId;
+    if (showSpinner) setSelectedPatternMatrixLoading(true);
+    setSelectedPatternMatrixError("");
+    try {
+      const matrix = await api.positionPatternMatrix(positionId);
+      if (selectedPatternMatrixRequestRef.current !== requestId) return;
+      setSelectedPatternMatrix(matrix);
+    } catch (err) {
+      if (selectedPatternMatrixRequestRef.current !== requestId) return;
+      if (showSpinner) setSelectedPatternMatrix(null);
+      setSelectedPatternMatrixError(err instanceof Error ? err.message : "다중 시간봉 패턴 관측을 불러오지 못했습니다.");
+    } finally {
+      if (selectedPatternMatrixRequestRef.current === requestId && showSpinner) setSelectedPatternMatrixLoading(false);
+    }
+  }, []);
 
   async function loadSelectedDeepDive(positionId: string, showSpinner = true) {
     const requestId = selectedDeepDiveRequestRef.current + 1;
@@ -387,12 +413,20 @@ export function LivePositionCockpit() {
     const desiredDetailLevel = viewMode === "minimal" ? "compact" : "full";
     const hasCurrentChart =
       selectedChartAnalysis?.position_id === selected.position.id &&
-      selectedChartAnalysis.detail_level === desiredDetailLevel;
+      selectedChartAnalysis.detail_level === desiredDetailLevel &&
+      selectedChartAnalysis.timeframe === chartTimeframe;
     if (!hasCurrentChart) {
       setSelectedChartAnalysis(null);
     }
     void loadSelectedChart(selected.position.id, !hasCurrentChart, viewMode === "minimal");
-  }, [loadSelectedChart, selected?.position.id, selectedChartAnalysis?.detail_level, selectedChartAnalysis?.position_id, viewMode]);
+  }, [chartTimeframe, loadSelectedChart, selected?.position.id, selectedChartAnalysis?.detail_level, selectedChartAnalysis?.position_id, selectedChartAnalysis?.timeframe, viewMode]);
+
+  useEffect(() => {
+    if (!selected?.position.id || viewMode !== "pro") return;
+    const hasCurrent = selectedPatternMatrix?.position_id === selected.position.id;
+    if (hasCurrent) return;
+    void loadSelectedPatternMatrix(selected.position.id, true);
+  }, [loadSelectedPatternMatrix, selected?.position.id, selectedPatternMatrix?.position_id, viewMode]);
 
   useEffect(() => {
     if (!selected?.position.id || viewMode !== "minimal" || selectedIsStockUnderlying) return;
@@ -516,6 +550,14 @@ export function LivePositionCockpit() {
                   <PositionVerdictBar
                     payload={selectedPayload}
                   />
+                  <PatternTimeframeMatrix
+                    matrix={selectedPatternMatrix?.position_id === selectedPayload.position.id ? selectedPatternMatrix : null}
+                    loading={selectedPatternMatrixLoading}
+                    error={selectedPatternMatrixError}
+                    selectedTimeframe={chartTimeframe}
+                    onSelect={setChartTimeframe}
+                    onRetry={() => void loadSelectedPatternMatrix(selectedPayload.position.id)}
+                  />
                   <SymbolAnalysisView
                     chartAnalysis={selectedChartForPayload}
                     chartLoading={selectedChartLoading}
@@ -548,6 +590,87 @@ export function LivePositionCockpit() {
       )}
     </div>
   );
+}
+
+function PatternTimeframeMatrix({
+  matrix,
+  loading,
+  error,
+  selectedTimeframe,
+  onSelect,
+  onRetry
+}: {
+  matrix: PositionPatternMatrix | null;
+  loading: boolean;
+  error: string;
+  selectedTimeframe: string;
+  onSelect: (timeframe: string) => void;
+  onRetry: () => void;
+}) {
+  return (
+    <section className="patternTimeframeMatrix" data-testid="pattern-timeframe-matrix" aria-label="확정 캔들 다중 시간봉 패턴 관측">
+      <header>
+        <div>
+          <strong>패턴 시간봉</strong>
+          <span>각 시간봉의 확정 캔들을 독립 검사 · 누르면 차트 전환</span>
+        </div>
+        {loading ? <em>검사 중</em> : matrix ? <em>확정봉 기준</em> : null}
+      </header>
+      {error ? (
+        <div className="patternTimeframeError">
+          <span>{error}</span>
+          <button className="button small secondary" onClick={onRetry} type="button">다시 검사</button>
+        </div>
+      ) : (
+        <div className="patternTimeframeRows">
+          {(matrix?.timeframes ?? []).map((row) => {
+            const detected = row.wyckoff.detected || row.harmonic.detected;
+            const latestWyckoffEvent = row.wyckoff.events[row.wyckoff.events.length - 1];
+            const wyckoffLabel = row.status !== "ok"
+              ? "데이터 없음"
+              : latestWyckoffEvent
+                ? `${latestWyckoffEvent.label ?? "와이코프"} ${Math.round(latestWyckoffEvent.confidence ?? 0)}`
+                : row.wyckoff.range_detected
+                  ? "레인지 확인"
+                  : "와이코프 0";
+            const harmonicLabel = row.status === "ok" && row.harmonic.best_pattern
+              ? `${row.harmonic.best_pattern.label ?? "하모닉"} ${Math.round(row.harmonic.best_pattern.confidence ?? 0)}`
+              : row.status === "ok" ? "하모닉 0" : "검사 불가";
+            return (
+              <button
+                className={`${selectedTimeframe === row.timeframe ? "active" : ""} ${detected ? "detected" : ""} ${row.status !== "ok" ? "unavailable" : ""}`}
+                disabled={row.status !== "ok"}
+                key={row.timeframe}
+                onClick={() => onSelect(row.timeframe)}
+                title={row.reason || `${row.candles}개 확정 캔들 · 마지막 ${formatPatternMatrixTime(row.last_confirmed_at)}`}
+                type="button"
+              >
+                <strong>{patternTimeframeLabel(row.timeframe)}</strong>
+                <span>{wyckoffLabel}</span>
+                <small>{harmonicLabel}</small>
+              </button>
+            );
+          })}
+          {loading && !matrix ? ["1d", "12h", "4h", "1h", "15m"].map((timeframe) => (
+            <div className="patternTimeframeSkeleton" key={timeframe}>
+              <strong>{patternTimeframeLabel(timeframe)}</strong>
+              <span>확정봉 검사 중</span>
+            </div>
+          )) : null}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function patternTimeframeLabel(timeframe: string): string {
+  return ({ "1d": "1D", "12h": "12H", "4h": "4H", "1h": "1H", "15m": "15M" } as Record<string, string>)[timeframe] ?? timeframe.toUpperCase();
+}
+
+function formatPatternMatrixTime(value: string | null): string {
+  if (!value) return "-";
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? "-" : parsed.toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
 function mergeSelectedPositionDetail(detail: LivePositionDetail, compact: LivePositionPayload): LivePositionDetail {

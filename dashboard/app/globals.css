@@ -2667,6 +2667,72 @@ h3 {
   pointer-events: none;
 }
 
+.patternTimeframeMatrix {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 10px 14px;
+  border: 1px solid var(--terminal-line);
+  border-radius: 8px;
+  background: rgba(var(--chart-panel-rgb), 0.58);
+}
+
+.patternTimeframeMatrix > header,
+.patternTimeframeMatrix > header > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.patternTimeframeMatrix > header { justify-content: space-between; }
+.patternTimeframeMatrix > header strong { color: var(--terminal-text); font-size: 12px; }
+.patternTimeframeMatrix > header span,
+.patternTimeframeMatrix > header em { color: var(--terminal-muted); font-size: 10px; font-style: normal; }
+.patternTimeframeMatrix > header em { color: var(--terminal-green); }
+
+.patternTimeframeRows {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.patternTimeframeRows > button,
+.patternTimeframeSkeleton {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+  padding: 8px 10px;
+  border: 1px solid var(--terminal-line);
+  border-radius: 6px;
+  background: rgba(var(--chart-neutral-rgb), 0.08);
+  color: var(--terminal-muted);
+  text-align: left;
+}
+
+.patternTimeframeRows > button { cursor: pointer; }
+.patternTimeframeRows > button:hover { border-color: rgba(var(--chart-cyan-rgb), 0.45); }
+.patternTimeframeRows > button.active { border-color: var(--terminal-green); background: rgba(var(--chart-green-rgb), 0.09); }
+.patternTimeframeRows > button.detected:not(.active) { border-color: rgba(var(--chart-cyan-rgb), 0.55); }
+.patternTimeframeRows > button.unavailable { cursor: not-allowed; opacity: 0.55; }
+.patternTimeframeRows strong { color: var(--terminal-text); font: 750 12px/1 var(--fce-font-number); }
+.patternTimeframeRows span { overflow: hidden; color: var(--terminal-cyan); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.patternTimeframeRows small { overflow: hidden; color: var(--terminal-muted); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.patternTimeframeRows > button.detected span { color: var(--terminal-green); }
+
+.patternTimeframeError {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--terminal-red);
+  font-size: 10px;
+}
+
+@media (max-width: 760px) {
+  .patternTimeframeMatrix > header > div { align-items: flex-start; flex-direction: column; gap: 2px; }
+  .patternTimeframeRows { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
 .positionChartHeader,
 .analysisPanelHeader,
 .railSectionHeader {

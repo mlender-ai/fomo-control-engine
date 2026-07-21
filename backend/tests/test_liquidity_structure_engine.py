@@ -12,7 +12,10 @@ from app.structure.liquidity.structure import detect_structure_shift
 from app.structure.liquidity.sweeps import detect_htf_range_sweeps, detect_liquidity_sweeps
 
 
-BASE_TIME = datetime(2026, 7, 6, tzinfo=timezone.utc)
+# Keep every synthetic 4h candle closed relative to the test run.  The chart
+# analysis contract intentionally ignores an in-progress candle, so a fixture
+# extending into the future would test clock leakage rather than liquidity.
+BASE_TIME = datetime(2026, 6, 1, tzinfo=timezone.utc)
 
 
 def test_liquidity_pool_detection_finds_equal_and_old_extremes_with_type_cap() -> None:

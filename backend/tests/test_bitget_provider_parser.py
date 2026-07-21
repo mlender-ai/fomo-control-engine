@@ -4,7 +4,8 @@ from typing import cast
 import pytest
 
 from app.exchange.bitget.client import BitgetClient
-from app.exchange.bitget.provider import BitgetMarketDataProvider
+from app.exchange.bitget.provider import BitgetMarketDataProvider, _aggregate_daily_candles
+from app.exchange.bitget.schemas import Candle
 
 
 class FakeBitgetClient:
@@ -157,3 +158,29 @@ async def test_history_candles_pagination_keeps_every_boundary_candle() -> None:
 
     assert len(candles) == 401
     assert all(right.timestamp - left.timestamp == timedelta(hours=4) for left, right in zip(candles, candles[1:]))
+
+
+def test_daily_resample_keeps_only_complete_exchange_aligned_days() -> None:
+    base = datetime(2026, 7, 1, 16, tzinfo=timezone.utc)
+    four_hour = [
+        Candle(
+            timestamp=base + timedelta(hours=4 * index),
+            open=100 + index,
+            high=102 + index,
+            low=99 + index,
+            close=101 + index,
+            volume=10 + index,
+            quote_volume=1_000 + index,
+        )
+        for index in range(13)
+    ]
+
+    daily = _aggregate_daily_candles(four_hour, anchor_hour=16)
+
+    assert len(daily) == 2
+    assert daily[0].timestamp == base
+    assert daily[0].open == 100
+    assert daily[0].close == 106
+    assert daily[0].high == 107
+    assert daily[0].low == 99
+    assert daily[1].timestamp == base + timedelta(days=1)

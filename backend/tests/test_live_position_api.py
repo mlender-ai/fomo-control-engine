@@ -8,7 +8,9 @@ from app.db.repository import MemoryRepository
 from app.exchange.bitget.client import BitgetClient
 from app.exchange.bitget.provider import BitgetMarketDataProvider
 from app.exchange.bitget.schemas import BitgetPosition
+from app.exchange.errors import MarketDataError
 from app.exchange.mock import MockMarketDataProvider
+from app.positions.pattern_matrix import build_pattern_matrix
 from app.services import http_handlers as routes
 
 
@@ -189,6 +191,7 @@ def test_live_position_chart_analysis_contract(client) -> None:
     assert payload["volume_xray"]["method"] == "data_unavailable"
     assert isinstance(payload["volume_xray"]["notes"], list)
     assert isinstance(payload["wyckoff_markers"], list)
+    assert payload["data_quality"]["unconfirmed_candles_excluded"] == 1
 
     compact_response = client.get(f"/api/live/positions/{position['id']}/chart-analysis?compact=true")
     assert compact_response.status_code == 200
@@ -203,6 +206,48 @@ def test_live_position_chart_analysis_contract(client) -> None:
     assert compact["one_liners"] == payload["one_liners"]
     assert all("raw_json" not in metric for metric in compact["derivatives"]["metrics"])
     assert compact["liquidity"].get("rejected_sweeps") == []
+
+
+def test_live_position_pattern_matrix_uses_independent_timeframes(client) -> None:
+    report = client.post("/api/reports", json={"symbol": "BTCUSDT", "timeframe": "4h"}).json()
+    position = client.post(
+        "/api/positions",
+        json={
+            "symbol": "BTCUSDT",
+            "direction": "long",
+            "entry_price": report["price"],
+            "quantity": 0.01,
+            "leverage": 2,
+        },
+    ).json()
+
+    response = client.get(f"/api/live/positions/{position['id']}/pattern-matrix")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["position_id"] == position["id"]
+    assert payload["policy"] == "independent_timeframes_confirmed_candles_only"
+    assert [row["timeframe"] for row in payload["timeframes"]] == ["1d", "12h", "4h", "1h", "15m"]
+    assert all(row["status"] == "ok" for row in payload["timeframes"])
+    assert all(row["candles"] >= 100 for row in payload["timeframes"])
+    assert all("detected" in row["wyckoff"] and "detected" in row["harmonic"] for row in payload["timeframes"])
+
+
+def test_pattern_matrix_isolates_one_unavailable_timeframe() -> None:
+    provider = MockMarketDataProvider()
+
+    def load_snapshot(symbol: str, timeframe: str) -> MarketSnapshot:
+        if timeframe == "1d":
+            raise MarketDataError("daily history unavailable")
+        return provider.get_snapshot(symbol, timeframe)
+
+    payload = build_pattern_matrix("BTCUSDT", load_snapshot)
+
+    daily, *remaining = payload["timeframes"]
+    assert daily["timeframe"] == "1d"
+    assert daily["status"] == "unavailable"
+    assert daily["reason"] == "daily history unavailable"
+    assert all(row["status"] == "ok" for row in remaining)
 
 
 def test_crypto_position_deepdive_does_not_attach_toss_signals(client) -> None:

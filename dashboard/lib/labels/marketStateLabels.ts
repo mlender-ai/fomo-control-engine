@@ -252,6 +252,7 @@ export function timeframeLabel(value: string | null | undefined): string {
   if (value === "15m") return "15분봉";
   if (value === "1h") return "1시간봉";
   if (value === "4h") return "4시간봉";
+  if (value === "12h") return "12시간봉";
   if (value === "1d") return "1일봉";
   return value ? value : "주기 확인 필요";
 }

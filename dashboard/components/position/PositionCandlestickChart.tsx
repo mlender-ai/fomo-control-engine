@@ -766,9 +766,9 @@ export function PositionCandlestickChart({
             </>
           ) : (
             <>
-              <strong>하모닉 미검출</strong>
+              <strong>{timeframeLabel(analysis.timeframe)} 하모닉 미검출</strong>
               <span>유효 X-A-B-C-D 비율 없음</span>
-              <small>PRZ 없음 · 방향 판정에 사용하지 않음</small>
+              <small>현재 시간봉 PRZ 없음 · 다른 시간봉과 독립 판정</small>
             </>
           )}
         </div>
@@ -1008,9 +1008,9 @@ function WyckoffLayerStatus({ analysis }: { analysis: PositionChartAnalysis }) {
   if (!range) {
     return (
       <div className="taLayerStatus inactive" data-testid="wyckoff-layer-status">
-        <strong>와이코프 미검출</strong>
+        <strong>{timeframeLabel(analysis.timeframe)} 와이코프 미검출</strong>
         <span>거래 레인지 없음 · {trendLabel}</span>
-        <small>Spring·UTAD·Phase 판정 대상 아님</small>
+        <small>현재 시간봉은 Spring·UTAD·Phase 판정 대상 아님</small>
       </div>
     );
   }

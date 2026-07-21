@@ -113,6 +113,7 @@ def _without_phase_l_fields(payload: dict) -> dict:
     if isinstance(data_quality, dict):
         data_quality.pop("analysis_candles", None)
         data_quality.pop("session_excluded_candles", None)
+        data_quality.pop("unconfirmed_candles_excluded", None)
     for candle in cleaned.get("candles", []) if isinstance(cleaned.get("candles"), list) else []:
         if isinstance(candle, dict):
             candle.pop("session", None)

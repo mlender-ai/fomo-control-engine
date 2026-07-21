@@ -662,6 +662,23 @@ class BitgetMarketDataProvider(MarketDataProvider):
             self.get_open_interest(normalized),
             self._get_ticker(normalized),
         )
+        fallback_used = False
+        # Bitget's recent endpoint may return fewer than the 100 candles the
+        # structure engines require on higher timeframes (notably 1D). Fill
+        # that gap from the public confirmed history endpoint instead of
+        # turning the whole timeframe into a false "pattern absent" result.
+        if len(candles) < 100:
+            history = await self.get_history_ohlcv_async(normalized, timeframe, limit=200)
+            if len(history) > len(candles):
+                candles = history
+                fallback_used = True
+            if timeframe.lower() == "1d" and len(candles) < 100:
+                four_hour_history = await self.get_history_ohlcv_async(normalized, "4h", limit=1_201)
+                anchor_hour = candles[-1].timestamp.astimezone(timezone.utc).hour if candles else 16
+                resampled = _aggregate_daily_candles(four_hour_history, anchor_hour=anchor_hour)
+                if len(resampled) > len(candles):
+                    candles = resampled[-200:]
+                    fallback_used = True
         if len(candles) < 30:
             raise BitgetAPIError(
                 "insufficient_candles",
@@ -685,7 +702,7 @@ class BitgetMarketDataProvider(MarketDataProvider):
             funding_ok=funding is not None,
             open_interest_ok=open_interest is not None,
             min_candles_met=len(candles) >= 30,
-            fallback_used=False,
+            fallback_used=fallback_used,
             candles=len(candles),
             last_candle_at=market_candles[-1].timestamp,
         )
@@ -807,6 +824,40 @@ class BitgetMarketDataProvider(MarketDataProvider):
 
 def normalize_symbol(symbol: str) -> str:
     return symbol.upper().replace("/", "").strip()
+
+
+def _aggregate_daily_candles(candles: list[Candle], *, anchor_hour: int) -> list[Candle]:
+    """Build complete Bitget-aligned 1D candles from confirmed 4H candles."""
+
+    anchor = timedelta(hours=anchor_hour % 24)
+    groups: dict[datetime, list[Candle]] = {}
+    for candle in sorted(candles, key=lambda item: item.timestamp):
+        timestamp = candle.timestamp.astimezone(timezone.utc)
+        shifted_day = (timestamp - anchor).replace(hour=0, minute=0, second=0, microsecond=0)
+        bucket_start = shifted_day + anchor
+        groups.setdefault(bucket_start, []).append(candle)
+
+    daily: list[Candle] = []
+    interval = timedelta(hours=4)
+    for bucket_start, items in sorted(groups.items()):
+        by_time = {item.timestamp.astimezone(timezone.utc): item for item in items}
+        expected = [bucket_start + interval * index for index in range(6)]
+        if any(timestamp not in by_time for timestamp in expected):
+            continue
+        ordered = [by_time[timestamp] for timestamp in expected]
+        quote_values = [item.quote_volume for item in ordered if item.quote_volume is not None]
+        daily.append(
+            Candle(
+                timestamp=bucket_start,
+                open=ordered[0].open,
+                high=max(item.high for item in ordered),
+                low=min(item.low for item in ordered),
+                close=ordered[-1].close,
+                volume=sum(item.volume for item in ordered),
+                quote_volume=sum(quote_values) if quote_values else None,
+            )
+        )
+    return daily
 
 
 def _run(coro):
