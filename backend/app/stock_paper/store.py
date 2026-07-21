@@ -2,14 +2,30 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import datetime, timedelta, timezone
+from enum import Enum
 import json
 from pathlib import Path
 import sqlite3
 from typing import Any
+from uuid import UUID
 
 from app.db.sqlite_utils import connect_sqlite
 
 from .models import Currency, Market, OrderStatus, PaperFill, Side, StockOrder
+
+
+def _json_default(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, UUID):
+        return str(value)
+    if isinstance(value, Enum):
+        return value.value
+    raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable")
+
+
+def _json_dumps(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, default=_json_default)
 
 
 class StockPaperStore:
@@ -64,7 +80,7 @@ class StockPaperStore:
             connection.execute(
                 """INSERT INTO stock_paper_analysis_snapshots
                 (market, symbol, observed_at, parameter_version, payload) VALUES (?, ?, ?, ?, ?)""",
-                (market.value, symbol.upper(), observed_at.isoformat(), parameter_version, json.dumps(payload, ensure_ascii=False)),
+                (market.value, symbol.upper(), observed_at.isoformat(), parameter_version, _json_dumps(payload)),
             )
 
     def latest_analysis_snapshot(self, market: Market, symbol: str) -> dict[str, Any] | None:

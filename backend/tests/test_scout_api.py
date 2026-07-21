@@ -282,6 +282,18 @@ def test_scan_tracking_view_is_union_of_active_intents_and_armed_setups(client: 
     client.post(f"/api/scout/intents/{intent_response.json()['intent']['id']}/cancel")
 
 
+def test_scan_tracking_view_includes_plain_watchlist_items(client: TestClient) -> None:
+    added = client.post("/api/watchlist", json={"symbol": "NBISUSDT", "asset_class": "stock"})
+    assert added.status_code == 200
+
+    payload = client.post("/api/scout/scan", json={}).json()
+    tracked = [item for item in payload["tracked"] if item["symbol"] == "NBISUSDT"]
+
+    assert len(tracked) == 1
+    assert tracked[0]["tracking_source"] == "manual"
+    assert tracked[0]["one_line"] == "추적 조건 확인 중"
+
+
 def test_watch_intent_is_idempotent_and_has_no_zone(client: TestClient) -> None:
     first = client.post("/api/scout/SOXLUSDT/intents", json={"kind": "watch", "timeframe": "4h"})
     second = client.post("/api/scout/SOXLUSDT/intents", json={"kind": "watch", "timeframe": "4h"})

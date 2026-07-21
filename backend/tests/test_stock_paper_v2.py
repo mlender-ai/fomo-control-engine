@@ -97,6 +97,23 @@ def test_rejection_ledger_keeps_every_failed_gate(tmp_path) -> None:
     assert {row["gate"] for row in distribution["gates"]} == {"risk_reward", "confirmed_flip"}
 
 
+def test_analysis_snapshot_serializes_datetime_values(tmp_path) -> None:
+    store = _store(tmp_path)
+    observed_at = datetime(2026, 7, 21, 2, 22, tzinfo=timezone.utc)
+
+    store.save_analysis_snapshot(
+        Market.US,
+        "NBIS",
+        observed_at=observed_at,
+        parameter_version="stock-v2",
+        payload={"status": "analyzed", "report": {"generated_at": observed_at}},
+    )
+
+    saved = store.latest_analysis_snapshot(Market.US, "NBIS")
+    assert saved is not None
+    assert saved["report"]["generated_at"] == observed_at.isoformat()
+
+
 @pytest.mark.asyncio
 async def test_repeated_401_preserves_safe_toss_error_details() -> None:
     calls = 0

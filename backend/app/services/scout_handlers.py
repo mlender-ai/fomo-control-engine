@@ -413,6 +413,22 @@ def scan_watchlist(request: ScanRequest | None = None) -> dict:
 
 def _tracking_sources() -> dict[tuple[str, str], dict[str, Any]]:
     sources: dict[tuple[str, str], dict[str, Any]] = {}
+    # /scout persists a watchlist row first. It is already a tracking request even
+    # when no entry intent or auto-armed setup exists yet, so it must not disappear
+    # from the web/Telegram tracking view while analysis is pending.
+    for item in _repo().list_watchlist():
+        key = ("manual", item.symbol.upper())
+        sources.setdefault(
+            key,
+            {
+                "symbol": item.symbol.upper(),
+                "tracking_source": "manual",
+                "intents": [],
+                "setups": [],
+                "timeframe": item.default_timeframe or "4h",
+                "watchlist_item": item,
+            },
+        )
     for intent in _repo().list_entry_intents(status="active", limit=1000):
         key = ("manual", intent.symbol.upper())
         bucket = sources.setdefault(

@@ -220,7 +220,16 @@ def pulse_candidate(
         )
     if contexts and all_normal:
         lines.append("전부 정상 · 변화 없음")
-    tracked_items = [item for item in (tracked or []) if isinstance(item, dict)]
+    tracked_items: list[dict[str, Any]] = []
+    tracked_symbols: set[str] = set()
+    for item in tracked or []:
+        if not isinstance(item, dict):
+            continue
+        symbol = str(item.get("symbol") or "-").upper()
+        if symbol in tracked_symbols:
+            continue
+        tracked_symbols.add(symbol)
+        tracked_items.append(item)
     if tracked_items:
         lines.append("\n<b>추적 중</b>")
         for item in tracked_items[:10]:

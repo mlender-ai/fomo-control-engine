@@ -149,6 +149,22 @@ def test_periodic_pulse_includes_integrated_tracking_block() -> None:
     assert candidate.payload["tracked"] == 1
 
 
+def test_periodic_pulse_deduplicates_manual_and_engine_tracking_for_same_symbol() -> None:
+    candidate = pulse_candidate(
+        [],
+        tracked=[
+            {"symbol": "HYPEUSDT", "tracking_source": "manual", "stance_label": "롱 우위"},
+            {"symbol": "HYPEUSDT", "tracking_source": "engine", "stance_label": "롱 우위"},
+            {"symbol": "NBISUSDT", "tracking_source": "manual", "stance_label": "판정 준비 중"},
+        ],
+    )
+
+    assert candidate is not None
+    assert candidate.message.count("HYPEUSDT") == 1
+    assert "NBISUSDT" in candidate.message
+    assert candidate.payload["tracked"] == 2
+
+
 def test_periodic_pulse_includes_paper_engine_activity() -> None:
     candidate = pulse_candidate(
         [],

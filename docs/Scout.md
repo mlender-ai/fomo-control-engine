@@ -42,6 +42,11 @@ The adapter's token buckets remain the final enforcement boundary even if a call
 
 The local worker runs a cheap session/price tick every 10 seconds. Ranking families refresh at most once per 60 seconds, KOSPI/KOSDAQ investor observations at most once per five minutes, and candidate orderbook/trade/limit/candle evidence at most once per 15 seconds. Warning checks are cached for one day. Price and stock metadata use 200-symbol batches, and 1-minute candidate candles are persisted before 5m/15m/1h/4h resampling. KR may expand from the six ranking families; US remains limited to the manual watchlist.
 
+`/scout SYMBOL`의 영속 상태는 `watchlist`가 정본이다. 아직 활성 진입 의도나 무장 셋업이
+없더라도 웹과 Telegram 정기 펄스에는 `추적 조건 확인 중`으로 표시한다. 같은 심볼에 수동
+추적과 엔진 셋업이 함께 있으면 상세 화면에서는 출처를 구분할 수 있지만 정기 펄스에서는
+심볼당 한 번만 표시한다.
+
 ### Judgment ledger pilot
 
 Candidate snapshots use the generic `entity_type` (`crypto`, `stock_kr`, `stock_us`) and preserve source, signal evidence, timestamp, and price. Outcomes are recorded independently at T+1, T+5, and T+20. The UI marks every aggregate with `N<30` as `표본 부족`.
