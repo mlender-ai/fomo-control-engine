@@ -56,6 +56,7 @@ import { loadFceViewMode, saveFceViewMode, type FceViewMode } from "@/lib/viewMo
 import { useSecondaryTaRows, visibleTaRows } from "@/lib/taDisplayPreferences";
 
 const LIVE_POSITION_SYNC_INTERVAL_SECONDS = 30;
+const WHALE_CHART_REFRESH_INTERVAL_SECONDS = 30;
 
 type MinimalEvidenceChoice = {
   key: string;
@@ -300,7 +301,7 @@ export function LivePositionCockpit() {
     return () => window.removeEventListener("popstate", restoreSelection);
   }, [stripChartKey]);
 
-  async function loadSelectedChart(positionId: string, showSpinner = true, compact = viewMode === "minimal") {
+  const loadSelectedChart = useCallback(async (positionId: string, showSpinner = true, compact = viewMode === "minimal") => {
     const requestId = selectedChartRequestRef.current + 1;
     selectedChartRequestRef.current = requestId;
     if (showSpinner) setSelectedChartLoading(true);
@@ -316,7 +317,7 @@ export function LivePositionCockpit() {
     } finally {
       if (selectedChartRequestRef.current === requestId && showSpinner) setSelectedChartLoading(false);
     }
-  }
+  }, [viewMode]);
 
   async function loadSelectedDeepDive(positionId: string, showSpinner = true) {
     const requestId = selectedDeepDiveRequestRef.current + 1;
@@ -391,7 +392,16 @@ export function LivePositionCockpit() {
       setSelectedChartAnalysis(null);
     }
     void loadSelectedChart(selected.position.id, !hasCurrentChart, viewMode === "minimal");
-  }, [selected?.position.id, viewMode]);
+  }, [loadSelectedChart, selected?.position.id, selectedChartAnalysis?.detail_level, selectedChartAnalysis?.position_id, viewMode]);
+
+  useEffect(() => {
+    if (!selected?.position.id || viewMode !== "minimal" || selectedIsStockUnderlying) return;
+    const positionId = selected.position.id;
+    const refreshId = window.setInterval(() => {
+      void loadSelectedChart(positionId, false, true);
+    }, WHALE_CHART_REFRESH_INTERVAL_SECONDS * 1000);
+    return () => window.clearInterval(refreshId);
+  }, [loadSelectedChart, selected?.position.id, selectedIsStockUnderlying, viewMode]);
 
   useEffect(() => {
     if (!selected?.position.id || viewMode !== "minimal" || !selectedIsStockUnderlying) {

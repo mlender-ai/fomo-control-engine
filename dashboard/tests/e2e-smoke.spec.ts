@@ -235,6 +235,85 @@ test("live position cockpit smoke path", async ({ page }) => {
   await expect(page.getByTestId("chart-layer-plan")).toHaveAttribute("aria-pressed", "true");
 });
 
+test("minimal crypto chart renders confirmed whale long and short fills as triangles", async ({ page }) => {
+  await page.route(/\/api\/live\/positions\/[^/]+\/chart-analysis\?/, async (route) => {
+    const response = await route.fetch();
+    const body = await response.json();
+    const candles = body.candles ?? [];
+    expect(candles.length).toBeGreaterThanOrEqual(3);
+    const historical = candles.at(-3);
+    const liveAnchor = candles.at(-2);
+    const item = (side: "long" | "short", eventAt: string, price: number) => ({
+      wallet_address: "0x1111111111111111111111111111111111111111",
+      wallet_label: "E2E 고래",
+      coin: body.symbol?.replace("USDT", "") ?? "BTC",
+      symbol: body.symbol ?? "BTCUSDT",
+      side,
+      event: "open",
+      size_usd: 250_000,
+      entry_px: price,
+      mark_px: price,
+      unrealized_pnl: 0,
+      event_at: eventAt,
+      validation_state: "candidate",
+      sample_size: 4,
+      win_1r_pct: null,
+      accuracy_label: "적중률 축적 중 (N=4)",
+      alias_disclaimer: "추정 별칭"
+    });
+    body.asset_class = "crypto";
+    body.onchain = {
+      supported: true,
+      symbol: body.symbol,
+      policy: "확정 체결 관측 전용",
+      validated_evidence: [],
+      markers: [
+        {
+          time: historical.time,
+          event_time: historical.time + 60,
+          kind: "entry",
+          side: "long",
+          event: "open",
+          count: 1,
+          size_usd: 250_000,
+          size_tier: 2,
+          price: historical.close,
+          label: "롱 진입",
+          emphasized: false,
+          live: false,
+          items: [item("long", new Date((historical.time + 60) * 1000).toISOString(), historical.close)]
+        },
+        {
+          time: liveAnchor.time,
+          event_time: liveAnchor.time + 14_400,
+          kind: "entry",
+          side: "short",
+          event: "open",
+          count: 1,
+          size_usd: 250_000,
+          size_tier: 2,
+          price: liveAnchor.close,
+          label: "숏 진입",
+          emphasized: false,
+          live: true,
+          items: [item("short", new Date((liveAnchor.time + 14_400) * 1000).toISOString(), liveAnchor.close)]
+        }
+      ]
+    };
+    await route.fulfill({ response, json: body });
+  });
+
+  await page.goto("/");
+  await expect(page.getByTestId("compact-chart-workspace")).toBeVisible({ timeout: 30_000 });
+  const markers = page.locator('[data-testid="onchain-marker"][data-shape="triangle"]');
+  await expect(markers).toHaveCount(2);
+  await expect(markers.filter({ has: page.locator("path") }).first()).toBeVisible();
+  await expect(page.locator('[data-testid="onchain-marker"][data-side="long"]')).toHaveCount(1);
+  await expect(page.locator('[data-testid="onchain-marker"][data-side="short"][data-live="true"]')).toHaveCount(1);
+  await expect(page.locator(".onchainMarkerLabel")).toContainText("LIVE S+");
+  await expect(page.locator('[data-testid="onchain-marker"][data-live="true"] title')).toContainText("체결");
+});
+
 test("unified liquidation density is the single live chart surface", async ({ page }) => {
   await page.route("**/api/live/positions/*/chart-analysis*", async (route) => {
     const response = await route.fetch();
@@ -535,6 +614,7 @@ test("stock perpetual position shows Toss source hierarchy instead of crypto wha
   await expect(sourceBanner).toContainText(/기초자산 장중|기초자산 장 마감/);
   await expect(sourceBanner).not.toContainText("Bitget 실행가");
   await expect(page.getByTestId("position-whale-banner")).toHaveCount(0);
+  await expect(page.locator('[data-testid="onchain-marker"]')).toHaveCount(0);
   await expect(page.getByTestId("underlying-join-strip")).toBeVisible();
   await expect(page.getByTestId("underlying-join-strip")).toContainText("Toss 원본");
   await expect(page.getByTestId("position-deepdive-panel")).toBeVisible();

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from uuid import NAMESPACE_URL, uuid5
 
 import pytest
@@ -287,8 +287,72 @@ def test_chart_markers_anchor_only_to_closed_candles_and_aggregate() -> None:
     assert len(context["markers"]) == 1
     assert context["markers"][0]["count"] == 2
     assert context["markers"][0]["time"] == candles[0]["time"]
+    assert context["markers"][0]["event_time"] == int((start + timedelta(hours=1, minutes=1)).timestamp())
+    assert context["markers"][0]["live"] is False
     assert context["markers"][0]["emphasized"] is False
     assert context["validated_evidence"] == []
+
+
+def test_chart_marks_confirmed_fill_in_open_window_as_live(monkeypatch: pytest.MonkeyPatch) -> None:
+    repo = MemoryRepository()
+    fixed_now = datetime(2026, 7, 21, 12, 30, tzinfo=timezone.utc)
+    monkeypatch.setattr("app.onchain.service.utc_now", lambda: fixed_now)
+    event_at = datetime(2026, 7, 21, 12, 15, tzinfo=timezone.utc)
+    repo.add_whale_event(
+        WhaleEvent(
+            wallet_address=ADDRESS,
+            wallet_label="실시간 고래",
+            coin="BTC",
+            symbol="BTCUSDT",
+            side="short",
+            event="open",
+            size=2,
+            size_usd=250_000,
+            entry_px=64_321,
+            event_at=event_at,
+        )
+    )
+    candles = [{"time": int(datetime(2026, 7, 21, hour, tzinfo=timezone.utc).timestamp())} for hour in (4, 8, 12)]
+
+    context = chart_onchain_context(repo, "BTCUSDT", "4h", candles)
+
+    assert len(context["markers"]) == 1
+    marker = context["markers"][0]
+    assert marker["time"] == candles[1]["time"]
+    assert marker["event_time"] == int(event_at.timestamp())
+    assert marker["price"] == 64_321
+    assert marker["side"] == "short"
+    assert marker["live"] is True
+
+
+def test_chart_keeps_latest_eight_event_groups_not_largest_eight(monkeypatch: pytest.MonkeyPatch) -> None:
+    repo = MemoryRepository()
+    fixed_now = datetime(2026, 7, 21, 12, 0, tzinfo=timezone.utc)
+    monkeypatch.setattr("app.onchain.service.utc_now", lambda: fixed_now)
+    start = datetime(2026, 7, 21, 0, 0, tzinfo=timezone.utc)
+    candles = [{"time": int((start + timedelta(hours=index)).timestamp())} for index in range(10)]
+    for index in range(9):
+        repo.add_whale_event(
+            WhaleEvent(
+                wallet_address=ADDRESS,
+                wallet_label="최근순 고래",
+                coin="BTC",
+                symbol="BTCUSDT",
+                side="long" if index % 2 == 0 else "short",
+                event="open",
+                size=1,
+                size_usd=9_000_000 if index == 0 else 100_000 + index,
+                entry_px=60_000 + index,
+                event_at=start + timedelta(hours=index, minutes=10),
+            )
+        )
+
+    markers = chart_onchain_context(repo, "BTCUSDT", "1h", candles)["markers"]
+
+    assert len(markers) == 8
+    assert markers[0]["event_time"] == int((start + timedelta(hours=1, minutes=10)).timestamp())
+    assert markers[-1]["event_time"] == int((start + timedelta(hours=8, minutes=10)).timestamp())
+    assert all(marker["size_usd"] < 9_000_000 for marker in markers)
 
 
 def test_whale_dashboard_reports_current_exposure_and_signed_flow() -> None:
@@ -344,6 +408,17 @@ def test_whale_dashboard_reports_current_exposure_and_signed_flow() -> None:
     assert dashboard["symbol_activity"]["BTCUSDT"]["positions"][0]["selection_rank"] == 1
     assert dashboard["symbol_activity"]["ETHUSDT"]["recent_events"][0]["side"] == "short"
     assert dashboard["symbol_activity"]["ETHUSDT"]["recent_events"][0]["event"] == "open"
+
+
+def test_whale_dashboard_rate_budget_covers_configured_wallet_capacity() -> None:
+    dashboard = whale_dashboard(
+        MemoryRepository(),
+        Settings(hyperliquid_whale_poll_interval_seconds=30, hyperliquid_whale_max_wallets=20),
+    )
+
+    assert dashboard["rate_budget"]["poll_interval_seconds"] == 30
+    assert dashboard["rate_budget"]["estimated_max_weight_per_minute"] == 880
+    assert dashboard["rate_budget"]["within_official_budget"] is True
 
 
 def test_whale_dashboard_exposes_four_week_follow_performance() -> None:

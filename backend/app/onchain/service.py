@@ -96,6 +96,13 @@ def whale_dashboard(repo: Any, settings: Any) -> dict[str, Any]:
                 "direction_eligible": review["trust_status"] == "trusted",
             }
         )
+    poll_interval = max(30, int(settings.hyperliquid_whale_poll_interval_seconds))
+    position_weight_per_wallet = 2
+    fill_base_weight_per_wallet = 20
+    official_ip_limit = 1200
+    polls_per_minute = max(1, (60 + poll_interval - 1) // poll_interval)
+    configured_wallet_limit = max(1, int(settings.hyperliquid_whale_max_wallets))
+    estimated_max_weight = polls_per_minute * configured_wallet_limit * (position_weight_per_wallet + fill_base_weight_per_wallet)
     return {
         "enabled": bool(settings.hyperliquid_whale_tracking_enabled),
         "wallet_count": len(wallets),
@@ -107,10 +114,12 @@ def whale_dashboard(repo: Any, settings: Any) -> dict[str, Any]:
         "flow": _flow_dashboard(repo, wallets, states),
         "symbol_activity": _symbol_activity(repo, wallets, states, review_context),
         "rate_budget": {
-            "poll_interval_seconds": int(settings.hyperliquid_whale_poll_interval_seconds),
-            "position_weight_per_wallet": 2,
-            "fill_base_weight_per_wallet": 20,
-            "official_ip_limit_weight_per_minute": 1200,
+            "poll_interval_seconds": poll_interval,
+            "position_weight_per_wallet": position_weight_per_wallet,
+            "fill_base_weight_per_wallet": fill_base_weight_per_wallet,
+            "estimated_max_weight_per_minute": estimated_max_weight,
+            "official_ip_limit_weight_per_minute": official_ip_limit,
+            "within_official_budget": estimated_max_weight <= official_ip_limit,
             "policy": "포지션 매 틱 + 마지막 체결 이후 증분 조회 · 실패 시 워커 공통 지수 백오프",
         },
         "policy": "미검증 고래는 관측·실측만 표시하며 방향 판정과 자동 진입에 사용하지 않습니다.",
@@ -274,43 +283,54 @@ def chart_onchain_context(repo: Any, symbol: str, timeframe: str, candles: list[
     review_context = _wallet_review_context(repo)
     now_s = int(utc_now().timestamp())
     candle_times = sorted(int(candle.get("time") or 0) for candle in candles if int(candle.get("time") or 0) > 0)
-    groups: dict[tuple[int, str, str], list[WhaleEvent]] = defaultdict(list)
+    closed_candle_times = [value for value in candle_times if value + duration <= now_s]
+    latest_closed = closed_candle_times[-1] if closed_candle_times else None
+    groups: dict[tuple[int, str, str, bool], list[WhaleEvent]] = defaultdict(list)
     for event in events:
         event_s = int(event.event_at.timestamp())
-        anchor = max((value for value in candle_times if value <= event_s and value + duration <= now_s), default=None)
-        if anchor is None or event_s >= anchor + duration:
-            continue
+        anchor = max((value for value in closed_candle_times if value <= event_s < value + duration), default=None)
+        live = False
+        if anchor is None:
+            in_current_window = latest_closed is not None and latest_closed + duration <= event_s < latest_closed + (2 * duration)
+            if not in_current_window or event_s > now_s:
+                continue
+            anchor = latest_closed
+            live = True
         kind = "entry" if event.event in {"open", "increase", "flip"} else "exit"
-        groups[(anchor, kind, event.side)].append(event)
+        groups[(anchor, kind, event.side, live)].append(event)
     markers = []
-    for (anchor, kind, side), grouped in groups.items():
+    for (anchor, kind, side, live), grouped in groups.items():
         ranked = sorted(grouped, key=lambda item: item.size_usd, reverse=True)
         items = [_event_payload(item, review_context) for item in ranked]
         size_usd = sum(item.size_usd for item in ranked)
         emphasized = any(item["validation_state"] == "validated" for item in items)
+        latest_event = max(ranked, key=lambda item: item.event_at)
         markers.append(
             {
                 "time": anchor,
+                "event_time": int(latest_event.event_at.timestamp()),
                 "kind": kind,
                 "side": side,
                 "event": "flip" if any(item.event == "flip" for item in ranked) else ranked[0].event,
                 "count": len(ranked),
                 "size_usd": size_usd,
+                "price": latest_event.entry_px or latest_event.mark_px,
                 "size_tier": _size_tier(size_usd),
                 "label": _marker_label(ranked[0], len(ranked), size_usd),
                 "emphasized": emphasized,
+                "live": live,
                 "items": items,
             }
         )
-    markers = sorted(markers, key=lambda item: (item["size_usd"], item["time"]), reverse=True)[:8]
+    markers = sorted(markers, key=lambda item: (item["event_time"], item["time"]), reverse=True)[:8]
     validated_evidence = _validated_consensus(repo, normalized, review_context)
     return {
         "supported": supported,
         "unsupported_reason": None if supported else "Hyperliquid perp 메타에 없는 심볼",
         "symbol": normalized,
-        "markers": sorted(markers, key=lambda item: item["time"]),
+        "markers": sorted(markers, key=lambda item: (item["event_time"], item["time"])),
         "validated_evidence": validated_evidence,
-        "policy": "확정 캔들 앵커 · 화면 최대 8개 · 미검증은 관측 표시만",
+        "policy": "확정 체결 최근 8그룹 · 미완성 봉은 우측 LIVE 표시 · 미검증은 관측 표시만",
     }
 
 

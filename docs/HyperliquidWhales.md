@@ -16,10 +16,10 @@ Manual `/whale add` registration remains available only as an override for a kno
 ## Collection budget
 
 - Maximum active wallets: 20.
-- Default poll interval: 120 seconds.
+- Default poll interval: 30 seconds. Values below 30 seconds are rejected by configuration validation.
 - `clearinghouseState`: weight 2 per wallet.
 - `userFillsByTime`: base weight 20 per wallet plus the official per-item response weight.
-- With 20 wallets and no large fill response, the estimate is 220 weight/minute against the official 1,200 weight/minute IP budget.
+- With 20 wallets and no returned fill items, the conservative base estimate is 880 weight/minute against the official 1,200 weight/minute IP budget. The dashboard publishes this configured-capacity estimate and whether it remains inside the official base budget.
 - Fill polling starts at the wallet's last stored fill timestamp. First registration uses a bounded seven-day lookback. Worker failures use the common exponential backoff.
 
 The relevant settings are `FCE_HYPERLIQUID_WHALE_TRACKING_ENABLED`, `FCE_HYPERLIQUID_WHALE_DISCOVERY_ENABLED`, `FCE_HYPERLIQUID_WHALE_DISCOVERY_INTERVAL_SECONDS`, `FCE_HYPERLIQUID_WHALE_POLL_INTERVAL_SECONDS`, `FCE_HYPERLIQUID_WHALE_MIN_SIZE_USD`, and `FCE_HYPERLIQUID_WHALE_MAX_WALLETS`.
@@ -27,7 +27,10 @@ The relevant settings are `FCE_HYPERLIQUID_WHALE_TRACKING_ENABLED`, `FCE_HYPERLI
 ## Data and decision boundaries
 
 - Events are derived only after a fill appears in `userFillsByTime`.
-- Chart markers are anchored to a closed FCE candle and never moved to a later candle.
+- Historical chart markers are anchored to the closed FCE candle that contains the confirmed fill and never moved to a later candle.
+- A confirmed fill in the still-open chart window is rendered at its observed fill price on the chart's right edge with a `LIVE` label. Its actual event timestamp is retained in the marker and tooltip; it is not assigned to the unfinished candle as if that candle were final.
+- The minimal chart refreshes its confirmed-fill overlay every 30 seconds for pure crypto symbols. Long fills use upward triangles, short fills use downward triangles; entries/increases are filled and reductions/closes are hollow.
+- The chart selects the most recent eight event groups by event time, not the eight largest notionals.
 - Coins that cannot map to a plain FCE `*USDT` symbol are stored but not rendered on an FCE chart.
 - Every wallet starts as a candidate. Its events are observation data, not a follow signal.
 - Discovery first filters the public leaderboard by account size, 30-day PnL/ROI, volume, and turnover. It then inspects current BTC/ETH positions for the top scan cohort and reserves directional slots across BTC/ETH long and short before filling the remaining slots by quality.

@@ -1449,6 +1449,11 @@ function renderTaOverlay(
     if (gauges) {
       badges.push(...validatedEventPillNodes(context, gauges));
     }
+    if (analysis.asset_class !== "stock") {
+      const onchain = onchainOverlayNodes(context, false);
+      shapes.push(...onchain.shapes);
+      badges.push(...onchain.badges);
+    }
   } else if (minimalEvidence) {
     const minimal = minimalEvidenceOverlayNodes(context, minimalEvidence, activeHarmonic);
     zones.push(...minimal.zones);
@@ -1484,7 +1489,7 @@ function renderTaOverlay(
       shapes.push(...harmonic.shapes);
       badges.push(...harmonic.badges);
     }
-    if (layers.ta.includes("onchain")) {
+    if (analysis.asset_class !== "stock" && layers.ta.includes("onchain")) {
       const onchain = onchainOverlayNodes(context);
       shapes.push(...onchain.shapes);
       badges.push(...onchain.badges);
@@ -2164,11 +2169,11 @@ function wyckoffOverlayNodes(context: OverlayContext): OverlayGroup {
   return { zones, shapes, badges };
 }
 
-function onchainOverlayNodes(context: OverlayContext): OverlayGroup {
+function onchainOverlayNodes(context: OverlayContext, showEmpty = true): OverlayGroup {
   const group: OverlayGroup = { zones: [], shapes: [], badges: [] };
   const markers = context.analysis.onchain?.markers ?? [];
   if (!context.analysis.onchain?.supported || !markers.length) {
-    group.badges.push(minimalFloatingLabel(context, "온체인 관측 없음", 18, 28, "text"));
+    if (showEmpty) group.badges.push(minimalFloatingLabel(context, "온체인 관측 없음", 18, 28, "text"));
     return group;
   }
   for (const marker of markers.slice(0, 8)) {
@@ -2181,45 +2186,64 @@ function onchainOverlayNodes(context: OverlayContext): OverlayGroup {
 
 function onchainMarkerNodes(context: OverlayContext, marker: OnchainChartMarker): { shapes: string[]; badges: string[] } {
   const candle = context.analysis.candles.find((item) => item.time === marker.time);
-  const x = context.chart.timeScale().timeToCoordinate(marker.time as Time);
-  if (!candle || x === null) return { shapes: [], badges: [] };
-  const above = marker.kind === "entry" ? marker.side === "short" : marker.side === "long";
-  const anchorPrice = above ? candle.high : candle.low;
+  if (!candle) return { shapes: [], badges: [] };
+  const historicalX = context.chart.timeScale().timeToCoordinate(marker.time as Time);
+  const x = marker.live ? context.right - 20 : historicalX;
+  if (x === null) return { shapes: [], badges: [] };
+  const above = marker.side === "short";
+  const lastCandle = context.analysis.candles.at(-1);
+  const livePrice = Number(marker.price);
+  const anchorPrice = marker.live && Number.isFinite(livePrice) && livePrice > 0
+    ? livePrice
+    : marker.live && lastCandle
+      ? lastCandle.close
+      : above
+        ? candle.high
+        : candle.low;
   const priceY = context.series.priceToCoordinate(anchorPrice);
   if (priceY === null) return { shapes: [], badges: [] };
-  const radius = marker.size_tier === 3 ? 6 : marker.size_tier === 2 ? 5 : 4;
+  const radius = marker.size_tier === 3 ? 8 : marker.size_tier === 2 ? 7 : 6;
   const stem = marker.size_tier === 3 ? 18 : 14;
   const y = clamp(priceY + (above ? -stem : stem), 16, context.height - 18);
-  const green = context.palette.color("green", marker.emphasized ? 0.98 : 0.54);
-  const red = context.palette.color("red", marker.emphasized ? 0.98 : 0.54);
-  const strokeWidth = marker.emphasized ? 2 : 1.2;
+  const green = context.palette.color("green", marker.emphasized || marker.live ? 0.98 : 0.78);
+  const red = context.palette.color("red", marker.emphasized || marker.live ? 0.98 : 0.78);
+  const strokeWidth = marker.emphasized || marker.live ? 2 : 1.5;
   const title = onchainMarkerTitle(marker);
   const shapes: string[] = [];
   shapes.push(`<line x1="${x}" x2="${x}" y1="${priceY}" y2="${y}" stroke="${marker.side === "long" ? green : red}" stroke-width="1" stroke-dasharray="2 3" opacity="0.72" />`);
-  if (marker.event === "flip") {
-    shapes.push(
-      `<g class="onchainMarker ${marker.emphasized ? "validated" : "candidate"}" data-testid="onchain-marker"><path d="M ${x - radius} ${y} L ${x} ${y - radius} L ${x + radius} ${y} L ${x} ${y + radius} Z" fill="${green}" stroke="${red}" stroke-width="${strokeWidth}" /><title>${escapeSvgText(title)}</title></g>`
-    );
-  } else {
-    const color = marker.side === "long" ? green : red;
-    const fill = marker.kind === "exit" ? context.palette.color("panel", 0.88) : color;
-    shapes.push(
-      `<g class="onchainMarker ${marker.emphasized ? "validated" : "candidate"}" data-testid="onchain-marker"><circle cx="${x}" cy="${y}" r="${radius}" fill="${fill}" stroke="${color}" stroke-width="${strokeWidth}" /><title>${escapeSvgText(title)}</title></g>`
-    );
-  }
+  const color = marker.side === "long" ? green : red;
+  const fill = marker.kind === "exit" ? context.palette.color("panel", 0.88) : color;
+  const triangle = marker.side === "long"
+    ? `M ${x} ${y - radius} L ${x - radius} ${y + radius} L ${x + radius} ${y + radius} Z`
+    : `M ${x - radius} ${y - radius} L ${x + radius} ${y - radius} L ${x} ${y + radius} Z`;
+  shapes.push(
+    `<g class="onchainMarker ${marker.emphasized ? "validated" : "candidate"}" data-testid="onchain-marker" data-shape="triangle" data-side="${marker.side}" data-live="${marker.live ? "true" : "false"}"><path d="${triangle}" fill="${fill}" stroke="${color}" stroke-width="${strokeWidth}" /><title>${escapeSvgText(title)}</title></g>`
+  );
   const label = onchainOperationLabel(marker);
   const labelX = clamp(x + radius + 4, 8, context.right - 54);
   const labelY = clamp(y + 3, 10, context.height - 10);
-  const badges = [
-    `<g class="onchainMarkerLabel ${marker.emphasized ? "validated" : "candidate"}"><title>${escapeSvgText(title)}</title><text x="${labelX}" y="${labelY}" fill="${marker.side === "long" ? green : red}" font-size="9" font-weight="700" font-family="SF Mono, Monaco, Consolas, monospace">${escapeSvgText(label)}</text></g>`
+  const badges = context.minimal && !marker.live ? [] : [
+    `<g class="onchainMarkerLabel ${marker.emphasized ? "validated" : "candidate"}"><title>${escapeSvgText(title)}</title><text x="${labelX}" y="${labelY}" fill="${marker.side === "long" ? green : red}" font-size="9" font-weight="700" font-family="SF Mono, Monaco, Consolas, monospace">${escapeSvgText(marker.live ? `LIVE ${label}` : label)}</text></g>`
   ];
   return { shapes, badges };
 }
 
 function onchainMarkerTitle(marker: OnchainChartMarker): string {
   return marker.items.map((item) => (
-    `${item.wallet_label} (${item.wallet_address.slice(0, 6)}…${item.wallet_address.slice(-4)}) · ${item.side === "long" ? "롱" : "숏"} ${formatCompactNumber(item.size_usd)} · ${item.event === "open" ? "진입" : item.event === "increase" ? "증액" : item.event === "reduce" ? "감액" : item.event === "close" ? "청산" : "전환"} · 가격 ${item.entry_px ? formatPrice(item.entry_px) : "-"} · 미실현 ${item.unrealized_pnl === null ? "-" : formatCompactNumber(item.unrealized_pnl)} · ${item.accuracy_label} · 별칭은 추정`
+    `${formatOnchainEventTime(item.event_at)} · ${item.wallet_label} (${item.wallet_address.slice(0, 6)}…${item.wallet_address.slice(-4)}) · ${item.side === "long" ? "롱" : "숏"} ${formatCompactNumber(item.size_usd)} · ${item.event === "open" ? "진입" : item.event === "increase" ? "증액" : item.event === "reduce" ? "감액" : item.event === "close" ? "청산" : "전환"} · 체결 ${item.entry_px ? formatPrice(item.entry_px) : item.mark_px ? formatPrice(item.mark_px) : "-"} · 미실현 ${item.unrealized_pnl === null ? "-" : formatCompactNumber(item.unrealized_pnl)} · ${item.accuracy_label} · 별칭은 추정`
   )).join("\n");
+}
+
+function formatOnchainEventTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "시각 미확인";
+  return new Intl.DateTimeFormat("ko-KR", {
+    month: "numeric",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).format(date);
 }
 
 function onchainOperationLabel(marker: OnchainChartMarker): string {

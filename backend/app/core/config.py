@@ -142,7 +142,8 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("FCE_HYPERLIQUID_WHALE_FOCUS_SYMBOLS", "HYPERLIQUID_WHALE_FOCUS_SYMBOLS"),
     )
     hyperliquid_whale_poll_interval_seconds: int = Field(
-        120,
+        30,
+        ge=30,
         validation_alias=AliasChoices("FCE_HYPERLIQUID_WHALE_POLL_INTERVAL_SECONDS", "HYPERLIQUID_WHALE_POLL_INTERVAL_SECONDS"),
     )
     hyperliquid_whale_min_size_usd: float = Field(

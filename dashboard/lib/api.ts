@@ -1676,6 +1676,7 @@ export type OnchainWhaleEvent = {
 
 export type OnchainChartMarker = {
   time: number;
+  event_time?: number;
   kind: "entry" | "exit";
   side: "long" | "short";
   event: string;
@@ -1684,6 +1685,8 @@ export type OnchainChartMarker = {
   size_tier: 1 | 2 | 3;
   label: string;
   emphasized: boolean;
+  price?: number | null;
+  live?: boolean;
   items: OnchainWhaleEvent[];
 };
 
