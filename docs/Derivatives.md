@@ -164,14 +164,20 @@ Default config:
 ```text
 FCE_DERIVATIVE_TRACKING_INTERVAL_SECONDS=300
 FCE_COINGLASS_RATE_LIMIT_PER_MINUTE=30
-FCE_COINGLASS_REQUESTS_PER_SYMBOL=10
+FCE_COINGLASS_REQUESTS_PER_SYMBOL=11
 ```
 
 Budget:
 
 ```text
 requests_per_tick = 30 * (300 / 60) = 150
-max_symbols_per_tick = floor(150 / 10) = 15
+max_symbols_per_tick = floor(150 / 11) = 13
 ```
 
-Therefore 15 symbols fit in one 5-minute tick at the worst-case feature budget. If tracked symbols exceed the tick budget, the worker uses round-robin selection. Unsupported optional probes are not counted as consumed requests.
+Therefore 13 symbols fit in one 5-minute tick at the conservative worst-case feature budget. BTC and ETH use the eleventh request for daily spot-ETF flow; other symbols normally consume fewer requests. If tracked symbols exceed the tick budget, the worker uses round-robin selection. Unsupported optional probes are not counted as consumed requests.
+
+### BTC·ETH spot ETF flow exception
+
+- Only `BTCUSDT` and `ETHUSDT` request CoinGlass V4 ETF flow history. The normalized signal is exposed at `derivatives.signals.etf_flow` for Scout and live-position charts.
+- The observation contains the latest reported daily net flow, the latest five reported-day sum, and the largest per-fund contributors. It is observation-only and is not consumed by confluence, scoring, candidate promotion, or paper entry.
+- The UI always labels the value `일별 ETF 보고 · 실시간 체결 아님`. Locked, empty, or failed responses remain blank with their source status; no fallback number is estimated.

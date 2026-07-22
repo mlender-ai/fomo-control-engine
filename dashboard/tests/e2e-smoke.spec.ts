@@ -411,6 +411,23 @@ test("money flow exposes the driver, magnitude, and execution history", async ({
         directions: { price: "up", spot_cvd: "up", futures_cvd: "up", oi: "up" },
         reason: "최근 30일 관측 분포의 40백분위로 방향을 구분했습니다."
       };
+      body.derivatives.signals.etf_flow = {
+        asset: "BTC",
+        available: true,
+        status: "ok",
+        source: "coinglass_v4",
+        source_label: "CoinGlass 미국 현물 ETF 집계",
+        as_of: "2026-07-21T00:00:00Z",
+        daily_flow_usd: 125000000,
+        five_report_day_flow_usd: -45000000,
+        report_days: 5,
+        contributors: [
+          { ticker: "IBIT", flow_usd: 150000000 },
+          { ticker: "GBTC", flow_usd: -25000000 }
+        ],
+        cadence: "daily",
+        truth_label: "일별 ETF 보고 · 실시간 체결 아님"
+      };
     }
     body.options = {
       available: true,
@@ -442,6 +459,13 @@ test("money flow exposes the driver, magnitude, and execution history", async ({
   await expect(moneyFlow).toContainText("+8.00%");
   await expect(moneyFlow.locator(".flowHistogramPlot")).toHaveCount(2);
   await expect(moneyFlow.locator("polyline")).toHaveCount(0);
+  const etfFlow = page.getByTestId("crypto-etf-flow-summary");
+  await expect(etfFlow).toBeVisible();
+  await expect(etfFlow).toContainText("BTC 현물 ETF");
+  await expect(etfFlow).toContainText("+$125M");
+  await expect(etfFlow).toContainText("−$45M");
+  await expect(etfFlow).toContainText("IBIT +$150M");
+  await expect(etfFlow).toContainText("일별 ETF 보고 · 실시간 체결 아님");
   const putCall = page.getByTestId("options-put-call-summary");
   await expect(putCall).toBeVisible();
   await expect(putCall).toContainText("풋/콜 비율");
@@ -453,6 +477,7 @@ test("money flow exposes the driver, magnitude, and execution history", async ({
 
   await page.setViewportSize({ width: 390, height: 1200 });
   await expect(moneyFlow).toBeVisible();
+  await expect(etfFlow).toBeVisible();
   const horizontalOverflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
   expect(horizontalOverflow).toBeLessThanOrEqual(0);
 });

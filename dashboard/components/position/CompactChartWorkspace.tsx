@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowDown, ArrowUp, Minus, ShieldCheck, TriangleAlert, Waves } from "lucide-react";
-import type { CompactChartGauges, DerivativesContext, OccOptionsSummary, PositionActionPlan, PositionChartAnalysis, PositionDeepDive } from "@/lib/api";
+import type { CompactChartGauges, CryptoEtfFlowSignal, DerivativesContext, OccOptionsSummary, PositionActionPlan, PositionChartAnalysis, PositionDeepDive } from "@/lib/api";
 import { MINIMAL_FIXED_LAYER_STATE } from "@/lib/chartLayers";
 import { formatPrice } from "@/lib/format";
 import { PositionChart, type PositionChartOverlay } from "./PositionChart";
@@ -212,6 +212,7 @@ export function MoneyFlowCard({
     ? coinglassRaw.options_summary as Record<string, unknown>
     : null;
   const coinglassLocked = derivatives?.coinglass?.source_status === "locked";
+  const etfFlow = derivatives?.signals?.etf_flow;
   const spotAvailable = flow?.coverage?.spot_available === true;
   const futuresAvailable = flow?.coverage?.futures_available === true;
   const spotUnavailableReason = flow && !spotAvailable
@@ -254,6 +255,8 @@ export function MoneyFlowCard({
       </header>
 
       {gauges?.stance_history?.length ? <StanceHistoryStrip gauges={gauges} /> : null}
+
+      {etfFlow ? <CryptoEtfFlowSummary flow={etfFlow} /> : null}
 
       {occOptions?.available === true ? <OptionsPositioningSummary options={occOptions} /> : null}
 
@@ -315,6 +318,50 @@ export function MoneyFlowCard({
           <small>Coinglass 집계·BTC/ETH 옵션 연결 대기</small>
         ) : null}
       </footer>
+    </section>
+  );
+}
+
+function CryptoEtfFlowSummary({ flow }: { flow: CryptoEtfFlowSignal }) {
+  const daily = finiteNumber(flow.daily_flow_usd);
+  const recent = finiteNumber(flow.five_report_day_flow_usd);
+  const tone = daily === null ? "unavailable" : daily > 0 ? "inflow" : daily < 0 ? "outflow" : "flat";
+  const contributors = (flow.contributors ?? []).slice(0, 4);
+  return (
+    <section className={`cryptoEtfFlowSummary ${tone}`} data-testid="crypto-etf-flow-summary">
+      <header>
+        <div>
+          <span>{flow.asset} 현물 ETF</span>
+          <strong>{daily === null ? "보고 대기" : daily >= 0 ? "순유입" : "순유출"}</strong>
+        </div>
+        <em>{flow.truth_label ?? "일별 ETF 보고 · 실시간 체결 아님"}</em>
+      </header>
+      {flow.available && daily !== null ? (
+        <div className="cryptoEtfFlowBody">
+          <article>
+            <span>최근 보고일</span>
+            <strong>{formatEtfReportDate(flow.as_of)}</strong>
+          </article>
+          <article>
+            <span>일간 순유입</span>
+            <strong>{formatSignedUsd(daily)}</strong>
+          </article>
+          <article>
+            <span>최근 {flow.report_days ?? 5}개 보고일</span>
+            <strong>{formatSignedUsd(recent)}</strong>
+          </article>
+          <div className="cryptoEtfContributors" aria-label="ETF별 자금 흐름">
+            {contributors.length ? contributors.map((item) => (
+              <span className={item.flow_usd > 0 ? "inflow" : item.flow_usd < 0 ? "outflow" : "flat"} key={item.ticker}>
+                <b>{item.ticker}</b> {formatSignedUsd(item.flow_usd)}
+              </span>
+            )) : <small>ETF별 내역 없음</small>}
+          </div>
+        </div>
+      ) : (
+        <p>{flow.reason ?? "CoinGlass ETF flow 보고값을 불러오지 못했습니다."}</p>
+      )}
+      <footer>출처 {flow.source_label ?? "CoinGlass V4"} · 관측 전용</footer>
     </section>
   );
 }
@@ -569,6 +616,23 @@ function formatCompactNumber(value: unknown): string {
   const number = Number(value);
   if (!Number.isFinite(number)) return "-";
   return new Intl.NumberFormat("ko-KR", { notation: "compact", maximumFractionDigits: 2 }).format(number);
+}
+
+function formatSignedUsd(value: unknown): string {
+  const number = finiteNumber(value);
+  if (number === null) return "-";
+  const formatted = new Intl.NumberFormat("en-US", {
+    notation: "compact",
+    maximumFractionDigits: 1
+  }).format(Math.abs(number));
+  return `${number > 0 ? "+" : number < 0 ? "−" : ""}$${formatted}`;
+}
+
+function formatEtfReportDate(value: string | null | undefined): string {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleDateString("ko-KR", { month: "short", day: "numeric" });
 }
 
 function formatRatio(value: unknown): string {

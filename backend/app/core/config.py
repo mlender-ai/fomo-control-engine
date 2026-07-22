@@ -205,7 +205,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("FCE_COINGLASS_RATE_LIMIT_PER_MINUTE", "COINGLASS_RATE_LIMIT_PER_MINUTE"),
     )
     coinglass_requests_per_symbol: int = Field(
-        10,
+        11,
         validation_alias=AliasChoices("FCE_COINGLASS_REQUESTS_PER_SYMBOL", "COINGLASS_REQUESTS_PER_SYMBOL"),
     )
     occ_options_enabled: bool = Field(

@@ -1420,6 +1420,67 @@ textarea:focus {
 
 .moneyFlowIndicator.inactive { border-style: dashed; }
 
+.cryptoEtfFlowSummary {
+  display: grid;
+  gap: 8px;
+  padding: 9px 10px;
+  border: 1px solid var(--rh-border);
+  border-left: 3px solid var(--rh-muted-bright);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--rh-surface) 86%, transparent);
+}
+
+.cryptoEtfFlowSummary.inflow { border-left-color: var(--rh-green); }
+.cryptoEtfFlowSummary.outflow { border-left-color: var(--rh-orange); }
+.cryptoEtfFlowSummary > header,
+.cryptoEtfFlowSummary > header > div,
+.cryptoEtfFlowSummary > footer {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.cryptoEtfFlowSummary > header { justify-content: space-between; }
+.cryptoEtfFlowSummary > header span,
+.cryptoEtfFlowSummary article > span,
+.cryptoEtfFlowSummary > footer { color: var(--rh-muted); font-size: 9px; }
+.cryptoEtfFlowSummary > header strong { color: var(--rh-white); font-size: 12px; }
+.cryptoEtfFlowSummary.inflow > header strong { color: var(--rh-green); }
+.cryptoEtfFlowSummary.outflow > header strong { color: var(--rh-orange); }
+.cryptoEtfFlowSummary > header em { color: var(--rh-muted-bright); font-size: 9px; font-style: normal; }
+.cryptoEtfFlowSummary > p { margin: 0; color: var(--rh-muted); font-size: 10px; }
+
+.cryptoEtfFlowBody {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(100px, .55fr)) minmax(240px, 1.8fr);
+  gap: 7px;
+}
+.cryptoEtfFlowBody > article {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid var(--rh-border);
+  background: var(--rh-black);
+}
+.cryptoEtfFlowBody > article strong { color: var(--rh-white); font-size: 13px; font-variant-numeric: tabular-nums; }
+.cryptoEtfFlowSummary.inflow .cryptoEtfFlowBody > article:nth-child(2) strong { color: var(--rh-green); }
+.cryptoEtfFlowSummary.outflow .cryptoEtfFlowBody > article:nth-child(2) strong { color: var(--rh-orange); }
+.cryptoEtfContributors {
+  display: flex;
+  flex-wrap: wrap;
+  align-content: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid var(--rh-border);
+  background: var(--rh-black);
+}
+.cryptoEtfContributors > span { padding: 3px 5px; color: var(--rh-muted-bright); font: 9px/1.2 var(--rh-font-mono); }
+.cryptoEtfContributors > span.inflow { color: var(--rh-green); }
+.cryptoEtfContributors > span.outflow { color: var(--rh-orange); }
+.cryptoEtfContributors b { color: var(--rh-white); }
+.cryptoEtfContributors small { color: var(--rh-muted); font-size: 9px; }
+
 .moneyFlowIndicatorHeader,
 .moneyFlowIndicatorFooter,
 .moneyFlowTitle,
@@ -4588,6 +4649,12 @@ textarea:focus {
     grid-template-columns: minmax(220px, 1fr) 170px minmax(210px, 1fr);
   }
 
+  .cryptoEtfFlowBody {
+    grid-template-columns: repeat(3, minmax(90px, .6fr));
+  }
+
+  .cryptoEtfContributors { grid-column: 1 / -1; }
+
   .moneyFlowIndicator .moneyFlowReadout {
     grid-column: 1 / -1;
   }
@@ -4645,6 +4712,18 @@ textarea:focus {
   .moneyFlowIndicatorGrid {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   }
+
+  .cryptoEtfFlowSummary > header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .cryptoEtfFlowBody {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .cryptoEtfFlowBody > article:first-child,
+  .cryptoEtfContributors { grid-column: 1 / -1; }
 
   .moneyFlowIndicator .moneyFlowPressure,
   .moneyFlowIndicator .moneyFlowReadout {

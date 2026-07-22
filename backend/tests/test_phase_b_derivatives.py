@@ -25,6 +25,7 @@ from app.db.models import (
 from app.db.repository import MemoryRepository, create_repository
 from app.db.sqlite_utils import connect_sqlite
 from app.derivatives.engine import flow_summary
+from app.derivatives.context import derivative_context_for_symbol
 from app.exchange.mock import MockMarketDataProvider
 from app.marketdata.coinglass import CoinglassProvider
 from app.marketdata.signals import build_derivative_signals, funding_state, percentile_rank
@@ -507,6 +508,26 @@ def test_coinglass_provider_parses_metric_liquidations_and_heatmap(monkeypatch) 
                     "price_candlesticks": [[1780000000, "100", "102", "99", "100", "1000"]],
                 },
             },
+            "etf_flow": {
+                "code": "0",
+                "data": [
+                    {
+                        "timestamp": 1779926400000,
+                        "flow_usd": -25_000_000,
+                        "price_usd": 65_000,
+                        "etf_flows": [{"etf_ticker": "GBTC", "flow_usd": -25_000_000}],
+                    },
+                    {
+                        "timestamp": 1780012800000,
+                        "flow_usd": 125_000_000,
+                        "price_usd": 66_000,
+                        "etf_flows": [
+                            {"etf_ticker": "IBIT", "flow_usd": 150_000_000},
+                            {"etf_ticker": "GBTC", "flow_usd": -25_000_000},
+                        ],
+                    },
+                ],
+            },
         }
         return {"status": "ok", "payload": payloads[feature], "message": "ok"}
 
@@ -514,7 +535,7 @@ def test_coinglass_provider_parses_metric_liquidations_and_heatmap(monkeypatch) 
     collection = provider.collect("BTCUSDT")
     metric = collection.metrics[0]
 
-    assert collection.requests_used == 6
+    assert collection.requests_used == 7
     assert metric.open_interest_value == 100_000_000
     assert metric.oi_change_pct == 2.5
     assert metric.top_ls == 1.7
@@ -522,6 +543,30 @@ def test_coinglass_provider_parses_metric_liquidations_and_heatmap(monkeypatch) 
     assert collection.liquidation_events[0].long_liquidation_usd == 1200
     assert collection.snapshot is not None
     assert collection.snapshot.liquidation_clusters[0]["sources"] == ["liq_cluster"]
+    etf_flow = collection.snapshot.raw_json["etf_flow_summary"]
+    assert etf_flow["asset"] == "BTC"
+    assert etf_flow["daily_flow_usd"] == 125_000_000
+    assert etf_flow["five_report_day_flow_usd"] == 100_000_000
+    assert etf_flow["report_days"] == 2
+    assert etf_flow["contributors"][0] == {"ticker": "IBIT", "flow_usd": 150_000_000.0}
+
+    repository = MemoryRepository()
+    repository.add_derivative_snapshot(collection.snapshot)
+    context = derivative_context_for_symbol(repository, provider.settings, "BTCUSDT")
+    assert context["signals"]["etf_flow"]["daily_flow_usd"] == 125_000_000
+
+
+def test_etf_flow_signal_is_limited_to_btc_and_eth() -> None:
+    repository = MemoryRepository()
+    settings = Settings(database_url="memory://", coinglass_api_key="")
+
+    btc = derivative_context_for_symbol(repository, settings, "BTCUSDT")
+    eth = derivative_context_for_symbol(repository, settings, "ETHUSDT")
+    sol = derivative_context_for_symbol(repository, settings, "SOLUSDT")
+
+    assert btc["signals"]["etf_flow"]["status"] == "locked"
+    assert eth["signals"]["etf_flow"]["asset"] == "ETH"
+    assert "etf_flow" not in sol["signals"]
 
 
 def test_derivative_signals_use_percentile_and_four_quadrant_classification() -> None:

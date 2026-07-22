@@ -136,6 +136,7 @@ class CoinglassProvider:
 
         options = {"status": "unsupported", "payload": None}
         options_oi = {"status": "unsupported", "payload": None}
+        etf_flow = {"status": "unsupported", "payload": None}
         if coin in {"BTC", "ETH"}:
             options = self._probe(
                 "/api/option/put-call-ratio/history",
@@ -147,9 +148,16 @@ class CoinglassProvider:
                 {"symbol": coin, "interval": self.settings.coinglass_interval, "limit": 2},
                 "options_open_interest",
             )
-            requests_used += sum(result.get("status") != "unsupported" for result in (options, options_oi))
+            etf_asset = "bitcoin" if coin == "BTC" else "ethereum"
+            etf_flow = self._probe(
+                f"/api/etf/{etf_asset}/flow-history",
+                {},
+                "etf_flow",
+            )
+            requests_used += sum(result.get("status") != "unsupported" for result in (options, options_oi, etf_flow))
         feature_status["options_put_call"] = options["status"]
         feature_status["options_open_interest"] = options_oi["status"]
+        feature_status["etf_flow"] = etf_flow["status"]
         raw["options_put_call"] = options.get("payload")
         raw["options_open_interest"] = options_oi.get("payload")
 
@@ -167,6 +175,8 @@ class CoinglassProvider:
         if aggregate_flow is not None:
             raw["money_flow_aggregate"] = aggregate_flow
         raw["options_summary"] = _options_summary(options, options_oi, coin)
+        if coin in {"BTC", "ETH"}:
+            raw["etf_flow_summary"] = _etf_flow_summary(etf_flow, coin)
         metric = _metric_from_results(normalized, oi, top_ratio, oi_weight, feature_status, notes, raw)
         events = _liquidation_events_from_result(normalized, liq_history, self.settings.coinglass_liquidation_interval)
         clusters = _clusters_from_heatmap(heatmap)
@@ -312,6 +322,67 @@ def _options_summary(result: dict[str, Any], oi_result: dict[str, Any], coin: st
         "options_open_interest": _first_number(oi_rows[-1], ("open_interest", "openInterest", "oi")) if oi_rows else None,
         "source": "coinglass_agg",
         "as_of": (_row_time(latest) or utc_now()).isoformat() if latest else None,
+    }
+
+
+def _etf_flow_summary(result: dict[str, Any], coin: str) -> dict[str, Any]:
+    """Normalize CoinGlass daily spot-ETF reports without inventing missing values."""
+    if coin not in {"BTC", "ETH"}:
+        return {"available": False, "status": "unsupported_symbol"}
+    status = str(result.get("status") or "error")
+    if status != "ok":
+        reason = "CoinGlass API 키 또는 플랜에 ETF flow 접근 권한이 없습니다." if status == "locked" else "CoinGlass ETF flow 수집에 실패했습니다."
+        return {
+            "asset": coin,
+            "available": False,
+            "status": status,
+            "source": "coinglass_v4",
+            "reason": reason,
+            "provider_message": result.get("message"),
+        }
+    rows = sorted(
+        _payload_rows(result.get("payload")),
+        key=lambda row: _row_time(row) or datetime.min.replace(tzinfo=timezone.utc),
+    )
+    rows = [row for row in rows if _first_number(row, ("flow_usd", "flowUsd")) is not None]
+    if not rows:
+        return {
+            "asset": coin,
+            "available": False,
+            "status": "empty",
+            "source": "coinglass_v4",
+            "reason": "CoinGlass ETF flow 응답에 보고된 값이 없습니다.",
+        }
+    latest = rows[-1]
+    latest_flow = _first_number(latest, ("flow_usd", "flowUsd"))
+    recent_values = [value for row in rows[-5:] if (value := _first_number(row, ("flow_usd", "flowUsd"))) is not None]
+    detail = latest.get("etf_flows") or latest.get("etfFlows")
+    contributors: list[dict[str, Any]] = []
+    if isinstance(detail, list):
+        for item in detail:
+            if not isinstance(item, dict):
+                continue
+            value = _first_number(item, ("flow_usd", "flowUsd"))
+            ticker = item.get("etf_ticker") or item.get("etfTicker") or item.get("ticker")
+            if value is None or not ticker:
+                continue
+            contributors.append({"ticker": str(ticker).upper(), "flow_usd": value})
+    contributors.sort(key=lambda item: abs(float(item["flow_usd"])), reverse=True)
+    as_of = _row_time(latest)
+    return {
+        "asset": coin,
+        "available": latest_flow is not None,
+        "status": "ok",
+        "source": "coinglass_v4",
+        "source_label": "CoinGlass 미국 현물 ETF 집계",
+        "as_of": as_of.isoformat() if as_of else None,
+        "daily_flow_usd": latest_flow,
+        "five_report_day_flow_usd": sum(recent_values) if recent_values else None,
+        "report_days": len(recent_values),
+        "price_usd": _first_number(latest, ("price_usd", "priceUsd")),
+        "contributors": contributors[:5],
+        "cadence": "daily",
+        "truth_label": "일별 ETF 보고 · 실시간 체결 아님",
     }
 
 
@@ -486,7 +557,7 @@ def _latest_row(payload: Any) -> dict[str, Any] | None:
 def _row_time(row: dict[str, Any] | None) -> datetime | None:
     if not row:
         return None
-    return _timestamp_ms(row.get("time"))
+    return _timestamp_ms(row.get("time") if row.get("time") is not None else row.get("timestamp"))
 
 
 def _latest_heatmap_close(data: dict[str, Any]) -> float | None:

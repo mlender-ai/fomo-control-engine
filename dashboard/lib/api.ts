@@ -1380,6 +1380,24 @@ export type DerivativeSignals = {
   } | null;
   liquidation_clusters: Array<Record<string, unknown>>;
   money_flow?: MoneyFlowSignal;
+  etf_flow?: CryptoEtfFlowSignal;
+};
+
+export type CryptoEtfFlowSignal = {
+  asset: "BTC" | "ETH";
+  available: boolean;
+  status: "ok" | "empty" | "locked" | "partial" | "error" | "missing" | string;
+  source: "coinglass_v4" | string;
+  source_label?: string;
+  as_of?: string | null;
+  daily_flow_usd?: number | null;
+  five_report_day_flow_usd?: number | null;
+  report_days?: number;
+  price_usd?: number | null;
+  contributors?: Array<{ ticker: string; flow_usd: number }>;
+  cadence?: "daily" | string;
+  truth_label?: string;
+  reason?: string;
 };
 
 export type DerivativesContext = {

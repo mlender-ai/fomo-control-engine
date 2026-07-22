@@ -4,6 +4,7 @@ from typing import Any
 
 from app.db.models import DerivativeMetric, LiquidationEvent
 from app.derivatives.engine import coinglass_status_snapshot, flow_summary
+from app.marketdata.base import coin_from_symbol
 from app.marketdata.signals import build_derivative_signals
 from app.validation.candidates import candidate_engine_review
 
@@ -22,6 +23,9 @@ def derivative_context_for_symbol(
     metric_history: list[DerivativeMetric] = repository.list_derivative_metrics(symbol=normalized, limit=metric_limit)
     liquidation_history: list[LiquidationEvent] = repository.list_liquidation_events(symbol=normalized, limit=event_limit)
     signals = build_derivative_signals(metric_history, liquidation_history, coinglass.liquidation_clusters)
+    etf_flow = _etf_flow_signal(normalized, coinglass)
+    if etf_flow is not None:
+        signals["etf_flow"] = etf_flow
     money_flow = signals.get("money_flow") if isinstance(signals.get("money_flow"), dict) else None
     if money_flow is not None:
         review = candidate_engine_review(repository, settings, "money_flow") or {}
@@ -40,6 +44,26 @@ def derivative_context_for_symbol(
         "source": "bitget",
         "source_status": latest.source_status if latest else "missing",
         "number_sources": _number_sources(latest, coinglass, signals),
+    }
+
+
+def _etf_flow_signal(symbol: str, coinglass: Any) -> dict[str, Any] | None:
+    """Expose ETF observation only for the explicitly approved BTC/ETH exception."""
+    coin = coin_from_symbol(symbol)
+    if coin not in {"BTC", "ETH"}:
+        return None
+    raw = coinglass.raw_json if coinglass is not None and isinstance(coinglass.raw_json, dict) else {}
+    summary = raw.get("etf_flow_summary")
+    if isinstance(summary, dict):
+        return dict(summary)
+    status = getattr(coinglass, "source_status", "missing") if coinglass is not None else "missing"
+    return {
+        "asset": coin,
+        "available": False,
+        "status": status,
+        "source": "coinglass_v4",
+        "reason": ("CoinGlass API 키가 없어 ETF flow를 불러오지 못했습니다." if status == "locked" else "CoinGlass ETF flow 수집 결과를 기다리고 있습니다."),
+        "truth_label": "일별 ETF 보고 · 실시간 체결 아님",
     }
 
 
