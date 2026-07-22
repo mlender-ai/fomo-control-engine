@@ -6,11 +6,13 @@ import { Activity, Bot, Building2, Plus, Radar, RefreshCw, ShieldCheck, Trash2, 
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { TerminalWarning } from "@/components/terminal";
 import { StockPaperEntryChart } from "@/components/StockPaperEntryChart";
-import { api, type OnchainWhaleDashboard, type PaperDashboard, type PaperGateFunnel, type PaperTrade, type StanceBacktestDashboard, type StockPaperDashboard, type StockPaperTrack } from "@/lib/api";
+import { PolymarketPaperView } from "@/components/PolymarketPaperView";
+import { api, type OnchainWhaleDashboard, type PaperDashboard, type PaperGateFunnel, type PaperTrade, type PolyPaperDashboard, type StanceBacktestDashboard, type StockPaperDashboard, type StockPaperTrack } from "@/lib/api";
 
 const tabs = [
   { id: "battle", label: "대결" },
   { id: "stocks", label: "주식 트랙" },
+  { id: "polymarket", label: "Polymarket" },
   { id: "positions", label: "엔진 포지션" },
   { id: "journal", label: "거래 일지" },
   { id: "status", label: "엔진 상태" },
@@ -25,15 +27,18 @@ export function EngineTradingShell() {
   const active = tabs.some((tab) => tab.id === requested) ? requested! : "battle";
   const [data, setData] = useState<PaperDashboard | null>(null);
   const [stockData, setStockData] = useState<StockPaperDashboard | null>(null);
+  const [polyData, setPolyData] = useState<PolyPaperDashboard | null>(null);
   const [stanceData, setStanceData] = useState<StanceBacktestDashboard | null>(null);
   const [whales, setWhales] = useState<OnchainWhaleDashboard | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [whaleError, setWhaleError] = useState("");
   const [stockError, setStockError] = useState("");
+  const [polyError, setPolyError] = useState("");
   const [stanceError, setStanceError] = useState("");
   const [starting, setStarting] = useState(false);
   const [refreshingStance, setRefreshingStance] = useState(false);
+  const [collectingPoly, setCollectingPoly] = useState(false);
 
   const loadWhales = useCallback(async () => {
     try {
@@ -49,7 +54,7 @@ export function EngineTradingShell() {
     setError("");
     void loadWhales();
     try {
-      const [crypto, stocks, stance] = await Promise.allSettled([api.paperDashboard(), api.stockPaperDashboard(), api.stanceBacktest()]);
+      const [crypto, stocks, poly, stance] = await Promise.allSettled([api.paperDashboard(), api.stockPaperDashboard(), api.polyPaperDashboard(), api.stanceBacktest()]);
       if (crypto.status === "rejected") throw crypto.reason;
       setData(crypto.value);
       if (stocks.status === "fulfilled") {
@@ -63,6 +68,12 @@ export function EngineTradingShell() {
         setStanceError("");
       } else {
         setStanceError(stance.reason instanceof Error ? stance.reason.message : "실히스토리 검증 결과를 불러오지 못했습니다.");
+      }
+      if (poly.status === "fulfilled") {
+        setPolyData(poly.value);
+        setPolyError("");
+      } else {
+        setPolyError(poly.reason instanceof Error ? poly.reason.message : "Polymarket 확률 원장을 불러오지 못했습니다.");
       }
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "엔진 트레이딩 데이터를 불러오지 못했습니다.");
@@ -104,6 +115,19 @@ export function EngineTradingShell() {
     }
   }
 
+  async function collectPolymarket() {
+    setCollectingPoly(true);
+    setPolyError("");
+    try {
+      await api.runPolyPaper();
+      setPolyData(await api.polyPaperDashboard());
+    } catch (reason) {
+      setPolyError(reason instanceof Error ? reason.message : "Polymarket 공개 시장 수집에 실패했습니다.");
+    } finally {
+      setCollectingPoly(false);
+    }
+  }
+
   return (
     <div className="page engineTradingPage" data-testid="engine-trading-page">
       <header className="pageHeader engineTradingHeader">
@@ -122,8 +146,9 @@ export function EngineTradingShell() {
       {error ? <TerminalWarning tone="error">{error}</TerminalWarning> : null}
       {whaleError ? <TerminalWarning tone="warning">고래 관측 갱신 실패 · {whaleError} · 페이퍼 엔진 화면은 계속 사용할 수 있습니다.</TerminalWarning> : null}
       {stockError && active === "stocks" ? <TerminalWarning tone="warning">{stockError}</TerminalWarning> : null}
+      {polyError && active === "polymarket" ? <TerminalWarning tone="warning">{polyError}</TerminalWarning> : null}
       {stanceError && active === "status" ? <TerminalWarning tone="warning">{stanceError}</TerminalWarning> : null}
-      {!data ? <EngineLoading /> : active === "battle" ? <BattleView data={data} whales={whales} starting={starting} onStart={startBenchmark} /> : active === "stocks" ? <StockPaperView data={stockData} /> : active === "positions" ? <PositionsView trades={data.open_trades} funnel={data.gate_funnel} activation={data.activation} /> : active === "journal" ? <JournalView trades={data.closed_trades} /> : active === "onchain" ? <OnchainView data={whales} onReload={loadWhales} /> : <EngineStatusView data={data} stance={stanceData} refreshingStance={refreshingStance} onRefreshStance={refreshStance} />}
+      {!data ? <EngineLoading /> : active === "battle" ? <BattleView data={data} whales={whales} starting={starting} onStart={startBenchmark} /> : active === "stocks" ? <StockPaperView data={stockData} /> : active === "polymarket" ? <PolymarketPaperView data={polyData} collecting={collectingPoly} onCollect={collectPolymarket} /> : active === "positions" ? <PositionsView trades={data.open_trades} funnel={data.gate_funnel} activation={data.activation} /> : active === "journal" ? <JournalView trades={data.closed_trades} /> : active === "onchain" ? <OnchainView data={whales} onReload={loadWhales} /> : <EngineStatusView data={data} stance={stanceData} refreshingStance={refreshingStance} onRefreshStance={refreshStance} />}
     </div>
   );
 }

@@ -22,6 +22,8 @@ from app.services import runtime as service
 from app.worker.heartbeat import HeartbeatRecord, SQLiteHeartbeatStore
 from app.toss.service import collect_market as collect_toss_market
 from app.stock_paper.service import run_stock_paper_engine
+from app.poly_paper.service import run_poly_paper_engine
+from app.services import http_handlers as engine_runtime
 
 logger = logging.getLogger("worker.manager")
 
@@ -261,6 +263,13 @@ class WorkerManager:
         paper = await asyncio.to_thread(run_stock_paper_engine, self.settings, {"KR": kr, "US": us})
         return {"KR": kr.get("status"), "US": us.get("status"), "stock_paper": paper}
 
+    async def _collect_polymarket(self) -> dict[str, Any]:
+        return await run_poly_paper_engine(
+            self.settings,
+            engine_runtime.market_provider,
+            engine_runtime.repository,
+        )
+
     async def _telegram_bot_loop(self) -> None:
         heartbeat = self.heartbeats["telegram_bot"]
 
@@ -435,6 +444,12 @@ class WorkerManager:
                 self._collect_toss_stocks,
                 enabled=self.settings.toss_stock_scout_enabled,
             ),
+            "polymarket_paper": WorkerJob(
+                "polymarket_paper",
+                self.settings.polymarket_poll_interval_seconds,
+                self._collect_polymarket,
+                enabled=self.settings.polymarket_paper_enabled,
+            ),
             "telegram_bot": WorkerJob("telegram_bot", 0, None, scheduled=False),
         }
 
@@ -514,6 +529,7 @@ class WorkerManager:
             "universe_scan": 150,
             "score_candidates": 180,
             "stance_backtest": 210,
+            "polymarket_paper": 240,
         }
         return fallback + timedelta(seconds=startup_offsets.get(name, 0))
 

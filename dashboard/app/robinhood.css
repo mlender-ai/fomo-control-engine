@@ -2173,6 +2173,430 @@ textarea:focus {
   max-width: 1180px;
 }
 
+.polyPaperView {
+  max-width: 1180px;
+}
+
+.polyPaperGate,
+.polyPaperHeader,
+.polyCalibration,
+.polyMarketSection,
+.polyPositionLedger,
+.polyMarketCard {
+  border: 1px solid var(--rh-border);
+  background: var(--rh-panel);
+}
+
+.polyPaperGate {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 20px;
+  padding: 14px 18px;
+  border-color: color-mix(in srgb, var(--rh-green) 42%, var(--rh-border));
+}
+
+.polyPaperGate > div {
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  gap: 2px 8px;
+}
+
+.polyPaperGate svg {
+  grid-row: 1 / 3;
+  color: var(--rh-green);
+}
+
+.polyPaperGate span,
+.polyPaperGate p,
+.polyPaperHeader p,
+.polyCalibration p {
+  margin: 0;
+  color: var(--rh-muted);
+  font-size: 11px;
+}
+
+.polyPaperGate strong {
+  color: var(--rh-green);
+  font-size: 13px;
+}
+
+.polyPaperGate p {
+  color: var(--rh-text);
+  font-size: 12px;
+}
+
+.polyPaperHeader {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 22px;
+}
+
+.polyPaperHeader h2,
+.polyCalibration h3,
+.polyMarketSection h3,
+.polyPositionLedger h3 {
+  margin: 4px 0 6px;
+  color: var(--rh-white);
+}
+
+.polyTrackSummary {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(100px, 1fr));
+  min-width: min(100%, 410px);
+  border: 1px solid var(--rh-border);
+}
+
+.polyTrackSummary p {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+  padding: 11px 13px;
+}
+
+.polyTrackSummary p + p {
+  border-left: 1px solid var(--rh-border);
+}
+
+.polyTrackSummary span,
+.polyTrackSummary strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.polyTrackSummary span {
+  color: var(--rh-muted);
+  font-size: 10px;
+}
+
+.polyTrackSummary strong {
+  color: var(--rh-white);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.polyCalibration,
+.polyMarketSection,
+.polyPositionLedger {
+  padding: 18px;
+}
+
+.polyCalibration > header,
+.polyMarketSection > header,
+.polyPositionLedger > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+
+.polyCalibration > header > div:last-child {
+  display: grid;
+  gap: 5px;
+  text-align: right;
+}
+
+.polyCalibration > header strong,
+.polyPositionLedger > header strong {
+  color: var(--rh-white);
+  font-family: var(--font-mono);
+}
+
+.polyCalibration > header small {
+  color: var(--rh-yellow);
+}
+
+.polyCalibrationCurve {
+  display: grid;
+  grid-template-columns: repeat(10, minmax(0, 1fr));
+  gap: 6px;
+  height: 150px;
+  margin: 18px 0 10px;
+  padding-top: 12px;
+  border-block: 1px solid var(--rh-border);
+}
+
+.polyCalibrationCurve > div {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 3px;
+  min-width: 0;
+  padding-bottom: 26px;
+}
+
+.polyCalibrationCurve i {
+  width: 6px;
+  min-height: 1px;
+  background: var(--rh-muted);
+}
+
+.polyCalibrationCurve i.actual {
+  background: var(--rh-green);
+}
+
+.polyCalibrationCurve span,
+.polyCalibrationCurve small {
+  position: absolute;
+  bottom: 9px;
+  color: var(--rh-muted);
+  font-family: var(--font-mono);
+  font-size: 9px;
+}
+
+.polyCalibrationCurve small {
+  top: 0;
+  right: 3px;
+  bottom: auto;
+}
+
+.polyMarketSection > header nav {
+  display: flex;
+  gap: 4px;
+}
+
+.polyMarketSection > header button {
+  padding: 7px 10px;
+  border: 1px solid var(--rh-border);
+  color: var(--rh-muted);
+  background: transparent;
+  font-size: 11px;
+}
+
+.polyMarketSection > header button.active {
+  border-color: var(--rh-green);
+  color: var(--rh-green);
+}
+
+.polyMarketGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.polyMarketCard {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 15px;
+}
+
+.polyMarketCard.eligible {
+  border-color: color-mix(in srgb, var(--rh-green) 55%, var(--rh-border));
+}
+
+.polyMarketCard > header,
+.polyEstimateMeta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.polyMarketCard > header span,
+.polyMarketCard > header b,
+.polyEstimateMeta,
+.polyExclusion,
+.polyMarketCard details span {
+  color: var(--rh-muted);
+  font-size: 10px;
+}
+
+.polyMarketCard > header span {
+  color: var(--rh-green);
+  text-transform: uppercase;
+}
+
+.polyMarketCard h4 {
+  min-height: 38px;
+  margin: 0;
+  color: var(--rh-white);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.polyProbabilityPair {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border-block: 1px solid var(--rh-border);
+}
+
+.polyProbabilityPair p {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  margin: 0;
+  padding: 10px 0;
+}
+
+.polyProbabilityPair p + p {
+  padding-left: 10px;
+  border-left: 1px solid var(--rh-border);
+}
+
+.polyProbabilityPair span {
+  color: var(--rh-muted);
+  font-size: 9px;
+}
+
+.polyProbabilityPair strong {
+  overflow: hidden;
+  color: var(--rh-white);
+  font-family: var(--font-mono);
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.polyEstimateMeta span {
+  padding: 3px 6px;
+  border: 1px solid var(--rh-border);
+  text-transform: uppercase;
+}
+
+.polyEstimateMeta .quality-high,
+.polyEstimateMeta .quality-medium {
+  border-color: color-mix(in srgb, var(--rh-green) 55%, var(--rh-border));
+  color: var(--rh-green);
+}
+
+.polyEstimateMeta strong {
+  margin-left: auto;
+  color: var(--rh-text);
+}
+
+.polyMarketCard details {
+  border-top: 1px solid var(--rh-border);
+  padding-top: 9px;
+}
+
+.polyMarketCard summary {
+  color: var(--rh-muted);
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.polyMarketCard details p,
+.polyMarketCard details div {
+  margin: 9px 0 0;
+  color: var(--rh-text);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.polyMarketCard details code {
+  display: inline-block;
+  margin-top: 7px;
+  color: var(--rh-green);
+  font-size: 10px;
+}
+
+.polyMarketCard details div {
+  display: grid;
+  gap: 3px;
+}
+
+.polyExclusion {
+  margin: 0;
+  color: var(--rh-yellow);
+}
+
+.polyPositionLedger article {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 0;
+  border-top: 1px solid var(--rh-border);
+}
+
+.polyPositionLedger article div {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 9px;
+  min-width: 0;
+}
+
+.polyPositionLedger article span,
+.polyPositionLedger article p {
+  overflow: hidden;
+  margin: 0;
+  color: var(--rh-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.polyPositionLedger article strong {
+  color: var(--rh-green);
+}
+
+.polyPositionLedger article b {
+  color: var(--rh-white);
+  font-family: var(--font-mono);
+}
+
+@media (max-width: 780px) {
+  .polyPaperGate,
+  .polyMarketGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .polyPaperGate {
+    align-items: stretch;
+  }
+
+  .polyPaperGate .button {
+    justify-content: center;
+    width: 100%;
+  }
+
+  .polyPaperHeader,
+  .polyCalibration > header,
+  .polyMarketSection > header,
+  .polyPositionLedger > header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .polyTrackSummary {
+    grid-template-columns: minmax(0, 1fr);
+    width: 100%;
+  }
+
+  .polyTrackSummary p + p {
+    border-top: 1px solid var(--rh-border);
+    border-left: 0;
+  }
+
+  .polyCalibration > header > div:last-child {
+    text-align: left;
+  }
+
+  .polyCalibrationCurve {
+    gap: 2px;
+  }
+
+  .polyMarketSection > header nav {
+    width: 100%;
+  }
+
+  .polyMarketSection > header button {
+    flex: 1 1 0;
+  }
+
+  .polyPositionLedger article {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 7px;
+  }
+}
+
 .stockPaperGate,
 .stockPaperHeader,
 .stockEntryAudit,

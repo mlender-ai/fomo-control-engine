@@ -2410,6 +2410,117 @@ export type StockPaperEntryChart = {
   empty_reason: "paper_fill_missing" | "observed_candles_missing" | null;
 };
 
+export type PolyEvidence = {
+  claim: string;
+  source: string;
+  observed_at: string;
+  value: number | string | null;
+};
+
+export type PolyEstimate = {
+  id: string;
+  market_id: string;
+  observed_at: string;
+  market_probability: number;
+  estimated_probability: number;
+  confidence_band: [number, number];
+  estimate_quality: "low" | "medium" | "high";
+  base_rate: Record<string, unknown>;
+  evidence: PolyEvidence[];
+  reasoning: string;
+  direction: "YES" | "NO";
+  gross_edge: number;
+  effective_price: number | null;
+  after_cost_edge: number | null;
+  trade_eligible: boolean;
+  exclusion_reason: string | null;
+  entity_type: "polymarket";
+};
+
+export type PolyPaperMarket = {
+  market_id: string;
+  slug: string;
+  question: string;
+  category: "crypto" | "macro";
+  observed_at: string;
+  end_at: string | null;
+  active: 0 | 1;
+  closed: 0 | 1;
+  market_probability: number | null;
+  liquidity: number;
+  trade_eligible: 0 | 1;
+  exclusion_reason: string | null;
+  metadata: {
+    resolution_source: string | null;
+    source: "polymarket_gamma_public";
+  };
+  estimate: PolyEstimate | null;
+};
+
+export type PolyPaperDashboard = {
+  enabled: boolean;
+  parameter_version: string;
+  read_only_label: string;
+  performance_gate: string;
+  sample_note: string;
+  categories: Array<"crypto" | "macro">;
+  live_orders_enabled: false;
+  track: {
+    currency?: "USDC";
+    parameter_version?: string;
+    started_at?: string | null;
+    ends_at?: string | null;
+    clock_valid?: 0 | 1;
+    initial_cash?: number;
+    cash?: number;
+    status?: "waiting" | "running" | "stopped";
+    stop_reason?: string | null;
+    last_collection_at?: string | null;
+    last_collection_status?: string | null;
+    last_collection_error?: string | null;
+    elapsed_days?: number;
+  };
+  markets: PolyPaperMarket[];
+  positions: Array<{
+    market_id: string;
+    estimate_id: string;
+    direction: "YES" | "NO";
+    shares: number;
+    average_price: number;
+    cost: number;
+    opened_at: string;
+    status: "open" | "resolved";
+    resolved_at: string | null;
+    outcome: 0 | 1 | null;
+    payout: number | null;
+    pnl: number | null;
+    question: string;
+    slug: string;
+  }>;
+  recent_fills: Array<{
+    id: string;
+    market_id: string;
+    direction: "YES" | "NO";
+    shares: number;
+    price: number;
+    notional: number;
+    filled_at: string;
+  }>;
+  calibration: {
+    n: number;
+    mean_brier_score: number | null;
+    sample_sufficient: boolean;
+    sample_warning: string | null;
+    curve: Array<{
+      bucket: string;
+      n: number;
+      mean_forecast: number | null;
+      actual_yes_rate: number | null;
+    }>;
+  };
+  resolution_count: number;
+};
+
 export type MarketSummary = {
   reports: Report[];
   positions: Position[];
@@ -2767,6 +2878,8 @@ export const api = {
   stockPaperDashboard: () => request<StockPaperDashboard>("/api/stock-paper/dashboard"),
   stockPaperEntryChart: (market: "KR" | "US", symbol: string) =>
     request<StockPaperEntryChart>(`/api/stock-paper/entry-chart?market=${market}&symbol=${encodeURIComponent(symbol)}`),
+  polyPaperDashboard: () => request<PolyPaperDashboard>("/api/poly-paper/dashboard"),
+  runPolyPaper: () => request<Record<string, unknown>>("/api/poly-paper/run", { method: "POST" }),
   onchainWhales: () => request<OnchainWhaleDashboard>("/api/onchain/whales"),
   addOnchainWhale: (payload: { address: string; label?: string }) => request<{ wallet: OnchainWhaleWallet }>("/api/onchain/whales", {
     method: "POST",

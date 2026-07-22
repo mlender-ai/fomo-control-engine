@@ -16,6 +16,7 @@ from app.derivatives.routes import router as derivatives_router
 from app.notify.routes import router as notify_router
 from app.onchain.routes import router as onchain_router
 from app.paper.routes import router as paper_router
+from app.poly_paper.routes import router as poly_paper_router
 from app.toss.routes import router as toss_router
 from app.stock_paper.routes import router as stock_paper_router
 from app.services import runtime as service
@@ -58,6 +59,7 @@ app.include_router(derivatives_router)
 app.include_router(notify_router)
 app.include_router(worker_router)
 app.include_router(paper_router)
+app.include_router(poly_paper_router)
 app.include_router(onchain_router)
 app.include_router(toss_router)
 app.include_router(stock_paper_router)

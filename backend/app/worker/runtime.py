@@ -31,6 +31,7 @@ def get_worker_status() -> dict[str, Any]:
                 "interim_scoring": {"status": "not_started"},
                 "alert_response_scoring": {"status": "not_started"},
                 "scout_scan": {"status": "not_started"},
+                "polymarket_paper": {"status": "not_started"},
                 "telegram_bot": {"status": "not_started"},
             },
             "notifications": {"muted_until": None, "is_muted": False},

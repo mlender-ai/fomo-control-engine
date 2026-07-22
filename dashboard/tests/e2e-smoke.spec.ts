@@ -934,6 +934,49 @@ test("engine core remains usable when optional whale data fails", async ({ page 
   await expect(page.getByText(/페이퍼 엔진 화면은 계속 사용할 수 있습니다/)).toBeVisible();
 });
 
+test("Polymarket paper tab exposes attributed probability and sample honesty", async ({ page }) => {
+  const now = "2026-07-22T03:00:00Z";
+  await page.route("**/api/poly-paper/dashboard", async (route) => {
+    await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({
+      enabled: true,
+      parameter_version: "poly-v1",
+      read_only_label: "Public market data · PaperBroker only · 지갑/실주문 없음",
+      performance_gate: "대표 산출물은 수익률이 아니라 만기 Brier score와 calibration입니다.",
+      sample_note: "N<30에서는 캘리브레이션 품질 판정을 유보합니다.",
+      categories: ["crypto", "macro"],
+      live_orders_enabled: false,
+      track: { currency: "USDC", cash: 9850, initial_cash: 10000, clock_valid: 1, elapsed_days: 1, status: "running", last_collection_at: now },
+      markets: [{
+        market_id: "btc-100k", slug: "btc-100k", question: "Will Bitcoin be above $100,000?", category: "crypto",
+        observed_at: now, end_at: "2026-07-30T00:00:00Z", active: 1, closed: 0, market_probability: 0.52,
+        liquidity: 250000, trade_eligible: 1, exclusion_reason: null,
+        metadata: { resolution_source: "official", source: "polymarket_gamma_public" },
+        estimate: {
+          id: "estimate-1", market_id: "btc-100k", observed_at: now, market_probability: 0.52,
+          estimated_probability: 0.7, confidence_band: [0.62, 0.78], estimate_quality: "high",
+          base_rate: { model: "lognormal_zero_drift_v1" },
+          evidence: [{ claim: "BTC 현물 108,000", source: "bitget:4h", observed_at: now, value: 108000 }],
+          reasoning: "현물·확정 4시간봉 실현 변동성·남은 시간을 적용한 관측 확률입니다.",
+          direction: "YES", gross_edge: 0.18, effective_price: 0.54, after_cost_edge: 0.16,
+          trade_eligible: true, exclusion_reason: null, entity_type: "polymarket"
+        }
+      }],
+      positions: [], recent_fills: [], resolution_count: 1,
+      calibration: { n: 1, mean_brier_score: 0.09, sample_sufficient: false, sample_warning: "표본 부족 · N=1/30", curve: Array.from({ length: 10 }, (_, index) => ({ bucket: `${index * 10}–${(index + 1) * 10}%`, n: index === 7 ? 1 : 0, mean_forecast: index === 7 ? 0.7 : null, actual_yes_rate: index === 7 ? 1 : null })) }
+    }) });
+  });
+
+  await page.goto("/engine?tab=polymarket");
+  const view = page.getByTestId("engine-poly-paper-tab");
+  await expect(view).toBeVisible({ timeout: 30_000 });
+  await expect(view).toContainText("지갑·실주문 구현 없음");
+  await expect(view).toContainText("Brier 0.0900");
+  await expect(view).toContainText("표본 부족 · N=1/30");
+  await expect(view).toContainText("비용 후 edge");
+  await view.getByText("근거·베이스레이트 보기").click();
+  await expect(view).toContainText("bitget:4h");
+});
+
 test("onchain flow keeps flip meaning and filters balanced events by instrument", async ({ page }) => {
   await page.route("**/api/onchain/whales", async (route) => {
     const response = await route.fetch();

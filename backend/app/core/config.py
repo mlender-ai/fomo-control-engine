@@ -1135,6 +1135,39 @@ class Settings(BaseSettings):
         ge=0,
         validation_alias=AliasChoices("FCE_STOCK_PAPER_KR_SELL_TAX_RATE", "STOCK_PAPER_KR_SELL_TAX_RATE"),
     )
+    polymarket_paper_enabled: bool = Field(
+        True,
+        validation_alias=AliasChoices("FCE_POLYMARKET_PAPER_ENABLED", "POLYMARKET_PAPER_ENABLED"),
+    )
+    polymarket_poll_interval_seconds: int = Field(
+        300,
+        ge=30,
+        validation_alias=AliasChoices("FCE_POLYMARKET_POLL_INTERVAL_SECONDS", "POLYMARKET_POLL_INTERVAL_SECONDS"),
+    )
+    polymarket_initial_usdc: float = Field(
+        10_000.0,
+        gt=0,
+        validation_alias=AliasChoices("FCE_POLYMARKET_INITIAL_USDC", "POLYMARKET_INITIAL_USDC"),
+    )
+    polymarket_gamma_base_url: str = Field(
+        "https://gamma-api.polymarket.com",
+        validation_alias=AliasChoices("FCE_POLYMARKET_GAMMA_BASE_URL", "POLYMARKET_GAMMA_BASE_URL"),
+    )
+    polymarket_clob_base_url: str = Field(
+        "https://clob.polymarket.com",
+        validation_alias=AliasChoices("FCE_POLYMARKET_CLOB_BASE_URL", "POLYMARKET_CLOB_BASE_URL"),
+    )
+    polymarket_timeout_seconds: float = Field(
+        10.0,
+        gt=0,
+        validation_alias=AliasChoices("FCE_POLYMARKET_TIMEOUT_SECONDS", "POLYMARKET_TIMEOUT_SECONDS"),
+    )
+    polymarket_market_limit: int = Field(
+        100,
+        ge=1,
+        le=500,
+        validation_alias=AliasChoices("FCE_POLYMARKET_MARKET_LIMIT", "POLYMARKET_MARKET_LIMIT"),
+    )
 
     model_config = SettingsConfigDict(
         env_file=".env",
