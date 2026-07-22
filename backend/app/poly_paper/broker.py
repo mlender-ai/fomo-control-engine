@@ -88,6 +88,7 @@ class PaperBroker:
             fee=preview.fee,
             notional=preview.notional,
             filled_at=datetime.now(timezone.utc),
+            entry_mode=order.entry_mode,
         )
         return ExecutionResult("partial" if preview.partial else "filled", fill, "liquidity_cap" if preview.partial else None)
 

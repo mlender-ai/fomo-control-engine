@@ -1140,7 +1140,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("FCE_POLYMARKET_PAPER_ENABLED", "POLYMARKET_PAPER_ENABLED"),
     )
     polymarket_poll_interval_seconds: int = Field(
-        300,
+        60,
         ge=30,
         validation_alias=AliasChoices("FCE_POLYMARKET_POLL_INTERVAL_SECONDS", "POLYMARKET_POLL_INTERVAL_SECONDS"),
     )

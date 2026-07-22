@@ -78,6 +78,7 @@ def execute_order(order: StockOrder, observation: MarketObservation, policy: Exe
         transaction_tax=fees.transaction_tax,
         fx_rate_to_krw=observation.fx_rate_to_krw,
         fx_observed_at=observation.fx_observed_at,
+        entry_mode=order.entry_mode,
     )
     return ExecutionResult(order=updated, fill=fill, reason=reason)
 

@@ -52,7 +52,7 @@ async def run_poly_paper_engine(
     if markets:
         store.activate_clock(now)
     settled = await _settle_due_markets(store, public, repository, now)
-    observed = estimated = entered = excluded = 0
+    observed = estimated = entered = excluded = strict_entered = coverage_entered = 0
     for source_market in markets:
         observed += 1
         market = _apply_market_gates(source_market, now=now)
@@ -76,6 +76,7 @@ async def run_poly_paper_engine(
             store.save_market(replace(market, trade_eligible=False, exclusion_reason=result.reason or market.exclusion_reason))
             continue
         estimate = result.estimate
+        book = None
         token_id = market.yes_token_id if estimate.direction.value == "YES" else market.no_token_id
         if not market.trade_eligible or token_id is None:
             estimate = replace(
@@ -97,7 +98,10 @@ async def run_poly_paper_engine(
                     minimum_edge=parameters.min_edge,
                     quality_allowed=quality_allowed,
                 )
-                provisional_notional = store.cash() * kelly_fraction(priced, cap=parameters.max_position_fraction)
+                provisional_notional = max(
+                    store.cash() * kelly_fraction(priced, cap=parameters.max_position_fraction),
+                    store.cash() * parameters.coverage_position_fraction if parameters.coverage_entry_enabled else 0,
+                )
                 preview = broker.preview(book, provisional_notional, taker_fee_rate=market.taker_fee_rate) if book and provisional_notional > 0 else None
                 estimate = attach_execution_cost(
                     estimate,
@@ -112,10 +116,23 @@ async def run_poly_paper_engine(
                     minimum_edge=parameters.min_edge,
                     quality_allowed=quality_allowed,
                 )
+        coverage_eligible = bool(
+            parameters.coverage_entry_enabled
+            and market.trade_eligible
+            and estimate.exclusion_reason == "after_cost_edge_low"
+            and quality_at_least(estimate.quality, parameters.min_estimate_quality)
+            and estimate.effective_price is not None
+            and book is not None
+            and bool(book.asks)
+            and estimate.base_rate
+            and estimate.evidence
+        )
+        estimate = replace(estimate, coverage_eligible=coverage_eligible)
         store.save_market(market)
-        store.save_estimate(estimate, repository)
+        store.save_estimate(estimate, repository, parameter_version=parameters.version)
         estimated += 1
-        if not estimate.trade_eligible:
+        entry_mode = "strict_edge" if estimate.trade_eligible else "coverage_calibration" if coverage_eligible else None
+        if entry_mode is None:
             excluded += 1
             continue
         if store.has_open_position(market.id) or store.open_position_count() >= parameters.max_open_markets:
@@ -124,7 +141,10 @@ async def run_poly_paper_engine(
         if book is None or token_id is None:
             excluded += 1
             continue
-        fraction = kelly_fraction(estimate, cap=parameters.max_position_fraction)
+        if entry_mode == "coverage_calibration" and store.open_position_count("coverage_calibration") >= parameters.coverage_target_open_markets:
+            excluded += 1
+            continue
+        fraction = kelly_fraction(estimate, cap=parameters.max_position_fraction) if entry_mode == "strict_edge" else parameters.coverage_position_fraction
         requested_notional = store.cash() * fraction
         if requested_notional <= 0:
             excluded += 1
@@ -136,6 +156,7 @@ async def run_poly_paper_engine(
             direction=estimate.direction,
             requested_notional=requested_notional,
             created_at=now,
+            entry_mode=entry_mode,
         )
         try:
             execution = broker.place(order, book, taker_fee_rate=market.taker_fee_rate)
@@ -145,6 +166,10 @@ async def run_poly_paper_engine(
         store.save_execution(order, status=execution.status, reason=execution.reason, fill=execution.fill)
         if execution.fill is not None:
             entered += 1
+            if entry_mode == "strict_edge":
+                strict_entered += 1
+            else:
+                coverage_entered += 1
     store.record_collection(status="observed", observed_at=now)
     return {
         "enabled": True,
@@ -152,6 +177,8 @@ async def run_poly_paper_engine(
         "observed": observed,
         "estimated": estimated,
         "entered": entered,
+        "strict_entered": strict_entered,
+        "coverage_entered": coverage_entered,
         "excluded": excluded,
         "settled": settled,
         "parameter_version": parameters.version,

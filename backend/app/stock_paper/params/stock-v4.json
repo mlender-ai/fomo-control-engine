@@ -1,0 +1,21 @@
+{
+  "version": "stock-v4",
+  "min_evidence": 4,
+  "min_checklist_passed": 5,
+  "min_checklist_total": 5,
+  "min_rr": 1.5,
+  "min_entry_score": 75,
+  "min_signature_ci_low_pct": 50.0,
+  "signature_gate_mode": "record_only",
+  "earnings_gate_mode": "not_evaluable",
+  "stance_gate_mode": "stable_long",
+  "max_open_positions": 5,
+  "daily_loss_limit_pct": 3.0,
+  "position_capital_fraction": 0.02,
+  "long_only": true,
+  "coverage_entry_enabled": true,
+  "coverage_target_open_positions": 3,
+  "coverage_position_capital_fraction": 0.005,
+  "coverage_scan_batch_size": 2,
+  "coverage_max_attempts_per_cycle": 3
+}

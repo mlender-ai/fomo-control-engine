@@ -21,6 +21,7 @@ from .signals import (
 )
 from .store import TossStockStore
 from app.stock_paper.models import Market
+from app.stock_paper.parameters import load_stock_parameters
 from app.stock_paper.store import StockPaperStore
 from app.stock_paper.universe import load_universe
 
@@ -43,6 +44,7 @@ _authentication_blocked: dict[str, dict[str, Any]] = {}
 _BENCHMARK_PROXY = {"KR": "237350", "US": "QQQ"}
 _MAX_CANDIDATES_PER_MARKET = 18
 _daily_backfill_cursor = {"KR": 0, "US": 0}
+_coverage_cursor = {"KR": 0, "US": 0}
 _daily_backfilled_on: dict[tuple[str, str], str] = {}
 
 
@@ -96,9 +98,17 @@ async def collect_market(settings: Settings, market: str) -> dict[str, Any]:
     now = datetime.now(timezone.utc).isoformat()
     try:
         calendar = await client.get(f"/api/v1/market-calendar/{market}")
-        session = _session_state(calendar)
+        session = _session_state(calendar, market)
         if session != "open":
-            return {**public_status(settings, market, store), "status": session, "market_state": session}
+            response = {
+                **public_status(settings, market, store),
+                "status": session,
+                "market_state": session,
+                "observed_at": now,
+                "coverage_candidates": [],
+            }
+            _latest_market[market] = response
+            return response
         rankings = await _load_rankings(client, store, market, now)
         investor_payloads = await _load_investor_flow(client, store, market, now)
         ranked_symbols = {symbol for payload in rankings.values() for symbol in _ranking_rows(payload)}
@@ -139,9 +149,23 @@ async def collect_market(settings: Settings, market: str) -> dict[str, Any]:
                 if exchange_rate:
                     stock_store.record_fx(exchange_rate, datetime.fromisoformat(now))
         candidates = await _build_ranked_candidates(client, store, market, rankings, investor_payloads, price_rows, stock_rows, now)
+        coverage_candidates = []
         if settings.stock_paper_engine_enabled:
             stock_store = StockPaperStore(settings.database_url)
             candidate_symbols = {str(item["symbol"]).upper() for item in candidates}
+            coverage_candidates = await _build_coverage_candidates(
+                client,
+                store,
+                market,
+                rankings,
+                investor_payloads,
+                price_rows,
+                stock_rows,
+                now,
+                excluded_symbols=candidate_symbols | set(stock_store.position_symbols(Market(market))),
+                batch_size=load_stock_parameters().coverage_scan_batch_size,
+            )
+            candidate_symbols.update(str(item["symbol"]).upper() for item in coverage_candidates)
             for symbol in stock_store.position_symbols(Market(market)):
                 if symbol not in candidate_symbols:
                     await _load_candidate_evidence(client, store, market, symbol, now)
@@ -161,6 +185,7 @@ async def collect_market(settings: Settings, market: str) -> dict[str, Any]:
             "observed_at": now,
             "groups": group_candidates(candidates),
             "trade_groups": group_candidates(item for item in candidates if item.get("tradable") is True),
+            "coverage_candidates": coverage_candidates,
         }
         _latest_market[market] = response
         _authentication_blocked.pop(market, None)
@@ -190,14 +215,17 @@ async def collect_market(settings: Settings, market: str) -> dict[str, Any]:
         await client.close()
 
 
-def _session_state(payload: dict[str, Any]) -> str:
+def _session_state(payload: dict[str, Any], market: str, *, now: datetime | None = None) -> str:
     result = payload.get("result") or payload.get("data") or payload
     today = result.get("today", result) if isinstance(result, dict) else {}
-    windows = list(_session_windows(today))
-    if not windows:
+    if not isinstance(today, dict):
         return "holiday"
-    now = datetime.now(timezone.utc)
-    return "open" if any(start <= now <= end for start, end in windows) else "closed"
+    regular = today.get("regularMarket") if market == "US" else (today.get("integrated") or {}).get("regularMarket")
+    window = _session_window(regular)
+    if window is None:
+        return "holiday"
+    current = now or datetime.now(timezone.utc)
+    return "open" if window[0] <= current <= window[1] else "closed"
 
 
 async def _load_rankings(client: TossReadOnlyClient, store: TossStockStore, market: str, observed_at: str) -> dict[str, dict[str, Any]]:
@@ -322,6 +350,87 @@ async def _build_ranked_candidates(
             for signal in checked["signals"]:
                 if signal.get("tone") == "candidate":
                     store.record_judgment(checked, signal)
+    return result
+
+
+async def _build_coverage_candidates(
+    client: TossReadOnlyClient,
+    store: TossStockStore,
+    market: str,
+    rankings: dict[str, dict[str, Any]],
+    investor_payloads: list[dict[str, Any]],
+    price_rows: list[dict[str, Any]],
+    stock_rows: list[dict[str, Any]],
+    observed_at: str,
+    *,
+    excluded_symbols: set[str],
+    batch_size: int,
+) -> list[dict[str, Any]]:
+    """Rotate the versioned universe through real execution observations.
+
+    This candidate lane is deliberately separate from Scout attention-gap
+    signals. It creates paper execution coverage without relabeling a weak
+    signal as a strict strategy entry.
+    """
+    if batch_size <= 0:
+        return []
+    universe = load_universe()
+    members = {item.symbol for item in universe.for_market(Market(market))}
+    price_by_symbol = {str(row.get("symbol") or "").upper(): row for row in price_rows}
+    stock_by_symbol = {str(row.get("symbol") or "").upper(): row for row in stock_rows}
+    market_rows = _ranking_rows(rankings.get("MARKET_TRADING_AMOUNT", {}))
+    retail_rows = _ranking_rows(rankings.get("TOSS_SECURITIES_TRADING_AMOUNT", {}))
+    ranked = sorted(
+        (symbol for symbol in members if symbol in price_by_symbol and symbol not in excluded_symbols),
+        key=lambda symbol: (_int((market_rows.get(symbol) or {}).get("rank")) is None, _int((market_rows.get(symbol) or {}).get("rank")) or 10_000, symbol),
+    )
+    if not ranked:
+        return []
+    start = _coverage_cursor[market] % len(ranked)
+    selected = [ranked[(start + offset) % len(ranked)] for offset in range(min(batch_size, len(ranked)))]
+    _coverage_cursor[market] = (start + len(selected)) % len(ranked)
+    result: list[dict[str, Any]] = []
+    for symbol in selected:
+        warnings_payload = await _load_warnings(client, store, market, symbol, observed_at)
+        warnings = [str(item.get("warningType") or item.get("type") or "") for item in _result_list(warnings_payload)]
+        evidence = await _load_candidate_evidence(client, store, market, symbol, observed_at)
+        market_rank = _int((market_rows.get(symbol) or {}).get("rank"))
+        retail_rank = _int((retail_rows.get(symbol) or {}).get("rank"))
+        coverage_signal = {
+            "type": "universe_coverage",
+            "label": "버전 유니버스 순환 체결 검증",
+            "tone": "observation",
+        }
+        candidate = build_candidate(
+            market=market,
+            symbol=symbol,
+            name=str((stock_by_symbol.get(symbol) or {}).get("name") or symbol),
+            price=_float((price_by_symbol.get(symbol) or {}).get("lastPrice")),
+            observed_at=observed_at,
+            market_rank=market_rank,
+            retail_rank=retail_rank,
+            warnings=warnings,
+            tradable=True,
+            role="universe_member",
+            extra_signals=[
+                coverage_signal,
+                *[
+                    signal
+                    for signal in (
+                        investor_flow_signal(investor_payloads, market_rank),
+                        momentum_signal(evidence["candles"]),
+                        evidence.get("orderbook_signal"),
+                        price_limit_signal(
+                            _float((price_by_symbol.get(symbol) or {}).get("lastPrice")),
+                            evidence.get("upper_limit"),
+                        ),
+                    )
+                    if signal
+                ],
+            ],
+        )
+        if candidate is not None:
+            result.append(candidate)
     return result
 
 
@@ -499,22 +608,20 @@ def _result_list(payload: dict[str, Any]) -> list[dict[str, Any]]:
     return [row for row in result if isinstance(row, dict)] if isinstance(result, list) else []
 
 
-def _session_windows(value: Any):
+def _session_window(value: Any) -> tuple[datetime, datetime] | None:
     if not isinstance(value, dict):
-        return
+        return None
     start = value.get("startTime")
     end = value.get("endTime")
     if start and end:
         try:
-            yield (
+            return (
                 datetime.fromisoformat(str(start).replace("Z", "+00:00")).astimezone(timezone.utc),
                 datetime.fromisoformat(str(end).replace("Z", "+00:00")).astimezone(timezone.utc),
             )
         except ValueError:
-            pass
-    for nested in value.values():
-        if isinstance(nested, dict):
-            yield from _session_windows(nested)
+            return None
+    return None
 
 
 def _int(value: Any) -> int | None:

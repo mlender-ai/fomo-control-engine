@@ -29,6 +29,8 @@ from app.poly_paper.models import (
 )
 from app.poly_paper.store import POLY_LEDGER_POSITION_ID, PolyPaperStore
 from app.poly_paper.service import run_poly_paper_engine
+from app.poly_paper import service as poly_service
+from app.poly_paper.estimator import EstimationResult
 
 
 NOW = datetime(2026, 7, 22, 3, 0, tzinfo=timezone.utc)
@@ -359,3 +361,31 @@ async def test_isolated_track_starts_and_enters_only_after_cost_positive_edge(tm
     assert dashboard["track"]["clock_valid"] == 1
     assert dashboard["track"]["currency"] == "USDC"
     assert dashboard["positions"][0]["status"] == "open"
+
+
+@pytest.mark.asyncio
+async def test_edge_low_market_enters_small_calibration_coverage_but_keeps_mode_label(tmp_path: Path, monkeypatch) -> None:
+    store = _store(tmp_path)
+    repository = MemoryRepository()
+    settings = Settings(database_url=f"sqlite:///{store.path}", polymarket_paper_enabled=True, polymarket_initial_usdc=10_000)
+    market = _market(yes_price=0.52, no_price=0.48, taker_fee_rate=0)
+    estimate = replace(_estimate(), effective_price=None, after_cost_edge=None, trade_eligible=False, exclusion_reason=None)
+    monkeypatch.setattr(poly_service, "estimate_market_probability", lambda *_args, **_kwargs: EstimationResult(estimate, None))
+
+    class PublicFixture:
+        async def list_markets(self, *, limit: int = 100) -> list[PolyMarket]:
+            return [market]
+
+        async def get_order_book(self, token_id: str) -> OrderBook:
+            return OrderBook(token_id=token_id, observed_at=NOW, bids=(), asks=(BookLevel(0.68, 10_000),))
+
+        async def get_market(self, market_id: str) -> PolyMarket | None:
+            return None
+
+    result = await run_poly_paper_engine(settings, MockMarketDataProvider(), repository, client=PublicFixture(), now=NOW)
+    dashboard = store.dashboard()
+    assert result["strict_entered"] == 0
+    assert result["coverage_entered"] == 1
+    assert dashboard["positions"][0]["entry_mode"] == "coverage_calibration"
+    assert dashboard["recent_fills"][0]["entry_mode"] == "coverage_calibration"
+    assert dashboard["positions"][0]["cost"] == pytest.approx(50)

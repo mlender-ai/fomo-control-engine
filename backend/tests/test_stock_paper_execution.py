@@ -200,7 +200,26 @@ def test_versioned_universe_has_two_independent_100_name_tracks() -> None:
     assert len(universe.for_market(Market.US)) == 100
     assert universe.entry_allowed(Market.KR, "005930", ["investment_risk"]) == (False, "warning_hard_gate")
     parameters = load_stock_parameters()
-    assert parameters.version == "stock-v3"
+    assert parameters.version == "stock-v4"
     assert parameters.signature_gate_mode == "record_only"
     assert parameters.earnings_gate_mode == "not_evaluable"
     assert parameters.long_only is True
+    assert parameters.coverage_entry_enabled is True
+    assert parameters.coverage_position_capital_fraction <= 0.01
+
+
+def test_entry_modes_keep_independent_cash_and_performance(tmp_path) -> None:
+    store = migrated_store(tmp_path)
+    broker = PaperBroker(store)
+    coverage_order = order(quantity=2)
+    coverage_order = StockOrder(**{**coverage_order.__dict__, "entry_mode": "coverage"})
+    result = broker.place(coverage_order, observation())
+    assert result.fill is not None
+    assert result.fill.entry_mode == "coverage"
+    dashboard = store.dashboard()
+    coverage = next(item for item in dashboard["mode_performance"] if item["market"] == "US" and item["entry_mode"] == "coverage")
+    strict = next(item for item in dashboard["mode_performance"] if item["market"] == "US" and item["entry_mode"] == "strict_signal")
+    assert coverage["position_count"] == 1
+    assert strict["position_count"] == 0
+    assert strict["cash"] == strict["initial_cash"]
+    assert dashboard["recent_fills"][0]["entry_mode"] == "coverage"

@@ -156,6 +156,9 @@ export function EngineTradingShell() {
 function StockPaperView({ data }: { data: StockPaperDashboard | null }) {
   if (!data) return <EngineLoading />;
   const rejectionLedger = data.entry_rejection_distribution ?? { period_days: 7, total: 0, gates: [] };
+  // Keep the route usable while a cached/rolling backend response predates
+  // the separated coverage-account projection.
+  const modePerformance = data.mode_performance ?? [];
   return (
     <div className="engineView stockPaperView" data-testid="engine-stock-paper-tab">
       <section className="stockPaperGate">
@@ -168,8 +171,9 @@ function StockPaperView({ data }: { data: StockPaperDashboard | null }) {
         <div><span className="engineSectionLabel">독립 검증 시계 · 4주</span><h2>나스닥100 · 코스피100</h2><p>같은 판단 게이트, 시장별 실제 체결 제약. 크립토 성적과 합산하지 않습니다.</p></div>
         <div><Building2 size={17} /><strong>{data.universe.total}종목</strong><span>{data.universe.version} · {data.parameter_version}</span></div>
       </header>
+      <TerminalWarning tone="warning">엄격 신호는 기존 임계를 유지합니다. 탐색 진입은 실제 체결 파이프라인 표본을 빠르게 만들기 위한 별도 소액 계정이며 전략 적중 성적에 합산하지 않습니다.</TerminalWarning>
       <section className="stockTrackGrid">
-        {data.tracks.map((track) => <StockTrackCard key={track.market} track={track} />)}
+        {data.tracks.map((track) => <StockTrackCard key={track.market} track={track} modes={modePerformance.filter((item) => item.market === track.market)} />)}
       </section>
       <StockPaperEntryChart fills={data.recent_fills} />
       <section className="stockExecutionAudit" data-testid="stock-entry-rejection-ledger">
@@ -193,25 +197,25 @@ function StockPaperView({ data }: { data: StockPaperDashboard | null }) {
       <section className="stockFillAudit">
         <header><span>최근 체결 원장</span><small>원통화 · 수수료/세금 · 환율 관측 시점 보존</small></header>
         {data.recent_fills.length ? data.recent_fills.slice(0, 8).map((fill) => (
-          <div key={fill.id}><strong>{fill.symbol}</strong><span>{fill.market} · {fill.side === "buy" ? "매수" : "매도"} {fill.quantity}주</span><b>{stockMoney(fill.price, fill.currency)}</b><small>수수료 {stockMoney(fill.commission, fill.currency)}{fill.transaction_tax ? ` · 세금 ${stockMoney(fill.transaction_tax, fill.currency)}` : ""}</small></div>
+          <div key={fill.id}><strong>{fill.symbol} <em className={`paperModeBadge ${fill.entry_mode}`}>{fill.entry_mode === "coverage" ? "탐색" : "엄격 신호"}</em></strong><span>{fill.market} · {fill.side === "buy" ? "매수" : "매도"} {fill.quantity}주</span><b>{stockMoney(fill.price, fill.currency)}</b><small>수수료 {stockMoney(fill.commission, fill.currency)}{fill.transaction_tax ? ` · 세금 ${stockMoney(fill.transaction_tax, fill.currency)}` : ""}</small></div>
         )) : <p>정직한 체결 조건을 모두 통과한 주문이 아직 없습니다.</p>}
       </section>
     </div>
   );
 }
 
-function StockTrackCard({ track }: { track: StockPaperTrack }) {
+function StockTrackCard({ track, modes }: { track: StockPaperTrack; modes: StockPaperDashboard["mode_performance"] }) {
   const rejectionCount = Object.values(track.rejection_reasons).reduce((sum, value) => sum + value, 0);
   return (
     <article className={`stockTrackCard ${track.status}`}>
       <header><div><span>{track.market === "KR" ? "한국" : "미국"}</span><strong>{track.benchmark_index}</strong></div><b>{track.elapsed_days}/28일</b></header>
       <div className="stockTrackReturns">
-        <p><span>엔진</span><strong className={track.engine_return_pct === null ? "" : track.engine_return_pct >= 0 ? "positive" : "negative"}>{track.engine_return_pct === null ? "시가 데이터 대기" : signedPct(track.engine_return_pct)}</strong></p>
+        {modes.map((mode) => <p key={mode.entry_mode}><span>{mode.entry_mode === "strict_signal" ? "엄격 신호" : "탐색 표본"} · {mode.position_count}개</span><strong className={mode.return_pct === null ? "" : mode.return_pct >= 0 ? "positive" : "negative"}>{mode.return_pct === null ? "시가 데이터 대기" : signedPct(mode.return_pct)}</strong></p>)}
         <p><span>{track.benchmark_index} · {track.benchmark_proxy_symbol} 프록시</span><strong>{track.benchmark_return_pct === null ? "데이터 대기" : signedPct(track.benchmark_return_pct)}</strong></p>
       </div>
       <div className="stockTrackProgress"><i style={{ width: `${Math.min(100, track.elapsed_days / 28 * 100)}%` }} /></div>
       {!track.clock_valid ? <em>검증 시계 대기 · {track.clock_invalidation_reason || "인증 후 첫 정상 관측 필요"}</em> : null}
-      <footer><span>{shortDate(track.started_at)} → {shortDate(track.ends_at)}</span><b>{stockMoney(track.cash, track.currency)}</b><small>미체결 {rejectionCount}건</small></footer>
+      <footer><span>{shortDate(track.started_at)} → {shortDate(track.ends_at)}</span><b className={track.last_market_state === "open" ? "positive" : "neutral"}>{track.last_market_state === "open" ? "정규장 OPEN" : "정규장 대기"}</b><small>최근 {track.last_market_observed_at ? shortDateTime(track.last_market_observed_at) : "—"} · 미체결 {rejectionCount}건</small></footer>
       {track.status === "stopped" ? <em>체결 invariant 정지 · {rejectionLabel(track.stop_reason || "unknown")}</em> : null}
     </article>
   );

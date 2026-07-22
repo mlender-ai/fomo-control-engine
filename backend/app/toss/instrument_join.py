@@ -298,7 +298,7 @@ async def _load_join_observation(mapping: InstrumentMap, settings: Settings, cli
         "mapping": mapping.model_dump(mode="json"),
         "toss_price": float(price_row["lastPrice"]),
         "toss_price_at": price_row.get("timestamp"),
-        "market_state": _session_state(calendar_payload),
+        "market_state": _session_state(calendar_payload, mapping.toss_market),
         "warnings": warnings,
         "warning_gate_blocked": warning_blocked,
         "warning_badges": warning_badges,

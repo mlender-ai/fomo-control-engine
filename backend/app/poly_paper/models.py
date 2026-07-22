@@ -97,6 +97,7 @@ class ProbabilityEstimate:
     after_cost_edge: float | None = None
     trade_eligible: bool = False
     exclusion_reason: str | None = None
+    coverage_eligible: bool = False
     id: str = field(default_factory=lambda: str(uuid4()))
 
     def payload(self) -> dict[str, Any]:
@@ -117,6 +118,7 @@ class ProbabilityEstimate:
             "after_cost_edge": self.after_cost_edge,
             "trade_eligible": self.trade_eligible,
             "exclusion_reason": self.exclusion_reason,
+            "coverage_eligible": self.coverage_eligible,
             "entity_type": "polymarket",
         }
 
@@ -130,6 +132,7 @@ class PaperOrder:
     requested_notional: float
     created_at: datetime
     id: str = field(default_factory=lambda: str(uuid4()))
+    entry_mode: str = "strict_edge"
 
 
 @dataclass(frozen=True)
@@ -143,6 +146,7 @@ class PaperFill:
     notional: float
     filled_at: datetime
     id: str = field(default_factory=lambda: str(uuid4()))
+    entry_mode: str = "strict_edge"
 
 
 class FillInvariantViolation(RuntimeError):

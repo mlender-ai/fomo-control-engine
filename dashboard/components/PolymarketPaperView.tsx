@@ -41,6 +41,7 @@ export function PolymarketPaperView({
           <p><span>정산 표본</span><strong>N={data.calibration.n}</strong></p>
         </div>
       </header>
+      <TerminalWarning tone="warning">비용 후 edge 5% 이상은 엄격 진입, 근거·정산·CLOB가 완비된 edge 미달 시장은 0.5% 소액 캘리브레이션 표본으로 분리합니다.</TerminalWarning>
 
       <section className="polyCalibration" data-testid="poly-calibration-card">
         <header>
@@ -70,7 +71,7 @@ export function PolymarketPaperView({
       <section className="polyPositionLedger">
         <header><div><span className="engineSectionLabel">USDC 독립 회계</span><h3>페이퍼 포지션</h3></div><strong>{data.positions.filter((item) => item.status === "open").length} open</strong></header>
         {data.positions.length ? data.positions.map((position) => (
-          <article key={position.market_id}><div><strong>{position.direction}</strong><span>{position.question}</span></div><p>{position.shares.toFixed(2)} shares @ {(position.average_price * 100).toFixed(1)}¢</p><b>{position.status === "resolved" ? `${position.pnl !== null && position.pnl >= 0 ? "+" : ""}${money(position.pnl ?? 0)}` : money(position.cost)}</b></article>
+          <article key={position.market_id}><div><strong>{position.direction} <em className={`paperModeBadge ${position.entry_mode}`}>{position.entry_mode === "coverage_calibration" ? "캘리브레이션" : "엄격 edge"}</em></strong><span>{position.question}</span></div><p>{position.shares.toFixed(2)} shares @ {(position.average_price * 100).toFixed(1)}¢</p><b>{position.status === "resolved" ? `${position.pnl !== null && position.pnl >= 0 ? "+" : ""}${money(position.pnl ?? 0)}` : money(position.cost)}</b></article>
         )) : <p className="engineEmptyLine">비용 차감 edge·근거 품질·호가 유동성을 모두 통과한 포지션이 아직 없습니다.</p>}
       </section>
     </div>
@@ -80,7 +81,7 @@ export function PolymarketPaperView({
 function PolyMarketCard({ market }: { market: PolyPaperMarket }) {
   const estimate = market.estimate;
   return (
-    <article className={`polyMarketCard ${estimate?.trade_eligible ? "eligible" : "observe"}`}>
+    <article className={`polyMarketCard ${estimate?.trade_eligible || estimate?.coverage_eligible ? "eligible" : "observe"}`}>
       <header><span>{market.category}</span><b>{market.liquidity >= 1_000_000 ? `$${(market.liquidity / 1_000_000).toFixed(1)}M` : `$${Math.round(market.liquidity / 1000)}K`} liquidity</b></header>
       <h4>{market.question}</h4>
       <div className="polyProbabilityPair">
@@ -89,7 +90,7 @@ function PolyMarketCard({ market }: { market: PolyPaperMarket }) {
         <p><span>비용 후 edge</span><strong>{estimate?.after_cost_edge === null || estimate?.after_cost_edge === undefined ? "—" : signedProbability(estimate.after_cost_edge)}</strong></p>
       </div>
       {estimate ? <><div className="polyEstimateMeta"><span className={`quality-${estimate.estimate_quality}`}>{estimate.estimate_quality}</span><strong>{estimate.direction} 관측</strong><small>{shortTime(estimate.observed_at)}</small></div><details><summary>근거·베이스레이트 보기</summary><p>{estimate.reasoning}</p><code>{String(estimate.base_rate.model ?? "base rate")}</code>{estimate.evidence.map((item, index) => <div key={`${item.source}-${index}`}><strong>{item.claim}</strong><span>{item.source} · {shortTime(item.observed_at)}</span></div>)}</details></> : <p className="polyExclusion">추정 없음 · {exclusionLabel(market.exclusion_reason)}</p>}
-      {estimate && !estimate.trade_eligible ? <p className="polyExclusion">관측 전용 · {exclusionLabel(estimate.exclusion_reason)}</p> : null}
+      {estimate?.coverage_eligible ? <p className="polyCoverageEligible">캘리브레이션 진입 가능 · 실제 CLOB 소액 표본</p> : estimate && !estimate.trade_eligible ? <p className="polyExclusion">관측 전용 · {exclusionLabel(estimate.exclusion_reason)}</p> : null}
     </article>
   );
 }

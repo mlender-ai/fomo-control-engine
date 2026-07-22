@@ -361,7 +361,7 @@ class TossStockStore:
         with self._connect() as connection:
             candle = connection.execute(
                 """SELECT * FROM toss_candles WHERE market=? AND symbol=? AND timeframe='1m'
-                ORDER BY opened_at DESC LIMIT 1""",
+                AND volume > 0 ORDER BY opened_at DESC LIMIT 1""",
                 (market, symbol),
             ).fetchone()
             if candle is None:

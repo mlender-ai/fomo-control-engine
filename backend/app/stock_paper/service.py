@@ -40,21 +40,24 @@ def run_stock_paper_engine(settings: Settings, market_payloads: dict[str, dict[s
     toss_store = TossStockStore(settings.database_url)
     payloads = market_payloads or {}
     processed = _process_pending_orders(broker, toss_store, payloads)
-    evaluated = 0
-    rejected = 0
+    evaluated = rejected = strict_entered = coverage_evaluated = coverage_attempted = coverage_entered = 0
     for market_name in ("KR", "US"):
         payload = payloads.get(market_name) or {}
         market = Market(market_name)
+        observed_at = _timestamp(payload.get("observed_at") or datetime.now(timezone.utc))
+        store.update_market_state(market, str(payload.get("market_state") or payload.get("status") or "unknown"), observed_at)
         if payload.get("status") == "observed":
             store.activate_clock(
                 market,
                 parameter_version=parameters.version,
-                observed_at=_timestamp(payload.get("observed_at")) if payload.get("observed_at") else datetime.now(timezone.utc),
+                observed_at=observed_at,
             )
-        candidates = _unique_candidates(payload.get("trade_groups") if "trade_groups" in payload else payload.get("groups"))
-        for candidate in candidates:
+        strict_candidates = _unique_candidates(payload.get("trade_groups") if "trade_groups" in payload else payload.get("groups"))
+        for candidate in strict_candidates:
             account = store.dashboard()
             symbol = str(candidate.get("symbol") or "").upper()
+            if store.position_quantity(market, symbol) > 0 or store.has_active_order(market, symbol):
+                continue
             track = next((item for item in account["tracks"] if item["market"] == market.value), None)
             open_count = sum(1 for item in account["positions"] if item["market"] == market.value)
             if open_count >= parameters.max_open_positions:
@@ -96,8 +99,8 @@ def run_stock_paper_engine(settings: Settings, market_payloads: dict[str, dict[s
                 current_price=_optional_float(candidate.get("price")),
                 prior_state=prior_state,
             )
-            observed_at = _timestamp(candidate.get("observed_at"))
-            store.save_analysis_snapshot(market, symbol, observed_at=observed_at, parameter_version=parameters.version, payload=analysis)
+            candidate_at = _timestamp(candidate.get("observed_at"))
+            store.save_analysis_snapshot(market, symbol, observed_at=candidate_at, parameter_version=parameters.version, payload=analysis)
             decision = evaluate_stock_entry(analysis, data_fresh=_is_fresh(candidate.get("observed_at")), parameters=parameters)
             evaluated += 1
             if not decision.enter:
@@ -113,7 +116,7 @@ def run_stock_paper_engine(settings: Settings, market_payloads: dict[str, dict[s
                         measured_value=result["measured_value"],
                         threshold=result["threshold"],
                         payload={"parameter_version": parameters.version, "source": analysis.get("source")},
-                        observed_at=observed_at,
+                        observed_at=candidate_at,
                     )
                 store.record_event_if_stale(
                     market,
@@ -124,26 +127,16 @@ def run_stock_paper_engine(settings: Settings, market_payloads: dict[str, dict[s
                 )
                 rejected += 1
                 continue
-            # Orders are paper-only and are created only after the shared analysis
-            # pipeline supplies every required v2 gate with observed inputs.
-            price = _optional_float(candidate.get("price"))
-            if price is None:
-                store.record_event_if_stale(market, "entry_gate_rejected", symbol=symbol, reason="market_data_missing")
-                store.record_entry_rejection(market, symbol, gate="market_data_missing", measured_value=None, threshold="observed_price")
-                rejected += 1
-                continue
-            capital = settings.stock_paper_initial_krw if market == Market.KR else settings.stock_paper_initial_usd
-            quantity = max(1, math.floor(capital * parameters.position_capital_fraction / price))
-            order = StockOrder(
-                symbol=symbol,
-                market=market,
-                currency=Currency.KRW if market == Market.KR else Currency.USD,
-                side=Side.BUY,
-                quantity=quantity,
-                signal_at=_timestamp(candidate.get("observed_at")),
-                signal_price=price,
+            result = _place_entry(
+                broker,
+                toss_store,
+                settings,
+                market,
+                payload,
+                candidate,
+                entry_mode="strict_signal",
+                capital_fraction=parameters.position_capital_fraction,
                 evidence={
-                    "candidate": candidate,
                     "decision_gates": decision.gate_results,
                     "analysis_source": analysis.get("source"),
                     "stance_state": ((analysis.get("confluence") or {}).get("stance_state") if isinstance(analysis.get("confluence"), dict) else None),
@@ -151,17 +144,130 @@ def run_stock_paper_engine(settings: Settings, market_payloads: dict[str, dict[s
                     "earnings_gate": analysis.get("earnings_gate"),
                 },
             )
-            observation = _observation(toss_store, market, symbol, payload.get("market_state") == "open")
-            broker.place(order, observation)
+            if result == "filled":
+                strict_entered += 1
+        coverage_candidates = [item for item in payload.get("coverage_candidates") or [] if isinstance(item, dict)]
+        coverage_slots_used = store.mode_position_count(market, "coverage") + store.mode_active_order_count(market, "coverage")
+        market_track = next((item for item in store.dashboard()["tracks"] if item["market"] == market.value), None)
+        loss_gate_open = not (
+            market_track and market_track.get("engine_return_pct") is not None and float(market_track["engine_return_pct"]) <= -parameters.daily_loss_limit_pct
+        )
+        if parameters.coverage_entry_enabled and loss_gate_open and coverage_slots_used < parameters.coverage_target_open_positions:
+            scored: list[tuple[int, int, dict[str, Any], dict[str, Any], Any]] = []
+            for candidate in coverage_candidates:
+                symbol = str(candidate.get("symbol") or "").upper()
+                if not symbol or store.position_quantity(market, symbol) > 0 or store.has_active_order(market, symbol):
+                    continue
+                warnings = tuple(str(item) for item in candidate.get("warning_badges") or [])
+                allowed, _ = universe.entry_allowed(market, symbol, warnings)
+                if candidate.get("tradable") is False or not allowed or not _is_fresh(candidate.get("observed_at")):
+                    continue
+                previous = store.latest_analysis_snapshot(market, symbol) or {}
+                prior = (previous.get("confluence") or {}).get("stance_state") if isinstance(previous.get("confluence"), dict) else None
+                analysis = analyze_stock_candidate(
+                    toss_store,
+                    market,
+                    symbol,
+                    current_price=_optional_float(candidate.get("price")),
+                    prior_state=prior,
+                )
+                candidate_at = _timestamp(candidate.get("observed_at"))
+                store.save_analysis_snapshot(market, symbol, observed_at=candidate_at, parameter_version=parameters.version, payload=analysis)
+                decision = evaluate_stock_entry(analysis, data_fresh=True, parameters=parameters)
+                coverage_evaluated += 1
+                long_evidence = ((analysis.get("confluence") or {}).get("long_evidence") if isinstance(analysis.get("confluence"), dict) else []) or []
+                short_evidence = ((analysis.get("confluence") or {}).get("short_evidence") if isinstance(analysis.get("confluence"), dict) else []) or []
+                scored.append((int(analysis.get("entry_score") or 0), len(long_evidence) - len(short_evidence), candidate, analysis, decision))
+            scored.sort(key=lambda item: (item[0], item[1], str(item[2].get("symbol") or "")), reverse=True)
+            for _, _, candidate, analysis, decision in scored:
+                if coverage_attempted >= parameters.coverage_max_attempts_per_cycle:
+                    break
+                if (
+                    store.mode_position_count(market, "coverage") + store.mode_active_order_count(market, "coverage")
+                    >= parameters.coverage_target_open_positions
+                ):
+                    break
+                if sum(1 for item in store.dashboard()["positions"] if item["market"] == market.value) >= parameters.max_open_positions:
+                    break
+                symbol = str(candidate.get("symbol") or "").upper()
+                if store.position_quantity(market, symbol) > 0 or store.has_active_order(market, symbol):
+                    continue
+                bypassed = [gate for gate in decision.rejection_reasons]
+                coverage_attempted += 1
+                result = _place_entry(
+                    broker,
+                    toss_store,
+                    settings,
+                    market,
+                    payload,
+                    candidate,
+                    entry_mode="coverage",
+                    capital_fraction=parameters.coverage_position_capital_fraction,
+                    evidence={
+                        "decision_gates": decision.gate_results,
+                        "bypassed_strict_gates": bypassed,
+                        "analysis_status": analysis.get("status"),
+                        "analysis_source": analysis.get("source"),
+                        "coverage_policy": "execution_sample_only_not_strict_performance",
+                    },
+                )
+                store.record_event(
+                    market,
+                    "coverage_entry_attempt",
+                    symbol=symbol,
+                    reason=result,
+                    payload={"bypassed_strict_gates": bypassed, "parameter_version": parameters.version},
+                    observed_at=_timestamp(candidate.get("observed_at")),
+                )
+                if result == "filled":
+                    coverage_entered += 1
     return {
         "enabled": True,
         "evaluated": evaluated,
         "rejected": rejected,
+        "strict_entered": strict_entered,
+        "coverage_evaluated": coverage_evaluated,
+        "coverage_attempted": coverage_attempted,
+        "coverage_entered": coverage_entered,
         "pending_processed": processed,
         "universe_version": universe.version,
         "parameter_version": parameters.version,
         "live_orders_enabled": False,
     }
+
+
+def _place_entry(
+    broker: PaperBroker,
+    toss_store: TossStockStore,
+    settings: Settings,
+    market: Market,
+    payload: dict[str, Any],
+    candidate: dict[str, Any],
+    *,
+    entry_mode: str,
+    capital_fraction: float,
+    evidence: dict[str, Any],
+) -> str:
+    symbol = str(candidate.get("symbol") or "").upper()
+    price = _optional_float(candidate.get("price"))
+    if price is None or price <= 0:
+        return "market_data_missing"
+    capital = settings.stock_paper_initial_krw if market == Market.KR else settings.stock_paper_initial_usd
+    quantity = max(1, math.floor(capital * capital_fraction / price))
+    order = StockOrder(
+        symbol=symbol,
+        market=market,
+        currency=Currency.KRW if market == Market.KR else Currency.USD,
+        side=Side.BUY,
+        quantity=quantity,
+        signal_at=_timestamp(candidate.get("observed_at")),
+        signal_price=price,
+        entry_mode=entry_mode,
+        evidence={"candidate": candidate, "entry_mode": entry_mode, **evidence},
+    )
+    observation = _observation(toss_store, market, symbol, payload.get("market_state") == "open")
+    execution = broker.place(order, observation)
+    return "filled" if execution.fill is not None else str(execution.reason or execution.order.status.value)
 
 
 def stock_paper_dashboard(settings: Settings) -> dict[str, Any]:

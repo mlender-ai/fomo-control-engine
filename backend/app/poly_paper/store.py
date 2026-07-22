@@ -39,6 +39,13 @@ class PolyPaperStore:
                 VALUES (1, 'USDC', ?, ?, ?, 'waiting', ?, ?)""",
                 (parameter_version, initial_cash, initial_cash, now.isoformat(), now.isoformat()),
             )
+            row = connection.execute("SELECT parameter_version FROM poly_paper_track WHERE id=1").fetchone()
+            if row and str(row["parameter_version"]) != parameter_version:
+                connection.execute(
+                    """UPDATE poly_paper_track SET parameter_version=?, clock_valid=0, started_at=NULL,
+                    ends_at=NULL, status='waiting', stop_reason=NULL, updated_at=? WHERE id=1""",
+                    (parameter_version, now.isoformat()),
+                )
 
     def activate_clock(self, observed_at: datetime) -> bool:
         with self._connect() as connection:
@@ -114,16 +121,19 @@ class PolyPaperStore:
         """
         with self._connect() as connection:
             row = connection.execute(
-                """SELECT e.trade_eligible, o.id AS order_id
+                """SELECT e.trade_eligible, e.payload, o.id AS order_id
                 FROM poly_estimates e
                 LEFT JOIN poly_orders o ON o.estimate_id=e.id
                 WHERE e.market_id=?
                 ORDER BY e.observed_at DESC LIMIT 1""",
                 (market_id,),
             ).fetchone()
-        return bool(row and row["trade_eligible"] and row["order_id"] is None)
+        if row is None or row["order_id"] is not None:
+            return False
+        payload = json.loads(row["payload"] or "{}")
+        return bool(row["trade_eligible"] or payload.get("coverage_eligible"))
 
-    def save_estimate(self, estimate: ProbabilityEstimate, repository: Any) -> str:
+    def save_estimate(self, estimate: ProbabilityEstimate, repository: Any, *, parameter_version: str = "poly-v1") -> str:
         judgment_id = f"poly:{estimate.market_id}:{estimate.id}"
         payload = estimate.payload()
         with self._connect() as connection:
@@ -168,7 +178,7 @@ class PolyPaperStore:
                 type="probability_estimate",
                 claim=payload,
                 confidence=round((estimate.confidence_high - estimate.confidence_low) * -100 + 100),
-                param_version={"poly": "poly-v1", "entity_type": "polymarket"},
+                param_version={"poly": parameter_version, "entity_type": "polymarket"},
             )
         )
         return judgment_id
@@ -178,9 +188,15 @@ class PolyPaperStore:
             row = connection.execute("SELECT cash FROM poly_paper_track WHERE id=1").fetchone()
         return float(row["cash"]) if row else 0.0
 
-    def open_position_count(self) -> int:
+    def open_position_count(self, entry_mode: str | None = None) -> int:
         with self._connect() as connection:
-            row = connection.execute("SELECT COUNT(*) AS count FROM poly_positions WHERE status='open'").fetchone()
+            if entry_mode is None:
+                row = connection.execute("SELECT COUNT(*) AS count FROM poly_positions WHERE status='open'").fetchone()
+            else:
+                row = connection.execute(
+                    "SELECT COUNT(*) AS count FROM poly_positions WHERE status='open' AND entry_mode=?",
+                    (entry_mode,),
+                ).fetchone()
         return int(row["count"]) if row else 0
 
     def has_open_position(self, market_id: str) -> bool:
@@ -200,12 +216,13 @@ class PolyPaperStore:
             "direction": order.direction.value,
             "requested_notional": order.requested_notional,
             "created_at": order.created_at.isoformat(),
+            "entry_mode": order.entry_mode,
         }
         with self._connect() as connection:
             connection.execute(
                 """INSERT INTO poly_orders
                 (id, market_id, estimate_id, token_id, direction, requested_notional,
-                 status, reason, created_at, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                 status, reason, created_at, entry_mode, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     order.id,
                     order.market_id,
@@ -216,6 +233,7 @@ class PolyPaperStore:
                     status,
                     reason,
                     order.created_at.isoformat(),
+                    order.entry_mode,
                     json.dumps(order_payload, ensure_ascii=False),
                 ),
             )
@@ -235,11 +253,12 @@ class PolyPaperStore:
                 "fee": fill.fee,
                 "notional": fill.notional,
                 "filled_at": fill.filled_at.isoformat(),
+                "entry_mode": fill.entry_mode,
             }
             connection.execute(
                 """INSERT INTO poly_fills
-                (id, order_id, market_id, direction, shares, price, fee, notional, filled_at, payload)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (id, order_id, market_id, direction, shares, price, fee, notional, filled_at, entry_mode, payload)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     fill.id,
                     fill.order_id,
@@ -250,6 +269,7 @@ class PolyPaperStore:
                     fill.fee,
                     fill.notional,
                     fill.filled_at.isoformat(),
+                    fill.entry_mode,
                     json.dumps(fill_payload, ensure_ascii=False),
                 ),
             )
@@ -260,7 +280,7 @@ class PolyPaperStore:
             connection.execute(
                 """INSERT INTO poly_positions
                 (market_id, estimate_id, direction, shares, average_price, cost,
-                 opened_at, status, payload) VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?)""",
+                 opened_at, status, entry_mode, payload) VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, ?)""",
                 (
                     fill.market_id,
                     order.estimate_id,
@@ -269,6 +289,7 @@ class PolyPaperStore:
                     fill.price,
                     fill.notional,
                     fill.filled_at.isoformat(),
+                    fill.entry_mode,
                     json.dumps(fill_payload, ensure_ascii=False),
                 ),
             )
@@ -296,6 +317,8 @@ class PolyPaperStore:
                 judgment_id NOT IN (SELECT judgment_id FROM poly_resolutions)""",
                 (market.id,),
             ).fetchall()
+            track = connection.execute("SELECT parameter_version FROM poly_paper_track WHERE id=1").fetchone()
+        parameter_version = str(track["parameter_version"]) if track else "unknown"
         scored = 0
         for row in estimates:
             probability = float(row["estimated_probability"])
@@ -338,7 +361,7 @@ class PolyPaperStore:
                     outcome="correct" if direction_correct else "wrong",
                     detail=f"Polymarket 공식 정산 outcome={outcome}; Brier={brier:.6f}",
                     metrics=payload,
-                    param_version={"poly": "poly-v1", "entity_type": "polymarket"},
+                    param_version={"poly": parameter_version, "entity_type": "polymarket"},
                 )
             )
             scored += 1
@@ -393,6 +416,11 @@ class PolyPaperStore:
             ).fetchall()
             fills = connection.execute("SELECT payload FROM poly_fills ORDER BY filled_at DESC LIMIT 20").fetchall()
             resolutions = connection.execute("SELECT * FROM poly_resolutions ORDER BY resolved_at DESC").fetchall()
+            mode_counts = connection.execute(
+                """SELECT entry_mode, COUNT(*) AS position_count,
+                SUM(CASE WHEN status='resolved' THEN pnl ELSE 0 END) AS realized_pnl
+                FROM poly_positions GROUP BY entry_mode ORDER BY entry_mode"""
+            ).fetchall()
         track_payload = dict(track) if track else {}
         elapsed_days = 0
         if track and bool(track["clock_valid"]) and track["started_at"]:
@@ -411,6 +439,7 @@ class PolyPaperStore:
             "recent_fills": [json.loads(row["payload"]) for row in fills],
             "calibration": _calibration([dict(row) for row in resolutions]),
             "resolution_count": len(resolutions),
+            "mode_performance": [dict(row) for row in mode_counts],
         }
 
 

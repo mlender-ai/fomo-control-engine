@@ -9,6 +9,8 @@ from app.stock_paper.models import Currency, Market, PaperFill, Side
 from app.stock_paper.service import run_stock_paper_engine, stock_paper_dashboard, stock_paper_entry_chart
 from app.stock_paper.store import StockPaperStore
 from app.toss.store import TossStockStore
+from app.stock_paper import service as stock_service
+from app.stock_paper.models import MarketObservation
 
 
 def settings_for(tmp_path) -> Settings:
@@ -135,3 +137,61 @@ def test_entry_chart_does_not_invent_data_for_unfilled_symbol(tmp_path) -> None:
     assert result["candles"] == []
     assert result["fills"] == []
     assert result["empty_reason"] == "paper_fill_missing"
+
+
+def test_coverage_lane_enters_with_real_execution_invariants_and_separate_mode(tmp_path, monkeypatch) -> None:
+    settings = settings_for(tmp_path)
+    now = datetime.now(timezone.utc)
+    candidate = {
+        "market": "US",
+        "symbol": "AAPL",
+        "price": 100.0,
+        "observed_at": now.isoformat(),
+        "warning_badges": [],
+        "tradable": True,
+        "role": "universe_member",
+        "signals": [{"type": "universe_coverage", "tone": "observation"}],
+    }
+    monkeypatch.setattr(
+        stock_service,
+        "analyze_stock_candidate",
+        lambda *_args, **_kwargs: {
+            "status": "analyzed",
+            "entry_score": 41,
+            "rr_ratio": None,
+            "invalidation": None,
+            "source": "observed-test",
+            "confluence": {"stance_state": {"stance": "neutral", "transitioning": False}, "long_evidence": [], "short_evidence": []},
+        },
+    )
+    monkeypatch.setattr(
+        stock_service,
+        "_observation",
+        lambda *_args, **_kwargs: MarketObservation(
+            symbol="AAPL",
+            market=Market.US,
+            observed_at=now,
+            session_open=True,
+            minute_open=100,
+            minute_high=101,
+            minute_low=99,
+            minute_close=100,
+            minute_volume=10_000,
+            bid=99.9,
+            ask=100.1,
+        ),
+    )
+    result = run_stock_paper_engine(
+        settings,
+        {
+            "US": {"status": "observed", "market_state": "open", "observed_at": now.isoformat(), "coverage_candidates": [candidate]},
+            "KR": {"status": "closed", "market_state": "closed", "observed_at": now.isoformat()},
+        },
+    )
+    dashboard = stock_paper_dashboard(settings)
+    assert result["coverage_attempted"] == 1
+    assert result["coverage_entered"] == 1
+    assert dashboard["recent_fills"][0]["entry_mode"] == "coverage"
+    assert dashboard["recent_fills"][0]["price"] == 100.1
+    strict = next(item for item in dashboard["mode_performance"] if item["market"] == "US" and item["entry_mode"] == "strict_signal")
+    assert strict["position_count"] == 0

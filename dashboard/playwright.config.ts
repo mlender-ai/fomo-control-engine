@@ -4,6 +4,9 @@ const apiPort = process.env.PLAYWRIGHT_API_PORT ?? "8895";
 const webPort = process.env.PLAYWRIGHT_WEB_PORT ?? "8896";
 const apiBaseUrl = `http://127.0.0.1:${apiPort}`;
 const webBaseUrl = process.env.PLAYWRIGHT_BASE_URL ?? `http://127.0.0.1:${webPort}`;
+// Do not reuse a partially migrated database from a previous interrupted run.
+// The process-scoped file also keeps concurrent local/CI invocations isolated.
+const e2eDatabaseUrl = process.env.FCE_E2E_DATABASE_URL ?? `sqlite:////tmp/fce-e2e-${process.pid}.db`;
 
 export default defineConfig({
   testDir: "./tests",
@@ -37,7 +40,7 @@ export default defineConfig({
         FCE_ENV: "e2e",
         FCE_DEMO_MODE: "true",
         FCE_CORS_ORIGINS: webBaseUrl,
-        FCE_DATABASE_URL: process.env.FCE_E2E_DATABASE_URL ?? "sqlite:////tmp/fce-e2e.db",
+        FCE_DATABASE_URL: e2eDatabaseUrl,
         FCE_WORKER_ENABLED: "true",
         FCE_WORKER_STARTUP_DELAY_SECONDS: "1",
         FCE_WORKER_SYNC_POSITIONS_INTERVAL_SECONDS: "3",

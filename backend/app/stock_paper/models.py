@@ -44,6 +44,7 @@ class StockOrder:
     signal_price: float | None = None
     reason: str | None = None
     evidence: dict[str, Any] = field(default_factory=dict)
+    entry_mode: str = "strict_signal"
 
     def __post_init__(self) -> None:
         if self.remaining_quantity is None:
@@ -100,6 +101,7 @@ class PaperFill:
     fx_rate_to_krw: float | None
     fx_observed_at: datetime | None
     id: str = field(default_factory=lambda: str(uuid4()))
+    entry_mode: str = "strict_signal"
 
     def payload(self) -> dict[str, Any]:
         value = asdict(self)

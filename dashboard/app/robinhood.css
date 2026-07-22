@@ -2173,6 +2173,31 @@ textarea:focus {
   max-width: 1180px;
 }
 
+.paperModeBadge {
+  display: inline-flex;
+  margin-left: 6px;
+  padding: 2px 6px;
+  border: 1px solid color-mix(in srgb, var(--rh-green) 55%, transparent);
+  border-radius: 999px;
+  color: var(--rh-green);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 750;
+  vertical-align: middle;
+}
+
+.paperModeBadge.coverage,
+.paperModeBadge.coverage_calibration {
+  border-color: rgba(255, 190, 45, .55);
+  color: #ffbe2d;
+}
+
+.polyCoverageEligible {
+  color: #ffbe2d;
+  font-size: 12px;
+  font-weight: 700;
+}
+
 .polyPaperView {
   max-width: 1180px;
 }

@@ -59,6 +59,21 @@ class StockPaperStore:
                     VALUES (?, ?, ?, ?, 'unlevered_etf_proxy_close', ?, ?, ?, ?, ?, 'running', ?, ?)""",
                     (market, currency, benchmark, proxy, universe_version, started, ends, capital, capital, started, started),
                 )
+                for entry_mode in ("strict_signal", "coverage"):
+                    connection.execute(
+                        """INSERT OR IGNORE INTO stock_paper_mode_accounts
+                        (market, entry_mode, currency, initial_cash, cash, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                        (market, entry_mode, currency, capital, capital, started, started),
+                    )
+
+    def update_market_state(self, market: Market, state: str, observed_at: datetime) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                """UPDATE stock_paper_tracks SET last_market_state=?, last_market_observed_at=?, updated_at=?
+                WHERE market=?""",
+                (state, observed_at.isoformat(), observed_at.isoformat(), market.value),
+            )
 
     def activate_clock(self, market: Market, *, parameter_version: str, observed_at: datetime) -> bool:
         now = observed_at.isoformat()
@@ -201,10 +216,11 @@ class StockPaperStore:
         payload = order.payload()
         with self._connect() as connection:
             connection.execute(
-                """INSERT INTO stock_paper_orders (id, market, symbol, side, status, signal_at, updated_at, reason, payload)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """INSERT INTO stock_paper_orders
+                (id, market, symbol, side, status, signal_at, updated_at, reason, entry_mode, payload)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET status=excluded.status, updated_at=excluded.updated_at,
-                reason=excluded.reason, payload=excluded.payload""",
+                reason=excluded.reason, entry_mode=excluded.entry_mode, payload=excluded.payload""",
                 (
                     order.id,
                     order.market.value,
@@ -214,6 +230,7 @@ class StockPaperStore:
                     payload["signal_at"],
                     updated,
                     order.reason,
+                    order.entry_mode,
                     json.dumps(payload, ensure_ascii=False),
                 ),
             )
@@ -223,7 +240,8 @@ class StockPaperStore:
         with self._connect() as connection:
             connection.execute(
                 """INSERT OR IGNORE INTO stock_paper_fills
-                (id, order_id, market, symbol, side, filled_at, payload) VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (id, order_id, market, symbol, side, filled_at, entry_mode, payload)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     fill.id,
                     fill.order_id,
@@ -231,6 +249,7 @@ class StockPaperStore:
                     fill.symbol,
                     fill.side.value,
                     payload["filled_at"],
+                    fill.entry_mode,
                     json.dumps(payload, ensure_ascii=False),
                 ),
             )
@@ -239,6 +258,11 @@ class StockPaperStore:
             connection.execute(
                 "UPDATE stock_paper_tracks SET cash=cash+?, updated_at=? WHERE market=?",
                 (net_cash, payload["filled_at"], fill.market.value),
+            )
+            connection.execute(
+                """UPDATE stock_paper_mode_accounts SET cash=cash+?, updated_at=?
+                WHERE market=? AND entry_mode=?""",
+                (net_cash, payload["filled_at"], fill.market.value, fill.entry_mode),
             )
             row = connection.execute(
                 "SELECT quantity, average_price FROM stock_paper_positions WHERE market=? AND symbol=?",
@@ -254,6 +278,35 @@ class StockPaperStore:
                 ON CONFLICT(market, symbol) DO UPDATE SET quantity=excluded.quantity,
                 average_price=excluded.average_price, updated_at=excluded.updated_at""",
                 (fill.market.value, fill.symbol, quantity, average, fill.currency.value, payload["filled_at"]),
+            )
+            mode_row = connection.execute(
+                """SELECT quantity, average_price FROM stock_paper_mode_positions
+                WHERE market=? AND symbol=? AND entry_mode=?""",
+                (fill.market.value, fill.symbol, fill.entry_mode),
+            ).fetchone()
+            mode_old_qty = int(mode_row["quantity"]) if mode_row else 0
+            mode_old_average = float(mode_row["average_price"]) if mode_row else 0.0
+            mode_quantity = mode_old_qty + fill.quantity if fill.side == Side.BUY else max(0, mode_old_qty - fill.quantity)
+            mode_average = (
+                ((mode_old_average * mode_old_qty) + (fill.price * fill.quantity)) / mode_quantity
+                if fill.side == Side.BUY and mode_quantity
+                else mode_old_average
+            )
+            connection.execute(
+                """INSERT INTO stock_paper_mode_positions
+                (market, symbol, entry_mode, quantity, average_price, currency, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(market, symbol,entry_mode) DO UPDATE SET quantity=excluded.quantity,
+                average_price=excluded.average_price, updated_at=excluded.updated_at""",
+                (
+                    fill.market.value,
+                    fill.symbol,
+                    fill.entry_mode,
+                    mode_quantity,
+                    mode_average,
+                    fill.currency.value,
+                    payload["filled_at"],
+                ),
             )
 
     def record_event(
@@ -337,6 +390,33 @@ class StockPaperStore:
             ).fetchall()
         return [str(row["symbol"]) for row in rows]
 
+    def has_active_order(self, market: Market, symbol: str) -> bool:
+        with self._connect() as connection:
+            row = connection.execute(
+                """SELECT 1 FROM stock_paper_orders WHERE market=? AND symbol=?
+                AND status IN ('queued', 'partial') LIMIT 1""",
+                (market.value, symbol.upper()),
+            ).fetchone()
+        return row is not None
+
+    def mode_position_count(self, market: Market, entry_mode: str) -> int:
+        with self._connect() as connection:
+            row = connection.execute(
+                """SELECT COUNT(*) AS count FROM stock_paper_mode_positions
+                WHERE market=? AND entry_mode=? AND quantity>0""",
+                (market.value, entry_mode),
+            ).fetchone()
+        return int(row["count"]) if row else 0
+
+    def mode_active_order_count(self, market: Market, entry_mode: str) -> int:
+        with self._connect() as connection:
+            row = connection.execute(
+                """SELECT COUNT(*) AS count FROM stock_paper_orders
+                WHERE market=? AND entry_mode=? AND status IN ('queued', 'partial')""",
+                (market.value, entry_mode),
+            ).fetchone()
+        return int(row["count"]) if row else 0
+
     def list_fills(self, limit: int = 100) -> list[PaperFill]:
         with self._connect() as connection:
             rows = connection.execute(
@@ -375,6 +455,16 @@ class StockPaperStore:
                     WHERE p.quantity > 0 ORDER BY p.market, p.symbol"""
                 ).fetchall()
             ]
+            mode_accounts = [dict(row) for row in connection.execute("SELECT * FROM stock_paper_mode_accounts ORDER BY market, entry_mode").fetchall()]
+            mode_positions = [
+                dict(row)
+                for row in connection.execute(
+                    """SELECT p.*, m.price AS current_price, m.observed_at AS mark_observed_at
+                    FROM stock_paper_mode_positions p LEFT JOIN stock_paper_marks m
+                    ON m.market=p.market AND m.symbol=p.symbol
+                    WHERE p.quantity > 0 ORDER BY p.market, p.entry_mode, p.symbol"""
+                ).fetchall()
+            ]
         reason_by_market: dict[str, Counter[str]] = {"KR": Counter(), "US": Counter()}
         for row in events:
             reason_by_market[str(row["market"])][str(row["reason"])] = int(row["count"])
@@ -402,12 +492,32 @@ class StockPaperStore:
                     "rejection_reasons": dict(reason_by_market[str(track["market"])]),
                 }
             )
+        mode_performance = []
+        for account in mode_accounts:
+            account_positions = [item for item in mode_positions if item["market"] == account["market"] and item["entry_mode"] == account["entry_mode"]]
+            marks_complete = all(item["current_price"] is not None for item in account_positions)
+            nav = float(account["cash"]) + sum(
+                int(item["quantity"]) * float(item["current_price"]) for item in account_positions if item["current_price"] is not None
+            )
+            return_pct = (nav / float(account["initial_cash"]) - 1) * 100 if marks_complete else None
+            mode_performance.append(
+                {
+                    **account,
+                    "position_count": len(account_positions),
+                    "nav": round(nav, 4) if marks_complete else None,
+                    "nav_complete": marks_complete,
+                    "return_pct": round(return_pct, 4) if return_pct is not None else None,
+                    "validation_eligible": account["entry_mode"] == "strict_signal",
+                }
+            )
         return {
             "as_of": now.isoformat(),
             "tracks": result_tracks,
             "positions": positions,
             "recent_fills": fills,
             "fill_count": fill_count,
+            "mode_performance": mode_performance,
+            "mode_positions": mode_positions,
             "live_orders_enabled": False,
             "performance_gate": "Toss 실주문은 주식 페이퍼가 4주간 벤치마크를 초과할 경우에만 재논의",
             "sample_note": "KR/US 원통화 성적이며 크립토 검증과 합산하지 않습니다.",
@@ -429,6 +539,7 @@ def _order_from_payload(payload: dict[str, Any]) -> StockOrder:
         signal_price=float(payload["signal_price"]) if payload.get("signal_price") is not None else None,
         reason=payload.get("reason"),
         evidence=dict(payload.get("evidence") or {}),
+        entry_mode=str(payload.get("entry_mode") or "strict_signal"),
     )
 
 
@@ -448,4 +559,5 @@ def _fill_from_payload(payload: dict[str, Any]) -> PaperFill:
         transaction_tax=float(payload["transaction_tax"]),
         fx_rate_to_krw=float(payload["fx_rate_to_krw"]) if payload.get("fx_rate_to_krw") is not None else None,
         fx_observed_at=(datetime.fromisoformat(str(payload["fx_observed_at"]).replace("Z", "+00:00")) if payload.get("fx_observed_at") else None),
+        entry_mode=str(payload.get("entry_mode") or "strict_signal"),
     )

@@ -20,6 +20,8 @@ from app.stock_paper.universe import load_universe
 from app.toss.client import TossReadOnlyClient
 from app.toss.errors import TossAuthenticationError
 from app.toss.signals import build_candidate, group_candidates
+from app.toss.service import _session_state
+from app.toss.store import TossStockStore
 
 
 PARAMS_DIR = Path(__file__).parents[1] / "app" / "stock_paper" / "params"
@@ -118,6 +120,69 @@ def test_stock_v3_replaces_momentary_flip_with_stable_long_without_lowering_thre
     assert v3_decision.gate_results["confirmed_flip"]["measured_value"]["flipped"] is False
     analysis["confluence"]["stance_state"]["transitioning"] = True
     assert evaluate_stock_entry(analysis, data_fresh=True, parameters=v3).gate_results["confirmed_flip"]["status"] == "rejected"
+
+
+def test_us_calendar_uses_regular_market_only_not_day_pre_or_after() -> None:
+    payload = {
+        "result": {
+            "today": {
+                "dayMarket": {"startTime": "2026-07-22T00:00:00Z", "endTime": "2026-07-22T08:00:00Z"},
+                "preMarket": {"startTime": "2026-07-22T08:00:00Z", "endTime": "2026-07-22T13:30:00Z"},
+                "regularMarket": {"startTime": "2026-07-22T13:30:00Z", "endTime": "2026-07-22T20:00:00Z"},
+                "afterMarket": {"startTime": "2026-07-22T20:00:00Z", "endTime": "2026-07-22T23:50:00Z"},
+            }
+        }
+    }
+    assert _session_state(payload, "US", now=datetime(2026, 7, 22, 3, tzinfo=timezone.utc)) == "closed"
+    assert _session_state(payload, "US", now=datetime(2026, 7, 22, 14, tzinfo=timezone.utc)) == "open"
+    assert _session_state(payload, "US", now=datetime(2026, 7, 22, 21, tzinfo=timezone.utc)) == "closed"
+
+
+def test_kr_calendar_uses_integrated_regular_market() -> None:
+    payload = {"result": {"today": {"integrated": {"regularMarket": {"startTime": "2026-07-22T00:00:00Z", "endTime": "2026-07-22T06:30:00Z"}}}}}
+    assert _session_state(payload, "KR", now=datetime(2026, 7, 22, 3, tzinfo=timezone.utc)) == "open"
+    assert _session_state(payload, "KR", now=datetime(2026, 7, 22, 7, tzinfo=timezone.utc)) == "closed"
+
+
+def test_execution_observation_skips_empty_current_minute(tmp_path) -> None:
+    path = tmp_path / "toss-observation.db"
+    connection = sqlite3.connect(path)
+    run_migrations(connection)
+    connection.close()
+    store = TossStockStore(f"sqlite:///{path}")
+    observed_at = datetime.now(timezone.utc).isoformat()
+    store.upsert_candles(
+        "KR",
+        "005930",
+        "1m",
+        "test",
+        observed_at,
+        [
+            {
+                "opened_at": "2026-07-22T15:20:00+09:00",
+                "open": 100,
+                "high": 102,
+                "low": 99,
+                "close": 101,
+                "volume": 10_000,
+            },
+            {
+                "opened_at": "2026-07-22T15:21:00+09:00",
+                "open": 101,
+                "high": 101,
+                "low": 101,
+                "close": 101,
+                "volume": 0,
+            },
+        ],
+    )
+
+    observation = store.latest_execution_observation("KR", "005930", session_open=True)
+
+    assert observation is not None
+    assert observation["minute_volume"] == 10_000
+    assert observation["minute_low"] == 99
+    assert observation["minute_high"] == 102
 
 
 def test_stock_v3_replay_keeps_entry_score_as_remaining_hard_gate(tmp_path) -> None:

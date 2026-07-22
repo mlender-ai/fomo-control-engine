@@ -2328,6 +2328,8 @@ export type StockPaperTrack = {
   clock_valid: 0 | 1;
   clock_invalidation_reason: string | null;
   parameter_version: string;
+  last_market_state: "open" | "closed" | "holiday" | "unknown" | string;
+  last_market_observed_at: string | null;
 };
 
 export type StockPaperDashboard = {
@@ -2341,6 +2343,18 @@ export type StockPaperDashboard = {
   positions: Array<{ market: "KR" | "US"; symbol: string; quantity: number; average_price: number; current_price: number | null; currency: "KRW" | "USD"; updated_at: string }>;
   recent_fills: StockPaperFill[];
   fill_count: number;
+  mode_performance: Array<{
+    market: "KR" | "US";
+    entry_mode: "strict_signal" | "coverage";
+    currency: "KRW" | "USD";
+    initial_cash: number;
+    cash: number;
+    position_count: number;
+    nav: number | null;
+    nav_complete: boolean;
+    return_pct: number | null;
+    validation_eligible: boolean;
+  }>;
   live_orders_enabled: false;
   performance_gate: string;
   sample_note: string;
@@ -2389,6 +2403,7 @@ export type StockPaperFill = {
   filled_at: string;
   fx_rate_to_krw: number | null;
   fx_observed_at: string | null;
+  entry_mode: "strict_signal" | "coverage";
 };
 
 export type StockPaperEntryChart = {
@@ -2434,6 +2449,7 @@ export type PolyEstimate = {
   after_cost_edge: number | null;
   trade_eligible: boolean;
   exclusion_reason: string | null;
+  coverage_eligible: boolean;
   entity_type: "polymarket";
 };
 
@@ -2496,6 +2512,7 @@ export type PolyPaperDashboard = {
     pnl: number | null;
     question: string;
     slug: string;
+    entry_mode: "strict_edge" | "coverage_calibration";
   }>;
   recent_fills: Array<{
     id: string;
@@ -2505,6 +2522,12 @@ export type PolyPaperDashboard = {
     price: number;
     notional: number;
     filled_at: string;
+    entry_mode: "strict_edge" | "coverage_calibration";
+  }>;
+  mode_performance: Array<{
+    entry_mode: "strict_edge" | "coverage_calibration";
+    position_count: number;
+    realized_pnl: number | null;
   }>;
   calibration: {
     n: number;
