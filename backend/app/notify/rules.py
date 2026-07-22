@@ -58,7 +58,7 @@ RULE_LABELS: dict[str, str] = {
     "periodic_pulse": "정기 상태 펄스",
     "full_alignment": "만장일치 정렬 발굴",
     "flow_divergence": "현물·선물 흐름 역행",
-    "whale_entry": "Hyperliquid 고래 진입 관측",
+    "whale_entry": "Hyperliquid 고래 3분 다중체결 관측",
 }
 
 RULE_SEVERITY: dict[str, AlertSeverity] = {

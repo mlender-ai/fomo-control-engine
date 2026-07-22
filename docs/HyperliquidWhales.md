@@ -18,12 +18,14 @@ Manual `/whale add` registration remains available only as an override for a kno
 
 - Maximum active wallets: 20.
 - Default poll interval: 30 seconds. Values below 30 seconds are rejected by configuration validation.
+- Telegram entry alerts use a fixed three-minute event-time window per wallet. The worker keeps polling every 30 seconds, buffers confirmed `open`, `increase`, and `flip` fills, and emits one message only when at least two fills belong to the same wallet inside that window. A single fill expires silently from the alert buffer while remaining intact in the append-only event ledger. Pending batches survive a worker restart through notification-state persistence.
+- A batch message groups identical coin/direction/action fills into one line with fill count, summed observed notional, and size-weighted average fill price. Different instruments and opposing sequential fills from the same wallet remain separate lines inside the same notification instead of being presented as simultaneous exposure.
 - `clearinghouseState`: weight 2 per wallet.
 - `userFillsByTime`: base weight 20 per wallet plus the official per-item response weight.
 - With 20 wallets and no returned fill items, the conservative base estimate is 880 weight/minute against the official 1,200 weight/minute IP budget. The dashboard publishes this configured-capacity estimate and whether it remains inside the official base budget.
 - Fill polling starts at the wallet's last stored fill timestamp. First registration uses a bounded seven-day lookback. Worker failures use the common exponential backoff.
 
-The relevant settings are `FCE_HYPERLIQUID_WHALE_TRACKING_ENABLED`, `FCE_HYPERLIQUID_WHALE_DISCOVERY_ENABLED`, `FCE_HYPERLIQUID_WHALE_DISCOVERY_INTERVAL_SECONDS`, `FCE_HYPERLIQUID_WHALE_POLL_INTERVAL_SECONDS`, `FCE_HYPERLIQUID_WHALE_MIN_SIZE_USD`, and `FCE_HYPERLIQUID_WHALE_MAX_WALLETS`.
+The relevant settings are `FCE_HYPERLIQUID_WHALE_TRACKING_ENABLED`, `FCE_HYPERLIQUID_WHALE_DISCOVERY_ENABLED`, `FCE_HYPERLIQUID_WHALE_DISCOVERY_INTERVAL_SECONDS`, `FCE_HYPERLIQUID_WHALE_POLL_INTERVAL_SECONDS`, `FCE_HYPERLIQUID_WHALE_ALERT_BATCH_WINDOW_SECONDS`, `FCE_HYPERLIQUID_WHALE_MIN_SIZE_USD`, and `FCE_HYPERLIQUID_WHALE_MAX_WALLETS`.
 
 ## Data and decision boundaries
 

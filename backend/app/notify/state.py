@@ -32,6 +32,9 @@ class NotificationState:
     last_pulse_at: datetime | None = None
     # WO-44 Part C: 발송 실패분 — 다음 pulse에 병합.
     pending_redelivery: list[dict[str, Any]] = field(default_factory=list)
+    # 같은 고래의 짧은 시간 내 진입 체결을 Telegram 한 건으로 묶기 위한 대기열.
+    # 원시 체결 원장은 DB에 그대로 남고, 이 상태는 알림 표현만 지연한다.
+    whale_alert_events: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
 
     def is_muted(self) -> bool:
         return self.muted_until is not None and datetime.now(timezone.utc) < self.muted_until
@@ -57,6 +60,7 @@ class NotificationState:
                 "lifecycle_positions": self.lifecycle_positions,
                 "last_pulse_at": _iso(self.last_pulse_at),
                 "pending_redelivery": self.pending_redelivery[-50:],
+                "whale_alert_events": {address: events[-200:] for address, events in self.whale_alert_events.items() if events},
                 "alert_rule_states": {
                     key: {
                         "status": rule.status,
@@ -90,6 +94,11 @@ class NotificationState:
         self.lifecycle_positions = {str(key): value for key, value in (payload.get("lifecycle_positions") or {}).items() if isinstance(value, dict)}
         self.last_pulse_at = _parse_dt(payload.get("last_pulse_at"))
         self.pending_redelivery = [item for item in payload.get("pending_redelivery", []) if isinstance(item, dict)]
+        self.whale_alert_events = {
+            str(address).lower(): [item for item in events if isinstance(item, dict)][-200:]
+            for address, events in (payload.get("whale_alert_events") or {}).items()
+            if isinstance(events, list)
+        }
         for key, raw in (payload.get("alert_rule_states") or {}).items():
             if not isinstance(raw, dict):
                 continue

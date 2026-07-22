@@ -146,6 +146,15 @@ class Settings(BaseSettings):
         ge=30,
         validation_alias=AliasChoices("FCE_HYPERLIQUID_WHALE_POLL_INTERVAL_SECONDS", "HYPERLIQUID_WHALE_POLL_INTERVAL_SECONDS"),
     )
+    hyperliquid_whale_alert_batch_window_seconds: int = Field(
+        180,
+        ge=30,
+        le=900,
+        validation_alias=AliasChoices(
+            "FCE_HYPERLIQUID_WHALE_ALERT_BATCH_WINDOW_SECONDS",
+            "HYPERLIQUID_WHALE_ALERT_BATCH_WINDOW_SECONDS",
+        ),
+    )
     hyperliquid_whale_min_size_usd: float = Field(
         100000.0,
         validation_alias=AliasChoices("FCE_HYPERLIQUID_WHALE_MIN_SIZE_USD", "HYPERLIQUID_WHALE_MIN_SIZE_USD"),

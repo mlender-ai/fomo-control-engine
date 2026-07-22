@@ -104,6 +104,15 @@ class FakeDirectionalPositionClient:
         return {"assetPositions": [{"position": {"coin": coin, "szi": size, "positionValue": value, "entryPx": "100"}}]}
 
 
+def test_whale_runtime_and_alert_batch_defaults_are_30s_and_3m() -> None:
+    settings = Settings()
+
+    assert settings.hyperliquid_whale_poll_interval_seconds == 30
+    assert settings.hyperliquid_whale_alert_batch_window_seconds == 180
+    with pytest.raises(ValueError):
+        Settings(hyperliquid_whale_poll_interval_seconds=29)
+
+
 def test_fill_classification_open_close_and_flip() -> None:
     wallet = WhaleWallet(address=ADDRESS, label="테스트 고래")
     now_ms = int(utc_now().timestamp() * 1000)
@@ -752,10 +761,12 @@ def test_sqlite_repository_persists_whale_data(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_whale_alert_uses_existing_state_machine_and_candidate_tone() -> None:
+async def test_whale_alert_batches_same_wallet_fills_for_three_minutes() -> None:
     repo = MemoryRepository()
     configure_runtime(repo=repo, provider=MockMarketDataProvider())
     sender = FakeSender()
+    started_at = datetime(2026, 7, 22, 0, 0, tzinfo=timezone.utc)
+    clock = {"now": started_at}
     # CI 는 FCE_TELEGRAM_ALERTS_ENABLED=false 를 주입 — 테스트는 명시적으로 켠다.
     engine = AlertEngine(
         Settings(
@@ -763,8 +774,9 @@ async def test_whale_alert_uses_existing_state_machine_and_candidate_tone() -> N
         ),
         sender,
         NotificationState(),
+        now_provider=lambda: clock["now"],
     )
-    event = WhaleEvent(
+    first = WhaleEvent(
         wallet_address=ADDRESS,
         wallet_label="테스트 고래",
         coin="BTC",
@@ -774,7 +786,19 @@ async def test_whale_alert_uses_existing_state_machine_and_candidate_tone() -> N
         size=2,
         size_usd=2_000_000,
         entry_px=63_000,
-        event_at=utc_now(),
+        event_at=started_at,
+    ).model_dump(mode="json")
+    second = WhaleEvent(
+        wallet_address=ADDRESS,
+        wallet_label="테스트 고래",
+        coin="ETH",
+        symbol="ETHUSDT",
+        side="short",
+        event="open",
+        size=100,
+        size_usd=190_000,
+        entry_px=1_900,
+        event_at=started_at + timedelta(minutes=2, seconds=59),
     ).model_dump(mode="json")
     dashboard = {
         "wallets": [
@@ -793,13 +817,148 @@ async def test_whale_alert_uses_existing_state_machine_and_candidate_tone() -> N
         ]
     }
 
-    assert await engine.evaluate_whale_events([event], dashboard) == 1
-    assert await engine.evaluate_whale_events([event], dashboard) == 0
+    assert await engine.evaluate_whale_events([first], dashboard) == 0
+    clock["now"] = started_at + timedelta(minutes=2, seconds=59)
+    assert await engine.evaluate_whale_events([second, first], dashboard) == 0
+    clock["now"] = started_at + timedelta(minutes=3)
+    assert await engine.evaluate_whale_events([], dashboard) == 1
+    assert await engine.evaluate_whale_events([], dashboard) == 0
+    assert len(sender.messages) == 1
+    assert "3분 다중체결 2건 · 2종목" in sender.messages[0]
     assert "미검증 관측" in sender.messages[0]
     assert "숏→롱 전환" in sender.messages[0]
+    assert "ETH" in sender.messages[0]
+    assert "숏 신규" in sender.messages[0]
     assert "추종 승률 50.0%" in sender.messages[0]
     assert "누적 +0.50R" in sender.messages[0]
     assert "따라가기 신호가 아닙니다" in sender.messages[0]
     alert = repo.list_alerts()[0]
     assert alert.rule_id == "whale_entry"
     assert alert.severity == "info"
+    assert alert.payload["fill_count"] == 2
+    assert len(alert.payload["event_ids"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_whale_alert_drops_single_fill_and_keeps_increase_in_multi_fill() -> None:
+    repo = MemoryRepository()
+    configure_runtime(repo=repo, provider=MockMarketDataProvider())
+    sender = FakeSender()
+    started_at = datetime(2026, 7, 22, 0, 0, tzinfo=timezone.utc)
+    clock = {"now": started_at}
+    engine = AlertEngine(
+        Settings(
+            database_url="memory://", telegram_bot_token="token", telegram_chat_id="123", telegram_alerts_enabled=True, telegram_quiet_hours_enabled=False
+        ),
+        sender,
+        NotificationState(),
+        now_provider=lambda: clock["now"],
+    )
+    single = WhaleEvent(
+        wallet_address=ADDRESS,
+        wallet_label="테스트 고래",
+        coin="SOL",
+        symbol="SOLUSDT",
+        side="long",
+        event="open",
+        size=10,
+        size_usd=1_000,
+        entry_px=100,
+        event_at=started_at,
+    ).model_dump(mode="json")
+    dashboard = {"wallets": [{"address": ADDRESS, "review": {"state": "candidate"}}]}
+
+    assert await engine.evaluate_whale_events([single], dashboard) == 0
+    clock["now"] = started_at + timedelta(minutes=3)
+    assert await engine.evaluate_whale_events([], dashboard) == 0
+    assert sender.messages == []
+    assert engine.state.whale_alert_events == {}
+
+    first_increase = WhaleEvent(
+        wallet_address=ADDRESS,
+        wallet_label="테스트 고래",
+        coin="HYPE",
+        symbol="HYPEUSDT",
+        side="short",
+        event="increase",
+        size=1,
+        size_usd=60,
+        entry_px=60,
+        event_at=clock["now"],
+    ).model_dump(mode="json")
+    second_increase = WhaleEvent(
+        wallet_address=ADDRESS,
+        wallet_label="테스트 고래",
+        coin="HYPE",
+        symbol="HYPEUSDT",
+        side="short",
+        event="increase",
+        size=2,
+        size_usd=124,
+        entry_px=62,
+        event_at=clock["now"] + timedelta(minutes=1),
+    ).model_dump(mode="json")
+    assert await engine.evaluate_whale_events([first_increase], dashboard) == 0
+    clock["now"] += timedelta(minutes=1)
+    assert await engine.evaluate_whale_events([second_increase], dashboard) == 0
+    clock["now"] += timedelta(minutes=2)
+    assert await engine.evaluate_whale_events([], dashboard) == 1
+    assert "HYPE" in sender.messages[0]
+    assert "숏 증액 2건" in sender.messages[0]
+    assert "184" in sender.messages[0]
+
+
+@pytest.mark.asyncio
+async def test_whale_alert_batch_survives_restart_and_excludes_outside_window(tmp_path) -> None:
+    repo = MemoryRepository()
+    configure_runtime(repo=repo, provider=MockMarketDataProvider())
+    state_path = tmp_path / "notification.json"
+    settings = Settings(
+        database_url="memory://",
+        telegram_bot_token="token",
+        telegram_chat_id="123",
+        telegram_alerts_enabled=True,
+        telegram_quiet_hours_enabled=False,
+        notification_state_path=str(state_path),
+    )
+    sender = FakeSender()
+    started_at = datetime(2026, 7, 22, 0, 0, tzinfo=timezone.utc)
+    clock = {"now": started_at}
+    first = WhaleEvent(
+        wallet_address=ADDRESS,
+        wallet_label="테스트 고래",
+        coin="BTC",
+        symbol="BTCUSDT",
+        side="long",
+        event="open",
+        size=1,
+        size_usd=60_000,
+        entry_px=60_000,
+        event_at=started_at,
+    ).model_dump(mode="json")
+    outside = WhaleEvent(
+        wallet_address=ADDRESS,
+        wallet_label="테스트 고래",
+        coin="ETH",
+        symbol="ETHUSDT",
+        side="long",
+        event="open",
+        size=1,
+        size_usd=2_000,
+        entry_px=2_000,
+        event_at=started_at + timedelta(minutes=3, seconds=1),
+    ).model_dump(mode="json")
+    dashboard = {"wallets": [{"address": ADDRESS, "review": {"state": "candidate"}}]}
+    first_engine = AlertEngine(settings, sender, NotificationState(), now_provider=lambda: clock["now"])
+
+    assert await first_engine.evaluate_whale_events([first], dashboard) == 0
+    restored = NotificationState()
+    restored.load(str(state_path))
+    assert len(restored.whale_alert_events[ADDRESS]) == 1
+    second_engine = AlertEngine(settings, sender, restored, now_provider=lambda: clock["now"])
+    clock["now"] = started_at + timedelta(minutes=3, seconds=1)
+    assert await second_engine.evaluate_whale_events([outside], dashboard) == 0
+    clock["now"] = started_at + timedelta(minutes=6, seconds=1)
+    assert await second_engine.evaluate_whale_events([], dashboard) == 0
+    assert sender.messages == []
+    assert restored.whale_alert_events == {}

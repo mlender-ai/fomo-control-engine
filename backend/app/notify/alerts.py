@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import datetime, timezone
+from html import escape
 from typing import Any, Callable
 from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -190,52 +191,28 @@ class AlertEngine:
             return 0
         wallets_value = dashboard.get("wallets")
         wallets: list[dict[str, Any]] = [item for item in wallets_value if isinstance(item, dict)] if isinstance(wallets_value, list) else []
+        wallets_by_address = {str(item.get("address") or "").lower(): item for item in wallets if str(item.get("address") or "").strip()}
+        now = self._now()
+        window_seconds = max(30, int(self.settings.hyperliquid_whale_alert_batch_window_seconds))
+        _queue_whale_alert_events(self.state, events, received_at=now)
         sent = 0
-        for event in events:
-            if not isinstance(event, dict) or event.get("event") not in {"open", "flip"}:
-                continue
-            raw_value = event.get("payload")
-            raw: dict[str, Any] = raw_value if isinstance(raw_value, dict) else {}
-            if raw.get("baseline"):
-                continue
-            address = str(event.get("wallet_address") or "")
-            wallet: dict[str, Any] = next((item for item in wallets if item.get("address") == address), {})
-            review_value = wallet.get("review")
-            review: dict[str, Any] = review_value if isinstance(review_value, dict) else {}
-            validated = review.get("trust_status") == "trusted" or review.get("state") == "validated"
-            side = "롱" if event.get("side") == "long" else "숏"
-            if event.get("event") == "flip":
-                action = "숏→롱 전환" if event.get("side") == "long" else "롱→숏 전환"
-            else:
-                action = f"{side} 신규"
-            size = _compact_usd(float(event.get("size_usd") or 0.0))
-            entry = float(event.get("entry_px") or 0.0)
-            sample_size = int(review.get("sample_size") or 0)
-            win_rate = review.get("win_1r_pct")
-            accuracy = f"추종 승률 {win_rate}% (N={sample_size})" if win_rate is not None else f"추종 승률 축적 중 (N={sample_size})"
-            cumulative_r = float(review.get("cumulative_return_r") or 0.0)
-            elapsed_days = int(review.get("validation_days") or 0)
-            remaining_days = int(review.get("validation_remaining_days") or max(0, 28 - elapsed_days))
-            performance = f"누적 {cumulative_r:+.2f}R · 4주 검증 {elapsed_days}/28일"
-            if remaining_days:
-                performance += f" ({remaining_days}일 남음)"
-            level = "엄선 고래" if validated else "미검증 관측"
-            candidate = AlertCandidate(
-                rule_id="whale_entry",
-                severity="warn" if validated else "info",
-                position_id=None,
-                symbol=str(event.get("symbol") or event.get("coin") or "HL"),
-                identity=str(event.get("id") or event.get("fill_id") or "whale"),
-                title=f"{event.get('wallet_label')} {event.get('coin')} {action}",
-                message=(
-                    f"🐋 <b>{event.get('wallet_label')} {event.get('coin')} {action} {size}</b> @ {entry:,.2f}\n"
-                    f"{level} · {accuracy}\n"
-                    f"{performance}\n"
-                    "관측 정보이며 따라가기 신호가 아닙니다. 별칭은 사용자 지정 추정입니다."
-                ),
-                payload={**event, "validation_state": review.get("state"), "summary": f"{action} {size} · {accuracy}"},
+        for address in sorted(list(self.state.whale_alert_events)):
+            batches, pending = _ready_whale_alert_batches(
+                self.state.whale_alert_events.get(address, []),
+                now=now,
+                window_seconds=window_seconds,
             )
-            sent += await self._fire_if_allowed(candidate)
+            if pending:
+                self.state.whale_alert_events[address] = pending
+            else:
+                self.state.whale_alert_events.pop(address, None)
+            wallet = wallets_by_address.get(address, {})
+            for batch in batches:
+                # 한 건뿐인 체결은 사용자 요구에 따라 조용히 폐기한다. 원시 원장은 유지된다.
+                if len(batch) < 2:
+                    continue
+                sent += await self._fire_if_allowed(_whale_batch_candidate(batch, wallet, window_seconds=window_seconds))
+        self._persist()
         return sent
 
     async def maybe_send_daily_summary(self, payload: dict[str, Any]) -> int:
@@ -533,3 +510,221 @@ def _compact_usd(value: float) -> str:
     if value >= 1_000:
         return f"{value / 1_000:.0f}K"
     return f"{value:.0f}"
+
+
+def _queue_whale_alert_events(state: NotificationState, events: list[dict[str, Any]], *, received_at: datetime) -> None:
+    known = {str(item.get("_batch_identity") or "") for pending in state.whale_alert_events.values() for item in pending if isinstance(item, dict)}
+    for event in events:
+        if not isinstance(event, dict) or event.get("event") not in {"open", "increase", "flip"}:
+            continue
+        raw_value = event.get("payload")
+        raw: dict[str, Any] = raw_value if isinstance(raw_value, dict) else {}
+        if raw.get("baseline"):
+            continue
+        address = str(event.get("wallet_address") or "").strip().lower()
+        if not address:
+            continue
+        identity = _whale_event_identity(event)
+        if identity in known:
+            continue
+        queued = dict(event)
+        queued["_batch_identity"] = identity
+        queued["_batch_received_at"] = received_at.isoformat()
+        state.whale_alert_events.setdefault(address, []).append(queued)
+        known.add(identity)
+
+
+def _ready_whale_alert_batches(
+    events: list[dict[str, Any]],
+    *,
+    now: datetime,
+    window_seconds: int,
+) -> tuple[list[list[dict[str, Any]]], list[dict[str, Any]]]:
+    remaining = sorted(
+        [item for item in events if isinstance(item, dict)],
+        key=lambda item: (_whale_event_time(item, now), str(item.get("_batch_identity") or "")),
+    )
+    ready: list[list[dict[str, Any]]] = []
+    window = _seconds(window_seconds)
+    while remaining:
+        first = remaining[0]
+        received_at = _parse_whale_datetime(first.get("_batch_received_at"), now)
+        event_started_at = _whale_event_time(first, received_at)
+        # 체결 시각 기준 3분 창이 닫힌 첫 30초 폴링에서 확정한다. 수집 지연으로
+        # 이미 창이 닫힌 이벤트는 관측 즉시 판정하되, 미래 시각으로 앞당기지 않는다.
+        if now < max(event_started_at + window, received_at):
+            break
+        event_deadline = event_started_at + window
+        batch = [item for item in remaining if _whale_event_time(item, received_at) <= event_deadline]
+        batch_ids = {str(item.get("_batch_identity") or "") for item in batch}
+        remaining = [item for item in remaining if str(item.get("_batch_identity") or "") not in batch_ids]
+        ready.append(batch)
+    return ready, remaining
+
+
+def _whale_batch_candidate(
+    events: list[dict[str, Any]],
+    wallet: dict[str, Any],
+    *,
+    window_seconds: int,
+) -> AlertCandidate:
+    ordered = sorted(events, key=lambda item: _whale_event_time(item, datetime.min.replace(tzinfo=timezone.utc)))
+    first = ordered[0]
+    address = str(first.get("wallet_address") or "").lower()
+    label = str(first.get("wallet_label") or wallet.get("label") or "고래")
+    review_value = wallet.get("review")
+    review: dict[str, Any] = review_value if isinstance(review_value, dict) else {}
+    validated = review.get("trust_status") == "trusted" or review.get("state") == "validated"
+    groups = _summarize_whale_batch(ordered)
+    coins = list(dict.fromkeys(str(item.get("coin") or "HL") for item in ordered))
+    total_notional = sum(float(item.get("size_usd") or 0.0) for item in ordered)
+    minutes = max(1, round(window_seconds / 60))
+    lines = [f"🐋 <b>{escape(label)} · {minutes}분 다중체결 {len(ordered)}건 · {len(coins)}종목 · {_compact_usd(total_notional)}</b>"]
+    for group in groups[:12]:
+        count = int(group["count"])
+        count_text = f" {count}건" if count > 1 else ""
+        lines.append(
+            f"• <b>{escape(str(group['coin']))}</b> {group['action']}{count_text} · "
+            f"{_compact_usd(float(group['size_usd']))} @ {_format_whale_price(float(group['entry_px']))}"
+        )
+    if len(groups) > 12:
+        lines.append(f"• 그 외 {len(groups) - 12}개 체결 조합")
+
+    sample_size = int(review.get("sample_size") or 0)
+    win_rate = review.get("win_1r_pct")
+    accuracy = f"추종 승률 {win_rate}% (N={sample_size})" if win_rate is not None else f"추종 승률 축적 중 (N={sample_size})"
+    cumulative_r = float(review.get("cumulative_return_r") or 0.0)
+    elapsed_days = int(review.get("validation_days") or 0)
+    remaining_days = int(review.get("validation_remaining_days") or max(0, 28 - elapsed_days))
+    performance = f"누적 {cumulative_r:+.2f}R · 4주 검증 {elapsed_days}/28일"
+    if remaining_days:
+        performance += f" ({remaining_days}일 남음)"
+    level = "엄선 고래" if validated else "미검증 관측"
+    lines.extend(
+        [
+            f"{level} · {accuracy}",
+            performance,
+            "3분 창의 다중체결만 묶은 관측 정보이며 따라가기 신호가 아닙니다. 별칭은 사용자 지정 추정입니다.",
+        ]
+    )
+    compact_events = [_compact_whale_event(item) for item in ordered]
+    first_identity = str(first.get("_batch_identity") or _whale_event_identity(first))
+    last_identity = str(ordered[-1].get("_batch_identity") or _whale_event_identity(ordered[-1]))
+    symbol = str(first.get("symbol") or first.get("coin") or "HL") if len(coins) == 1 else "MULTI"
+    return AlertCandidate(
+        rule_id="whale_entry",
+        severity="warn" if validated else "info",
+        position_id=None,
+        symbol=symbol,
+        identity=f"{address}:{first_identity}:{last_identity}:{len(ordered)}",
+        title=f"{label} {minutes}분 다중체결 {len(ordered)}건",
+        message="\n".join(lines),
+        payload={
+            "kind": "whale_multi_fill",
+            "wallet_address": address,
+            "wallet_label": label,
+            "validation_state": review.get("state"),
+            "window_seconds": window_seconds,
+            "fill_count": len(ordered),
+            "instrument_count": len(coins),
+            "event_ids": [item["id"] for item in compact_events],
+            "events": compact_events,
+            "summary": f"{minutes}분 다중체결 {len(ordered)}건 · {len(coins)}종목 · {_compact_usd(total_notional)} · {accuracy}",
+        },
+    )
+
+
+def _summarize_whale_batch(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    grouped: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for event in events:
+        coin = str(event.get("coin") or "HL")
+        side = "long" if event.get("side") == "long" else "short"
+        kind = str(event.get("event") or "open")
+        key = (coin, side, kind)
+        row = grouped.setdefault(
+            key,
+            {
+                "coin": coin,
+                "action": _whale_action(kind, side),
+                "count": 0,
+                "size_usd": 0.0,
+                "size": 0.0,
+                "weighted_entry": 0.0,
+            },
+        )
+        size = abs(float(event.get("size") or 0.0))
+        entry = float(event.get("entry_px") or 0.0)
+        row["count"] += 1
+        row["size_usd"] += float(event.get("size_usd") or 0.0)
+        row["size"] += size
+        row["weighted_entry"] += entry * size
+    result = []
+    for row in grouped.values():
+        size = float(row.pop("size"))
+        weighted_entry = float(row.pop("weighted_entry"))
+        row["entry_px"] = weighted_entry / size if size > 0 else 0.0
+        result.append(row)
+    return result
+
+
+def _whale_action(kind: str, side: str) -> str:
+    side_label = "롱" if side == "long" else "숏"
+    if kind == "flip":
+        return "숏→롱 전환" if side == "long" else "롱→숏 전환"
+    if kind == "increase":
+        return f"{side_label} 증액"
+    return f"{side_label} 신규"
+
+
+def _compact_whale_event(event: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": str(event.get("id") or event.get("fill_id") or _whale_event_identity(event)),
+        "fill_id": event.get("fill_id"),
+        "coin": event.get("coin"),
+        "symbol": event.get("symbol"),
+        "side": event.get("side"),
+        "event": event.get("event"),
+        "size": event.get("size"),
+        "size_usd": event.get("size_usd"),
+        "entry_px": event.get("entry_px"),
+        "event_at": event.get("event_at"),
+    }
+
+
+def _whale_event_identity(event: dict[str, Any]) -> str:
+    return str(
+        event.get("id")
+        or event.get("fill_id")
+        or ":".join(
+            [
+                str(event.get("wallet_address") or ""),
+                str(event.get("coin") or ""),
+                str(event.get("event") or ""),
+                str(event.get("event_at") or ""),
+                str(event.get("size") or ""),
+            ]
+        )
+    )
+
+
+def _whale_event_time(event: dict[str, Any], fallback: datetime) -> datetime:
+    return _parse_whale_datetime(event.get("event_at"), fallback)
+
+
+def _parse_whale_datetime(value: Any, fallback: datetime) -> datetime:
+    if isinstance(value, datetime):
+        parsed = value
+    else:
+        try:
+            parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            return fallback
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _format_whale_price(value: float) -> str:
+    if value < 1:
+        return f"{value:,.6f}"
+    if value < 100:
+        return f"{value:,.4f}"
+    return f"{value:,.2f}"
