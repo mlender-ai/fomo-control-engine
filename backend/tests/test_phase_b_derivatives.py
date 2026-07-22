@@ -362,7 +362,8 @@ def test_sqlite_uses_wal_and_busy_timeout(tmp_path) -> None:
 
     assert journal_mode == "wal"
     assert busy_timeout == 5000
-    assert Settings().db_trade_fill_retention_days == 7
+    # 2026-07-23: fill 폭증(하루 ~2M행) 대응으로 기본 리텐션 7→2일(머니플로우는 최근 짧은 창만 읽음).
+    assert Settings().db_trade_fill_retention_days == 2
 
 
 def test_retention_downsamples_derivative_metrics_and_prunes_liquidations(

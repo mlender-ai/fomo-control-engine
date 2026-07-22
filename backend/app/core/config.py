@@ -237,7 +237,9 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("FCE_DB_BACKUP_KEEP_DAYS", "DB_BACKUP_KEEP_DAYS"),
     )
     db_trade_fill_retention_days: int = Field(
-        7,
+        # 2일: 머니플로우/CVD는 최근 짧은 창 + 행수 상한으로만 읽는다(trade_cache._latest_rows).
+        # 하루 ~2M행 폭증(2026-07-23 12.8GB 사건) — 7일이면 상시 ~4-5GB. 2일이면 ~1GB.
+        2,
         validation_alias=AliasChoices("FCE_DB_TRADE_FILL_RETENTION_DAYS", "DB_TRADE_FILL_RETENTION_DAYS"),
     )
     db_alert_retention_days: int = Field(

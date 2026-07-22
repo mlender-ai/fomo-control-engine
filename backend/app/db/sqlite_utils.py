@@ -83,6 +83,9 @@ def connect_sqlite(path: str | Path) -> sqlite3.Connection:
 
 def configure_sqlite_connection(connection: sqlite3.Connection) -> sqlite3.Connection:
     connection.execute("PRAGMA busy_timeout=5000")
+    # 빈 DB(신규 설치·CI)는 INCREMENTAL 로 생성돼 리텐션 후 incremental_vacuum 이 파일을 실제로 줄인다.
+    # 기존 비어있지 않은 DB 에는 무해 no-op(모드 변경은 VACUUM 필요) — 이 머신 DB 는 1회 VACUUM 으로 이미 전환됨.
+    connection.execute("PRAGMA auto_vacuum=INCREMENTAL")
     return connection
 
 

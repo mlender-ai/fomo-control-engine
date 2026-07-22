@@ -243,6 +243,16 @@ def _apply_sqlite_retention(connection: sqlite3.Connection, settings: Settings) 
         raise RuntimeError("retention attempted to mutate a permanent table")
     details["permanent_tables_verified"] = True
     details["permanent_table_counts"] = permanent_after
+    # 삭제로 생긴 빈 페이지를 OS로 반환(파일 실제 축소). auto_vacuum=INCREMENTAL DB 에서만 동작(그 외 무해 no-op).
+    # 12.8GB 비대 사건(2026-07-23): 리텐션 DELETE 는 있었으나 회수가 없어 파일이 안 줄었다.
+    try:
+        connection.commit()
+        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        connection.execute("PRAGMA incremental_vacuum")
+        connection.commit()
+        details["incremental_vacuum"] = "ok"
+    except Exception as exc:  # 회수 실패가 리텐션 자체를 무효화하지 않게 격리
+        details["incremental_vacuum"] = f"skipped: {type(exc).__name__}: {exc}"
     return details
 
 
