@@ -67,4 +67,4 @@
 
 - [x] HARNESS.md 백엔드 게이트 통과 (`601 passed`, coverage 77.38%, core 88.07%, mypy 166/174)
 - [x] 관련 문서 갱신
-- [ ] origin/main 반영 + CI success 확인
+- [x] origin/main 반영 + CI success 확인 (run `29879799059`)
