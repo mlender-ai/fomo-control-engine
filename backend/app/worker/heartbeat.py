@@ -22,6 +22,8 @@ class HeartbeatRecord:
     current_interval_seconds: int = 0
     last_started_at: datetime | None = None
     last_success_at: datetime | None = None
+    # D3: 엔진이 조기 반환(비활성/미구성) 없이 실제로 평가를 수행한 마지막 시각.
+    last_effective_run_at: datetime | None = None
     last_error_at: datetime | None = None
     last_error: str | None = None
     next_run_at: datetime | None = None
@@ -38,6 +40,7 @@ class HeartbeatRecord:
             "current_interval_seconds": self.current_interval_seconds,
             "last_started_at": self.last_started_at,
             "last_success_at": self.last_success_at,
+            "last_effective_run_at": self.last_effective_run_at,
             "last_error_at": self.last_error_at,
             "last_error": self.last_error,
             "next_run_at": self.next_run_at,
@@ -76,12 +79,13 @@ class SQLiteHeartbeatStore:
                         current_interval_seconds,
                         last_started_at,
                         last_success_at,
+                        last_effective_run_at,
                         last_error_at,
                         last_error,
                         next_run_at,
                         updated_at
                     )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.job_name,
@@ -94,6 +98,7 @@ class SQLiteHeartbeatStore:
                     record.current_interval_seconds,
                     _iso(record.last_started_at),
                     _iso(record.last_success_at),
+                    _iso(record.last_effective_run_at),
                     _iso(record.last_error_at),
                     record.last_error,
                     _iso(record.next_run_at),
@@ -134,6 +139,14 @@ def _parse_dt(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value) if value else None
 
 
+def _row_get(row: sqlite3.Row, key: str) -> str | None:
+    # 마이그레이션 이전 스키마로 만든 행을 읽을 때 컬럼 부재를 관대하게 처리한다.
+    try:
+        return row[key]
+    except (IndexError, KeyError):
+        return None
+
+
 def _row_to_record(row: sqlite3.Row) -> HeartbeatRecord:
     return HeartbeatRecord(
         job_name=row["job_name"],
@@ -146,6 +159,7 @@ def _row_to_record(row: sqlite3.Row) -> HeartbeatRecord:
         current_interval_seconds=int(row["current_interval_seconds"] or 0),
         last_started_at=_parse_dt(row["last_started_at"]),
         last_success_at=_parse_dt(row["last_success_at"]),
+        last_effective_run_at=_parse_dt(_row_get(row, "last_effective_run_at")),
         last_error_at=_parse_dt(row["last_error_at"]),
         last_error=row["last_error"],
         next_run_at=_parse_dt(row["next_run_at"]),

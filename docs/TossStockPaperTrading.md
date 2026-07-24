@@ -44,9 +44,26 @@ KR/US 각 100종목과 시장별 프록시 1개는 200건 배치 한도 안에�
 
 엄격 후보는 시장별 상위 18개로 제한한다. 별도 coverage 스캐너는 시장별 2종목씩 버전 고정 유니버스를 순환하며 현재가·warnings·호가·체결·가격제한·1분봉을 모두 받은 종목만 실행 표본 후보로 만든다. 후보 일봉 200개는 종목별 하루 한 번만 갱신하고 나머지 15분 주기는 저장본을 공용 분석에 사용한다. 최초 백필 버스트도 5 TPS 공유 버킷이 직렬화한다. 시장별 최대 5개 포지션이 모두 후보 밖인 최악 조건까지 계산한 값이다. 비후보 유니버스는 시장별 한 종목씩 순환하며 일봉 200개를 백필해 약 17분에 100종목을 한 번 순회한다. `X-RateLimit-Remaining`이 20% 아래로 내려가면 공유 버킷이 선제 감속하고 429는 Retry-After와 지수 백오프로 재시도한다.
 
+## 구동 잡·엔진 플래그 관계 (침묵 금지)
+
+주식 페이퍼는 두 플래그로 나뉜다.
+
+- `FCE_TOSS_STOCK_SCOUT_ENABLED` (구동 잡 `toss_stock_scout`, 기본 **False**): Toss 시장 수집 + `run_stock_paper_engine` 실행 주기를 만든다. 이 잡이 꺼지면 엔진은 **한 번도 호출되지 않는다**.
+- `FCE_STOCK_PAPER_ENGINE_ENABLED` (엔진, 기본 **True**): 엔진 내부 활성 여부. 상태 화면·설정에는 이 값이 노출된다.
+
+두 값이 어긋나면(엔진 True · 구동 잡 False) 상태 화면엔 "활성"으로 보이지만 실행되지 않는 **스플릿 플래그 함정**이 된다. `run_stock_paper_engine`의 `_ready_to_start`도 `toss_stock_scout_enabled`를 요구하므로, 구동 잡이 꺼진 상태에서 엔진을 직접 호출해도 `toss_observation_not_configured`로 조기 반환한다.
+
+이 불일치는 이제 **조용히 유지되지 않는다**. `WorkerManager`가 기동 시 명시적 경고를 발행하고(`worker flag inconsistency`), `status()["flag_warnings"]`와 `/api/system/paper/diagnosis`에 노출한다. 주식 페이퍼를 실제로 돌리려면 두 플래그를 모두 켜야 한다. 자세한 계약은 [`docs/PaperObservability.md`](PaperObservability.md).
+
+## 검증 시계 유실일 처리
+
+주식 트랙의 검증 경과일은 달력일이 아니라 **엔진이 정상적으로 평가를 수행한 날**(effective run)로 세는 것이 정직하다. 워커가 죽었거나 구동 잡이 꺼져 있던 날 = 원장 미축적 = 검증일 유실이며, 이를 정상 경과로 계산하면 안 된다.
+
+이 WO에서 관측 기반을 놓았다: 워커 하트비트 `last_effective_run_at`(마이그레이션 `0031`)이 엔진이 실제로 평가한 마지막 시각을 기록한다. `last_success_at`과의 괴리가 유실 구간을 드러낸다. 검증 시계를 유실일 제외 기준으로 재계산하고 대시보드에 "경과 N일 (유실 M일 제외)"로 표기하는 작업은 후속 WO로 연결한다(HANDOFF 참조).
+
 ## 관측·복기
 
-GE의 `주식 트랙`은 시장별 시작일/28일, 원통화 NAV, 프록시 수익률, 미체결 사유, 최근 fill의 수수료·세금을 표시한다. GR 요약은 같은 주식 트랙으로 연결한다. `stock_paper_events`가 세션·가격제한·VI·유동성·데이터 누락을 실제 발생 건수로 보존한다.
+GE의 `주식 트랙`은 시장별 시작일/28일, 원통화 NAV, 프록시 수익률, 미체결 사유, 최근 fill의 수수료·세금을 표시한다. GR 요약은 같은 주식 트랙으로 연결한다. `stock_paper_events`가 세션·가격제한·VI·유동성·데이터 누락을 실제 발생 건수로 보존한다. 3트랙 공통 이벤트 계약(`opened/closed/rejected_summary/skipped/error`)과 텔레그램 배선은 [`docs/PaperObservability.md`](PaperObservability.md)를 정본으로 한다.
 
 ### stock-v4 커버리지 레인
 

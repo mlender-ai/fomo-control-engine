@@ -12,17 +12,35 @@ from .broker import PaperBroker, create_broker
 from .execution import ExecutionPolicy
 from .models import Currency, Market, MarketObservation, OrderStatus, Side, StockOrder
 from .parameters import load_stock_parameters
+from app.notify.paper_events import track_event
+
 from .analysis import analyze_stock_candidate
 from .policy import evaluate_stock_entry
 from .store import StockPaperStore
 from .universe import load_universe
 
+TRACK = "stock"
+
 
 def run_stock_paper_engine(settings: Settings, market_payloads: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
     if not settings.stock_paper_engine_enabled:
-        return {"enabled": False, "reason": "disabled"}
+        # 조용한 스킵 금지 (D3): 비활성도 사유와 함께 관측 가능해야 한다. effective_run=False로
+        # 워커가 last_effective_run_at을 갱신하지 않게 하고, skipped 이벤트로 상태를 노출한다.
+        return {
+            "enabled": False,
+            "reason": "disabled",
+            "effective_run": False,
+            "events": [track_event(TRACK, "skipped", "*", detail={"reason": "disabled"})],
+        }
     if not _ready_to_start(settings):
-        return {"enabled": True, "ready_to_start": False, "reason": "toss_observation_not_configured", "live_orders_enabled": False}
+        return {
+            "enabled": True,
+            "ready_to_start": False,
+            "reason": "toss_observation_not_configured",
+            "live_orders_enabled": False,
+            "effective_run": False,
+            "events": [track_event(TRACK, "skipped", "*", detail={"reason": "toss_observation_not_configured"})],
+        }
     universe = load_universe()
     parameters = load_stock_parameters()
     store = StockPaperStore(settings.database_url)
@@ -41,6 +59,8 @@ def run_stock_paper_engine(settings: Settings, market_payloads: dict[str, dict[s
     payloads = market_payloads or {}
     processed = _process_pending_orders(broker, toss_store, payloads)
     evaluated = rejected = strict_entered = coverage_evaluated = coverage_attempted = coverage_entered = 0
+    events: list[dict[str, Any]] = []
+    reject_gate_counts: dict[str, int] = {}
     for market_name in ("KR", "US"):
         payload = payloads.get(market_name) or {}
         market = Market(market_name)
@@ -64,6 +84,7 @@ def run_stock_paper_engine(settings: Settings, market_payloads: dict[str, dict[s
                 store.record_event_if_stale(market, "entry_gate_rejected", symbol=symbol, reason="max_open_positions")
                 store.record_entry_rejection(market, symbol, gate="max_open_positions", measured_value=open_count, threshold=parameters.max_open_positions)
                 rejected += 1
+                reject_gate_counts["max_open_positions"] = reject_gate_counts.get("max_open_positions", 0) + 1
                 continue
             if track and track.get("engine_return_pct") is not None and float(track["engine_return_pct"]) <= -parameters.daily_loss_limit_pct:
                 store.record_event_if_stale(market, "entry_gate_rejected", symbol=symbol, reason="daily_loss_limit")
@@ -75,11 +96,13 @@ def run_stock_paper_engine(settings: Settings, market_payloads: dict[str, dict[s
                     threshold=-parameters.daily_loss_limit_pct,
                 )
                 rejected += 1
+                reject_gate_counts["daily_loss_limit"] = reject_gate_counts.get("daily_loss_limit", 0) + 1
                 continue
             warnings = tuple(str(item) for item in candidate.get("warning_badges") or [])
             if candidate.get("tradable") is False:
                 store.record_entry_rejection(market, symbol, gate="universe_entry_blocked", measured_value=candidate.get("role"), threshold="universe_member")
                 rejected += 1
+                reject_gate_counts["universe_entry_blocked"] = reject_gate_counts.get("universe_entry_blocked", 0) + 1
                 continue
             allowed, universe_reason = universe.entry_allowed(market, symbol, warnings)
             if not allowed:
@@ -88,6 +111,8 @@ def run_stock_paper_engine(settings: Settings, market_payloads: dict[str, dict[s
                     market, symbol, gate=universe_reason or "universe_entry_blocked", measured_value=warnings, threshold="entry_allowed"
                 )
                 rejected += 1
+                _gate = universe_reason or "universe_entry_blocked"
+                reject_gate_counts[_gate] = reject_gate_counts.get(_gate, 0) + 1
                 continue
             previous = store.latest_analysis_snapshot(market, symbol) or {}
             previous_confluence = previous.get("confluence") if isinstance(previous.get("confluence"), dict) else {}
@@ -126,6 +151,7 @@ def run_stock_paper_engine(settings: Settings, market_payloads: dict[str, dict[s
                     payload={"all_reasons": list(decision.rejection_reasons), "source": f"{parameters.version}-shared-analysis"},
                 )
                 rejected += 1
+                reject_gate_counts[reason] = reject_gate_counts.get(reason, 0) + 1
                 continue
             result = _place_entry(
                 broker,
@@ -146,6 +172,14 @@ def run_stock_paper_engine(settings: Settings, market_payloads: dict[str, dict[s
             )
             if result == "filled":
                 strict_entered += 1
+                events.append(
+                    track_event(
+                        TRACK,
+                        "opened",
+                        symbol,
+                        detail={"market": market.value, "entry_mode": "strict_signal", "price": _optional_float(candidate.get("price"))},
+                    )
+                )
         coverage_candidates = [item for item in payload.get("coverage_candidates") or [] if isinstance(item, dict)]
         coverage_slots_used = store.mode_position_count(market, "coverage") + store.mode_active_order_count(market, "coverage")
         market_track = next((item for item in store.dashboard()["tracks"] if item["market"] == market.value), None)
@@ -221,6 +255,32 @@ def run_stock_paper_engine(settings: Settings, market_payloads: dict[str, dict[s
                 )
                 if result == "filled":
                     coverage_entered += 1
+                    events.append(
+                        track_event(
+                            TRACK,
+                            "opened",
+                            symbol,
+                            detail={"market": market.value, "entry_mode": "coverage", "price": _optional_float(candidate.get("price"))},
+                        )
+                    )
+    # 거부는 개별 발송하면 스팸(전 종목 거부)이므로 1건의 집계 이벤트로 요약한다 (작업3).
+    if rejected > 0:
+        top_gate = max(reject_gate_counts.items(), key=lambda kv: kv[1])[0] if reject_gate_counts else None
+        events.append(
+            track_event(
+                TRACK,
+                "rejected_summary",
+                "*",
+                detail={
+                    "evaluated": evaluated,
+                    "rejected": rejected,
+                    "top_reject_gate": top_gate,
+                    "gate_counts": reject_gate_counts,
+                    "strict_entered": strict_entered,
+                    "coverage_entered": coverage_entered,
+                },
+            )
+        )
     return {
         "enabled": True,
         "evaluated": evaluated,
@@ -233,6 +293,9 @@ def run_stock_paper_engine(settings: Settings, market_payloads: dict[str, dict[s
         "universe_version": universe.version,
         "parameter_version": parameters.version,
         "live_orders_enabled": False,
+        "effective_run": True,
+        "top_reject_gate": (max(reject_gate_counts.items(), key=lambda kv: kv[1])[0] if reject_gate_counts else None),
+        "events": events,
     }
 
 

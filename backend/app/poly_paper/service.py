@@ -10,9 +10,13 @@ from app.core.config import Settings
 from .broker import PaperBroker, taker_fee_per_share
 from .client import PolymarketPublicClient, resolved_outcome
 from .estimator import attach_execution_cost, estimate_market_probability, kelly_fraction, quality_at_least
+from app.notify.paper_events import track_event
+
 from .models import FillInvariantViolation, OrderBook, PaperOrder, PolyMarket
 from .parameters import load_poly_parameters
 from .store import PolyPaperStore
+
+TRACK = "poly"
 
 
 class PublicMarketClient(Protocol):
@@ -36,7 +40,14 @@ async def run_poly_paper_engine(
     store = PolyPaperStore(settings.database_url)
     store.ensure_track(initial_cash=settings.polymarket_initial_usdc, parameter_version=parameters.version, now=now)
     if not settings.polymarket_paper_enabled:
-        return {"enabled": False, "reason": "disabled", "live_orders_enabled": False}
+        # 조용한 스킵 금지 (D3): 비활성도 사유와 함께 관측되어야 한다.
+        return {
+            "enabled": False,
+            "reason": "disabled",
+            "live_orders_enabled": False,
+            "effective_run": False,
+            "events": [track_event(TRACK, "skipped", "*", detail={"reason": "disabled"})],
+        }
     public = client or PolymarketPublicClient(
         gamma_base_url=settings.polymarket_gamma_base_url,
         clob_base_url=settings.polymarket_clob_base_url,
@@ -48,11 +59,24 @@ async def run_poly_paper_engine(
     except Exception as exc:
         message = f"{type(exc).__name__}: {exc}"
         store.record_collection(status="error", observed_at=now, error=message)
-        return {"enabled": True, "status": "error", "error": message, "live_orders_enabled": False}
+        return {
+            "enabled": True,
+            "status": "error",
+            "error": message,
+            "live_orders_enabled": False,
+            "effective_run": False,
+            "events": [track_event(TRACK, "error", "*", detail={"reason": "market_fetch_failed", "error": message})],
+        }
     if markets:
         store.activate_clock(now)
     settled = await _settle_due_markets(store, public, repository, now)
     observed = estimated = entered = excluded = strict_entered = coverage_entered = 0
+    events: list[dict[str, Any]] = []
+    exclusion_counts: dict[str, int] = {}
+
+    def _exclude(reason: str) -> None:
+        exclusion_counts[reason] = exclusion_counts.get(reason, 0) + 1
+
     for source_market in markets:
         observed += 1
         market = _apply_market_gates(source_market, now=now)
@@ -73,6 +97,7 @@ async def run_poly_paper_engine(
         result = await asyncio.to_thread(estimate_market_probability, market, market_provider, now=now)
         if result.estimate is None:
             excluded += 1
+            _exclude(str(result.reason or market.exclusion_reason or "estimate_unavailable"))
             store.save_market(replace(market, trade_eligible=False, exclusion_reason=result.reason or market.exclusion_reason))
             continue
         estimate = result.estimate
@@ -134,20 +159,25 @@ async def run_poly_paper_engine(
         entry_mode = "strict_edge" if estimate.trade_eligible else "coverage_calibration" if coverage_eligible else None
         if entry_mode is None:
             excluded += 1
+            _exclude(str(estimate.exclusion_reason or "not_trade_eligible"))
             continue
         if store.has_open_position(market.id) or store.open_position_count() >= parameters.max_open_markets:
             excluded += 1
+            _exclude("position_capacity")
             continue
         if book is None or token_id is None:
             excluded += 1
+            _exclude("orderbook_missing")
             continue
         if entry_mode == "coverage_calibration" and store.open_position_count("coverage_calibration") >= parameters.coverage_target_open_markets:
             excluded += 1
+            _exclude("coverage_capacity")
             continue
         fraction = kelly_fraction(estimate, cap=parameters.max_position_fraction) if entry_mode == "strict_edge" else parameters.coverage_position_fraction
         requested_notional = store.cash() * fraction
         if requested_notional <= 0:
             excluded += 1
+            _exclude("insufficient_cash")
             continue
         order = PaperOrder(
             market_id=market.id,
@@ -170,6 +200,38 @@ async def run_poly_paper_engine(
                 strict_entered += 1
             else:
                 coverage_entered += 1
+            events.append(
+                track_event(
+                    TRACK,
+                    "opened",
+                    market.id,
+                    detail={
+                        "question": market.question,
+                        "direction": estimate.direction.value,
+                        "entry_mode": entry_mode,
+                    },
+                )
+            )
+    if settled:
+        events.append(track_event(TRACK, "closed", "*", detail={"settled": settled}))
+    # 제외(exclusion)는 개별 발송하면 스팸이므로 집계 이벤트 1건으로 요약한다 (작업3).
+    top_exclusion = max(exclusion_counts.items(), key=lambda kv: kv[1])[0] if exclusion_counts else None
+    if excluded > 0:
+        events.append(
+            track_event(
+                TRACK,
+                "rejected_summary",
+                "*",
+                detail={
+                    "evaluated": estimated,
+                    "rejected": excluded,
+                    "top_reject_gate": top_exclusion,
+                    "gate_counts": exclusion_counts,
+                    "strict_entered": strict_entered,
+                    "coverage_entered": coverage_entered,
+                },
+            )
+        )
     store.record_collection(status="observed", observed_at=now)
     return {
         "enabled": True,
@@ -179,6 +241,9 @@ async def run_poly_paper_engine(
         "entered": entered,
         "strict_entered": strict_entered,
         "coverage_entered": coverage_entered,
+        "effective_run": True,
+        "top_reject_gate": top_exclusion,
+        "events": events,
         "excluded": excluded,
         "settled": settled,
         "parameter_version": parameters.version,

@@ -34,6 +34,7 @@ WO-FCE-89 정본. 해자의 단위는 화면 기능이 아니라 **당시 가격
 | 진입 스냅샷 (`position_entry_snapshot`) | position deepdive | 채점 불가 | 당시 사실 기준점; 방향 주장이 아님 |
 | intent 등록 (`entry_intent_registered`) | scout | 채점 불가 | 수명주기 감사; 발화 intent를 별도 채점 |
 | 자율 강등·격리·승격 제안 | `autonomy_logs` | 채점 불가 | 거버넌스 결정 이력; 효과는 주간 ImprovementProof가 별도 평가 |
+| 페이퍼 거부 집계 (`rejected_summary`) | paper engine (crypto/stock/poly) | 기록 중 | "평가했으나 진입 안 함"도 판단이다. 한 주기의 거부를 개별 발송 대신 `평가 N · 진입 M · 거부 K · 최다 거부 게이트 X`로 집계한다. 원장 유형으로 등록해 "진입 0"이 침묵이 아니라 관측 가능한 판단이 되게 한다(WO-FCE-PAPER-OBSERVABILITY-01) |
 
 와이코프·유동성 sweep·하모닉 PRZ는 기존 `wyckoff_event`, `liquidity_sweep`, `harmonic_prz`로 원장과 종료 scorecard에 이미 연결돼 있다. 신규 감지기 추가 모라토리엄은 `AGENTS.md`를 따른다.
 
