@@ -17,6 +17,7 @@ from app.notify.alerts import AlertEngine
 from app.notify.bot.bot import TelegramBotSupervisor
 from app.notify.bot.formatters import format_paper_event
 from app.notify.state import NotificationState
+from app.notify.paper_events import SUPPRESSIBLE_KINDS, suppression_key
 from app.notify.telegram import TelegramSender
 from app.services import runtime as service
 from app.worker.heartbeat import HeartbeatRecord, SQLiteHeartbeatStore
@@ -65,6 +66,8 @@ class WorkerManager:
         self._locks = {name: asyncio.Lock() for name in self.jobs}
         self._telegram_task: asyncio.Task | None = None
         self._started = False
+        # D2: 스플릿 플래그 불일치(엔진 켜짐 · 구동 잡 꺼짐)를 조용히 두지 않는다.
+        self.flag_warnings = self._flag_consistency_warnings()
 
     async def start(self) -> None:
         _configure_worker_logging(self.settings)
@@ -89,6 +92,8 @@ class WorkerManager:
             self._schedule_job(job.name, job.interval_seconds, self._first_run_at(job.name, next_run))
 
         self._telegram_task = asyncio.create_task(self._telegram_bot_loop(), name="fce-telegram-bot")
+        for warning in self.flag_warnings:
+            logger.warning("worker flag inconsistency: %s", warning["message"])
         logger.info("worker scheduler started jobs=%s", sorted(self.jobs))
 
     async def stop(self) -> None:
@@ -117,7 +122,29 @@ class WorkerManager:
                 "muted_until": self.state.muted_until,
                 "is_muted": self.state.is_muted(),
             },
+            "flag_warnings": self.flag_warnings,
         }
+
+    def _flag_consistency_warnings(self) -> list[dict[str, Any]]:
+        """엔진은 켜졌는데 그것을 구동하는 잡이 꺼진 조용한 불일치를 노출한다 (D2).
+
+        스플릿 플래그 함정: 상태 화면엔 페이퍼가 '활성'으로 보이지만 구동 잡이 꺼져 있어
+        한 번도 실행되지 않는다. 이 경우를 기동 시 명시적 경고로 발행한다.
+        """
+        warnings: list[dict[str, Any]] = []
+        if self.settings.stock_paper_engine_enabled and not self.settings.toss_stock_scout_enabled:
+            warnings.append(
+                {
+                    "track": "stock",
+                    "engine_flag": "stock_paper_engine_enabled=True",
+                    "driver_flag": "toss_stock_scout_enabled=False",
+                    "message": (
+                        "주식 페이퍼 엔진은 활성이나 구동 잡(toss_stock_scout)이 꺼져 있어 한 번도 실행되지 않습니다. "
+                        "FCE_TOSS_STOCK_SCOUT_ENABLED=true 로 구동 잡을 켜십시오."
+                    ),
+                }
+            )
+        return warnings
 
     async def _run_scheduled_job(self, name: str) -> Any:
         job = self.jobs[name]
@@ -151,7 +178,12 @@ class WorkerManager:
                 heartbeat.runs += 1
                 heartbeat.consecutive_failures = 0
                 heartbeat.status = "ok"
-                heartbeat.last_success_at = datetime.now(timezone.utc)
+                now_ts = datetime.now(timezone.utc)
+                heartbeat.last_success_at = now_ts
+                # D3: 조기 반환(비활성/미구성)은 success이지만 effective run이 아니다. 엔진이 실제로
+                # 평가를 수행한 잡만 last_effective_run_at을 갱신한다. 이 괴리가 "돌지만 안 돈다"를 드러낸다.
+                if not (isinstance(result, dict) and result.get("effective_run") is False):
+                    heartbeat.last_effective_run_at = now_ts
                 heartbeat.last_error = None
                 if scheduled:
                     self._restore_interval_if_needed(name)
@@ -205,13 +237,31 @@ class WorkerManager:
         }
 
     async def _send_paper_events(self, result: dict[str, Any]) -> int:
+        if not isinstance(result, dict):
+            return 0
+        events = [event for event in (result.get("events") or []) if isinstance(event, dict)]
+        # 트랙이 실제로 평가했다면 그 트랙의 skip 억제 상태를 리셋한다 — 회복은 다음 스킵의
+        # 새 상태 전이가 되어 다시 1회 발송되도록. 뮤트 여부와 무관하게 상태는 정확히 유지한다.
+        if result.get("effective_run"):
+            for track in {str(event.get("track") or "") for event in events if event.get("track")}:
+                self.state.clear_paper_skips_for_track(track)
         if not getattr(self.settings, "paper_telegram_alerts_enabled", True) or not self.settings.telegram_alerts_enabled or self.state.is_muted():
+            self._persist_state()
             return 0
         sent = 0
-        for event in result.get("events", []) or []:
-            if isinstance(event, dict):
-                sent += await self.sender.send_to_all(format_paper_event(event))
+        for event in events:
+            # skipped/미발생 계열은 연속 동일 사유 스팸을 막기 위해 억제 정책을 통과해야 발송한다.
+            if str(event.get("kind") or "") in SUPPRESSIBLE_KINDS and event.get("track"):
+                if not self.state.register_paper_skip(suppression_key(event)):
+                    continue
+            sent += await self.sender.send_to_all(format_paper_event(event))
+        self._persist_state()
         return sent
+
+    def _persist_state(self) -> None:
+        path = str(getattr(self.settings, "notification_state_path", "") or "")
+        if path:
+            self.state.save(path)
 
     async def _evaluate_performance_alerts(self) -> int:
         performance = await asyncio.to_thread(service.performance_summary)
@@ -261,14 +311,24 @@ class WorkerManager:
             collect_toss_market(self.settings, "US"),
         )
         paper = await asyncio.to_thread(run_stock_paper_engine, self.settings, {"KR": kr, "US": us})
-        return {"KR": kr.get("status"), "US": us.get("status"), "stock_paper": paper}
+        # D1: 주식 페이퍼도 크립토와 같은 텔레그램 경로를 태운다(과거엔 미배선 = 구조적 침묵).
+        await self._send_paper_events(paper)
+        return {
+            "KR": kr.get("status"),
+            "US": us.get("status"),
+            "stock_paper": paper,
+            "effective_run": bool(paper.get("effective_run")),
+        }
 
     async def _collect_polymarket(self) -> dict[str, Any]:
-        return await run_poly_paper_engine(
+        result = await run_poly_paper_engine(
             self.settings,
             engine_runtime.market_provider,
             engine_runtime.repository,
         )
+        # D1: 폴리 페이퍼도 텔레그램 경로 배선(과거엔 미호출).
+        await self._send_paper_events(result)
+        return result
 
     async def _telegram_bot_loop(self) -> None:
         heartbeat = self.heartbeats["telegram_bot"]

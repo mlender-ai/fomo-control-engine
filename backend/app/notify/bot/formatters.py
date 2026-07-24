@@ -887,6 +887,11 @@ def _paper_current_stance(trade: dict[str, Any]) -> str:
 
 
 def format_paper_event(event: dict[str, Any]) -> str:
+    # WO-FCE-PAPER-OBSERVABILITY-01: stock/poly 트랙은 공통 계약 {track,kind,symbol,ts,detail}로
+    # 렌더한다. crypto 이벤트는 track 키가 없어 아래 기존 경로를 그대로 탄다(회귀 금지, C3).
+    track = str(event.get("track") or "")
+    if track in {"stock", "poly"}:
+        return _format_track_paper_event(track, event)
     kind = str(event.get("kind") or "")
     if kind == "gate_diagnostic":
         funnel = _dump(event.get("funnel"))
@@ -916,6 +921,83 @@ def format_paper_event(event: dict[str, Any]) -> str:
         lines.append(f"net {_signed_pct(trade.get('net_return_pct'))} · 사유 {escape(_exit_reason(event.get('reason') or trade.get('exit_reason')))}")
     lines.append("실주문이 아닌 엔진 가상 거래 기록입니다.")
     return "\n".join(lines)
+
+
+_TRACK_LABELS = {"stock": "📈 주식 페이퍼", "poly": "🎲 폴리 페이퍼"}
+_REJECT_GATE_LABELS = {
+    "evidence": "증거 부족",
+    "max_open_positions": "포지션 한도",
+    "daily_loss_limit": "일일 손실 한도",
+    "universe_entry_blocked": "유니버스 제외",
+    "position_capacity": "마켓 한도",
+    "orderbook_missing": "호가 없음",
+    "coverage_capacity": "커버리지 한도",
+    "insufficient_cash": "잔고 부족",
+    "after_cost_edge_low": "비용 후 엣지 부족",
+    "liquidity_below_minimum": "유동성 부족",
+    "resolution_too_near": "만기 임박",
+}
+_SKIP_REASON_LABELS = {
+    "disabled": "엔진 비활성",
+    "toss_observation_not_configured": "Toss 관측 미구성",
+    "market_fetch_failed": "마켓 조회 실패",
+}
+
+
+def _gate_label(gate: Any) -> str:
+    key = str(gate or "")
+    return _REJECT_GATE_LABELS.get(key, key or "판단 근거 부족")
+
+
+def _format_track_paper_event(track: str, event: dict[str, Any]) -> str:
+    label = _TRACK_LABELS.get(track, track)
+    kind = str(event.get("kind") or "")
+    detail = _dump(event.get("detail"))
+    symbol = str(event.get("symbol") or "-")
+    tail = "실주문이 아닌 엔진 가상 거래 기록입니다."
+    if kind == "opened":
+        mode = "커버리지" if detail.get("entry_mode") in {"coverage", "coverage_calibration"} else "전략"
+        head = f"<b>{label} · 진입 · {escape(symbol)}</b>"
+        bits = [f"모드 {mode}"]
+        if detail.get("direction"):
+            bits.append(escape(str(detail["direction"])))
+        if detail.get("market"):
+            bits.append(escape(str(detail["market"])))
+        if detail.get("price") is not None:
+            bits.append(f"@ {_price(detail.get('price'))}")
+        return "\n".join([head, " · ".join(bits), tail])
+    if kind == "closed":
+        head = f"<b>{label} · 청산/정산</b>"
+        settled = detail.get("settled")
+        body = f"정산 {int(settled)}건" if settled is not None else "청산 기록"
+        return "\n".join([head, body, tail])
+    if kind == "rejected_summary":
+        head = f"<b>{label} · 평가 요약</b>"
+        evaluated = int(detail.get("evaluated") or 0)
+        rejected = int(detail.get("rejected") or 0)
+        entered = int(detail.get("strict_entered") or 0) + int(detail.get("coverage_entered") or 0)
+        top = _gate_label(detail.get("top_reject_gate"))
+        return "\n".join(
+            [
+                head,
+                f"평가 {evaluated} · 진입 {entered} · 거부 {rejected}",
+                f"최다 거부: {escape(top)}",
+                "거부는 개별 발송하지 않고 1건으로 집계합니다.",
+            ]
+        )
+    if kind == "skipped":
+        reason = str(detail.get("reason") or "")
+        head = f"<b>{label} · 미실행</b>"
+        return "\n".join([head, f"사유: {escape(_SKIP_REASON_LABELS.get(reason, reason or '알 수 없음'))}", "엔진이 이번 주기에 평가를 수행하지 않았습니다."])
+    if kind == "error":
+        reason = str(detail.get("reason") or "")
+        head = f"<b>{label} · 오류</b>"
+        err = detail.get("error")
+        lines = [head, f"사유: {escape(_SKIP_REASON_LABELS.get(reason, reason or '알 수 없음'))}"]
+        if err:
+            lines.append(escape(_compact(str(err), 120)))
+        return "\n".join(lines)
+    return f"<b>{label}</b>\n{escape(kind)} · {escape(symbol)}"
 
 
 def format_status(payload: dict[str, Any]) -> str:

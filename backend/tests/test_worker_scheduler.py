@@ -175,3 +175,83 @@ def test_user_fill_sync_job_runs_independently_every_two_minutes(tmp_path) -> No
     job = manager.jobs["sync_user_fills"]
     assert job.enabled is True
     assert job.interval_seconds == 120
+
+
+# ── WO-FCE-PAPER-OBSERVABILITY-01 ──────────────────────────────
+
+
+def test_split_flag_inconsistency_emits_startup_warning(tmp_path) -> None:
+    # D2: 엔진 켜짐 · 구동잡 꺼짐 = 조용한 불일치. 기동 시 명시적 경고를 발행해야 한다.
+    manager = WorkerManager(_settings(tmp_path, stock_paper_engine_enabled=True, toss_stock_scout_enabled=False))
+    warnings = manager.flag_warnings
+    assert any(item["track"] == "stock" for item in warnings)
+    assert manager.status()["flag_warnings"] == warnings
+
+
+def test_no_flag_warning_when_consistent(tmp_path) -> None:
+    manager = WorkerManager(_settings(tmp_path, stock_paper_engine_enabled=True, toss_stock_scout_enabled=True))
+    assert all(item["track"] != "stock" for item in manager.flag_warnings)
+
+
+@pytest.mark.asyncio
+async def test_send_paper_events_delivers_track_events(tmp_path) -> None:
+    manager = WorkerManager(_settings(tmp_path, telegram_alerts_enabled=True, paper_telegram_alerts_enabled=True))
+    sent: list[str] = []
+
+    async def _capture(text: str) -> int:
+        sent.append(text)
+        return 1
+
+    setattr(manager.sender, "send_to_all", _capture)
+    result = {
+        "effective_run": True,
+        "events": [
+            {"track": "stock", "kind": "opened", "symbol": "AAPL", "ts": "2026-07-24T00:00:00+00:00", "detail": {"market": "US"}},
+            {
+                "track": "stock",
+                "kind": "rejected_summary",
+                "symbol": "*",
+                "ts": "2026-07-24T00:00:00+00:00",
+                "detail": {"evaluated": 5, "rejected": 5, "top_reject_gate": "evidence"},
+            },
+        ],
+    }
+    delivered = await manager._send_paper_events(result)
+    assert delivered == 2
+    assert any("주식 페이퍼" in text for text in sent)
+
+
+@pytest.mark.asyncio
+async def test_send_paper_events_suppresses_repeated_skips(tmp_path) -> None:
+    manager = WorkerManager(_settings(tmp_path, telegram_alerts_enabled=True, paper_telegram_alerts_enabled=True))
+    sent: list[str] = []
+
+    async def _capture(text: str) -> int:
+        sent.append(text)
+        return 1
+
+    setattr(manager.sender, "send_to_all", _capture)
+    skip_result = {
+        "effective_run": False,
+        "events": [{"track": "stock", "kind": "skipped", "symbol": "*", "ts": "2026-07-24T00:00:00+00:00", "detail": {"reason": "disabled"}}],
+    }
+    first = await manager._send_paper_events(skip_result)
+    second = await manager._send_paper_events(skip_result)
+    # 최초 스킵은 발송, 같은 사유 반복은 억제 → 스팸 0.
+    assert first == 1
+    assert second == 0
+
+
+@pytest.mark.asyncio
+async def test_muted_paper_events_are_silenced_but_state_stays_consistent(tmp_path) -> None:
+    manager = WorkerManager(_settings(tmp_path, telegram_alerts_enabled=True, paper_telegram_alerts_enabled=True))
+    manager.state.mute_for(3600)
+
+    async def _fail(text: str) -> int:  # pragma: no cover - must not be called
+        raise AssertionError("muted alerts must not send")
+
+    setattr(manager.sender, "send_to_all", _fail)
+    delivered = await manager._send_paper_events(
+        {"effective_run": True, "events": [{"track": "stock", "kind": "opened", "symbol": "AAPL", "ts": "2026-07-24T00:00:00+00:00", "detail": {}}]}
+    )
+    assert delivered == 0
