@@ -21,7 +21,7 @@ from app.notify.alerts import AlertEngine
 from app.worker import liveness
 from app.worker.manager import WorkerManager
 
-NOW = datetime(2026, 7, 27, 12, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 7, 27, 2, 0, tzinfo=timezone.utc)  # 월 11:00 KST — KR 장중
 
 
 def _settings(tmp_path, **overrides) -> Settings:
@@ -239,3 +239,28 @@ async def test_sync_failure_does_not_kill_pulse_and_paper(tmp_path) -> None:
         assert manager.heartbeats[name].status == "ok", f"{name} 이 수집 실패에 함께 죽었다"
     assert manager.heartbeats["periodic_pulse"].runs >= 1, "생존 펄스가 데이터 수집 실패에 종속되면 안 된다"
     assert isinstance(result, dict)
+
+
+# ── 오탐 방지: 장 마감 중 "정지" 알림 금지 ──────────────────────────
+
+
+def test_market_session_gate_prevents_false_alarm_at_night(tmp_path) -> None:
+    """장 마감 시간에 주식 트랙 정지 알림을 쏘면 매일 밤 오탐 → 사용자 뮤트 → 침묵 재발.
+
+    WO 금지 항목(알림 스팸의 악순환)을 구조적으로 차단한다.
+    """
+    night = datetime(2026, 7, 27, 14, 30, tzinfo=timezone.utc)  # 23:30 KST
+    weekend = datetime(2026, 7, 25, 2, 0, tzinfo=timezone.utc)  # 토 11:00 KST
+    assert liveness.market_session_active("KR", NOW) is True
+    assert liveness.market_session_active("KR", night) is False
+    assert liveness.market_session_active("KR", weekend) is False
+    assert liveness.market_session_active(None, night) is True  # 코인은 24/7
+
+    status = {"jobs": {"toss_stock_scout": _job(effective_age_s=6 * 3600, interval=10)}}
+    rows = {row["job"]: row for row in liveness.track_liveness(status, _settings(tmp_path), night)}
+    assert rows["toss_stock_scout"]["state"] == "market_closed"
+    assert rows["toss_stock_scout"]["stale"] is False
+    assert liveness.evaluate_liveness(status, _settings(tmp_path), night) == []
+
+    # 같은 정체 상태라도 장중이면 반드시 잡는다.
+    assert any(c.rule_id == "engine_liveness" for c in liveness.evaluate_liveness(status, _settings(tmp_path), NOW))

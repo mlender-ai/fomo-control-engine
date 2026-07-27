@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import shutil
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Any
 
@@ -22,12 +23,35 @@ from app.core.config import Settings
 from app.notify.rules import AlertCandidate, RULE_LABELS
 
 # 생존 감시 대상 트랙 — 3트랙 페이퍼 + 포지션 동기화(D3: 기존엔 sync_positions 단독이었다).
-TRACKED_JOBS: dict[str, str] = {
-    "paper_engine": "크립토 페이퍼",
-    "toss_stock_scout": "주식 수집(토스)",
-    "polymarket_paper": "폴리마켓 페이퍼",
-    "sync_positions": "포지션 동기화",
+# market: 해당 시장이 열려 있을 때만 stale 을 판정한다. 장 마감 시간에 "정지" 알림을 쏘면
+# 매일 밤 오탐 → 사용자 뮤트 → 침묵 재발이라는 이 WO가 금지한 악순환이 된다.
+TRACKED_JOBS: dict[str, dict[str, Any]] = {
+    "paper_engine": {"label": "크립토 페이퍼", "market": None},  # 24/7
+    "toss_stock_scout": {"label": "주식 수집(토스)", "market": "KR"},
+    "polymarket_paper": {"label": "폴리마켓 페이퍼", "market": None},
+    "sync_positions": {"label": "포지션 동기화", "market": None},
 }
+
+# 장 시작 직후엔 첫 수집까지 여유를 준다(초).
+MARKET_OPEN_GRACE_SECONDS = 600
+
+
+def market_session_active(market: str | None, now: datetime) -> bool:
+    """해당 시장이 지금 열려 있나. market=None(코인·상시)은 항상 True."""
+    if not market:
+        return True
+    if market == "KR":
+        local = now.astimezone(ZoneInfo("Asia/Seoul"))
+        open_at, close_at = (9, 0), (15, 30)
+    else:  # US
+        local = now.astimezone(ZoneInfo("America/New_York"))
+        open_at, close_at = (9, 30), (16, 0)
+    if local.weekday() >= 5:  # 주말
+        return False
+    start = local.replace(hour=open_at[0], minute=open_at[1], second=0, microsecond=0) + timedelta(seconds=MARKET_OPEN_GRACE_SECONDS)
+    end = local.replace(hour=close_at[0], minute=close_at[1], second=0, microsecond=0)
+    return start <= local <= end
+
 
 # 기대 주기 대비 몇 배까지 용인할지. 기본 3배(WO 명시).
 DEFAULT_STALE_MULTIPLIER = 3
@@ -109,7 +133,9 @@ def track_liveness(worker_status: dict[str, Any], settings: Settings, now: datet
     multiplier = max(2, int(getattr(settings, "worker_liveness_stale_multiplier", DEFAULT_STALE_MULTIPLIER)))
     jobs = worker_status.get("jobs", {}) or {}
     rows: list[dict[str, Any]] = []
-    for job_name, label in TRACKED_JOBS.items():
+    for job_name, spec in TRACKED_JOBS.items():
+        label = spec["label"]
+        market = spec.get("market")
         job = jobs.get(job_name) or {}
         if not job or job.get("status") == "disabled":
             rows.append(
@@ -120,6 +146,20 @@ def track_liveness(worker_status: dict[str, Any], settings: Settings, now: datet
                     "effective_age_seconds": None,
                     "threshold_seconds": None,
                     "last_effective_run_at": None,
+                    "stale": False,
+                }
+            )
+            continue
+        # 장 마감 중인 시장 트랙은 "정지"가 아니라 "장 종료" — 오탐 알림을 쏘지 않는다.
+        if not market_session_active(market, now):
+            rows.append(
+                {
+                    "job": job_name,
+                    "label": label,
+                    "state": "market_closed",
+                    "effective_age_seconds": _age_seconds(job.get("last_effective_run_at"), now),
+                    "threshold_seconds": None,
+                    "last_effective_run_at": job.get("last_effective_run_at"),
                     "stale": False,
                 }
             )
@@ -245,6 +285,9 @@ def daily_liveness_lines(
             continue
         if row["state"] == "disabled":
             lines.append(f"• {row['label']}: ⚪ 비활성(플래그 꺼짐)")
+            continue
+        if row["state"] == "market_closed":
+            lines.append(f"• {row['label']}: 🌙 장 종료 (마지막 평가 {_fmt_age(row['effective_age_seconds'])} 전)")
             continue
         mark = "🔴 정지" if row["stale"] else "🟢 정상"
         age = _fmt_age(row["effective_age_seconds"])
