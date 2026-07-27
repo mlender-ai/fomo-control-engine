@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Awaitable, Callable
@@ -20,6 +21,7 @@ from app.notify.state import NotificationState
 from app.notify.paper_events import SUPPRESSIBLE_KINDS, suppression_key
 from app.notify.telegram import TelegramSender
 from app.services import runtime as service
+from app.worker import liveness
 from app.worker.heartbeat import HeartbeatRecord, SQLiteHeartbeatStore
 from app.toss.service import collect_market as collect_toss_market
 from app.stock_paper.service import run_stock_paper_engine
@@ -211,7 +213,14 @@ class WorkerManager:
                 self._persist(heartbeat)
 
     async def _sync_positions(self) -> dict[str, Any]:
-        payload = await asyncio.to_thread(service.sync_and_analyze_positions)
+        # WO-FCE-ENGINE-LIVENESS-01 작업 2(D1): 이 줄이 유일하게 _run_hook 보호 밖에 있어,
+        # Bitget 오류·DB 잠금 하나로 아래 8단계(크립토 페이퍼·모든 알림·생존 펄스·일일 요약)가
+        # 통째로 소멸했다. 훅으로 격리하고, 실패해도 빈 payload 로 나머지를 계속 실행한다.
+        # 생존 신호(pulse·daily_summary)가 데이터 수집 성공에 의존하면 안 된다.
+        sync_job = self.jobs["sync_and_analyze"]
+        payload = await self._run_hook("sync_and_analyze", sync_job.runner) if sync_job.runner else None
+        if not isinstance(payload, dict):
+            payload = {"positions": [], "sync_failed": True}
         await self._run_hook("detect_closures", lambda: asyncio.to_thread(service.detect_closures))
         paper_result = await self._run_hook("paper_engine", lambda: asyncio.to_thread(service.run_paper_engine))
         if isinstance(paper_result, dict):
@@ -227,7 +236,8 @@ class WorkerManager:
             lambda: self._evaluate_performance_alerts(),
         )
         await self._run_hook("periodic_pulse", lambda: self.alerts.maybe_send_pulse(payload))
-        await self._run_hook("daily_summary", lambda: self.alerts.maybe_send_daily_summary(payload))
+        # 작업 5: 트랙 생존 라인 동봉 — 진입이 0이어도 "살아있음"이 매일 도착해야 한다(뮤트 관통).
+        await self._run_hook("daily_summary", lambda: self.alerts.maybe_send_daily_summary(payload, self._liveness_lines()))
         return {
             "open_count": payload.get("open_count"),
             "needs_exit_record_count": payload.get("needs_exit_record_count"),
@@ -413,6 +423,14 @@ class WorkerManager:
                 self.settings.db_backup_interval_seconds,
                 lambda: asyncio.to_thread(service.database_backup),
             ),
+            # WO-FCE-ENGINE-LIVENESS-01(D1): sync_and_analyze 를 훅 잡으로 등록해 실패를 격리한다.
+            # 이 잡이 실패해도 아래 단계(페이퍼·알림·펄스·일일요약)는 계속 실행된다.
+            "sync_and_analyze": WorkerJob(
+                "sync_and_analyze",
+                self.settings.worker_sync_positions_interval_seconds,
+                lambda: asyncio.to_thread(service.sync_and_analyze_positions),
+                scheduled=False,
+            ),
             "detect_closures": WorkerJob(
                 "detect_closures",
                 self.settings.worker_detect_closures_interval_seconds,
@@ -510,7 +528,59 @@ class WorkerManager:
                 self._collect_polymarket,
                 enabled=self.settings.polymarket_paper_enabled,
             ),
+            # WO-FCE-ENGINE-LIVENESS-01(D2·D3): 사망 감지의 상시화.
+            # 기존엔 sync_positions 예외 시점에만 평가돼, 잡이 "성공"하며 아무것도 안 하는
+            # 4일 정지를 아무도 몰랐다. 독립 스케줄로 승격하고 3트랙을 감시 대상에 넣는다.
+            "worker_liveness": WorkerJob(
+                "worker_liveness",
+                self.settings.worker_liveness_interval_seconds,
+                self._evaluate_liveness,
+            ),
             "telegram_bot": WorkerJob("telegram_bot", 0, None, scheduled=False),
+        }
+
+    def _liveness_lines(self) -> list[str]:
+        """일일 요약용 3트랙 생존 라인. 진단 실패는 라인 생략이 아니라 게이트 정보만 생략."""
+        diagnosis: dict[str, Any] | None = None
+        try:
+            from app.api.paper_diagnosis import paper_diagnosis
+
+            diagnosis = paper_diagnosis()
+        except Exception as exc:
+            logger.debug("paper diagnosis for liveness lines failed: %s", exc)
+        return liveness.daily_liveness_lines(self.status(), self.settings, diagnosis)
+
+    async def _evaluate_liveness(self) -> dict[str, Any]:
+        """트랙 정지·백오프 고착·인프라·재시작 감시 + 외부 데드맨용 하트비트 기록.
+
+        ⚠️ 이것은 **내부** 감시다. 프로세스가 죽으면 이 잡도 죽는다 — 그래서 하트비트 파일을
+        남기고, 프로세스 사망은 외부 감시자(scripts/local/deadman.sh)가 그 파일로 판정한다.
+        """
+        status = self.status()
+        candidates = list(liveness.evaluate_liveness(status, self.settings))
+        candidates.extend(liveness.infra_alerts(*liveness.capacity_probe(self.settings), self.settings))
+        restarts = liveness.recent_restarts(self.settings)
+        restart_candidate = liveness.restart_alert(restarts)
+        if restart_candidate is not None:
+            candidates.append(restart_candidate)
+
+        sent = await self.alerts.evaluate_liveness_alerts(candidates)
+
+        snapshot = liveness.build_liveness_snapshot(
+            status,
+            self.settings,
+            pid=os.getpid(),
+            extra={"restarts_24h": len(restarts), "alerts_sent": sent},
+        )
+        try:
+            liveness.write_liveness_snapshot(self.settings.worker_liveness_path, snapshot)
+        except Exception as exc:  # 하트비트 기록 실패가 워커를 멈추면 안 된다
+            logger.warning("liveness snapshot write failed: %s", exc)
+        return {
+            "stale_tracks": snapshot["stale_tracks"],
+            "backoff_stuck": snapshot["backoff_stuck"],
+            "alerts_sent": sent,
+            "restarts_24h": len(restarts),
         }
 
     def _schedule_job(self, name: str, interval_seconds: int, next_run_time: datetime | None = None) -> None:

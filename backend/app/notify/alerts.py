@@ -160,6 +160,20 @@ class AlertEngine:
             sent += await self._fire_if_allowed(candidate)
         return sent
 
+    async def evaluate_liveness_alerts(self, candidates: list[AlertCandidate]) -> int:
+        """WO-FCE-ENGINE-LIVENESS-01 (C2): 생존/사망 신호는 **뮤트를 관통한다.**
+
+        뮤트는 *조건 알림*을 끄는 장치지 심장박동을 끄는 장치가 아니다. 뮤트가 사망 경보까지
+        침묵시키면 "조용함"이 정상인지 고장인지 영원히 구분할 수 없다(이번 사고의 구조적 원인).
+        쿨다운·중복 억제는 그대로 적용되어 스팸을 막는다.
+        """
+        if not self.settings.telegram_alerts_enabled:
+            return 0
+        sent = 0
+        for candidate in candidates:
+            sent += await self._fire_if_allowed(candidate)
+        return sent
+
     async def evaluate_derivatives(self, snapshots: list[dict[str, Any]]) -> int:
         if not self.settings.telegram_alerts_enabled or self.state.is_muted():
             return 0
@@ -215,23 +229,38 @@ class AlertEngine:
         self._persist()
         return sent
 
-    async def maybe_send_daily_summary(self, payload: dict[str, Any]) -> int:
-        if not self.settings.telegram_alerts_enabled or self.state.is_muted():
+    async def maybe_send_daily_summary(self, payload: dict[str, Any], liveness_lines: list[str] | None = None) -> int:
+        """WO-FCE-ENGINE-LIVENESS-01 작업 5: 트랙 생존 라인은 뮤트를 관통한다(C2).
+
+        뮤트 중이면 조건 알림 다이제스트는 생략하고 **생존 라인만** 보낸다 — 뮤트가 "살아있음"의
+        증거까지 지우면 침묵이 다시 스스로를 은폐한다.
+        """
+        if not self.settings.telegram_alerts_enabled:
+            return 0
+        muted = self.state.is_muted()
+        if muted and not liveness_lines:
             return 0
         due, date_key = morning_summary_due(self.settings, self.state.last_summary_date, self._now())
         if not due:
             return 0
-        suppressed = self.state.suppressed_alerts
-        lines = ["<b>밤새 알림 요약</b>"]
-        if suppressed:
-            for item in suppressed[:20]:
-                lines.append(f"• {item.get('emoji', '🟡')} <b>{item.get('symbol', '-')}</b> — {item.get('title', '-')}")
-                if item.get("summary"):
-                    lines.append(f"  {item['summary']}")
+        lines: list[str] = []
+        if not muted:
+            suppressed = self.state.suppressed_alerts
+            lines.append("<b>밤새 알림 요약</b>")
+            if suppressed:
+                for item in suppressed[:20]:
+                    lines.append(f"• {item.get('emoji', '🟡')} <b>{item.get('symbol', '-')}</b> — {item.get('title', '-')}")
+                    if item.get("summary"):
+                        lines.append(f"  {item['summary']}")
+            else:
+                lines.append("억제된 알림은 없습니다.")
+            lines.append("")
+            lines.append(format_positions_summary(payload))
         else:
-            lines.append("억제된 알림은 없습니다.")
-        lines.append("")
-        lines.append(format_positions_summary(payload))
+            lines.append("<b>생존 신호</b> (뮤트 중 — 조건 알림은 억제됨)")
+        if liveness_lines:
+            lines.append("")
+            lines.extend(liveness_lines)
         count = await self.sender.send_to_all("\n".join(lines))
         if count:
             self.state.suppressed_alerts.clear()

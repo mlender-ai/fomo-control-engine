@@ -74,10 +74,18 @@ crypto 트랙은 기존 `{kind, reason, trade}` 계약을 그대로 유지한다
 
 최상단에 `flag_warnings`와 침묵 금지 원칙 문구를 함께 반환한다.
 
-## 남은 항목 (후속 WO)
+## 남은 항목 → **WO-FCE-ENGINE-LIVENESS-01에서 청산 완료 (2026-07-27)**
 
-이 WO에서 배선·계약·억제·진단 표면·effective run·스플릿 플래그 경고를 구현했다. 다음은 별도 후속으로 남긴다(HANDOFF 참조):
+이 WO에서 배선·계약·억제·진단 표면·effective run·스플릿 플래그 경고를 구현했고,
+미완으로 남겼던 작업 5·6은 후속 WO에서 전부 완결했다. 정본: [`docs/EngineLiveness.md`](EngineLiveness.md).
 
-- 일일 요약/펄스의 트랙별 생존 라인 + 뮤트 관통 생존 신호 (작업 5).
-- DB 성장 감시 · keepalive 재시작 가시화 · 검증 시계 유실일 보정 (작업 6).
-- 페이퍼 잡의 stale 감지 대상 포함 (작업 5 일부).
+| 미완 항목 | 상태 |
+| --- | --- |
+| 일일 요약 트랙별 생존 라인 + 뮤트 관통 생존 신호 (작업 5) | ✅ `liveness.daily_liveness_lines()` + `AlertEngine.maybe_send_daily_summary(liveness_lines=)` — 뮤트 중엔 생존 라인만 발송 |
+| 페이퍼 잡 stale 감지 대상 포함 (작업 5 일부) | ✅ `liveness.TRACKED_JOBS` 에 3트랙 전부 포함, `worker_liveness` 잡(5분)이 상시 평가 |
+| DB 성장 감시 (작업 6) | ✅ `liveness.infra_alerts()` — DB 10GB·디스크 20GB 임계 |
+| keepalive 재시작 가시화 (작업 6) | ✅ `logs/restarts.jsonl` + `process_restarted` 알림 + 진단 응답 `liveness.restarts_24h` |
+| 검증 시계 유실일 보정 (작업 6) | ✅ `liveness.elapsed_excluding_gaps()` — "경과 N일 (유실 M일 제외)" |
+
+**미완 머지의 교훈**: 이 WO가 작업 5·6을 미완으로 두고 머지한 사이, 정확히 그 미완 항목이 필요했던
+3트랙 4일 정지가 발생했고 아무도 알지 못했다. 관측성 항목은 부분 머지하지 않는다.

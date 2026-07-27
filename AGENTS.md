@@ -62,6 +62,7 @@ Playwright는 반드시 `npm run test:e2e`/`build:e2e`를 사용해 `.next-e2e`�
 - **적용된 마이그레이션 불변**: `backend/app/db/migrations/*.sql` 기존 파일 수정 금지 — 새 번호로 추가.
 - **킬존 게이트**: 차트·UI·시각 고도화 WO는 발의 시 `docs/FCE-MOAT-STRATEGY-01.md` §2 킬존 대조 결과와 위생 필요성(장애·가독 불능·데이터 오표시)을 명시해야 한다. 명시 없으면 착수 금지.
 - **신규 감지기 모라토리엄**: 기존 candidate 시그니처 중 validated 승격 1호가 나오기 전 신규 감지기(엘리엇·추가 하모닉 등) 추가 금지. 예외는 사용자 명시 승인.
+- **생존 감시는 프로세스 밖에 하나 이상**: 감시 경로를 추가·변경할 때 최소 1개는 **워커 프로세스 외부**여야 한다. 내부 감시만 추가하는 변경은 반려 — 워커가 죽으면 감시도 함께 죽어 침묵이 스스로를 은폐한다(2026-07-23 3트랙 4일 정지 사고). 뮤트는 조건 알림만 억제하며 생존/사망 신호를 끄지 못한다. stale 판정은 `last_success_at`이 아니라 `last_effective_run_at` 기준이다. 정본: [`docs/EngineLiveness.md`](docs/EngineLiveness.md).
 
 ## 코드 규율 — 게으름 사다리
 

@@ -872,8 +872,31 @@ class Settings(BaseSettings):
     )
     alert_rules_enabled: str = Field(
         "trigger_near,invalidation_breach,take_profit_hit,status_worsened,health_drop,liq_proximity,liq_unknown_high_lev,wyckoff_event,data_stall,funding_extreme,oi_divergence,liq_cluster_near,setup_near,setup_triggered,setup_invalidated,intent_approaching,intent_zone_entered,intent_zone_entered_partial,intent_invalidated,universe_discovery,mdd_limit_warn,mdd_limit_critical,"
-        "position_opened,position_closed,verdict_changed,stance_flipped,evidence_insufficient,periodic_pulse,full_alignment,flow_divergence,whale_entry",
+        "position_opened,position_closed,verdict_changed,stance_flipped,evidence_insufficient,periodic_pulse,full_alignment,flow_divergence,whale_entry,"
+        # WO-FCE-ENGINE-LIVENESS-01: 생존 감시 계열은 기본 활성 — 끄면 침묵이 다시 은폐된다.
+        "engine_liveness,job_backoff_stuck,infra_capacity,process_restarted",
         validation_alias=AliasChoices("FCE_ALERT_RULES_ENABLED", "ALERT_RULES_ENABLED"),
+    )
+    # ── WO-FCE-ENGINE-LIVENESS-01 생존 감시 ──────────────────────────────
+    worker_liveness_interval_seconds: int = Field(
+        300,
+        validation_alias=AliasChoices("FCE_WORKER_LIVENESS_INTERVAL_SECONDS", "WORKER_LIVENESS_INTERVAL_SECONDS"),
+    )
+    worker_liveness_stale_multiplier: int = Field(
+        3,
+        validation_alias=AliasChoices("FCE_WORKER_LIVENESS_STALE_MULTIPLIER", "WORKER_LIVENESS_STALE_MULTIPLIER"),
+    )
+    worker_liveness_path: str = Field(
+        "../logs/liveness.json",
+        validation_alias=AliasChoices("FCE_WORKER_LIVENESS_PATH", "WORKER_LIVENESS_PATH"),
+    )
+    db_size_alert_gb: float = Field(
+        10.0,
+        validation_alias=AliasChoices("FCE_DB_SIZE_ALERT_GB", "DB_SIZE_ALERT_GB"),
+    )
+    disk_free_alert_gb: float = Field(
+        20.0,
+        validation_alias=AliasChoices("FCE_DISK_FREE_ALERT_GB", "DISK_FREE_ALERT_GB"),
     )
     # WO-44 포지션 라이프사이클 알림.
     alert_pulse_interval_hours: float = Field(

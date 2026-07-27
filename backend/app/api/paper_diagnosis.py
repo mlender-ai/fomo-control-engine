@@ -94,8 +94,21 @@ def paper_diagnosis() -> dict[str, Any]:
         "ready_to_start_reason": None if settings.paper_engine_enabled else "disabled",
     }
 
+    # WO-FCE-ENGINE-LIVENESS-01: 생존 감시 상태를 같은 화면에 노출한다 —
+    # 트랙 정지·백오프 고착·재시작 이력이 진단 응답 하나로 보여야 한다(작업 4·6).
+    from app.worker import liveness as _liveness
+
+    tracks_liveness = _liveness.track_liveness(worker, settings)
+    restarts = _liveness.recent_restarts(settings)
     return {
         "principle": "침묵 금지 — 모든 미발생은 사유와 함께 관측 가능해야 한다.",
         "flag_warnings": worker.get("flag_warnings", []) if isinstance(worker, dict) else [],
         "tracks": {"crypto": crypto, "stock": stock, "poly": poly},
+        "liveness": {
+            "watchdog_topology": "internal(worker_liveness job) + external(scripts/local/deadman.sh)",
+            "tracks": tracks_liveness,
+            "stale_tracks": [row["job"] for row in tracks_liveness if row["stale"]],
+            "backoff_stuck": _liveness.backoff_stuck_jobs(worker),
+            "restarts_24h": {"count": len(restarts), "events": restarts[-10:]},
+        },
     }

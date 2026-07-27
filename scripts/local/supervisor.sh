@@ -15,18 +15,35 @@ log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG_DIR/supervisor.log"; }
 
 listening() { lsof -ti :"$1" -sTCP:LISTEN >/dev/null 2>&1; }
 
+# WO-FCE-ENGINE-LIVENESS-01 작업 6: 재시작을 조용히 넘기지 않는다(C4).
+# 워커가 이 파일을 읽어 "최근 24h 재시작 N회"를 알림·진단에 노출한다.
+record_restart() {
+  printf '{"at":"%s","target":"%s"}\n' "$(date -u '+%Y-%m-%dT%H:%M:%S+00:00')" "$1" >> "$LOG_DIR/restarts.jsonl"
+}
+
 start_backend() {
   log "backend(8875) down → restart"
+  record_restart "backend:8875"
   nohup /bin/bash "$REPO_DIR/scripts/local/run-backend.sh" >> "$LOG_DIR/backend.log" 2>&1 &
 }
 start_frontend() {
   log "frontend(8876) down → restart"
+  record_restart "frontend:8876"
   nohup /bin/bash "$REPO_DIR/scripts/local/run-frontend.sh" >> "$LOG_DIR/frontend.log" 2>&1 &
 }
 
 log "supervisor started (pid $$, interval ${INTERVAL}s)"
+deadman_tick=0
 while true; do
   listening 8875 || start_backend
   listening 8876 || start_frontend
+  # WO-FCE-ENGINE-LIVENESS-01 작업 3: 외부 데드맨 스위치.
+  # 프로세스가 살아 있어도 워커가 하트비트를 못 쓰면(스케줄러 정지·잡 데드락) 여기서 잡는다.
+  # 60초에 한 번만 평가(감시 루프는 15초 주기).
+  deadman_tick=$((deadman_tick + INTERVAL))
+  if [ "$deadman_tick" -ge 60 ]; then
+    deadman_tick=0
+    /bin/bash "$REPO_DIR/scripts/local/deadman.sh" >> "$LOG_DIR/deadman.log" 2>&1 || true
+  fi
   sleep "$INTERVAL"
 done
