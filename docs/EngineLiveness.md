@@ -56,7 +56,7 @@
 | DB 용량 경고 | 10GB | `FCE_DB_SIZE_ALERT_GB` |
 | 디스크 여유 경고 | 20GB | `FCE_DISK_FREE_ALERT_GB` |
 
-감시 대상 트랙: `paper_engine`(크립토) · `toss_stock_scout`(주식) · `polymarket_paper`(폴리) · `sync_positions`.
+감시 대상 트랙: `paper_engine`(크립토) · `polymarket_paper`(폴리) · `sync_positions` + 시장 단위 가상 트랙 `stock_kr`·`stock_us`(아래 "시장별 독립 생존 판정" 참조).
 
 ## 4. 뮤트 정책 (C2)
 
@@ -111,3 +111,23 @@ FCE_DEADMAN_STALE_SECONDS=30 bash scripts/local/deadman.sh   # 강제 점검(테
 - 사망 알림을 워커·앱 코드 경유로 발송 (죽은 경로 재사용)
 - `last_success_at` 기준 stale 판정 (조기 반환을 정상으로 오인)
 - 유실일을 정상 경과로 계산
+
+
+## 시장별 독립 생존 판정 (WO-FCE-PAPER-ENTRY-REALITY-01, 2026-07-28)
+
+`toss_stock_scout` **하나의 잡이 KR·US 를 함께 수집**한다(`_collect_toss_stocks` 가 두 시장을
+`asyncio.gather`). 그런데 liveness 가 이 잡을 `market="KR"` 로만 판정해서, 미국 정규장
+(KST 22:30~05:00)에는 항상 `market_closed` 로 분류됐다 →
+**미장이 완전히 죽어도 경보가 구조적으로 불가능했다.**
+
+해법: 잡 하트비트가 아니라 **시장별 실제 평가 흔적**으로 판정한다.
+
+| 가상 트랙 | 시장 | 판정 근거 | 세션 |
+| --- | --- | --- | --- |
+| `stock_kr` | KR | `stock_paper_analysis_snapshots` 의 KR 최신 `observed_at` | 09:00~15:30 KST |
+| `stock_us` | US | 같은 테이블의 US 최신 `observed_at` | 09:30~16:00 ET (정규장만) |
+
+- `MARKET_DATA_TRACKS` 에 정의, 기대 주기 900초 × stale 배수(기본 3) = 2,700초 임계.
+- 각 시장은 **자기 정규장에만** 평가된다. 상대 시장이 열려 있어도 자기 장이 닫혔으면 `market_closed`.
+- 장중인데 관측 기록이 아예 없으면 그 자체를 정지로 본다(미장 침묵이 여기서 잡힌다).
+- 프리·애프터 마켓은 범위 외.

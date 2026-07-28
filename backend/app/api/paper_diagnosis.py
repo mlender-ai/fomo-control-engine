@@ -98,7 +98,19 @@ def paper_diagnosis() -> dict[str, Any]:
     # 트랙 정지·백오프 고착·재시작 이력이 진단 응답 하나로 보여야 한다(작업 4·6).
     from app.worker import liveness as _liveness
 
-    tracks_liveness = _liveness.track_liveness(worker, settings)
+    # 시장 단위 가상 트랙(stock_kr/us)은 잡 하트비트가 아니라 실제 평가 흔적으로 판정한다(D3).
+    market_data: dict[str, str | None] = {}
+    try:
+        from app.stock_paper.models import Market
+
+        if stock_store.enabled:
+            market_data = {
+                "stock_kr": stock_store.latest_analysis_at(Market.KR),
+                "stock_us": stock_store.latest_analysis_at(Market.US),
+            }
+    except Exception:
+        market_data = {}
+    tracks_liveness = _liveness.track_liveness(worker, settings, market_data=market_data)
     restarts = _liveness.recent_restarts(settings)
     return {
         "principle": "침묵 금지 — 모든 미발생은 사유와 함께 관측 가능해야 한다.",

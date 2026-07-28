@@ -223,12 +223,31 @@ def _rules_resolution_source(description: str) -> str | None:
     return None
 
 
+# WO-FCE-PAPER-ENTRY-REALITY-01 작업 2 — 옵션 B: macro 정직한 제외.
+#
+# macro 시장은 베이스레이트 제공자가 없어 estimator 가 100% 즉시 거부한다
+# (estimator.py: macro_base_rate_provider_unavailable). 근거 없는 확률을 발행하는 것은
+# C2(정직성) 위반이므로 추정을 억지로 만들지 않는다. 대신 **수집 단계에서 제외**한다.
+#
+# 왜 거부로 남기지 않고 수집에서 빼는가: 평가 대상이 아닌 것을 거부로 세면 지표가 오염된다.
+# 실측(2026-07-28)에서 매 틱 거부 40~44건의 대부분이 macro였고, 그 결과 "최다 거부 게이트"가
+# 영구히 macro_base_rate_provider_unavailable 로 고정돼 **진짜 거부 사유가 가려졌다.**
+#
+# 유니버스 영향: 실측 crypto 534 / macro 99 → macro 제외 후에도 crypto 534개가 남는다(84%).
+# 재도입 조건: 근거 있는 베이스레이트 소스(과거 FOMC 결정 분포·CPI 서프라이즈 분포 등)를
+# evidence[]·confidence_band 와 함께 연결하는 별도 WO. docs/PolyPaperTrading.md 참조.
+SUPPORTED_CATEGORIES: tuple[Category, ...] = (Category.CRYPTO,)
+
+
 def _balanced_categories(markets: list[PolyMarket], limit: int) -> list[PolyMarket]:
-    by_category = {category: [market for market in markets if market.category == category] for category in (Category.CRYPTO, Category.MACRO)}
-    floor = max(1, limit // 3)
-    selected = by_category[Category.CRYPTO][:floor] + by_category[Category.MACRO][:floor]
+    supported = [market for market in markets if market.category in SUPPORTED_CATEGORIES]
+    by_category = {category: [market for market in supported if market.category == category] for category in SUPPORTED_CATEGORIES}
+    floor = max(1, limit // max(1, len(SUPPORTED_CATEGORIES)))
+    selected: list[PolyMarket] = []
+    for category in SUPPORTED_CATEGORIES:
+        selected.extend(by_category[category][:floor])
     selected_ids = {market.id for market in selected}
-    selected.extend(market for market in markets if market.id not in selected_ids)
+    selected.extend(market for market in supported if market.id not in selected_ids)
     return selected[:limit]
 
 

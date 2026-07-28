@@ -62,35 +62,40 @@ def test_track_stale_detected_even_when_job_reports_success(tmp_path) -> None:
     """
     status = {
         "jobs": {
-            "toss_stock_scout": _job(effective_age_s=4 * 86400, interval=10),  # 4일 정지
             "paper_engine": _job(effective_age_s=60),
             "polymarket_paper": _job(effective_age_s=60, interval=60),
             "sync_positions": _job(effective_age_s=60),
         }
     }
-    rows = {row["job"]: row for row in liveness.track_liveness(status, _settings(tmp_path), NOW)}
+    # 주식은 KR·US 를 한 잡이 담당하므로 잡 하트비트가 아니라 시장별 평가 흔적으로 판정한다.
+    market_data = {"stock_kr": (NOW - timedelta(days=4)).isoformat(), "stock_us": None}
+    rows = {row["job"]: row for row in liveness.track_liveness(status, _settings(tmp_path), NOW, market_data)}
 
-    assert rows["toss_stock_scout"]["stale"] is True
+    assert rows["stock_kr"]["stale"] is True  # KR 장중인데 4일 정지
     assert rows["paper_engine"]["stale"] is False
     assert rows["polymarket_paper"]["stale"] is False
 
-    candidates = liveness.evaluate_liveness(status, _settings(tmp_path), NOW)
+    candidates = liveness.evaluate_liveness(status, _settings(tmp_path), NOW, market_data)
     stale = [c for c in candidates if c.payload.get("kind") == "track_stale"]
-    assert len(stale) == 1
-    assert stale[0].identity == "toss_stock_scout"
+    assert [c.identity for c in stale] == ["stock_kr"]
     assert stale[0].severity == "critical"
 
 
 def test_three_paper_tracks_are_all_monitored() -> None:
-    """D3: 감시 대상이 sync_positions 단독이었다 — 3트랙 전부 포함되어야 한다."""
-    assert {"paper_engine", "toss_stock_scout", "polymarket_paper"}.issubset(set(liveness.TRACKED_JOBS))
+    """D3: 감시 대상이 sync_positions 단독이었다 — 3트랙 전부 포함되어야 한다.
+
+    주식은 KR·US 가 한 잡에 묶여 있어 시장 단위 가상 트랙으로 분리 감시한다
+    (WO-FCE-PAPER-ENTRY-REALITY-01: 미장 침묵이 구조적으로 관측 불가였던 결함 수리).
+    """
+    assert {"paper_engine", "polymarket_paper"}.issubset(set(liveness.TRACKED_JOBS))
+    assert {"stock_kr", "stock_us"}.issubset(set(liveness.MARKET_DATA_TRACKS))
 
 
 def test_disabled_track_is_not_reported_as_dead(tmp_path) -> None:
-    status = {"jobs": {"toss_stock_scout": {"status": "disabled"}}}
+    status = {"jobs": {"polymarket_paper": {"status": "disabled"}}}
     rows = {row["job"]: row for row in liveness.track_liveness(status, _settings(tmp_path), NOW)}
-    assert rows["toss_stock_scout"]["state"] == "disabled"
-    assert rows["toss_stock_scout"]["stale"] is False
+    assert rows["polymarket_paper"]["state"] == "disabled"
+    assert rows["polymarket_paper"]["stale"] is False
 
 
 # ── D4: 백오프 고착 ────────────────────────────────────────────────
@@ -174,8 +179,7 @@ async def test_liveness_alerts_pierce_mute(tmp_path) -> None:
             return 1
 
     engine = AlertEngine(settings, _Sender(), state)
-    status = {"jobs": {"toss_stock_scout": _job(effective_age_s=4 * 86400, interval=10)}}
-    candidates = liveness.evaluate_liveness(status, settings, NOW)
+    candidates = liveness.evaluate_liveness({}, settings, NOW, {"stock_kr": (NOW - timedelta(days=4)).isoformat()})
 
     delivered = await engine.evaluate_liveness_alerts(candidates)
 
@@ -249,18 +253,20 @@ def test_market_session_gate_prevents_false_alarm_at_night(tmp_path) -> None:
 
     WO 금지 항목(알림 스팸의 악순환)을 구조적으로 차단한다.
     """
-    night = datetime(2026, 7, 27, 14, 30, tzinfo=timezone.utc)  # 23:30 KST
+    # 20:00 KST = 07:00 ET — KR·US 둘 다 닫힌 시각(23:30 KST 는 미국 장중이라 US 경보가 정상 발화한다).
+    night = datetime(2026, 7, 27, 11, 0, tzinfo=timezone.utc)
     weekend = datetime(2026, 7, 25, 2, 0, tzinfo=timezone.utc)  # 토 11:00 KST
     assert liveness.market_session_active("KR", NOW) is True
     assert liveness.market_session_active("KR", night) is False
     assert liveness.market_session_active("KR", weekend) is False
     assert liveness.market_session_active(None, night) is True  # 코인은 24/7
 
-    status = {"jobs": {"toss_stock_scout": _job(effective_age_s=6 * 3600, interval=10)}}
-    rows = {row["job"]: row for row in liveness.track_liveness(status, _settings(tmp_path), night)}
-    assert rows["toss_stock_scout"]["state"] == "market_closed"
-    assert rows["toss_stock_scout"]["stale"] is False
-    assert liveness.evaluate_liveness(status, _settings(tmp_path), night) == []
+    market_data = {"stock_kr": (night - timedelta(hours=6)).isoformat(), "stock_us": (night - timedelta(hours=6)).isoformat()}
+    rows = {row["job"]: row for row in liveness.track_liveness({}, _settings(tmp_path), night, market_data)}
+    assert rows["stock_kr"]["state"] == "market_closed"
+    assert rows["stock_kr"]["stale"] is False
+    assert liveness.evaluate_liveness({}, _settings(tmp_path), night, market_data) == []
 
     # 같은 정체 상태라도 장중이면 반드시 잡는다.
-    assert any(c.rule_id == "engine_liveness" for c in liveness.evaluate_liveness(status, _settings(tmp_path), NOW))
+    stale_kr = {"stock_kr": (NOW - timedelta(hours=6)).isoformat()}
+    assert any(c.rule_id == "engine_liveness" for c in liveness.evaluate_liveness({}, _settings(tmp_path), NOW, stale_kr))

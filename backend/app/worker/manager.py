@@ -539,6 +539,23 @@ class WorkerManager:
             "telegram_bot": WorkerJob("telegram_bot", 0, None, scheduled=False),
         }
 
+    def _stock_market_data(self) -> dict[str, str | None]:
+        """시장별 마지막 분석 시각 — KR·US 독립 생존 판정 재료(D3)."""
+        try:
+            from app.stock_paper.models import Market
+            from app.stock_paper.store import StockPaperStore
+
+            store = StockPaperStore(self.settings.database_url)
+            if not store.enabled:
+                return {}
+            return {
+                "stock_kr": store.latest_analysis_at(Market.KR),
+                "stock_us": store.latest_analysis_at(Market.US),
+            }
+        except Exception as exc:
+            logger.debug("stock market data probe failed: %s", exc)
+            return {}
+
     def _liveness_lines(self) -> list[str]:
         """일일 요약용 3트랙 생존 라인. 진단 실패는 라인 생략이 아니라 게이트 정보만 생략."""
         diagnosis: dict[str, Any] | None = None
@@ -548,7 +565,7 @@ class WorkerManager:
             diagnosis = paper_diagnosis()
         except Exception as exc:
             logger.debug("paper diagnosis for liveness lines failed: %s", exc)
-        return liveness.daily_liveness_lines(self.status(), self.settings, diagnosis)
+        return liveness.daily_liveness_lines(self.status(), self.settings, diagnosis, market_data=self._stock_market_data())
 
     async def _evaluate_liveness(self) -> dict[str, Any]:
         """트랙 정지·백오프 고착·인프라·재시작 감시 + 외부 데드맨용 하트비트 기록.
@@ -557,7 +574,8 @@ class WorkerManager:
         남기고, 프로세스 사망은 외부 감시자(scripts/local/deadman.sh)가 그 파일로 판정한다.
         """
         status = self.status()
-        candidates = list(liveness.evaluate_liveness(status, self.settings))
+        market_data = self._stock_market_data()
+        candidates = list(liveness.evaluate_liveness(status, self.settings, market_data=market_data))
         candidates.extend(liveness.infra_alerts(*liveness.capacity_probe(self.settings), self.settings))
         restarts = liveness.recent_restarts(self.settings)
         restart_candidate = liveness.restart_alert(restarts)
@@ -571,6 +589,7 @@ class WorkerManager:
             self.settings,
             pid=os.getpid(),
             extra={"restarts_24h": len(restarts), "alerts_sent": sent},
+            market_data=market_data,
         )
         try:
             liveness.write_liveness_snapshot(self.settings.worker_liveness_path, snapshot)

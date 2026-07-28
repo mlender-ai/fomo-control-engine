@@ -249,12 +249,19 @@ def test_non_crypto_macro_market_is_not_added_to_universe() -> None:
     assert parse_market({"id": "sports", "question": "Will Team A win?", "category": "sports"}) is None
 
 
-def test_universe_reserves_observation_capacity_for_both_categories() -> None:
+def test_universe_excludes_macro_until_base_rate_provider_exists() -> None:
+    """WO-FCE-PAPER-ENTRY-REALITY-01 옵션 B: macro 는 수집 단계에서 제외한다.
+
+    estimator 가 macro 를 100% 즉시 거부(`macro_base_rate_provider_unavailable`)하는데도
+    유니버스에 남겨두면, 평가 대상이 아닌 것이 매 틱 거부로 집계돼 최다 거부 게이트를
+    영구 고정시키고 **crypto 의 진짜 거부 사유를 가린다**(2026-07-28 실측).
+    근거 있는 베이스레이트 소스가 연결되면 재도입한다(C2 정직성).
+    """
     crypto = [_market(id=f"c{index}", liquidity=100_000 - index) for index in range(20)]
     macro = [_market(id=f"m{index}", category=Category.MACRO, liquidity=10_000 - index) for index in range(8)]
     selected = _balanced_categories(crypto + macro, 12)
-    assert sum(item.category == Category.MACRO for item in selected) >= 4
-    assert sum(item.category == Category.CRYPTO for item in selected) >= 4
+    assert sum(item.category == Category.MACRO for item in selected) == 0
+    assert sum(item.category == Category.CRYPTO for item in selected) == 12
 
 
 def test_dashboard_keeps_crypto_and_macro_visible(tmp_path: Path) -> None:

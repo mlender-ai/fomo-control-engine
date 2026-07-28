@@ -27,9 +27,21 @@ from app.notify.rules import AlertCandidate, RULE_LABELS
 # 매일 밤 오탐 → 사용자 뮤트 → 침묵 재발이라는 이 WO가 금지한 악순환이 된다.
 TRACKED_JOBS: dict[str, dict[str, Any]] = {
     "paper_engine": {"label": "크립토 페이퍼", "market": None},  # 24/7
-    "toss_stock_scout": {"label": "주식 수집(토스)", "market": "KR"},
     "polymarket_paper": {"label": "폴리마켓 페이퍼", "market": None},
     "sync_positions": {"label": "포지션 동기화", "market": None},
+}
+
+# WO-FCE-PAPER-ENTRY-REALITY-01 (D3): 시장 단위 가상 트랙.
+#
+# `toss_stock_scout` **하나의 잡이 KR·US 를 함께 수집**하므로 잡 하트비트로는 시장별 정지를
+# 구분할 수 없었다. 그래서 liveness 가 KR 로만 판정했고, 미국 장중(KST 22:30~05:00)에는
+# market_closed 로 분류돼 **미장이 완전히 죽어도 경보가 구조적으로 불가능**했다.
+#
+# 해법: 잡이 아니라 **실제 평가 흔적**(시장별 분석 스냅샷 최신 시각)으로 시장별 생존을 판정한다.
+# 각 시장은 자기 정규장 시간에만 평가된다.
+MARKET_DATA_TRACKS: dict[str, dict[str, Any]] = {
+    "stock_kr": {"label": "주식 수집(KR)", "market": "KR", "expected_interval_seconds": 900},
+    "stock_us": {"label": "주식 수집(US)", "market": "US", "expected_interval_seconds": 900},
 }
 
 # 장 시작 직후엔 첫 수집까지 여유를 준다(초).
@@ -124,10 +136,16 @@ def recent_restarts(settings: Settings, *, hours: int = 24) -> list[dict[str, An
     return rows
 
 
-def track_liveness(worker_status: dict[str, Any], settings: Settings, now: datetime | None = None) -> list[dict[str, Any]]:
+def track_liveness(
+    worker_status: dict[str, Any],
+    settings: Settings,
+    now: datetime | None = None,
+    market_data: dict[str, str | None] | None = None,
+) -> list[dict[str, Any]]:
     """트랙별 생존 상태(일일 요약·진단 응답·외부 스냅샷 공용).
 
     stale 판정은 last_effective_run_at 기준이다. last_success_at 은 "돌지만 안 돈다"를 못 잡는다.
+    market_data: 시장 단위 가상 트랙의 마지막 평가 시각(ISO) — {"stock_kr": ..., "stock_us": ...}.
     """
     now = now or datetime.now(timezone.utc)
     multiplier = max(2, int(getattr(settings, "worker_liveness_stale_multiplier", DEFAULT_STALE_MULTIPLIER)))
@@ -185,6 +203,39 @@ def track_liveness(worker_status: dict[str, Any], settings: Settings, now: datet
                 "stale": stale,
             }
         )
+
+    # 시장 단위 가상 트랙(KR·US) — 잡 하트비트가 아니라 실제 평가 흔적으로 판정한다(D3).
+    for key, spec in MARKET_DATA_TRACKS.items():
+        observed_at = (market_data or {}).get(key)
+        if not market_session_active(spec["market"], now):
+            rows.append(
+                {
+                    "job": key,
+                    "label": spec["label"],
+                    "state": "market_closed",
+                    "effective_age_seconds": _age_seconds(observed_at, now),
+                    "threshold_seconds": None,
+                    "last_effective_run_at": observed_at,
+                    "stale": False,
+                }
+            )
+            continue
+        threshold = int(spec["expected_interval_seconds"]) * multiplier
+        age = _age_seconds(observed_at, now)
+        # 장중인데 관측 기록이 아예 없으면 그 자체가 정지다(미장 침묵이 여기 걸린다).
+        stale = age is None or age > threshold
+        rows.append(
+            {
+                "job": key,
+                "label": spec["label"],
+                "state": "stale" if stale else "ok",
+                "effective_age_seconds": age,
+                "threshold_seconds": threshold,
+                "last_effective_run_at": observed_at,
+                "never_effective": age is None,
+                "stale": stale,
+            }
+        )
     return rows
 
 
@@ -208,12 +259,17 @@ def backoff_stuck_jobs(worker_status: dict[str, Any]) -> list[dict[str, Any]]:
     return sorted(stuck, key=lambda row: -row["multiple"])
 
 
-def evaluate_liveness(worker_status: dict[str, Any], settings: Settings, now: datetime | None = None) -> list[AlertCandidate]:
+def evaluate_liveness(
+    worker_status: dict[str, Any],
+    settings: Settings,
+    now: datetime | None = None,
+    market_data: dict[str, str | None] | None = None,
+) -> list[AlertCandidate]:
     """트랙 정지·백오프 고착 알림 후보. 뮤트를 관통해 발송된다(C2) — 호출부 책임."""
     now = now or datetime.now(timezone.utc)
     candidates: list[AlertCandidate] = []
 
-    for row in track_liveness(worker_status, settings, now):
+    for row in track_liveness(worker_status, settings, now, market_data):
         if not row["stale"]:
             continue
         age = _fmt_age(row["effective_age_seconds"])
@@ -265,6 +321,7 @@ def daily_liveness_lines(
     settings: Settings,
     diagnosis: dict[str, Any] | None = None,
     now: datetime | None = None,
+    market_data: dict[str, str | None] | None = None,
 ) -> list[str]:
     """작업 5: 일일 요약의 트랙별 생존 라인.
 
@@ -280,7 +337,7 @@ def daily_liveness_lines(
                 gates[job] = track["top_reject_gate"]
 
     lines = ["<b>트랙 생존</b>"]
-    for row in track_liveness(worker_status, settings, now):
+    for row in track_liveness(worker_status, settings, now, market_data):
         if row["state"] == "missing":
             continue
         if row["state"] == "disabled":
@@ -303,11 +360,12 @@ def build_liveness_snapshot(
     now: datetime | None = None,
     pid: int | None = None,
     extra: dict[str, Any] | None = None,
+    market_data: dict[str, str | None] | None = None,
 ) -> dict[str, Any]:
     """외부 데드맨 스위치가 읽을 하트비트. **워커가 살아있을 때만 갱신된다** —
     파일이 낡았다는 것 자체가 프로세스 사망의 증거다(감시자는 이 파일만 읽는다)."""
     now = now or datetime.now(timezone.utc)
-    tracks = track_liveness(worker_status, settings, now)
+    tracks = track_liveness(worker_status, settings, now, market_data)
     return {
         "schema_version": 1,
         "written_at": now.isoformat(),

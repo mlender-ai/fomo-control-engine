@@ -109,6 +109,21 @@ class StockPaperStore:
                 (market.value, symbol.upper(), observed_at.isoformat(), parameter_version, _json_dumps(payload)),
             )
 
+    def latest_analysis_at(self, market: Market) -> str | None:
+        """시장별 마지막 분석 시각 — WO-FCE-PAPER-ENTRY-REALITY-01(D3) 미장 독립 생존 판정용.
+
+        KR·US 를 한 잡(`toss_stock_scout`)이 함께 수집하므로 잡 하트비트로는 시장별 정지를
+        구분할 수 없다. 실제 평가 흔적(분석 스냅샷)이 시장별 생존의 유일한 증거다.
+        """
+        if not self.enabled:
+            return None
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT MAX(observed_at) AS latest FROM stock_paper_analysis_snapshots WHERE market=?",
+                (market.value,),
+            ).fetchone()
+        return str(row["latest"]) if row and row["latest"] else None
+
     def latest_analysis_snapshot(self, market: Market, symbol: str) -> dict[str, Any] | None:
         with self._connect() as connection:
             row = connection.execute(

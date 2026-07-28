@@ -71,9 +71,15 @@ class NotificationState:
         return False
 
     def clear_paper_skips_for_track(self, track: str) -> None:
-        """엔진이 다시 정상 평가하면 그 트랙의 skip 상태를 지워 다음 스킵을 새 전이로 만든다."""
+        """엔진이 다시 정상 평가하면 그 트랙의 skip 상태를 지워 다음 스킵을 새 전이로 만든다.
+
+        ⚠️ rejected_summary 상태는 지우지 않는다(WO-FCE-PAPER-ENTRY-REALITY-01).
+        거부 집계는 **평가가 정상일 때 매 틱 발생**하므로, effective_run 마다 상태를 지우면
+        "최다 거부 게이트 전이 시에만 발송" 정책이 무력화되어 60초마다 스팸이 재발한다.
+        거부 상태는 게이트가 실제로 바뀌거나 날짜가 바뀔 때만 다시 발송된다.
+        """
         prefix = f"{track}:"
-        for key in [key for key in self.paper_skip_state if key.startswith(prefix)]:
+        for key in [key for key in self.paper_skip_state if key.startswith(prefix) and ":rejected_summary:" not in key]:
             del self.paper_skip_state[key]
 
     # ── 영속화 (WO-44 Part C) ──────────────────────────────────────

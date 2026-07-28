@@ -130,10 +130,14 @@ def test_skip_state_survives_persistence(tmp_path) -> None:
     assert key in reloaded.paper_skip_state
 
 
-def test_skipped_is_the_only_suppressible_kind() -> None:
+def test_non_events_are_suppressible_but_real_events_are_not() -> None:
+    # WO-FCE-PAPER-ENTRY-REALITY-01 명세 정정: rejected_summary 도 억제 대상이다.
+    # 선행 WO는 "집계 1건"만 규정하고 발송 빈도를 빠뜨려 60초마다 1건(일 1,440건)이 나갔다.
+    # "무엇이 안 일어났는가"는 조회 대상이고, "무엇이 일어났는가"만 알림 대상이다.
     assert "skipped" in SUPPRESSIBLE_KINDS
+    assert "rejected_summary" in SUPPRESSIBLE_KINDS
     assert "opened" not in SUPPRESSIBLE_KINDS
-    assert "rejected_summary" not in SUPPRESSIBLE_KINDS
+    assert "closed" not in SUPPRESSIBLE_KINDS
 
 
 # ── 포맷터 (크립토 회귀 방지 + 트랙 렌더) ────────────────────────
