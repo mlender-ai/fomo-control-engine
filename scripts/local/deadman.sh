@@ -60,6 +60,12 @@ read_state() {
 }
 write_state() { echo "$1|$2|$3" > "$STATE_FILE"; }
 
+# supervisor 가 "자동 복구 포기"를 알릴 때 쓰는 강제 메시지 경로(C5).
+if [ -n "${FCE_DEADMAN_FORCE_MESSAGE:-}" ]; then
+  send_telegram "$FCE_DEADMAN_FORCE_MESSAGE"
+  exit 0
+fi
+
 now_epoch=$(date +%s)
 IFS='|' read -r prev_status last_notified last_selfcheck <<< "$(read_state)"
 last_notified=${last_notified:-0}; last_selfcheck=${last_selfcheck:-0}

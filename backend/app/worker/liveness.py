@@ -380,11 +380,17 @@ def build_liveness_snapshot(
 
 
 def write_liveness_snapshot(path: str | Path, snapshot: dict[str, Any]) -> None:
-    """원자적 쓰기 — 외부 감시자가 반쯤 쓰인 파일을 읽고 오탐하지 않게."""
-    target = Path(path).expanduser()
+    """원자적 쓰기 — 외부 감시자가 반쯤 쓰인 파일을 읽고 오탐하지 않게.
+
+    ⚠️ `default=str` 필수(WO-FCE-ENGINE-RESTORE-01 사고). 스냅샷에는 `status()` 유래의
+    datetime(예: muted_until)이 섞여 들어올 수 있고, 직렬화 실패 시 하트비트가 **조용히**
+    멈춰 외부 감시자가 프로세스 사망으로 오판한다(2026-07-28: 11.7시간 오탐).
+    심장박동은 어떤 이유로도 멈추면 안 되므로 표현 불가 타입은 문자열로 낮춰서라도 기록한다.
+    """
+    target = Path(path).expanduser().resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
     temp = target.with_suffix(target.suffix + ".tmp")
-    temp.write_text(json.dumps(snapshot, ensure_ascii=False), encoding="utf-8")
+    temp.write_text(json.dumps(snapshot, ensure_ascii=False, default=str), encoding="utf-8")
     temp.replace(target)
 
 

@@ -6,6 +6,7 @@ import logging
 import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Awaitable, Callable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -148,6 +149,18 @@ class WorkerManager:
             )
         return warnings
 
+    def _job_timeout_seconds(self, name: str) -> int:
+        """잡 실행 예산(초). 주기 × 배수를 하한/상한으로 클램프한다.
+
+        하트비트처럼 주기가 짧은 잡도 최소 예산(기본 120초)을 받아 조기 취소되지 않는다.
+        """
+        job = self.jobs.get(name)
+        interval = int(getattr(job, "interval_seconds", 0) or 0)
+        multiplier = max(2, int(self.settings.worker_job_timeout_multiplier))
+        floor = max(10, int(self.settings.worker_job_timeout_floor_seconds))
+        ceiling = max(floor, int(self.settings.worker_job_timeout_ceiling_seconds))
+        return max(floor, min(ceiling, interval * multiplier or floor))
+
     async def _run_scheduled_job(self, name: str) -> Any:
         job = self.jobs[name]
         if job.runner is None:
@@ -174,9 +187,13 @@ class WorkerManager:
             heartbeat.next_run_at = self._next_run_at(name)
             self._persist(heartbeat)
             try:
+                # C3: 무한 대기 금지. 잡마다 예산(주기 × 배수, 하한/상한 클램프)을 주고
+                # 초과하면 취소한다. 취소해도 락은 `async with` 가 풀어주므로 다음 틱은 정상 실행된다.
+                # 2026-07-28 사고 이전엔 manager 전체에 timeout 이 0건이었다.
+                budget = self._job_timeout_seconds(name)
                 result = runner()
                 if inspect.isawaitable(result):
-                    result = await result
+                    result = await asyncio.wait_for(result, timeout=budget)
                 heartbeat.runs += 1
                 heartbeat.consecutive_failures = 0
                 heartbeat.status = "ok"
@@ -193,6 +210,16 @@ class WorkerManager:
                 return result
             except asyncio.CancelledError:
                 raise
+            except asyncio.TimeoutError:
+                heartbeat.consecutive_failures += 1
+                heartbeat.total_failures += 1
+                heartbeat.status = "error"
+                heartbeat.last_error_at = datetime.now(timezone.utc)
+                heartbeat.last_error = f"timeout after {self._job_timeout_seconds(name)}s"
+                logger.error("worker.%s TIMEOUT — 취소하고 다음 틱으로 넘어간다", name)
+                if scheduled:
+                    self._apply_backoff_if_needed(name)
+                return None
             except Exception as exc:
                 heartbeat.consecutive_failures += 1
                 heartbeat.total_failures += 1
@@ -531,6 +558,12 @@ class WorkerManager:
             # WO-FCE-ENGINE-LIVENESS-01(D2·D3): 사망 감지의 상시화.
             # 기존엔 sync_positions 예외 시점에만 평가돼, 잡이 "성공"하며 아무것도 안 하는
             # 4일 정지를 아무도 몰랐다. 독립 스케줄로 승격하고 3트랙을 감시 대상에 넣는다.
+            # C2: 심장박동은 별도·초경량 잡. 감시 평가가 막혀도 이건 계속 뛴다.
+            "heartbeat": WorkerJob(
+                "heartbeat",
+                self.settings.worker_heartbeat_interval_seconds,
+                self._write_heartbeat,
+            ),
             "worker_liveness": WorkerJob(
                 "worker_liveness",
                 self.settings.worker_liveness_interval_seconds,
@@ -567,11 +600,37 @@ class WorkerManager:
             logger.debug("paper diagnosis for liveness lines failed: %s", exc)
         return liveness.daily_liveness_lines(self.status(), self.settings, diagnosis, market_data=self._stock_market_data())
 
-    async def _evaluate_liveness(self) -> dict[str, Any]:
-        """트랙 정지·백오프 고착·인프라·재시작 감시 + 외부 데드맨용 하트비트 기록.
+    def _write_heartbeat(self) -> dict[str, Any]:
+        """WO-FCE-ENGINE-RESTORE-01 (C2) — **심장박동 전용 잡. 가장 단순한 경로여야 한다.**
 
-        ⚠️ 이것은 **내부** 감시다. 프로세스가 죽으면 이 잡도 죽는다 — 그래서 하트비트 파일을
-        남기고, 프로세스 사망은 외부 감시자(scripts/local/deadman.sh)가 그 파일로 판정한다.
+        네트워크·앱 서비스 호출 없음. 파일에 타임스탬프만 쓰고 즉시 반환한다.
+
+        왜 분리했나: 하트비트가 평가·텔레그램 전송 뒤에 있으면 그 앞단이 매달리거나 실패할 때
+        심장박동이 함께 멎는다. 2026-07-28 사고에서 스냅샷 직렬화 실패(datetime) 하나로
+        하트비트가 11.7시간 멈췄고, 외부 감시자는 그것을 프로세스 사망으로 오판했다.
+        이 잡은 실패할 이유가 최소여야 하며, 실패하면 **ERROR 로 크게 남긴다**(조용한 실패 금지).
+        """
+        payload = {
+            "schema_version": 2,
+            "written_at": datetime.now(timezone.utc).isoformat(),
+            "pid": os.getpid(),
+            "scheduler_running": bool(self.scheduler.running),
+            "source": "heartbeat_job",
+        }
+        try:
+            liveness.write_liveness_snapshot(self.settings.worker_liveness_path, payload)
+        except Exception as exc:
+            # 심장박동 실패는 경고가 아니라 오류다 — 이걸 WARNING 으로 삼켜서 11.7시간을 잃었다.
+            logger.error("HEARTBEAT WRITE FAILED (외부 감시자가 사망으로 오판한다): %s", exc, exc_info=True)
+            return {"written": False, "error": f"{type(exc).__name__}: {exc}"}
+        return {"written": True, "at": payload["written_at"]}
+
+    async def _evaluate_liveness(self) -> dict[str, Any]:
+        """트랙 정지·백오프 고착·인프라·재시작 감시(진단 스냅샷 포함).
+
+        ⚠️ 이것은 **내부** 감시다. 프로세스가 죽으면 이 잡도 죽는다 — 프로세스 사망 판정은
+        `_write_heartbeat` 가 남긴 파일을 외부 감시자(scripts/local/deadman.sh)가 읽어서 한다.
+        이 잡이 느려지거나 실패해도 심장박동은 별도 잡이라 계속 뛴다(C2).
         """
         status = self.status()
         market_data = self._stock_market_data()
@@ -591,10 +650,12 @@ class WorkerManager:
             extra={"restarts_24h": len(restarts), "alerts_sent": sent},
             market_data=market_data,
         )
+        # 상세 진단 스냅샷은 하트비트와 **다른 파일**에 쓴다 — 진단 실패가 심장박동을 멈추지 않게(C2).
         try:
-            liveness.write_liveness_snapshot(self.settings.worker_liveness_path, snapshot)
-        except Exception as exc:  # 하트비트 기록 실패가 워커를 멈추면 안 된다
-            logger.warning("liveness snapshot write failed: %s", exc)
+            detail_path = str(Path(self.settings.worker_liveness_path).with_name("liveness-detail.json"))
+            liveness.write_liveness_snapshot(detail_path, snapshot)
+        except Exception as exc:
+            logger.warning("liveness detail snapshot write failed: %s", exc)
         return {
             "stale_tracks": snapshot["stale_tracks"],
             "backoff_stuck": snapshot["backoff_stuck"],

@@ -131,3 +131,81 @@ FCE_DEADMAN_STALE_SECONDS=30 bash scripts/local/deadman.sh   # 강제 점검(테
 - 각 시장은 **자기 정규장에만** 평가된다. 상대 시장이 열려 있어도 자기 장이 닫혔으면 `market_closed`.
 - 장중인데 관측 기록이 아예 없으면 그 자체를 정지로 본다(미장 침묵이 여기서 잡힌다).
 - 프리·애프터 마켓은 범위 외.
+
+
+## 심장박동의 제1 규칙 (WO-FCE-ENGINE-RESTORE-01, 2026-07-28)
+
+> **심장박동은 가장 단순한 경로여야 한다.**
+> **감지 신호와 조치 신호는 일치해야 한다.**
+
+### 사고: 조용한 직렬화 실패로 11.7시간 정지
+
+`build_liveness_snapshot` 에 `status()` 유래 `datetime`(muted_until)이 섞여 들어가
+`json.dumps` 가 실패했다. 그런데 그 실패는 `try/except → logger.warning` 으로 삼켜졌고,
+잡은 6밀리초 만에 **"ok"** 로 완주했다. 결과:
+
+- 하트비트 파일 11.7시간 정지 (`Object of type datetime is not JSON serializable`)
+- 잡 28종 전부 정상, DB·상태파일은 초 단위 갱신 → **엔진은 멀쩡했다**
+- 외부 감시자는 하트비트만 보므로 **프로세스 사망으로 오판**하고 사망 알림 발송
+- supervisor 는 **포트만** 봤으므로 개입하지 않음 → 11.7시간 방치
+
+### 수리 3종
+
+| 규칙 | 구현 |
+| --- | --- |
+| 심장박동 전용 잡 | `heartbeat` 잡(60초) — 파일에 타임스탬프만 쓰고 즉시 반환. 네트워크·앱 서비스 호출 0 |
+| 실패는 크게 | 하트비트 쓰기 실패는 **ERROR + stack** (WARNING 으로 삼키지 않는다) |
+| 직렬화 방어 | `json.dumps(..., default=str)` — 표현 불가 타입은 문자열로 낮춰서라도 기록 |
+
+상세 진단 스냅샷은 `liveness-detail.json` 으로 **분리**했다. 진단이 실패해도 심장박동은 뛴다.
+
+### 매달림(hang) vs 사망(death)
+
+| 상태 | 포트 | 하트비트 | 판정 주체 | 조치 |
+| --- | --- | --- | --- | --- |
+| 정상 | 열림 | 갱신 | — | — |
+| **매달림** | **열림** | **정지** | supervisor(`check_heartbeat_hang`) | 900초 초과 시 강제 재시작 |
+| 사망 | 닫힘 | 정지 | supervisor(`listening`) + deadman | 즉시 재기동 |
+
+**C4(감지-조치 일치)**: 과거엔 감지=하트비트, 조치=포트로 신호가 어긋나 매달림이 방치됐다.
+이제 supervisor 가 **하트비트 나이로도** 재시작을 판단한다.
+
+### 자동 복구 정책 (C5 · 폭주 금지)
+
+| 항목 | 기본값 | 설정 키 |
+| --- | --- | --- |
+| 매달림 판정 임계 | 900초 | `FCE_SUPERVISOR_HB_STALE_SECONDS` |
+| 재시작 쿨다운 | 600초 | `FCE_SUPERVISOR_HB_COOLDOWN_SECONDS` |
+| 시간당 상한 | 3회 | `FCE_SUPERVISOR_HB_MAX_RESTARTS_PER_HOUR` |
+| 잡 실행 예산 | 주기 × 5 (120~1800초) | `FCE_WORKER_JOB_TIMEOUT_*` |
+
+상한 초과 시 자동 복구를 **중단**하고 "🛑 자동 복구 포기 · 수동 개입 필요"를 발송한다 —
+재시작으로 안 고쳐지는 문제를 무한 재시작으로 덮지 않는다.
+
+### 어댑터 타임아웃 점검표 (C3 · 누락 0)
+
+| 어댑터 | 타임아웃 | 위치 |
+| --- | --- | --- |
+| Bitget | `self.timeout` (설정) | `exchange/bitget/client.py:85` |
+| Toss | 10.0초 (`toss_timeout_seconds`) | `toss/client.py:88` |
+| Polymarket | 10.0초 (`polymarket_timeout_seconds`) | `poly_paper/client.py:106` |
+| Telegram | 10초 | `notify/telegram.py:48` |
+| Hyperliquid | 10.0초 (`hyperliquid_request_timeout_seconds`) | `onchain/hyperliquid/client.py:36` |
+| Coinglass | 10.0초 | `marketdata/coinglass.py:198` |
+
+두 겹 방어: 어댑터 HTTP 타임아웃 + 잡 단위 `asyncio.wait_for`.
+잡 타임아웃만으로는 `asyncio.to_thread` 내부 스레드가 계속 돌아 누수가 남는다.
+
+### 검증 절차 (회귀 시 재현)
+
+```bash
+# 매달림 재현: 포트는 열어두고 하트비트만 낡게 만든다
+python3 -c "import json,datetime;p='logs/liveness.json';d=json.load(open(p));\
+d['written_at']=(datetime.datetime.now(datetime.timezone.utc)-datetime.timedelta(minutes=20)).isoformat();\
+json.dump(d,open(p,'w'))"
+# → 15초 내 supervisor 가 재시작해야 한다
+grep "heartbeat stale" logs/supervisor.log
+```
+
+2026-07-28 실측: 위조 1210초 → **10초 내 PID 교체 확인**(18264 → 18459),
+`restarts.jsonl` 에 `reason="heartbeat_stale"` 기록.

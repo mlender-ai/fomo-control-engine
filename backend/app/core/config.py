@@ -878,6 +878,23 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("FCE_ALERT_RULES_ENABLED", "ALERT_RULES_ENABLED"),
     )
     # ── WO-FCE-ENGINE-LIVENESS-01 생존 감시 ──────────────────────────────
+    worker_heartbeat_interval_seconds: int = Field(
+        60,
+        validation_alias=AliasChoices("FCE_WORKER_HEARTBEAT_INTERVAL_SECONDS", "WORKER_HEARTBEAT_INTERVAL_SECONDS"),
+    )
+    # C3: 잡 실행 예산 = 주기 × 배수. 초과 시 취소하고 다음 틱을 정상 실행한다(무한 대기 금지).
+    worker_job_timeout_multiplier: int = Field(
+        5,
+        validation_alias=AliasChoices("FCE_WORKER_JOB_TIMEOUT_MULTIPLIER", "WORKER_JOB_TIMEOUT_MULTIPLIER"),
+    )
+    worker_job_timeout_floor_seconds: int = Field(
+        120,
+        validation_alias=AliasChoices("FCE_WORKER_JOB_TIMEOUT_FLOOR_SECONDS", "WORKER_JOB_TIMEOUT_FLOOR_SECONDS"),
+    )
+    worker_job_timeout_ceiling_seconds: int = Field(
+        1800,
+        validation_alias=AliasChoices("FCE_WORKER_JOB_TIMEOUT_CEILING_SECONDS", "WORKER_JOB_TIMEOUT_CEILING_SECONDS"),
+    )
     worker_liveness_interval_seconds: int = Field(
         300,
         validation_alias=AliasChoices("FCE_WORKER_LIVENESS_INTERVAL_SECONDS", "WORKER_LIVENESS_INTERVAL_SECONDS"),
