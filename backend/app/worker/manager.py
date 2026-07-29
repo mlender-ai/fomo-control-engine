@@ -589,6 +589,16 @@ class WorkerManager:
             logger.debug("stock market data probe failed: %s", exc)
             return {}
 
+    def _stock_market_reasons(self) -> dict[str, str]:
+        """시장별 정지 사유(차단 래치·조기 반환) — 감시가 "왜"까지 말하게 한다(작업 3)."""
+        try:
+            from app.toss import blocks as toss_blocks
+
+            return toss_blocks.stall_reasons()
+        except Exception as exc:
+            logger.debug("toss stall reason probe failed: %s", exc)
+            return {}
+
     def _liveness_lines(self) -> list[str]:
         """일일 요약용 3트랙 생존 라인. 진단 실패는 라인 생략이 아니라 게이트 정보만 생략."""
         diagnosis: dict[str, Any] | None = None
@@ -634,7 +644,8 @@ class WorkerManager:
         """
         status = self.status()
         market_data = self._stock_market_data()
-        candidates = list(liveness.evaluate_liveness(status, self.settings, market_data=market_data))
+        market_reasons = self._stock_market_reasons()
+        candidates = list(liveness.evaluate_liveness(status, self.settings, market_data=market_data, market_reasons=market_reasons))
         candidates.extend(liveness.infra_alerts(*liveness.capacity_probe(self.settings), self.settings))
         restarts = liveness.recent_restarts(self.settings)
         restart_candidate = liveness.restart_alert(restarts)
@@ -753,7 +764,9 @@ def _configure_worker_logging(settings: Settings) -> None:
 
 def _compact_result(result: Any) -> Any:
     if isinstance(result, dict):
-        return {key: value for key, value in result.items() if key in {"count", "open_count", "positions", "scores", "needs_exit_record_count"}}
+        # KR·US 를 넣는 이유: 이게 빠져 있어서 "20.8시간째 authentication_failed" 가
+        # 로그에 단 한 줄도 안 남았다(WO-FCE-TOSS-US-STALL-01 D4). 조기 반환 사유는 버리지 않는다.
+        return {key: value for key, value in result.items() if key in {"count", "open_count", "positions", "scores", "needs_exit_record_count", "KR", "US"}}
     return result
 
 

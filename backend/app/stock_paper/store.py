@@ -14,6 +14,16 @@ from app.db.sqlite_utils import connect_sqlite
 from .models import Currency, Market, OrderStatus, PaperFill, Side, StockOrder
 
 
+def _liveness_clock(started_at: datetime, effective_days: set[str], now: datetime) -> dict[str, Any]:
+    """검증 시계 보정을 `liveness.elapsed_excluding_gaps` 하나로 통일한다(중복 구현 금지).
+
+    지연 import 인 이유: 트레이딩 스토어가 워커 모듈에 로드 시점 의존성을 갖지 않게 하기 위함.
+    """
+    from app.worker.liveness import elapsed_excluding_gaps
+
+    return elapsed_excluding_gaps(started_at, effective_days, now)
+
+
 def _json_default(value: Any) -> Any:
     if isinstance(value, datetime):
         return value.isoformat()
@@ -108,6 +118,21 @@ class StockPaperStore:
                 (market, symbol, observed_at, parameter_version, payload) VALUES (?, ?, ?, ?, ?)""",
                 (market.value, symbol.upper(), observed_at.isoformat(), parameter_version, _json_dumps(payload)),
             )
+
+    def effective_days(self, market: Market) -> set[str]:
+        """실제 평가가 있었던 날짜(UTC, ISO date) 집합 — 검증 시계 보정용(C5).
+
+        WO-FCE-TOSS-US-STALL-01 작업 5. 달력일로 경과를 세면 "28일 검증했다"가 거짓이 된다.
+        실측 2026-07-28~29: 인증 래치로 US 정규장 잔여 6시간·KR 정규장 6.5시간이 통째로 유실됐다.
+        """
+        if not self.enabled:
+            return set()
+        with self._connect() as connection:
+            rows = connection.execute(
+                "SELECT DISTINCT substr(observed_at, 1, 10) AS day FROM stock_paper_analysis_snapshots WHERE market=?",
+                (market.value,),
+            ).fetchall()
+        return {str(row["day"]) for row in rows if row["day"]}
 
     def latest_analysis_at(self, market: Market) -> str | None:
         """시장별 마지막 분석 시각 — WO-FCE-PAPER-ENTRY-REALITY-01(D3) 미장 독립 생존 판정용.
@@ -496,10 +521,16 @@ class StockPaperStore:
                 int(item["quantity"]) * float(item["current_price"]) for item in track_positions if item["current_price"] is not None
             )
             engine_return = (nav / float(track["initial_cash"]) - 1) * 100 if marks_complete else None
+            # C5: 유실 구간을 정상 검증 기간으로 계산하지 않는다. 달력일과 실측일을 **둘 다** 싣고,
+            # 화면은 "경과 N일 (유실 M일 제외)" 로 정직하게 표기한다.
+            clock = _liveness_clock(start, self.effective_days(Market(track["market"])), now)
             result_tracks.append(
                 {
                     **track,
-                    "elapsed_days": max(0, min(28, (now - start).days)) if bool(track.get("clock_valid")) else 0,
+                    "elapsed_days": min(28, clock["effective_days"]) if bool(track.get("clock_valid")) else 0,
+                    "calendar_days": clock["calendar_days"],
+                    "lost_days": clock["lost_days"],
+                    "elapsed_label": clock["label"] if bool(track.get("clock_valid")) else "첫 수집 대기",
                     "benchmark_return_pct": round(benchmark_return, 4) if benchmark_return is not None else None,
                     "nav": round(nav, 4) if marks_complete else None,
                     "nav_complete": marks_complete,

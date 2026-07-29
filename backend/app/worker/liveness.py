@@ -141,11 +141,14 @@ def track_liveness(
     settings: Settings,
     now: datetime | None = None,
     market_data: dict[str, str | None] | None = None,
+    market_reasons: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     """트랙별 생존 상태(일일 요약·진단 응답·외부 스냅샷 공용).
 
     stale 판정은 last_effective_run_at 기준이다. last_success_at 은 "돌지만 안 돈다"를 못 잡는다.
     market_data: 시장 단위 가상 트랙의 마지막 평가 시각(ISO) — {"stock_kr": ..., "stock_us": ...}.
+    market_reasons: 시장 코드(KR/US)별 정지 사유 한 줄 — 감시가 "왜"까지 말하게 한다
+    (WO-FCE-TOSS-US-STALL-01 작업 3. 사유 없는 정지 알림은 사람이 코드를 뒤지게 만든다).
     """
     now = now or datetime.now(timezone.utc)
     multiplier = max(2, int(getattr(settings, "worker_liveness_stale_multiplier", DEFAULT_STALE_MULTIPLIER)))
@@ -234,6 +237,7 @@ def track_liveness(
                 "last_effective_run_at": observed_at,
                 "never_effective": age is None,
                 "stale": stale,
+                "reason": (market_reasons or {}).get(str(spec["market"])),
             }
         )
     return rows
@@ -264,12 +268,13 @@ def evaluate_liveness(
     settings: Settings,
     now: datetime | None = None,
     market_data: dict[str, str | None] | None = None,
+    market_reasons: dict[str, str] | None = None,
 ) -> list[AlertCandidate]:
     """트랙 정지·백오프 고착 알림 후보. 뮤트를 관통해 발송된다(C2) — 호출부 책임."""
     now = now or datetime.now(timezone.utc)
     candidates: list[AlertCandidate] = []
 
-    for row in track_liveness(worker_status, settings, now, market_data):
+    for row in track_liveness(worker_status, settings, now, market_data, market_reasons):
         if not row["stale"]:
             continue
         age = _fmt_age(row["effective_age_seconds"])
@@ -277,7 +282,8 @@ def evaluate_liveness(
             [
                 f"🔴 <b>트랙 정지</b> — {row['label']}",
                 f"마지막 실제 평가: {age} 전 (허용 {_fmt_age(row['threshold_seconds'])})",
-                "잡은 '성공'으로 기록되지만 실제 평가가 없습니다 — 데이터 소스·인증을 확인하세요.",
+                # 사유를 아는데 안 알리면 사람이 다시 코드를 뒤진다(작업 3).
+                f"사유: {row['reason']}" if row.get("reason") else "잡은 '성공'으로 기록되지만 실제 평가가 없습니다 — 데이터 소스·인증을 확인하세요.",
             ]
         )
         candidates.append(
@@ -322,6 +328,7 @@ def daily_liveness_lines(
     diagnosis: dict[str, Any] | None = None,
     now: datetime | None = None,
     market_data: dict[str, str | None] | None = None,
+    market_reasons: dict[str, str] | None = None,
 ) -> list[str]:
     """작업 5: 일일 요약의 트랙별 생존 라인.
 
@@ -337,7 +344,7 @@ def daily_liveness_lines(
                 gates[job] = track["top_reject_gate"]
 
     lines = ["<b>트랙 생존</b>"]
-    for row in track_liveness(worker_status, settings, now, market_data):
+    for row in track_liveness(worker_status, settings, now, market_data, market_reasons):
         if row["state"] == "missing":
             continue
         if row["state"] == "disabled":
@@ -349,6 +356,9 @@ def daily_liveness_lines(
         mark = "🔴 정지" if row["stale"] else "🟢 정상"
         age = _fmt_age(row["effective_age_seconds"])
         extra = f" · 최다거부 {gates[row['job']]}" if gates.get(row["job"]) else ""
+        # 정지 라인은 사유까지 실어야 사람이 코드를 뒤지지 않는다(작업 3).
+        if row["stale"] and row.get("reason"):
+            extra = f" · {row['reason']}{extra}"
         lines.append(f"• {row['label']}: {mark} · 마지막 실제 평가 {age} 전{extra}")
     return lines
 

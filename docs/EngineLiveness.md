@@ -209,3 +209,63 @@ grep "heartbeat stale" logs/supervisor.log
 
 2026-07-28 실측: 위조 1210초 → **10초 내 PID 교체 확인**(18264 → 18459),
 `restarts.jsonl` 에 `reason="heartbeat_stale"` 기록.
+
+## 자기잠금 금지 · 산출물 기준 감시 (WO-FCE-TOSS-US-STALL-01, 2026-07-29)
+
+> **차단 상태는 자동 재시도 경로를 반드시 가져야 한다(자기잠금 금지).**
+> **잡 단위 감시로는 잡 내부 분기의 죽음을 볼 수 없다 — 산출물 기준 감시가 필요하다.**
+
+### 사고: 잡은 도는데 수집만 20.8시간 정지
+
+`_authentication_blocked` 가 자기잠금 래치였다. 401 → 차단 등록 → 진입 즉시 반환(호출 안 함)
+→ 성공할 기회가 없음 → 차단 영구. 해제 경로가 "수집 성공"뿐인데 차단 때문에 시도 자체가 없었다.
+
+| 층위 | 상태 | 왜 못 봤나 |
+| --- | --- | --- |
+| 프로세스 | 22.7시간 무중단 | 죽지 않았다 |
+| 하트비트 | 60초마다 정상 | 심장은 뛰었다 |
+| `toss_stock_scout` | runs 8,076 · 오류 0 | 조기 반환은 "성공"이다 |
+| `last_effective_run_at` | 계속 갱신 | 잡이 반환값을 주면 effective 로 친다 |
+| 실제 수집 | **0건 (20.8시간)** | 아무 지표에도 안 나타난다 |
+
+정지 알림은 `stock_us` 하나만 떴고, **이유를 몰라 사람이 코드를 뒤져야 했다.**
+
+### 고정한 규칙
+
+1. **자기잠금 금지(C2)** — 모든 차단은 `blocked_until` 백오프 후 실호출로 재시도한다.
+   정본: [`docs/TossAuthRunbook.md`](TossAuthRunbook.md) "자동 재시도·백오프".
+2. **조용한 조기 반환 금지(C3)** — 산출물 없는 반환 6개 지점(`authentication_failed`·
+   `maintenance`·세션 비개장·`empty_universe`·`edge_blocked`)은 전부
+   `{market, status, reason, blocked_until, observed_at}` 로 기록되고 진단 API 에 노출된다.
+3. **사유 있는 정지 알림(작업 3)** — 트랙 stale 알림·일일 요약 생존 라인에 사유가 함께 실린다.
+   `market_reasons` 로 `track_liveness`/`evaluate_liveness`/`daily_liveness_lines` 에 주입한다.
+4. **로그가 사유를 버리지 않는다(D4)** — `_compact_result` 화이트리스트에 `KR`·`US` 를 넣었다.
+   이게 빠져 있어서 "20.8시간째 authentication_failed" 가 로그에 단 한 줄도 없었다.
+
+### 감시 증거의 층위 — 무엇을 보고 살아있다고 말하는가
+
+| 증거 | 잡는 것 | 놓치는 것 |
+| --- | --- | --- |
+| 프로세스 포트 | 사망 | 매달림·내부 분기 정지 |
+| 하트비트 파일 | 매달림 | 잡 내부 분기 정지 |
+| 잡 `last_success_at` | 잡 예외 | 조기 반환("성공"으로 기록) |
+| 잡 `last_effective_run_at` | 무수확 사이클 | 잡이 값을 반환하면 통과 |
+| **산출물(DB 기록)** | **분기 단위 정지** | 게이트 하류면 후보 부재와 구분 불가 |
+
+`stock_kr`·`stock_us` 트랙은 `stock_paper_analysis_snapshots` 를 근거로 삼는데,
+이 테이블은 **진입 게이트 3개를 통과한 뒤에만** 기록된다. 따라서 "스냅샷 없음"은
+"수집 정지"와 "후보 부재"를 구분하지 못한다 — 그래서 사유(`market_reasons`)를 함께 실어야 한다.
+원시 수집 여부는 `toss_quotes`(시장별 `observed_at`)가 정본이다.
+
+### 검증 시계 유실일 (C5 · 3트랙 완결)
+
+`elapsed_excluding_gaps` 는 정의만 있고 **어디서도 호출되지 않는 죽은 코드**였다. 이제 배선됐다.
+
+| 트랙 | 실측 근거 | 표기 |
+| --- | --- | --- |
+| 주식 KR·US | `stock_paper_analysis_snapshots` 의 날짜별 존재 | `경과 N일 (유실 M일 제외)` |
+| 폴리 | `poly_markets.observed_at` 의 날짜별 존재 | 동일 |
+
+API 는 `elapsed_days`(유실 제외) · `calendar_days` · `lost_days` · `elapsed_label` 을 함께 낸다.
+대시보드 3곳(주식 트랙 카드·폴리 뷰·리뷰 개요)이 유실일을 표시한다.
+숫자가 나빠져도 정직한 재계산이 우선이다.

@@ -13,6 +13,13 @@ from app.db.sqlite_utils import connect_sqlite
 from .models import PaperFill, PaperOrder, PolyMarket, ProbabilityEstimate
 
 
+def _liveness_clock(started_at: datetime, effective_days: set[str], now: datetime) -> dict[str, Any]:
+    """검증 시계 보정 공용 계산(지연 import — 스토어가 워커에 로드 의존성을 갖지 않게)."""
+    from app.worker.liveness import elapsed_excluding_gaps
+
+    return elapsed_excluding_gaps(started_at, effective_days, now)
+
+
 POLY_LEDGER_POSITION_ID = uuid5(NAMESPACE_URL, "fce:polymarket:paper:ledger")
 
 
@@ -423,9 +430,22 @@ class PolyPaperStore:
             ).fetchall()
         track_payload = dict(track) if track else {}
         elapsed_days = 0
+        # C5: 엔진이 멈춰 있던 날은 검증한 날이 아니다. 관측 흔적(poly_markets.observed_at)이 있는
+        # 날만 경과로 센다 — WO-FCE-TOSS-US-STALL-01 작업 5(3트랙 공통 적용).
+        clock: dict[str, Any] = {"calendar_days": 0, "effective_days": 0, "lost_days": 0, "label": "첫 수집 대기"}
         if track and bool(track["clock_valid"]) and track["started_at"]:
-            elapsed_days = max(0, min(28, (datetime.now(timezone.utc) - _datetime(track["started_at"])).days))
+            with self._connect() as connection:
+                observed = connection.execute("SELECT DISTINCT substr(observed_at, 1, 10) AS day FROM poly_markets").fetchall()
+            clock = _liveness_clock(
+                _datetime(track["started_at"]),
+                {str(row["day"]) for row in observed if row["day"]},
+                datetime.now(timezone.utc),
+            )
+            elapsed_days = min(28, clock["effective_days"])
         track_payload["elapsed_days"] = elapsed_days
+        track_payload["calendar_days"] = clock["calendar_days"]
+        track_payload["lost_days"] = clock["lost_days"]
+        track_payload["elapsed_label"] = clock["label"]
         market_payload = []
         for row in markets:
             item = {key: row[key] for key in row.keys() if key not in {"payload", "estimate_payload", "category_rank"}}

@@ -124,6 +124,18 @@ class TossReadOnlyClient:
         """Verify issuance without exposing the token to diagnostic callers."""
         await self._access_token()
 
+    def invalidate_cached_token(self) -> None:
+        """차단 해제를 재시도하기 전에 캐시 토큰을 버린다 (WO-FCE-TOSS-US-STALL-01 작업 2).
+
+        401 로 차단된 뒤 같은 토큰으로 재시도하면 즉시 재차단되어 백오프만 늘어난다.
+        폐기해 두면 다음 요청이 강제로 재발급을 거친다.
+        """
+        try:
+            key = (self.client_id, id(asyncio.get_running_loop()))
+        except RuntimeError:  # 실행 중인 루프가 없으면 캐시 키 자체가 없다.
+            return
+        _SHARED_TOKENS.pop(key, None)
+
     async def _access_token(self, *, force: bool = False, rejected_token: str | None = None) -> str:
         if not self.configured:
             raise TossAuthenticationError("토스 API 인증값이 설정되지 않았습니다.")

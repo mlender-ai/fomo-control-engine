@@ -37,7 +37,7 @@ export function PolymarketPaperView({
         <div><span className="engineSectionLabel">독립 확률 검증 · {data.parameter_version}</span><h2>Polymarket · Crypto / Macro</h2><p>캔들 판정 엔진과 분리하고, 만기 정답으로 Brier score를 채점합니다.</p></div>
         <div className="polyTrackSummary">
           <p><span>USDC 잔액</span><strong>{money(cash)}</strong></p>
-          <p><span>검증 시계</span><strong>{track.clock_valid ? `${track.elapsed_days ?? 0}/28일` : "첫 수집 대기"}</strong></p>
+          <p><span>검증 시계</span><strong>{track.clock_valid ? `${track.elapsed_days ?? 0}/28일${track.lost_days ? ` (유실 ${track.lost_days}일 제외)` : ""}` : "첫 수집 대기"}</strong></p>
           <p><span>정산 표본</span><strong>N={data.calibration.n}</strong></p>
         </div>
       </header>

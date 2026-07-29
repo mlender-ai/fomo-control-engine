@@ -110,7 +110,12 @@ def paper_diagnosis() -> dict[str, Any]:
             }
     except Exception:
         market_data = {}
-    tracks_liveness = _liveness.track_liveness(worker, settings, market_data=market_data)
+    # 조기 반환 사유·차단 래치는 예외를 던지지 않아 잡 지표에 안 남는다 — 여기서 노출한다(D4).
+    from app.toss import blocks as _toss_blocks
+
+    toss_blocks_snapshot = _toss_blocks.blocks_snapshot()
+    toss_outcomes = _toss_blocks.outcomes_snapshot()
+    tracks_liveness = _liveness.track_liveness(worker, settings, market_data=market_data, market_reasons=_toss_blocks.stall_reasons())
     restarts = _liveness.recent_restarts(settings)
     return {
         "principle": "침묵 금지 — 모든 미발생은 사유와 함께 관측 가능해야 한다.",
@@ -122,5 +127,11 @@ def paper_diagnosis() -> dict[str, Any]:
             "stale_tracks": [row["job"] for row in tracks_liveness if row["stale"]],
             "backoff_stuck": _liveness.backoff_stuck_jobs(worker),
             "restarts_24h": {"count": len(restarts), "events": restarts[-10:]},
+        },
+        # 자기잠금 래치 재발 감시용. blocked 가 있는데 retry_in_seconds 가 줄지 않으면 이상이다.
+        "toss_collection": {
+            "principle": "모든 차단에는 자동 재시도 경로가 있다 — 재시작 없이 스스로 풀려야 한다.",
+            "blocks": toss_blocks_snapshot,
+            "last_outcomes": toss_outcomes,
         },
     }

@@ -2337,6 +2337,10 @@ export type StockPaperTrack = {
   status: "running" | "stopped" | "completed";
   stop_reason: string | null;
   elapsed_days: number;
+  /** 유실일 제외 정직 표기 — 엔진 정지 구간을 검증 기간으로 세지 않는다(WO-FCE-TOSS-US-STALL-01 작업 5). */
+  calendar_days?: number;
+  lost_days?: number;
+  elapsed_label?: string;
   engine_return_pct: number | null;
   nav: number | null;
   nav_complete: boolean;
@@ -2513,6 +2517,9 @@ export type PolyPaperDashboard = {
     last_collection_status?: string | null;
     last_collection_error?: string | null;
     elapsed_days?: number;
+    calendar_days?: number;
+    lost_days?: number;
+    elapsed_label?: string;
   };
   markets: PolyPaperMarket[];
   positions: Array<{

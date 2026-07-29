@@ -41,7 +41,7 @@ export function ReviewOverviewShell() {
           href="/engine?tab=stocks"
           icon={Building2}
           title="주식 페이퍼"
-          value={stockPaper?.tracks.length ? stockPaper.tracks.map((track) => `${track.market} ${track.elapsed_days}/28일`).join(" · ") : "트랙 준비 중"}
+          value={stockPaper?.tracks.length ? stockPaper.tracks.map((track) => `${track.market} ${track.elapsed_days}/28일${track.lost_days ? ` (유실 ${track.lost_days}일)` : ""}`).join(" · ") : "트랙 준비 중"}
           detail={stockPaper?.sample_note || "나스닥100·코스피100을 독립 시계로 검증합니다."}
         />
         <ReviewEntry

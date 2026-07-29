@@ -2785,6 +2785,15 @@ textarea:focus {
   border-color: var(--rh-red);
 }
 
+/* 유실일 표기 — "28일 검증했다"가 거짓이 되지 않게 경과 옆에 항상 붙는다(C5 정직성). */
+.stockTrackCard > header .lostDays {
+  display: block;
+  color: var(--rh-red);
+  font-size: var(--fce-type-xs);
+  font-weight: 500;
+  text-align: right;
+}
+
 .stockTrackCard > header,
 .stockExecutionAudit > header,
 .stockFillAudit > header {

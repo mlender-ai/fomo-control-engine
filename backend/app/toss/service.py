@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
-import math
 import time
 from typing import Any
 
+import logging
+
 from app.core.config import Settings
 
+from . import blocks
 from .client import TossReadOnlyClient
 from .errors import TossAuthenticationError, TossEdgeBlocked, TossMaintenance
 from .signals import (
@@ -38,9 +40,7 @@ _investor_cache: dict[str, tuple[float, list[dict[str, Any]]]] = {}
 _warning_cache: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
 _candidate_evidence_cache: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
 _orderbook_imbalance: dict[tuple[str, str], float] = {}
-_maintenance_until: dict[str, float] = {}
 _latest_market: dict[str, dict[str, Any]] = {}
-_authentication_blocked: dict[str, dict[str, Any]] = {}
 _BENCHMARK_PROXY = {"KR": "237350", "US": "QQQ"}
 _MAX_CANDIDATES_PER_MARKET = 18
 _daily_backfill_cursor = {"KR": 0, "US": 0}
@@ -48,8 +48,16 @@ _coverage_cursor = {"KR": 0, "US": 0}
 _daily_backfilled_on: dict[tuple[str, str], str] = {}
 
 
+logger = logging.getLogger("toss.service")
+
+
 def clear_authentication_blocks() -> None:
-    _authentication_blocked.clear()
+    """진단 API 가 사람 개입으로 차단을 즉시 푸는 경로.
+
+    주의: 이건 **보조** 경로다. 자동 복구는 `blocks` 의 백오프 재시도가 담당한다.
+    2026-07-28 사고 때는 이 수동 경로가 유일한 해제 수단이라 20.8시간이 날아갔다.
+    """
+    blocks.clear_all()
 
 
 def public_status(settings: Settings, market: str, store: TossStockStore) -> dict[str, Any]:
@@ -72,23 +80,58 @@ def latest_status(settings: Settings, market: str, store: TossStockStore) -> dic
     return _latest_market.get(market) or public_status(settings, market, store)
 
 
+def _early_return(
+    settings: Settings,
+    market: str,
+    store: TossStockStore,
+    status: str,
+    *,
+    reason: str | None = None,
+    extra: dict[str, Any] | None = None,
+    block: blocks.MarketBlock | None = None,
+) -> dict[str, Any]:
+    """C3: 산출물 없는 반환은 **전부** 사유와 함께 기록한다.
+
+    조기 반환 6개 지점(auth/maintenance/세션 비개장/empty_universe/edge_blocked)은 모두
+    정상 반환이라 잡 하트비트·오류 카운터에 흔적이 남지 않는다. 그래서
+    "5.5시간째 authentication_failed" 를 아무도 보고받지 못했다(D4).
+    """
+    outcome = blocks.record_outcome(market, status, reason=reason, block=block)
+    response = {
+        **public_status(settings, market, store),
+        "status": status,
+        "reason": reason,
+        "outcome": outcome,
+        **(extra or {}),
+    }
+    if block is not None:
+        response.update(
+            {
+                "retry_in_seconds": block.retry_in_seconds(),
+                "attempt_count": block.attempt_count,
+                "blocked_since": block.first_blocked_at,
+                **block.last_error,
+            }
+        )
+    _latest_market[market] = response
+    return response
+
+
 async def collect_market(settings: Settings, market: str) -> dict[str, Any]:
     store = TossStockStore(settings.database_url)
-    if market in _authentication_blocked:
-        return {
-            **public_status(settings, market, store),
-            "status": "authentication_failed",
-            **_authentication_blocked[market],
-            "diagnosis_url": "/api/system/toss/auth-diagnosis",
-        }
-    pause_seconds = math.ceil(_maintenance_until.get(market, 0) - time.monotonic())
-    if pause_seconds > 0:
-        return {
-            **public_status(settings, market, store),
-            "status": "maintenance",
-            "message": "토스 API 점검으로 수집을 일시 중지했습니다.",
-            "pause_seconds": pause_seconds,
-        }
+    # C2(자기잠금 금지): 차단돼 있어도 재시도 시각이 지나면 여기서 막지 않고 **실제로 호출한다**.
+    blocked = blocks.active_block(market)
+    if blocked is not None:
+        return _early_return(
+            settings,
+            market,
+            store,
+            blocked.status,
+            reason=blocked.reason,
+            block=blocked,
+            extra={"diagnosis_url": "/api/system/toss/auth-diagnosis"} if blocked.status == "authentication_failed" else None,
+        )
+    retrying = blocks.pending_block(market)
     client = TossReadOnlyClient(
         settings.toss_client_id,
         settings.toss_client_secret,
@@ -96,19 +139,31 @@ async def collect_market(settings: Settings, market: str) -> dict[str, Any]:
         timeout_seconds=settings.toss_timeout_seconds,
     )
     now = datetime.now(timezone.utc).isoformat()
+    if retrying is not None:
+        # 차단 해제 재시도. 인증 차단이면 폐기된 토큰으로 재시도해봐야 즉시 재차단이다.
+        logger.info(
+            "toss %s 차단 해제 재시도 — %s (%d회차 · %d초 지속)",
+            market,
+            retrying.status,
+            retrying.attempt_count,
+            retrying.blocked_seconds(),
+        )
+        if retrying.status == "authentication_failed":
+            client.invalidate_cached_token()
     try:
         calendar = await client.get(f"/api/v1/market-calendar/{market}")
         session = _session_state(calendar, market)
         if session != "open":
-            response = {
-                **public_status(settings, market, store),
-                "status": session,
-                "market_state": session,
-                "observed_at": now,
-                "coverage_candidates": [],
-            }
-            _latest_market[market] = response
-            return response
+            # 호출이 성공했으므로 차단은 실제로 풀렸다 — 장이 닫혔을 뿐이다.
+            _note_recovery(market, blocks.clear_block(market))
+            return _early_return(
+                settings,
+                market,
+                store,
+                session,
+                reason=_session_reason(calendar, market, session),
+                extra={"market_state": session, "observed_at": now, "coverage_candidates": []},
+            )
         rankings = await _load_rankings(client, store, market, now)
         investor_payloads = await _load_investor_flow(client, store, market, now)
         ranked_symbols = {symbol for payload in rankings.values() for symbol in _ranking_rows(payload)}
@@ -117,7 +172,15 @@ async def collect_market(settings: Settings, market: str) -> dict[str, Any]:
         symbols = list(dict.fromkeys([*configured_symbols, *universe_symbols, _BENCHMARK_PROXY[market]]))
         symbols = list(dict.fromkeys([*symbols, *sorted(ranked_symbols)]))[:400]
         if not symbols:
-            return {**public_status(settings, market, store), "status": "empty_universe", "market_state": "open"}
+            _note_recovery(market, blocks.clear_block(market))
+            return _early_return(
+                settings,
+                market,
+                store,
+                "empty_universe",
+                reason="수집 대상 심볼이 0개 — 유니버스·워치리스트 설정을 확인하세요.",
+                extra={"market_state": "open", "observed_at": now},
+            )
         price_rows: list[dict[str, Any]] = []
         stock_rows: list[dict[str, Any]] = []
         for offset in range(0, len(symbols), 200):
@@ -188,40 +251,110 @@ async def collect_market(settings: Settings, market: str) -> dict[str, Any]:
             "coverage_candidates": coverage_candidates,
         }
         _latest_market[market] = response
-        _authentication_blocked.pop(market, None)
+        blocks.record_outcome(market, "observed", reason=None)
+        _note_recovery(market, blocks.clear_block(market))
         return response
     except TossEdgeBlocked as exc:
-        return {**public_status(settings, market, store), "status": "edge_blocked", "message": str(exc), "request_id": exc.request_id}
+        # 과거엔 래치가 없어 매 틱(10초) 무의미하게 재호출했다 — IP 미등록은 사람이 고쳐야 한다(C4).
+        block = blocks.register_block(
+            market,
+            "edge_blocked",
+            "토스 API 허용 IP 미등록 — 콘솔에서 이 서버 IP를 등록하세요.",
+            {"message": str(exc), "request_id": exc.request_id},
+        )
+        return _early_return(settings, market, store, "edge_blocked", reason=block.reason, block=block)
     except TossAuthenticationError as exc:
-        details = {
-            "message": str(exc),
-            "request_id": exc.request_id,
-            "error_code": exc.error_code,
-            "error_message": exc.error_message,
-            "diagnosis_url": "/api/system/toss/auth-diagnosis",
-        }
-        _authentication_blocked[market] = details
-        response = {
-            **public_status(settings, market, store),
-            "status": "authentication_failed",
-            **details,
-        }
-        _latest_market[market] = response
-        return response
+        block = blocks.register_block(
+            market,
+            "authentication_failed",
+            "토스 인증 실패 — 토큰 재발급 후 자동 재시도합니다.",
+            {
+                "message": str(exc),
+                "request_id": exc.request_id,
+                "error_code": exc.error_code,
+                "error_message": exc.error_message,
+            },
+        )
+        logger.warning(
+            "toss %s 인증 차단 — %d초 후 자동 재시도 (%d회차). 재시작 없이 스스로 풀려야 한다.",
+            market,
+            block.retry_in_seconds(),
+            block.attempt_count,
+        )
+        return _early_return(
+            settings,
+            market,
+            store,
+            "authentication_failed",
+            reason=block.reason,
+            block=block,
+            extra={"diagnosis_url": "/api/system/toss/auth-diagnosis"},
+        )
     except TossMaintenance as exc:
-        _maintenance_until[market] = time.monotonic() + 900
-        return {**public_status(settings, market, store), "status": "maintenance", "message": str(exc), "pause_seconds": 900, "request_id": exc.request_id}
+        block = blocks.register_block(
+            market,
+            "maintenance",
+            "토스 API 점검 — 수집을 일시 중지했습니다.",
+            {"message": str(exc), "request_id": exc.request_id},
+        )
+        return _early_return(
+            settings,
+            market,
+            store,
+            "maintenance",
+            reason=block.reason,
+            block=block,
+            extra={"pause_seconds": block.retry_in_seconds()},
+        )
     finally:
         await client.close()
 
 
-def _session_state(payload: dict[str, Any], market: str, *, now: datetime | None = None) -> str:
+def _note_recovery(market: str, cleared: blocks.MarketBlock | None) -> None:
+    """차단이 풀린 사실은 조용히 넘기지 않는다 — 자동 복구도 관측 대상이다."""
+    if cleared is None:
+        return
+    logger.info(
+        "toss %s 수집 복구 — %s 차단 해제 (%d회 재시도 · %d초 지속)",
+        market,
+        cleared.status,
+        cleared.attempt_count,
+        cleared.blocked_seconds(),
+    )
+
+
+def _session_reason(payload: dict[str, Any], market: str, session: str) -> str:
+    """장이 닫혔다는 판정의 **근거**(파싱된 정규장 창)를 함께 남긴다(작업 4).
+
+    미국 정규장인데 holiday 가 나오는 상황을 진단 API 에서 즉시 식별할 수 있어야 한다.
+    """
+    window = _session_window(_regular_market(payload, market))
+    if window is None:
+        return f"{market} 정규장 창을 응답에서 찾지 못했습니다(휴장 또는 응답 구조 변경)."
+    return f"{market} 정규장 {window[0].isoformat()} ~ {window[1].isoformat()} (UTC) 기준 {session}"
+
+
+def _regular_market(payload: dict[str, Any], market: str) -> Any:
+    """정규장 창을 응답에서 꺼낸다. **KR·US 구조가 실제로 다르다** (작업 4 실측 2026-07-29).
+
+    비대칭은 버그가 아니라 토스 응답 스펙이다. 지우면 KR 이 즉시 영구 holiday 가 된다.
+
+        KR: {"date", "integrated": {"preMarket", "regularMarket", "afterMarket"}}
+        US: {"date", "dayMarket", "preMarket", "regularMarket", "afterMarket"}   ← 평면
+
+    검증: 같은 시각 반대 분기를 적용하면 양쪽 모두 `holiday` 로 오판했다.
+    """
     result = payload.get("result") or payload.get("data") or payload
     today = result.get("today", result) if isinstance(result, dict) else {}
     if not isinstance(today, dict):
-        return "holiday"
-    regular = today.get("regularMarket") if market == "US" else (today.get("integrated") or {}).get("regularMarket")
-    window = _session_window(regular)
+        return None
+    if market == "US":
+        return today.get("regularMarket")
+    return (today.get("integrated") or {}).get("regularMarket")
+
+
+def _session_state(payload: dict[str, Any], market: str, *, now: datetime | None = None) -> str:
+    window = _session_window(_regular_market(payload, market))
     if window is None:
         return "holiday"
     current = now or datetime.now(timezone.utc)

@@ -208,7 +208,7 @@ function StockTrackCard({ track, modes }: { track: StockPaperTrack; modes: Stock
   const rejectionCount = Object.values(track.rejection_reasons).reduce((sum, value) => sum + value, 0);
   return (
     <article className={`stockTrackCard ${track.status}`}>
-      <header><div><span>{track.market === "KR" ? "한국" : "미국"}</span><strong>{track.benchmark_index}</strong></div><b>{track.elapsed_days}/28일</b></header>
+      <header><div><span>{track.market === "KR" ? "한국" : "미국"}</span><strong>{track.benchmark_index}</strong></div><b title={track.elapsed_label || undefined}>{track.elapsed_days}/28일{track.lost_days ? <small className="lostDays"> 유실 {track.lost_days}일</small> : null}</b></header>
       <div className="stockTrackReturns">
         {modes.map((mode) => <p key={mode.entry_mode}><span>{mode.entry_mode === "strict_signal" ? "엄격 신호" : "탐색 표본"} · {mode.position_count}개</span><strong className={mode.return_pct === null ? "" : mode.return_pct >= 0 ? "positive" : "negative"}>{mode.return_pct === null ? "시가 데이터 대기" : signedPct(mode.return_pct)}</strong></p>)}
         <p><span>{track.benchmark_index} · {track.benchmark_proxy_symbol} 프록시</span><strong>{track.benchmark_return_pct === null ? "데이터 대기" : signedPct(track.benchmark_return_pct)}</strong></p>
