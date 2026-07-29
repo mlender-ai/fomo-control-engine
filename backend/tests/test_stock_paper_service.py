@@ -195,3 +195,36 @@ def test_coverage_lane_enters_with_real_execution_invariants_and_separate_mode(t
     assert dashboard["recent_fills"][0]["price"] == 100.1
     strict = next(item for item in dashboard["mode_performance"] if item["market"] == "US" and item["entry_mode"] == "strict_signal")
     assert strict["position_count"] == 0
+
+
+# ── effective run 정직성 (WO-FCE-TOSS-US-STALL-01) ──────────────────
+#
+# 과거엔 `"effective_run": True` 하드코딩이라 양 시장이 closed 이고 평가가 0건이어도
+# last_effective_run_at 이 10초마다 갱신됐다. 그래서 20.8시간 수집 정지 동안에도
+# "실제 평가 중"으로 보였다 — 정지를 잡으라고 만든 지표가 정지를 가려줬다.
+
+
+def test_effective_run_is_false_when_both_markets_are_closed(tmp_path) -> None:
+    result = run_stock_paper_engine(
+        settings_for(tmp_path),
+        {"KR": {"status": "closed", "market_state": "closed"}, "US": {"status": "closed", "market_state": "closed"}},
+    )
+    assert result["effective_run"] is False
+
+
+def test_effective_run_is_false_while_collection_is_blocked(tmp_path) -> None:
+    """실제 사고 상태 그대로 — 인증 차단으로 양 시장 수집 0건."""
+    result = run_stock_paper_engine(
+        settings_for(tmp_path),
+        {"KR": {"status": "authentication_failed"}, "US": {"status": "authentication_failed"}},
+    )
+    assert result["effective_run"] is False
+
+
+def test_effective_run_is_true_when_one_market_is_observed(tmp_path) -> None:
+    """한 시장만 열려 있어도 실제 평가다 — 후보 0개(무수확)와 정지는 다르다."""
+    result = run_stock_paper_engine(
+        settings_for(tmp_path),
+        {"KR": {"status": "closed"}, "US": {"status": "observed", "market_state": "open", "groups": {}}},
+    )
+    assert result["effective_run"] is True

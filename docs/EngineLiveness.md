@@ -269,3 +269,16 @@ grep "heartbeat stale" logs/supervisor.log
 API 는 `elapsed_days`(유실 제외) · `calendar_days` · `lost_days` · `elapsed_label` 을 함께 낸다.
 대시보드 3곳(주식 트랙 카드·폴리 뷰·리뷰 개요)이 유실일을 표시한다.
 숫자가 나빠져도 정직한 재계산이 우선이다.
+
+### effective run 은 하드코딩될 수 없다
+
+`run_stock_paper_engine` 은 `"effective_run": True` 를 **하드코딩**하고 있었다. 그래서 양 시장이
+`closed` 이고 평가가 0건이어도 `toss_stock_scout.last_effective_run_at` 이 10초마다 갱신됐다.
+20.8시간 수집 정지 동안에도 이 지표는 "실제 평가 중"이라고 말했다 —
+**정지를 잡으라고 만든 지표가 정지를 가려줬다.**
+
+현재: 한 시장이라도 `status=observed` 또는 `market_state=open` 일 때만 True.
+무수확(후보 0개)은 여전히 True 다 — "살아있는데 조용한 것"과 "죽어서 조용한 것"은 다르다.
+
+> 새 잡을 추가할 때 `effective_run` 을 상수로 두면 이 문서 위반이다.
+> 반드시 "실제로 일했나"를 나타내는 런타임 값이어야 한다.

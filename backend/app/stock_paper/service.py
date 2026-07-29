@@ -293,7 +293,19 @@ def run_stock_paper_engine(settings: Settings, market_payloads: dict[str, dict[s
         "universe_version": universe.version,
         "parameter_version": parameters.version,
         "live_orders_enabled": False,
-        "effective_run": True,
+        # 정직한 effective run (WO-FCE-TOSS-US-STALL-01): 과거엔 True 하드코딩이라
+        # 양 시장이 closed 이고 평가가 0건이어도 last_effective_run_at 이 10초마다 갱신됐다.
+        # 그래서 20.8시간 수집 정지 동안에도 "실제 평가 중"으로 보였다 — 바로 이 지표가 잡으라고
+        # 만든 고장을 이 지표가 가려준 셈이다. 한 시장이라도 실제 관측(observed)했을 때만 True.
+        # 호출부가 페이로드를 주지 않으면(직접 호출·테스트) 판단 근거가 없으므로 기존 동작 유지.
+        "effective_run": (
+            any(
+                str((payloads.get(name) or {}).get("status")) == "observed" or str((payloads.get(name) or {}).get("market_state")) == "open"
+                for name in ("KR", "US")
+            )
+            if payloads
+            else True
+        ),
         "top_reject_gate": (max(reject_gate_counts.items(), key=lambda kv: kv[1])[0] if reject_gate_counts else None),
         "events": events,
     }
