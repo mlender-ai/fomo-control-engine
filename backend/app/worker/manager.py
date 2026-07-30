@@ -35,6 +35,21 @@ logger = logging.getLogger("worker.manager")
 JobRunner = Callable[[], Any | Awaitable[Any]]
 
 
+def _track_key_for_event(event: dict[str, Any]) -> str:
+    """페이퍼 이벤트를 성과 리포트의 트랙키로 매핑한다.
+
+    주식은 KR·US 를 분리 집계하므로(작업 3) detail.market 으로 갈라야 한다 —
+    market 이 없으면 어느 시장인지 단정하지 않고 빈 키를 돌려 접미를 생략한다.
+    """
+    track = str(event.get("track") or "")
+    if not track:
+        return "crypto"
+    if track == "stock":
+        market = str((event.get("detail") or {}).get("market") or "")
+        return f"stock_{market.lower()}" if market else ""
+    return track
+
+
 @dataclass
 class WorkerJob:
     name: str
@@ -264,7 +279,10 @@ class WorkerManager:
         )
         await self._run_hook("periodic_pulse", lambda: self.alerts.maybe_send_pulse(payload))
         # 작업 5: 트랙 생존 라인 동봉 — 진입이 0이어도 "살아있음"이 매일 도착해야 한다(뮤트 관통).
-        await self._run_hook("daily_summary", lambda: self.alerts.maybe_send_daily_summary(payload, self._liveness_lines()))
+        await self._run_hook(
+            "daily_summary",
+            lambda: self.alerts.maybe_send_daily_summary(payload, self._liveness_lines(), self._performance_lines()),
+        )
         return {
             "open_count": payload.get("open_count"),
             "needs_exit_record_count": payload.get("needs_exit_record_count"),
@@ -286,14 +304,36 @@ class WorkerManager:
             self._persist_state()
             return 0
         sent = 0
+        # §2-3: 청산·정산이 하나라도 있으면 트랙 누적 승률·N 을 한 번만 집계해 하단에 붙인다.
+        # "결과 뭐였다 → 승률 어떻다" 를 한 메시지에서 보게 한다.
+        track_records = self._track_record_suffixes() if any(str(event.get("kind") or "") == "closed" for event in events) else {}
         for event in events:
             # skipped/미발생 계열은 연속 동일 사유 스팸을 막기 위해 억제 정책을 통과해야 발송한다.
             if str(event.get("kind") or "") in SUPPRESSIBLE_KINDS and event.get("track"):
                 if not self.state.register_paper_skip(suppression_key(event)):
                     continue
-            sent += await self.sender.send_to_all(format_paper_event(event))
+            message = format_paper_event(event)
+            suffix = track_records.get(_track_key_for_event(event)) if str(event.get("kind") or "") == "closed" else None
+            if suffix:
+                message = f"{message}\n{suffix}"
+            sent += await self.sender.send_to_all(message)
         self._persist_state()
         return sent
+
+    def _track_record_suffixes(self) -> dict[str, str]:
+        """트랙키 → 누적 승률 문구. 집계 실패는 즉시 알림 자체를 막지 않는다."""
+        try:
+            from app.notify.performance_report import format_track_record_suffix
+
+            payload = service.paper_performance()
+            return {
+                str(track.get("key")): format_track_record_suffix(track.get("closed") or {})
+                for track in (payload.get("tracks") or [])
+                if isinstance(track, dict) and track.get("key")
+            }
+        except Exception as exc:
+            logger.warning("track record suffix failed: %s", exc, exc_info=True)
+            return {}
 
     def _persist_state(self) -> None:
         path = str(getattr(self.settings, "notification_state_path", "") or "")
@@ -311,6 +351,10 @@ class WorkerManager:
 
     async def _weekly_calibration_report(self) -> dict[str, Any]:
         sent = await self.alerts.maybe_send_weekly_calibration_report()
+        return {"count": sent}
+
+    async def _weekly_performance_report(self) -> dict[str, Any]:
+        sent = await self.alerts.maybe_send_weekly_performance_report()
         return {"count": sent}
 
     async def _collect_derivatives(self) -> dict[str, Any]:
@@ -505,6 +549,13 @@ class WorkerManager:
                 60,
                 self._weekly_calibration_report,
             ),
+            # WO-FCE-PERFORMANCE-REPORT-01 §2-2: 주간 성과 리포트. 캘리브레이션과 별도 잡으로
+            # 둔다 — 한쪽 실패가 다른 쪽 발송을 막지 않게.
+            "weekly_performance_report": WorkerJob(
+                "weekly_performance_report",
+                60,
+                self._weekly_performance_report,
+            ),
             "refresh_calibration_cache": WorkerJob(
                 "refresh_calibration_cache",
                 self.settings.worker_calibration_cache_interval_seconds,
@@ -609,6 +660,22 @@ class WorkerManager:
         except Exception as exc:
             logger.debug("paper diagnosis for liveness lines failed: %s", exc)
         return liveness.daily_liveness_lines(self.status(), self.settings, diagnosis, market_data=self._stock_market_data())
+
+    def _performance_lines(self) -> list[str]:
+        """일일 요약용 4트랙 성과 라인 (WO-FCE-PERFORMANCE-REPORT-01 §2-1).
+
+        생존 라인과 역할이 다르다 — 생존은 "살아있음", 성과는 "무엇을 하고 있음"이다.
+        집계 실패는 요약 전체를 막지 않는다(성과 블록만 생략).
+        """
+        try:
+            from app.notify.performance_report import format_paper_performance
+
+            payload = service.paper_performance()
+            date_label = datetime.now(timezone.utc).strftime("%m-%d")
+            return format_paper_performance(payload, date_label=date_label)
+        except Exception as exc:
+            logger.warning("paper performance report failed: %s", exc, exc_info=True)
+            return []
 
     def _write_heartbeat(self) -> dict[str, Any]:
         """WO-FCE-ENGINE-RESTORE-01 (C2) — **심장박동 전용 잡. 가장 단순한 경로여야 한다.**
@@ -739,6 +806,7 @@ class WorkerManager:
             "refresh_symbol_catalog": 8,
             "daily_summary": 12,
             "weekly_calibration_report": 18,
+            "weekly_performance_report": 20,
             "discover_whale_leaderboard": 24,
             "regen_stale_insights": 28,
             "collect_derivatives": 40,

@@ -25,6 +25,8 @@ class NotificationState:
     sent_alert_keys: dict[str, datetime] = field(default_factory=dict)
     last_summary_date: str | None = None
     last_weekly_calibration_date: str | None = None
+    # WO-FCE-PERFORMANCE-REPORT-01: 주간 성과 리포트 발송일. 캘리브레이션과 별도 주기다.
+    last_weekly_performance_date: str | None = None
     alert_rule_states: dict[str, AlertRuleState] = field(default_factory=dict)
     suppressed_alerts: list[dict[str, Any]] = field(default_factory=list)
     # WO-44: 포지션별 라이프사이클 트래커 (verdict/stance/insufficient) — 영속 대상.
@@ -92,6 +94,7 @@ class NotificationState:
                 "muted_until": _iso(self.muted_until),
                 "last_summary_date": self.last_summary_date,
                 "last_weekly_calibration_date": self.last_weekly_calibration_date,
+                "last_weekly_performance_date": self.last_weekly_performance_date,
                 "suppressed_alerts": self.suppressed_alerts[-100:],
                 "lifecycle_positions": self.lifecycle_positions,
                 "last_pulse_at": _iso(self.last_pulse_at),
@@ -127,6 +130,7 @@ class NotificationState:
         self.muted_until = _parse_dt(payload.get("muted_until"))
         self.last_summary_date = payload.get("last_summary_date")
         self.last_weekly_calibration_date = payload.get("last_weekly_calibration_date")
+        self.last_weekly_performance_date = payload.get("last_weekly_performance_date")
         self.suppressed_alerts = [item for item in payload.get("suppressed_alerts", []) if isinstance(item, dict)]
         self.lifecycle_positions = {str(key): value for key, value in (payload.get("lifecycle_positions") or {}).items() if isinstance(value, dict)}
         self.last_pulse_at = _parse_dt(payload.get("last_pulse_at"))

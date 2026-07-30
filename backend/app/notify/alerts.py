@@ -34,6 +34,7 @@ from app.notify.rules import (
     quiet_hours_active,
     rearm_signals,
 )
+from app.notify.performance_report import format_weekly_performance
 from app.notify.state import AlertRuleState, NotificationState
 from app.notify.telegram import TelegramSender, inline_keyboard
 from app.services import runtime as service
@@ -229,7 +230,12 @@ class AlertEngine:
         self._persist()
         return sent
 
-    async def maybe_send_daily_summary(self, payload: dict[str, Any], liveness_lines: list[str] | None = None) -> int:
+    async def maybe_send_daily_summary(
+        self,
+        payload: dict[str, Any],
+        liveness_lines: list[str] | None = None,
+        performance_lines: list[str] | None = None,
+    ) -> int:
         """WO-FCE-ENGINE-LIVENESS-01 작업 5: 트랙 생존 라인은 뮤트를 관통한다(C2).
 
         뮤트 중이면 조건 알림 다이제스트는 생략하고 **생존 라인만** 보낸다 — 뮤트가 "살아있음"의
@@ -256,6 +262,12 @@ class AlertEngine:
                 lines.append("억제된 알림은 없습니다.")
             lines.append("")
             lines.append(format_positions_summary(payload))
+            # WO-FCE-PERFORMANCE-REPORT-01 §2-1: 페이퍼 4트랙 성과. 진입이 0인 트랙도
+            # 반드시 등장한다 — 이벤트가 없어서 침묵하던 구조를 여기서 제거한다.
+            # 실계좌 포지션 요약(format_positions_summary)과 별도 블록으로 둔다(C4).
+            if performance_lines:
+                lines.append("")
+                lines.extend(performance_lines)
         else:
             lines.append("<b>생존 신호</b> (뮤트 중 — 조건 알림은 억제됨)")
         if liveness_lines:
@@ -265,6 +277,23 @@ class AlertEngine:
         if count:
             self.state.suppressed_alerts.clear()
             self.state.last_summary_date = date_key
+        return count
+
+    async def maybe_send_weekly_performance_report(self) -> int:
+        """WO-FCE-PERFORMANCE-REPORT-01 §2-2: 주간 성과 + 4주 검증 진행도.
+
+        N>=30 도달 불가 판정은 **매주 반복 보고**한다 — 문제를 잊지 않게 하는 것이 목적이다.
+        """
+        if not self.settings.telegram_alerts_enabled or self.state.is_muted():
+            return 0
+        due, date_key = _weekly_calibration_due(self.settings, self.state.last_weekly_performance_date, self._now())
+        if not due:
+            return 0
+        payload = await asyncio.to_thread(service.paper_performance)
+        count = await self.sender.send_to_all(format_weekly_performance(payload))
+        if count:
+            self.state.last_weekly_performance_date = date_key
+            self._persist()
         return count
 
     async def maybe_send_weekly_calibration_report(self) -> int:

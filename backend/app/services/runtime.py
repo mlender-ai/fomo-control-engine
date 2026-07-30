@@ -1222,6 +1222,24 @@ def performance_summary() -> dict[str, Any]:
     return runtime.performance_summary()
 
 
+def paper_performance() -> dict[str, Any]:
+    """4트랙(크립토·주식 KR·주식 US·폴리) 페이퍼 성과 (WO-FCE-PERFORMANCE-REPORT-01).
+
+    원장 단일 경로: 별도 집계 테이블 없이 각 트랙의 기존 원장/대시보드를 읽는다(작업 3).
+    """
+    from app.poly_paper.store import PolyPaperStore
+    from app.review.paper_performance import paper_performance_report
+    from app.stock_paper.store import StockPaperStore
+
+    stock_store = StockPaperStore(runtime.settings.database_url)
+    poly_store = PolyPaperStore(runtime.settings.database_url)
+    return paper_performance_report(
+        crypto_trades=runtime.repository.list_paper_trades(limit=1000),
+        stock_dashboard=stock_store.dashboard() if stock_store.enabled else {},
+        poly_dashboard=poly_store.dashboard() if poly_store.enabled else {},
+    )
+
+
 def run_paper_engine() -> dict[str, Any]:
     def load(symbol: str, timeframe: str) -> dict[str, Any]:
         return scout_handlers.scout_analysis(symbol, timeframe=timeframe, force=False, detail=True)
