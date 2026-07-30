@@ -202,12 +202,20 @@ def _apply_sqlite_retention(connection: sqlite3.Connection, settings: Settings) 
         )
     )
     details.update(
+        _downsample_open_position_snapshots(
+            connection,
+            closed_snapshot_cutoff,
+            max(1, int(settings.db_snapshot_downsample_minutes)),
+        )
+    )
+    details.update(
         _downsample_derivative_metrics(
             connection,
             deriv_metric_cutoff,
             max(1, int(settings.db_deriv_metrics_downsample_minutes)),
         )
     )
+    details.update(_delete_expired_reports(connection, derivative_cutoff))
     details["derivative_snapshots_deleted"] = _delete(
         connection,
         "DELETE FROM derivative_snapshots WHERE as_of < ?",
@@ -285,14 +293,7 @@ def _downsample_derivative_metrics(connection: sqlite3.Connection, cutoff: datet
         buckets.add(key)
         keep_ids.add(str(row["id"]))
     delete_ids = [str(row["id"]) for row in rows if str(row["id"]) not in keep_ids]
-    deleted_total = 0
-    if delete_ids:
-        placeholders = ",".join("?" for _ in delete_ids)
-        deleted_total = _delete(
-            connection,
-            f"DELETE FROM deriv_metrics WHERE id IN ({placeholders})",
-            tuple(delete_ids),
-        )
+    deleted_total = _delete_by_ids(connection, "deriv_metrics", "id", delete_ids)
     _verify_remaining_ids(
         connection,
         table="deriv_metrics",
@@ -307,6 +308,90 @@ def _downsample_derivative_metrics(connection: sqlite3.Connection, cutoff: datet
         "deriv_metrics_deleted": deleted_total,
         "deriv_metrics_downsample_minutes": bucket_minutes,
         "deriv_metrics_aggregate_verified": True,
+    }
+
+
+def _delete_expired_reports(connection: sqlite3.Connection, cutoff: datetime) -> dict[str, object]:
+    """리텐션 사각지대였던 reports 를 정리한다 — 심볼별 최신 1건과 참조분은 보존.
+
+    2026-07-30 dbstat 실측: 9.4GB 중 reports 가 2.37GB(26%)였고 리텐션이 아예 없었다.
+    읽기 경로는 latest_report(symbol)·recent_reports(limit)·get_report(id) 뿐이라
+    심볼별 최신과 research_runs 참조분을 남기면 조회 동작은 그대로 보존된다.
+    """
+    preserved: set[str] = set()
+    if connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='research_runs'").fetchone():
+        preserved.update(
+            str(row["report_id"])
+            for row in connection.execute("SELECT report_id FROM research_runs WHERE report_id IS NOT NULL").fetchall()
+            if row["report_id"]
+        )
+    preserved.update(
+        str(row["id"])
+        for row in connection.execute(
+            """
+            SELECT r.id
+            FROM reports AS r
+            JOIN (SELECT symbol, MAX(created_at) AS max_created FROM reports GROUP BY symbol) AS latest
+              ON latest.symbol = r.symbol AND latest.max_created = r.created_at
+            """
+        ).fetchall()
+    )
+    old_ids = [str(row["id"]) for row in connection.execute("SELECT id FROM reports WHERE created_at < ?", (cutoff.isoformat(),)).fetchall()]
+    delete_ids = [report_id for report_id in old_ids if report_id not in preserved]
+    return {
+        "reports_deleted": _delete_by_ids(connection, "reports", "id", delete_ids),
+        "reports_preserved": len(preserved),
+    }
+
+
+def _downsample_open_position_snapshots(connection: sqlite3.Connection, cutoff: datetime, bucket_minutes: int) -> dict[str, object]:
+    """열린 포지션의 오래된 스냅샷도 다운샘플한다.
+
+    기존 다운샘플은 ``status != 'open'`` 만 대상이라 열린 포지션의 스냅샷은 나이와
+    무관하게 영구 누적됐다(2026-07-30 실측: 열린 4개 포지션이 78,954행/905MB).
+    최근 구간은 손대지 않고 cutoff 이전만 버킷당 1건으로 줄인다.
+    """
+    positions = connection.execute("SELECT id FROM positions WHERE status = 'open'").fetchall()
+    preserved_snapshot_ids = {
+        str(row["snapshot_id"])
+        for row in connection.execute("SELECT snapshot_id FROM position_insights WHERE snapshot_id IS NOT NULL").fetchall()
+        if row["snapshot_id"]
+    }
+    deleted_total = 0
+    before_total = 0
+    for position in positions:
+        rows = connection.execute(
+            "SELECT id, created_at FROM position_snapshots WHERE position_id = ? AND created_at < ? ORDER BY created_at ASC",
+            (position["id"], cutoff.isoformat()),
+        ).fetchall()
+        before_total += len(rows)
+        keep_ids: set[str] = set()
+        buckets: set[int] = set()
+        for row in rows:
+            snapshot_id = str(row["id"])
+            if snapshot_id in preserved_snapshot_ids:
+                keep_ids.add(snapshot_id)
+                continue
+            bucket = int(_parse_dt(row["created_at"]).timestamp() // (bucket_minutes * 60))
+            if bucket not in buckets:
+                buckets.add(bucket)
+                keep_ids.add(snapshot_id)
+        delete_ids = [str(row["id"]) for row in rows if str(row["id"]) not in keep_ids]
+        deleted_total += _delete_by_ids(connection, "position_snapshots", "id", delete_ids)
+        _verify_remaining_ids(
+            connection,
+            table="position_snapshots",
+            id_column="id",
+            where="position_id = ? AND created_at < ?",
+            params=(str(position["id"]), cutoff.isoformat()),
+            expected=keep_ids,
+        )
+    return {
+        "open_positions_downsampled": len(positions),
+        "open_position_snapshots_before_downsample": before_total,
+        "open_position_snapshots_after_downsample": before_total - deleted_total,
+        "open_position_snapshots_deleted": deleted_total,
+        "open_position_snapshot_aggregate_verified": True,
     }
 
 
@@ -348,13 +433,7 @@ def _downsample_closed_position_snapshots(connection: sqlite3.Connection, cutoff
                 buckets.add(bucket)
                 keep_ids.add(snapshot_id)
         delete_ids = [str(row["id"]) for row in rows if str(row["id"]) not in keep_ids]
-        if delete_ids:
-            placeholders = ",".join("?" for _ in delete_ids)
-            deleted_total += _delete(
-                connection,
-                f"DELETE FROM position_snapshots WHERE id IN ({placeholders})",
-                tuple(delete_ids),
-            )
+        deleted_total += _delete_by_ids(connection, "position_snapshots", "id", delete_ids)
         _verify_remaining_ids(
             connection,
             table="position_snapshots",
@@ -434,14 +513,7 @@ def _delete_expired_alerts(connection: sqlite3.Connection, cutoff: datetime) -> 
             preserved_alert_ids.add(str(source_id))
     old_alert_rows = connection.execute("SELECT id FROM alerts WHERE fired_at < ?", (cutoff.isoformat(),)).fetchall()
     delete_ids = [str(row["id"]) for row in old_alert_rows if str(row["id"]) not in preserved_alert_ids]
-    if not delete_ids:
-        return 0
-    placeholders = ",".join("?" for _ in delete_ids)
-    return _delete(
-        connection,
-        f"DELETE FROM alerts WHERE id IN ({placeholders})",
-        tuple(delete_ids),
-    )
+    return _delete_by_ids(connection, "alerts", "id", delete_ids)
 
 
 def _delete_if_table(connection: sqlite3.Connection, table: str, query: str, params: tuple[str, ...]) -> int:
@@ -454,6 +526,24 @@ def _delete_if_table(connection: sqlite3.Connection, table: str, query: str, par
 def _delete(connection: sqlite3.Connection, query: str, params: tuple = ()) -> int:
     cursor = connection.execute(query, params)
     return int(cursor.rowcount or 0)
+
+
+# 단일 IN (...) 은 SQLITE_MAX_VARIABLE_NUMBER(구버전 999)에 걸려 리텐션 트랜잭션 전체를
+# 롤백시킨다 — reports 는 18만 행 규모라 청크 없이는 아무것도 지우지 못한다.
+_DELETE_CHUNK_SIZE = 900
+
+
+def _delete_by_ids(connection: sqlite3.Connection, table: str, id_column: str, ids: list[str]) -> int:
+    deleted = 0
+    for start in range(0, len(ids), _DELETE_CHUNK_SIZE):
+        chunk = ids[start : start + _DELETE_CHUNK_SIZE]
+        placeholders = ",".join("?" for _ in chunk)
+        deleted += _delete(
+            connection,
+            f'DELETE FROM "{table}" WHERE "{id_column}" IN ({placeholders})',
+            tuple(chunk),
+        )
+    return deleted
 
 
 def _connect(path: Path) -> sqlite3.Connection:

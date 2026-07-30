@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 import pytest
 
@@ -21,6 +22,7 @@ from app.db.models import (
     Position,
     PositionSnapshot,
     PositionStatus,
+    Report,
 )
 from app.db.repository import MemoryRepository, create_repository
 from app.db.sqlite_utils import connect_sqlite
@@ -31,6 +33,7 @@ from app.marketdata.coinglass import CoinglassProvider
 from app.marketdata.signals import build_derivative_signals, funding_state, percentile_rank
 from app.notify.alerts import AlertEngine
 from app.notify.state import NotificationState
+from app.report.engine import generate_report
 from app.services import runtime as service
 from app.services.runtime import _coinglass_budget
 
@@ -269,12 +272,101 @@ def test_retention_downsamples_snapshots_and_preserves_judgment_data(tmp_path) -
     assert retention["details"]["position_snapshots_deleted"] > 0
     assert retention["details"]["position_snapshot_aggregate_verified"] is True
     assert 1 <= len(closed_remaining) < len(closed_snapshots)
-    assert len(open_remaining) == 12
+    # 열린 포지션의 cutoff 이전 스냅샷도 다운샘플된다(과거엔 나이 무관 영구 누적).
+    assert retention["details"]["open_position_snapshots_deleted"] > 0
+    assert retention["details"]["open_position_snapshot_aggregate_verified"] is True
+    assert 1 <= len(open_remaining) < 12
     assert {alert.id for alert in alerts} == {preserved_alert.id}
     assert judgments[0].id == judgment.id
     assert old_alert.id not in {alert.id for alert in alerts}
     assert trade_fill_count == 0
     assert heartbeat_count == 0
+
+
+def test_retention_prunes_old_reports_and_keeps_latest_per_symbol(tmp_path) -> None:
+    db_path = tmp_path / "reports-retention.db"
+    repo = create_repository(f"sqlite:///{db_path}")
+    provider = MockMarketDataProvider()
+    now = datetime.now(timezone.utc)
+    templates = {symbol: generate_report(provider.get_snapshot(symbol)) for symbol in ("BTCUSDT", "ETHUSDT")}
+
+    def _stored(symbol: str, created_at: datetime) -> Report:
+        report = templates[symbol].model_copy(update={"id": uuid4(), "created_at": created_at})
+        repo.add_report(report)
+        return report
+
+    # 1000행 > _DELETE_CHUNK_SIZE(900) — 청크 삭제까지 함께 검증한다.
+    stale_btc = [_stored("BTCUSDT", now - timedelta(days=60, minutes=index)) for index in range(1000)]
+    referenced = stale_btc[0]
+    latest_btc = _stored("BTCUSDT", now - timedelta(days=40))
+    _stored("ETHUSDT", now - timedelta(days=60))
+    latest_eth = _stored("ETHUSDT", now - timedelta(days=1))
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "INSERT INTO research_runs (id, symbol, timeframe, report_id, created_at, payload) VALUES (?, ?, ?, ?, ?, ?)",
+            ("run-1", "BTCUSDT", "4h", str(referenced.id), (now - timedelta(days=60)).isoformat(), "{}"),
+        )
+    settings = Settings(
+        database_url=f"sqlite:///{db_path}",
+        db_backup_dir=str(tmp_path / "backups"),
+        db_retention_days=30,
+    )
+
+    retention = enforce_retention(settings, repo)
+
+    with sqlite3.connect(db_path) as connection:
+        remaining_ids = {str(row[0]) for row in connection.execute("SELECT id FROM reports").fetchall()}
+
+    assert retention["details"]["reports_deleted"] == 1000
+    # 심볼별 최신 1건(2) + research_runs 참조분(1)
+    assert retention["details"]["reports_preserved"] == 3
+    assert remaining_ids == {str(referenced.id), str(latest_btc.id), str(latest_eth.id)}
+    # 조회 경로가 그대로 동작해야 한다.
+    assert repo.latest_report("BTCUSDT").id == latest_btc.id
+    assert repo.latest_report("ETHUSDT").id == latest_eth.id
+    assert repo.get_report(referenced.id) is not None
+
+
+def test_retention_keeps_recent_open_position_snapshots(tmp_path) -> None:
+    db_path = tmp_path / "open-snapshots.db"
+    repo = create_repository(f"sqlite:///{db_path}")
+    now = datetime.now(timezone.utc)
+    open_position = repo.add_position(
+        Position(
+            symbol="BTCUSDT",
+            direction=Direction.long,
+            entry_price=100,
+            quantity=1,
+            status=PositionStatus.open,
+            opened_at=now - timedelta(days=60),
+        )
+    )
+    recent_ids = set()
+    for index in range(6):
+        created_at = now - timedelta(minutes=10 * index)
+        snapshot = repo.add_position_snapshot(
+            PositionSnapshot(
+                position_id=open_position.id,
+                symbol="BTCUSDT",
+                as_of=created_at,
+                created_at=created_at,
+                mark_price=100 + index,
+                health_score=50,
+                status_label="open",
+                risk_score=20,
+                score_json={},
+                analysis_json={},
+            )
+        )
+        recent_ids.add(snapshot.id)
+    settings = Settings(database_url=f"sqlite:///{db_path}", db_backup_dir=str(tmp_path / "backups"))
+
+    retention = enforce_retention(settings, repo)
+
+    remaining = repo.list_position_snapshots(open_position.id, limit=50)
+    # cutoff 이후 구간은 다운샘플 대상이 아니다 — 최근 관측은 촘촘하게 유지된다.
+    assert retention["details"]["open_position_snapshots_deleted"] == 0
+    assert {snapshot.id for snapshot in remaining} == recent_ids
 
 
 def test_retention_preserves_permanent_ledger_and_competition_tables(tmp_path) -> None:

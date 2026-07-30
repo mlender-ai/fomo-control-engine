@@ -239,6 +239,9 @@ class Settings(BaseSettings):
     db_trade_fill_retention_days: int = Field(
         # 2일: 머니플로우/CVD는 최근 짧은 창 + 행수 상한으로만 읽는다(trade_cache._latest_rows).
         # 하루 ~2M행 폭증(2026-07-23 12.8GB 사건) — 7일이면 상시 ~4-5GB. 2일이면 ~1GB.
+        # 2026-07-30 재실측: 유입이 2배로 늘어(07-28 3.07M행·07-29 4.17M행/일) 2일 정상상태가
+        # ~1GB 가정을 깨고 3.26GB(본체 2.23GB + 인덱스 1.03GB, DB 9.4GB의 36%)가 됐다.
+        # 리텐션·incremental_vacuum 은 정상 동작 중이며 이 값은 유입량 대비 재검토 대상이다.
         2,
         validation_alias=AliasChoices("FCE_DB_TRADE_FILL_RETENTION_DAYS", "DB_TRADE_FILL_RETENTION_DAYS"),
     )
