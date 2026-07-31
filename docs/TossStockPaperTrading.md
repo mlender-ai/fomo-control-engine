@@ -75,6 +75,32 @@ KR/US 각 100종목과 시장별 프록시 1개는 200건 배치 한도 안에�
 
 이 WO에서 관측 기반을 놓았다: 워커 하트비트 `last_effective_run_at`(마이그레이션 `0031`)이 엔진이 실제로 평가한 마지막 시각을 기록한다. `last_success_at`과의 괴리가 유실 구간을 드러낸다. 검증 시계를 유실일 제외 기준으로 재계산하는 계산부는 **WO-FCE-ENGINE-LIVENESS-01에서 구현 완료**했다 — `app/worker/liveness.py::elapsed_excluding_gaps()` 가 `{calendar_days, effective_days, lost_days, label}` 을 반환하며 라벨은 "경과 N일 (유실 M일 제외)" 형식이다. 대시보드 표기 연결은 화면 작업이라 별도 UI WO로 남긴다.
 
+## RR 정의 — 분할 청산 가중 (WO-FCE-PNF-TARGET-01)
+
+기존 RR의 보상 분자는 `take_profit[0]`(가장 가까운 목표) 하나뿐이었다. 실제 운용은 분할 청산인데 RR은 TP1만 셌으므로 보상이 **체계적으로 과소평가**됐고, 구조 레벨이 촘촘한 종목은 첫 목표가 손절폭보다 가까워 RR<1이 항상 발생했다(실측: US `risk_reward` 거부 22건, NVDA RR 0.53/임계 1.5). RR 게이트가 종목을 거른 게 아니라 목표 산출 방식이 스스로를 거른 기아 상태였다.
+
+수리: 보상을 **분할 청산 배분 가중 기대값**(기본 40/35/25, 사용 가능한 목표 수로 정규화)으로 산출한다. 임계 `min_rr`은 **1.5로 불변**이다 — 분자를 정합화할 뿐 기준을 낮추지 않는다.
+
+두 정의를 **병기**해 어느 쪽으로 통과했는지 항상 추적한다.
+
+| 키 | 의미 |
+|---|---|
+| `rr_ratio` | 게이트가 쓰는 정본 = 가중 RR |
+| `rr_ratio_first_target` | 기존 TP1 단독 기준(회귀 비교 기준선) |
+| `rr_detail` | 위험·보상·목표 수·사용된 배분비율 |
+| `rr_ab` | `{with_pnf, structure_only, first_target_only}` A/B 기록 |
+| `target_source` | `structure_levels` 또는 `structure_levels+pnf_measured_objective` |
+
+**정직한 고지**: 가중평균은 TP1 이상이므로 통과율이 오르는 방향인 것은 산술적으로 당연하다(민감도 그리드 105조합: 31.4%→48.6%, 새로 거부 0). 정당화 근거는 "기준을 낮췄다"가 아니라 "분자가 틀렸었다"이다. 다만 무차별 통과는 아니다 — NVDA 사례는 TP2가 3배여도 RR 1.02로 여전히 거부된다. **이 변경이 성과를 개선하는지는 청산 표본이 0이라 판정 불가하다.**
+
+PNF 측정 목표의 산출·편입 규칙은 [`docs/PNFTarget.md`](PNFTarget.md)가 정본이다.
+
+## 청산 경로 부재 (미해결 · 최우선)
+
+**주식 페이퍼에는 매도(SELL) 주문을 생성하는 코드가 전 코드베이스에 없다.** `StockOrder` 생성은 `service.py`의 `side=Side.BUY` 한 곳뿐이며, `Side.SELL`은 accounting(거래세)·execution(하한가 잠김)·broker(수량 검증)에만 등장한다 — 전부 "SELL 주문이 왔을 때"의 처리기이고 그 주문을 만드는 코드가 없다.
+
+따라서 청산 0건은 청산 조건이 까다로워서가 아니라 **구조적으로 매도가 불가능**하기 때문이다. 이 상태에서는 승률·실현 R·목표 도달률을 채점할 수 없고, 어떤 진입 개선안도 효과를 측정할 수 없다. 청산 경로 신설이 후속 WO의 최우선 항목이다([`docs/WinRateImprovementBacklog.md`](WinRateImprovementBacklog.md) 선결 0-1).
+
 ## 관측·복기
 
 GE의 `주식 트랙`은 시장별 시작일/28일, 원통화 NAV, 프록시 수익률, 미체결 사유, 최근 fill의 수수료·세금을 표시한다. GR 요약은 같은 주식 트랙으로 연결한다. `stock_paper_events`가 세션·가격제한·VI·유동성·데이터 누락을 실제 발생 건수로 보존한다. 3트랙 공통 이벤트 계약(`opened/closed/rejected_summary/skipped/error`)과 텔레그램 배선은 [`docs/PaperObservability.md`](PaperObservability.md)를 정본으로 한다.

@@ -151,6 +151,21 @@ def _wyckoff_signatures(analysis: dict[str, Any], asset_class: str, timeframe: s
         elif "utad" in label or "sow" in label or "lpsy" in label:
             event = "utad_confirmed" if "utad" in label else "wyckoff_short_event"
             result.append(_signature("wyckoff", event, _confidence_bucket(confidence), "short", asset_class, timeframe))
+    # WO-FCE-PNF-TARGET-01 (C3): PNF 측정 목표를 실제로 채택한 진입은 candidate 시그니처로
+    # 등록되어 원장 채점·부패 감지에 합류한다. 새 감지기가 아니라 기존 와이코프 국면의 목표
+    # 계산기이므로 engine="wyckoff"를 재사용한다(C2). 승격은 N>=30·CI 하한 충족 시에만.
+    objective = analysis.get("pnf_measured_objective")
+    if isinstance(objective, dict) and objective.get("adopted"):
+        result.append(
+            _signature(
+                "wyckoff",
+                "pnf_measured_objective",
+                _confidence_bucket(_num(objective.get("confidence"), 0)),
+                str(objective.get("direction") or "long"),
+                asset_class,
+                timeframe,
+            )
+        )
     return result
 
 
