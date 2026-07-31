@@ -181,3 +181,14 @@ WO 본문의 D1("주식 진입이 0이므로 `opened` 이벤트가 없다")은 *
 주식(`stock_paper_tracks`)·폴리(`poly_paper_track`)는 유실일 제외 경과일을 갖지만
 **크립토는 그 원천이 없다.** 없는 값을 만들지 않고 `clock: None` 으로 두며, 리포트는
 크립토의 "검증 D+N"을 생략한다. 크립토 검증 시계가 필요하면 별도 WO 대상이다.
+
+## 고아 포지션 제외 표기 규격 (WO-FCE-STOCK-EXIT-01)
+
+청산 경로가 없던 구간에 진입한 포지션은 엔진 성과가 아니다. 통계에서 제외하되 **침묵하지 않는다** — 제외 사실과 사유가 항상 보여야 한다.
+
+- 저장: `stock_paper_positions.excluded_from_stats=1`, `exclusion_reason='void_no_exit_path'`
+- 이벤트: 청산 시 `closed` 이벤트 `detail.excluded_from_stats=true`
+- 표기: 성과 화면·리포트는 "승률 N% (제외 M건: 청산 경로 부재 구간)"처럼 **제외 건수를 함께** 표시한다. 제외를 숨기면 표본이 실제보다 많아 보인다.
+- 도구: `scripts/void_orphan_stock_positions.py`(기본 dry-run)
+
+폴리 정산도 같은 원칙을 따른다: 정산되지 않은 사유를 `settlement_skips`로 집계해 "만기 미도래"인지 "가격이 확정 극단값에 미달"인지 구분 가능하게 한다.

@@ -414,6 +414,87 @@ class StockPaperStore:
             rows = connection.execute(query, parameters).fetchall()
         return [_order_from_payload(json.loads(row["payload"])) for row in rows]
 
+    # ── 청산 경로 (WO-FCE-STOCK-EXIT-01) ──────────────────────────
+
+    def set_exit_plan(self, market: Market, symbol: str, plan: dict[str, Any], opened_at: datetime) -> None:
+        """진입 시점의 무효화선·목표를 고정 저장한다.
+
+        청산 판단이 '진입 근거로 삼은 선'을 그대로 쓰게 하기 위함이다. 최신 분석으로
+        매번 다시 계산하면 기준선이 움직여 손절이 사후적으로 정당화된다.
+        """
+        with self._connect() as connection:
+            connection.execute(
+                """UPDATE stock_paper_positions
+                SET exit_plan=?, opened_at=COALESCE(opened_at, ?)
+                WHERE market=? AND symbol=?""",
+                (_json_dumps(plan), opened_at.isoformat(), market.value, symbol.upper()),
+            )
+            connection.execute(
+                """UPDATE stock_paper_mode_positions
+                SET opened_at=COALESCE(opened_at, ?)
+                WHERE market=? AND symbol=?""",
+                (opened_at.isoformat(), market.value, symbol.upper()),
+            )
+
+    def open_positions(self, market: Market | None = None) -> list[dict[str, Any]]:
+        """청산 판단 대상인 보유 포지션. 통계 제외분도 포함한다(청산은 해야 하므로)."""
+        query = """SELECT p.*, m.price AS current_price, m.observed_at AS mark_observed_at
+            FROM stock_paper_positions p LEFT JOIN stock_paper_marks m
+            ON m.market=p.market AND m.symbol=p.symbol
+            WHERE p.quantity > 0"""
+        params: tuple[Any, ...] = ()
+        if market is not None:
+            query += " AND p.market=?"
+            params = (market.value,)
+        with self._connect() as connection:
+            rows = [dict(row) for row in connection.execute(query + " ORDER BY p.market, p.symbol", params).fetchall()]
+        for row in rows:
+            raw = row.get("exit_plan")
+            try:
+                row["exit_plan"] = json.loads(raw) if raw else {}
+            except (TypeError, ValueError):
+                row["exit_plan"] = {}
+        return rows
+
+    def record_realized_level(self, market: Market, symbol: str, level: int) -> None:
+        """TP 사다리에서 실현한 단계를 기록해 같은 단계가 반복 체결되지 않게 한다."""
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT exit_plan FROM stock_paper_positions WHERE market=? AND symbol=?",
+                (market.value, symbol.upper()),
+            ).fetchone()
+            if row is None:
+                return
+            try:
+                plan = json.loads(row["exit_plan"]) if row["exit_plan"] else {}
+            except (TypeError, ValueError):
+                plan = {}
+            levels = sorted({int(item) for item in plan.get("realized_levels") or []} | {int(level)})
+            plan["realized_levels"] = levels
+            connection.execute(
+                "UPDATE stock_paper_positions SET exit_plan=? WHERE market=? AND symbol=?",
+                (_json_dumps(plan), market.value, symbol.upper()),
+            )
+
+    def mark_excluded_from_stats(self, market: Market, symbol: str, reason: str) -> None:
+        """고아 포지션을 성과 통계에서 제외한다(C4). 원장 행은 그대로 남는다."""
+        with self._connect() as connection:
+            for table in ("stock_paper_positions", "stock_paper_mode_positions"):
+                connection.execute(
+                    f"UPDATE {table} SET excluded_from_stats=1, exclusion_reason=? WHERE market=? AND symbol=?",
+                    (reason, market.value, symbol.upper()),
+                )
+
+    def excluded_symbols(self, market: Market | None = None) -> list[dict[str, Any]]:
+        query = """SELECT market, symbol, quantity, average_price, exclusion_reason
+            FROM stock_paper_positions WHERE excluded_from_stats=1"""
+        params: tuple[Any, ...] = ()
+        if market is not None:
+            query += " AND market=?"
+            params = (market.value,)
+        with self._connect() as connection:
+            return [dict(row) for row in connection.execute(query, params).fetchall()]
+
     def position_quantity(self, market: Market, symbol: str) -> int:
         with self._connect() as connection:
             row = connection.execute(
