@@ -17,6 +17,13 @@ from .parameters import load_poly_parameters
 from .store import PolyPaperStore
 
 TRACK = "poly"
+# 마지막 정산 시도의 미정산 사유 집계 — 진단 표면·리포트에서 (a)/(b) 판별에 쓴다.
+_LAST_SETTLEMENT_SKIPS: dict[str, int] = {}
+
+
+def last_settlement_skips() -> dict[str, int]:
+    """직전 정산 사이클에서 정산되지 않은 사유 분포."""
+    return dict(_LAST_SETTLEMENT_SKIPS)
 
 
 class PublicMarketClient(Protocol):
@@ -242,6 +249,7 @@ async def run_poly_paper_engine(
         "strict_entered": strict_entered,
         "coverage_entered": coverage_entered,
         "effective_run": True,
+        "settlement_skips": last_settlement_skips(),
         "top_reject_gate": top_exclusion,
         "events": events,
         "excluded": excluded,
@@ -289,16 +297,31 @@ async def _settle_due_markets(
     now: datetime,
 ) -> int:
     scored = 0
+    # WO-FCE-STOCK-EXIT-01 작업 6: 정산 0건이 (a)만기 미도래인지 (b)로직 미동작인지 구분
+    # 불가능했다. 미정산 사유를 집계해 "왜 아직 정산이 없는가"를 관측 가능하게 한다(침묵 금지).
+    skip_reasons: dict[str, int] = {}
+
+    def _skip(reason: str) -> None:
+        skip_reasons[reason] = skip_reasons.get(reason, 0) + 1
+
     for market_id in store.unresolved_market_ids():
         try:
             market = await client.get_market(market_id)
         except Exception:
+            _skip("fetch_failed")
             continue
         if market is None:
+            _skip("market_missing")
             continue
         store.save_market(market)
         outcome = resolved_outcome(market)
-        if outcome is None or not market.resolution_source:
+        if outcome is None:
+            # closed=False면 만기 미도래(a). closed=True인데 여기 걸리면 가격이 확정
+            # 극단값(>=0.999)에 못 미친 것이고 이는 (b) 계열 신호다.
+            _skip("not_closed" if not market.closed else "closed_but_price_not_final")
+            continue
+        if not market.resolution_source:
+            _skip("resolution_source_missing")
             continue
         scored += store.settle_market(
             market,
@@ -307,4 +330,8 @@ async def _settle_due_markets(
             repository=repository,
             resolved_at=now,
         )
+    if skip_reasons:
+        store.record_collection(status="observed", observed_at=now)
+    _LAST_SETTLEMENT_SKIPS.clear()
+    _LAST_SETTLEMENT_SKIPS.update(skip_reasons)
     return scored

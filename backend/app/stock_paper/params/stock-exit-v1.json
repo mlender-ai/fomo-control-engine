@@ -1,0 +1,13 @@
+{
+  "version": "stock-exit-v1",
+  "invalidation_basis": "close",
+  "max_holding_days": 10,
+  "tp_ladder": [
+    { "level": 1, "fraction": 0.4 },
+    { "level": 2, "fraction": 0.35 },
+    { "level": 3, "fraction": 0.25 }
+  ],
+  "breakeven_stop_after_tp1": true,
+  "forced_exit_warnings": ["거래정지", "정리매매", "상장폐지", "관리종목지정"],
+  "max_carryover_days": 3
+}

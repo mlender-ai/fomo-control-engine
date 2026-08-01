@@ -15,11 +15,14 @@ from .parameters import load_stock_parameters
 from app.notify.paper_events import track_event
 
 from .analysis import analyze_stock_candidate
+from .exit_policy import evaluate_stock_exit, load_exit_parameters
 from .policy import evaluate_stock_entry
 from .store import StockPaperStore
 from .universe import load_universe
 
 TRACK = "stock"
+# 청산 경로 부재 구간(WO-FCE-STOCK-EXIT-01 이전)에 진입한 포지션의 제외 사유.
+VOID_NO_EXIT_PATH = "void_no_exit_path"
 
 
 def run_stock_paper_engine(settings: Settings, market_payloads: dict[str, dict[str, Any]] | None = None) -> dict[str, Any]:
@@ -61,6 +64,8 @@ def run_stock_paper_engine(settings: Settings, market_payloads: dict[str, dict[s
     evaluated = rejected = strict_entered = coverage_evaluated = coverage_attempted = coverage_entered = 0
     events: list[dict[str, Any]] = []
     reject_gate_counts: dict[str, int] = {}
+    # 청산을 진입보다 먼저 처리한다 — 자본과 포지션 슬롯을 먼저 회수해야 진입 한도가 정확해진다.
+    exits = _process_exits(broker, store, toss_store, payloads, events)
     for market_name in ("KR", "US"):
         payload = payloads.get(market_name) or {}
         market = Market(market_name)
@@ -162,6 +167,8 @@ def run_stock_paper_engine(settings: Settings, market_payloads: dict[str, dict[s
                 candidate,
                 entry_mode="strict_signal",
                 capital_fraction=parameters.position_capital_fraction,
+                store=store,
+                exit_plan=_exit_plan_from_analysis(analysis),
                 evidence={
                     "decision_gates": decision.gate_results,
                     "analysis_source": analysis.get("source"),
@@ -237,6 +244,8 @@ def run_stock_paper_engine(settings: Settings, market_payloads: dict[str, dict[s
                     candidate,
                     entry_mode="coverage",
                     capital_fraction=parameters.coverage_position_capital_fraction,
+                    store=store,
+                    exit_plan=_exit_plan_from_analysis(analysis),
                     evidence={
                         "decision_gates": decision.gate_results,
                         "bypassed_strict_gates": bypassed,
@@ -290,6 +299,8 @@ def run_stock_paper_engine(settings: Settings, market_payloads: dict[str, dict[s
         "coverage_attempted": coverage_attempted,
         "coverage_entered": coverage_entered,
         "pending_processed": processed,
+        "exits": exits,
+        "exit_parameter_version": load_exit_parameters().version,
         "universe_version": universe.version,
         "parameter_version": parameters.version,
         "live_orders_enabled": False,
@@ -311,6 +322,122 @@ def run_stock_paper_engine(settings: Settings, market_payloads: dict[str, dict[s
     }
 
 
+def _process_exits(
+    broker: PaperBroker,
+    store: StockPaperStore,
+    toss_store: TossStockStore,
+    payloads: dict[str, dict[str, Any]],
+    events: list[dict[str, Any]],
+) -> dict[str, int]:
+    """보유 포지션의 청산을 판정하고 **매도 주문을 생성**한다.
+
+    이 함수가 WO-FCE-STOCK-EXIT-01 이전에 없던 바로 그 코드다. 이전에는 무효화선을 계산해
+    진입 게이트에 쓰면서도 그 선에 도달했을 때 아무 일도 일어나지 않았다.
+
+    체결 가격은 여기서 정하지 않는다 — `broker.place()` → `execute_order()`가 관측 데이터에서
+    파생한다. 장외 신호는 `session_closed`로 대기했다가 다음 세션 **시가**로 체결되므로
+    무효화 가격 마법 체결이 구조적으로 불가능하다(C1).
+    """
+    parameters = load_exit_parameters()
+    counters = {"evaluated": 0, "triggered": 0, "filled": 0, "unfilled": 0}
+    for row in store.open_positions():
+        market = Market(str(row["market"]))
+        symbol = str(row["symbol"]).upper()
+        payload = payloads.get(market.value) or {}
+        plan = row.get("exit_plan") if isinstance(row.get("exit_plan"), dict) else {}
+        observation = _observation(toss_store, market, symbol, payload.get("market_state") == "open")
+        warnings = observation.warnings if observation is not None else ()
+        counters["evaluated"] += 1
+        decision = evaluate_stock_exit(
+            plan=plan,
+            close_price=_optional_float(row.get("current_price")),
+            average_price=_optional_float(row.get("average_price")),
+            holding_days=_holding_days(row.get("opened_at")),
+            warnings=tuple(str(item) for item in warnings),
+            realized_levels=tuple(int(item) for item in (plan.get("realized_levels") or [])),
+            parameters=parameters,
+        )
+        if not decision.should_exit:
+            continue
+        counters["triggered"] += 1
+        held = int(row["quantity"])
+        quantity = held if decision.fraction >= 1.0 else max(1, math.floor(held * decision.fraction))
+        quantity = min(quantity, held)
+        order = StockOrder(
+            symbol=symbol,
+            market=market,
+            currency=Currency.KRW if market == Market.KR else Currency.USD,
+            side=Side.SELL,
+            quantity=quantity,
+            signal_at=datetime.now(timezone.utc),
+            # signal_price는 기록용이다. 체결가로 쓰이지 않는다 — 그게 갭 정직성의 핵심이다.
+            signal_price=_optional_float(row.get("current_price")),
+            entry_mode=str(row.get("entry_mode") or "strict_signal"),
+            evidence={
+                "exit_trigger": decision.trigger,
+                "exit_level": decision.level,
+                "exit_detail": decision.detail,
+                "exit_parameter_version": parameters.version,
+                "plan": plan,
+            },
+        )
+        execution = broker.place(order, observation)
+        store.record_event(
+            market,
+            "exit_signal",
+            symbol=symbol,
+            order_id=order.id,
+            reason=decision.trigger,
+            payload={"decision": decision.detail, "requested_quantity": quantity, "level": decision.level},
+        )
+        if execution.fill is not None:
+            counters["filled"] += 1
+            if decision.trigger == "take_profit" and decision.level is not None:
+                store.record_realized_level(market, symbol, decision.level)
+            events.append(
+                track_event(
+                    TRACK,
+                    "closed",
+                    symbol,
+                    detail={
+                        "market": market.value,
+                        "trigger": decision.trigger,
+                        "quantity": execution.fill.quantity,
+                        "price": execution.fill.price,
+                        "entry_mode": order.entry_mode,
+                        "excluded_from_stats": bool(row.get("excluded_from_stats")),
+                    },
+                )
+            )
+        else:
+            # 하한가 잠김·VI·거래정지·장외는 미체결이며 사유가 원장에 남는다.
+            # "빠져나올 수 없었다"를 정직하게 기록하는 것이 성과를 좋게 보이게 하는 것보다 중요하다.
+            counters["unfilled"] += 1
+    return counters
+
+
+def _holding_days(opened_at: Any) -> int:
+    if not opened_at:
+        return 0
+    try:
+        opened = _timestamp(opened_at)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, (datetime.now(timezone.utc) - opened).days)
+
+
+def _exit_plan_from_analysis(analysis: dict[str, Any]) -> dict[str, Any]:
+    """진입 시점의 무효화선·TP 목표를 청산 기준으로 고정한다."""
+    invalidation = analysis.get("invalidation") if isinstance(analysis.get("invalidation"), dict) else {}
+    targets = [item for item in (analysis.get("take_profit_targets") or []) if isinstance(item, dict)]
+    return {
+        "invalidation_price": invalidation.get("price"),
+        "targets": [{"level": index + 1, "price": item.get("price"), "source": item.get("source")} for index, item in enumerate(targets)],
+        "target_source": analysis.get("target_source"),
+        "realized_levels": [],
+    }
+
+
 def _place_entry(
     broker: PaperBroker,
     toss_store: TossStockStore,
@@ -322,6 +449,8 @@ def _place_entry(
     entry_mode: str,
     capital_fraction: float,
     evidence: dict[str, Any],
+    store: StockPaperStore | None = None,
+    exit_plan: dict[str, Any] | None = None,
 ) -> str:
     symbol = str(candidate.get("symbol") or "").upper()
     price = _optional_float(candidate.get("price"))
@@ -342,6 +471,10 @@ def _place_entry(
     )
     observation = _observation(toss_store, market, symbol, payload.get("market_state") == "open")
     execution = broker.place(order, observation)
+    if execution.fill is not None and store is not None and exit_plan is not None:
+        # 진입 근거로 삼은 무효화선·목표를 청산 기준으로 고정한다. 매 주기 재계산하면
+        # 기준선이 움직여 손절이 사후적으로 정당화된다.
+        store.set_exit_plan(market, symbol, exit_plan, execution.fill.filled_at)
     return "filled" if execution.fill is not None else str(execution.reason or execution.order.status.value)
 
 

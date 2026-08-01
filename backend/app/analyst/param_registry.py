@@ -49,6 +49,40 @@ PARAM_REGISTRY: dict[str, ParamDefinition] = {
         hard_min=50,
         hard_max=95,
     ),
+    # WO-FCE-PNF-TARGET-01 작업 1: 분할 청산 배분 비율. TP1 비중을 키우면 보상 분자가
+    # 가까운 목표에 쏠려 RR이 보수화되므로 tighten 방향은 increase다. 합이 1이 되도록
+    # 하는 정규화는 stock_paper.risk_reward가 수행하고, 여기서는 개별 비중의 극단값을 막는다.
+    "stock_tp_weight_primary": ParamDefinition(
+        name="stock_tp_weight_primary",
+        tighten_when="increase",
+        hard_min=0.20,
+        hard_max=0.80,
+    ),
+    "stock_tp_weight_secondary": ParamDefinition(
+        name="stock_tp_weight_secondary",
+        tighten_when="increase",
+        hard_min=0.10,
+        hard_max=0.60,
+    ),
+    "stock_tp_weight_tertiary": ParamDefinition(
+        name="stock_tp_weight_tertiary",
+        tighten_when="increase",
+        hard_min=0.05,
+        hard_max=0.50,
+    ),
+    # PNF 리버설을 키우면 목표가 멀어져 RR이 커지므로 완화 방향이다 — tighten은 decrease.
+    "pnf_reversal": ParamDefinition(
+        name="pnf_reversal",
+        tighten_when="decrease",
+        hard_min=2,
+        hard_max=5,
+    ),
+    "pnf_min_columns": ParamDefinition(
+        name="pnf_min_columns",
+        tighten_when="increase",
+        hard_min=3,
+        hard_max=12,
+    ),
     "harmonic_min_confidence": ParamDefinition(
         name="harmonic_min_confidence",
         tighten_when="increase",
