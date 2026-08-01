@@ -273,6 +273,11 @@ class WorkerManager:
             "evaluate_alerts",
             lambda: self.alerts.evaluate_positions(payload.get("positions", [])),
         )
+        # WO-FCE-STRUCTURE-CONTEXT-01: 보유 포지션의 구조 관계 전이(레인지 이탈·OB 진입·국면 전환).
+        await self._run_hook(
+            "evaluate_structure_context",
+            lambda: self.alerts.evaluate_position_structure(payload.get("positions", [])),
+        )
         await self._run_hook(
             "evaluate_performance_alerts",
             lambda: self._evaluate_performance_alerts(),
@@ -517,6 +522,12 @@ class WorkerManager:
             ),
             "evaluate_lifecycle": WorkerJob(
                 "evaluate_lifecycle",
+                self.settings.worker_sync_positions_interval_seconds,
+                None,
+                scheduled=False,
+            ),
+            "evaluate_structure_context": WorkerJob(
+                "evaluate_structure_context",
                 self.settings.worker_sync_positions_interval_seconds,
                 None,
                 scheduled=False,

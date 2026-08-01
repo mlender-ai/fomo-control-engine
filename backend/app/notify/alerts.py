@@ -24,6 +24,7 @@ from app.notify.lifecycle import (
     transition_candidates,
 )
 from app.notify.rules import (
+    RULE_LABELS,
     AlertCandidate,
     cooldown_seconds,
     evaluate_data_stall,
@@ -36,6 +37,7 @@ from app.notify.rules import (
 )
 from app.notify.performance_report import format_weekly_performance
 from app.notify.state import AlertRuleState, NotificationState
+from app.structure.context import build_structure_context, detect_structure_transitions, transition_state_key
 from app.notify.telegram import TelegramSender, inline_keyboard
 from app.services import runtime as service
 
@@ -66,6 +68,56 @@ class AlertEngine:
             self._rearm(context, candidates)
             for candidate in candidates:
                 sent += await self._fire_if_allowed(candidate)
+        return sent
+
+    async def evaluate_position_structure(self, payloads: list[dict[str, Any]]) -> int:
+        """보유 포지션의 구조 관계 전이를 알린다 (WO-FCE-STRUCTURE-CONTEXT-01).
+
+        **보유 포지션이 있을 때만 발화한다.** 시장 전체 와이코프 이벤트는 기존
+        `wyckoff_event`가 담당하며 이 WO에서 변경하지 않는다. 전이가 없으면 0건이므로
+        같은 구조 상태가 100틱 반복돼도 스팸이 생기지 않는다(C6).
+        """
+        if not self.settings.telegram_alerts_enabled or self.state.is_muted():
+            return 0
+        if "position_structure_event" not in self.settings.alert_enabled_rule_set:
+            return 0
+        sent = 0
+        for payload in payloads:
+            position: dict[str, Any] = _as_dict(payload.get("position")) or payload
+            symbol = str(position.get("symbol") or "").upper()
+            if not symbol:
+                continue
+            state: dict[str, Any] = _as_dict(payload.get("state"))
+            analysis: dict[str, Any] = _as_dict(state.get("analysis"))
+            if not analysis:
+                continue
+            levels: dict[str, Any] = _as_dict(analysis.get("price_levels"))
+            zones = analysis.get("order_block_zones")
+            previous: dict[str, Any] = _as_dict(self.state.structure_contexts.get(symbol))
+            context = build_structure_context(
+                analysis=analysis,
+                entry_price=_float(position.get("entry_price")),
+                mark_price=_float(analysis.get("mark_price") or position.get("mark_price")),
+                invalidation_price=_float(levels.get("invalidation")),
+                order_block_zones=[item for item in zones if isinstance(item, dict)] if isinstance(zones, list) else [],
+                pnf_objective=_as_dict(analysis.get("pnf_measured_objective")) or None,
+                previous_phase=str(_as_dict(previous.get("wyckoff")).get("phase") or "") or None,
+            )
+            events = detect_structure_transitions(previous or None, context)
+            self.state.structure_contexts[symbol] = context
+            for event in events:
+                candidate = AlertCandidate(
+                    rule_id="position_structure_event",
+                    severity="info",
+                    position_id=str(position.get("id") or "") or None,
+                    symbol=symbol,
+                    identity=transition_state_key(symbol, event, context),
+                    title=RULE_LABELS["position_structure_event"],
+                    message=format_structure_event(symbol, position, event, context),
+                    payload={"event": event, "context": context},
+                )
+                sent += await self._fire_if_allowed(candidate)
+        self._persist()
         return sent
 
     async def evaluate_lifecycle(self, sync_payload: dict[str, Any]) -> int:
@@ -786,3 +838,42 @@ def _format_whale_price(value: float) -> str:
     if value < 100:
         return f"{value:,.4f}"
     return f"{value:,.2f}"
+
+
+def format_structure_event(symbol: str, position: dict[str, Any], event: dict[str, Any], context: dict[str, Any]) -> str:
+    """구조 이벤트 메시지. 관측 서술만 담고 매매 신호를 만들지 않는다(C4)."""
+    from html import escape
+
+    direction = "롱" if str(position.get("direction") or "").lower() == "long" else "숏"
+    relation = context.get("position_relation") if isinstance(context.get("position_relation"), dict) else {}
+    wyckoff = context.get("wyckoff") if isinstance(context.get("wyckoff"), dict) else {}
+    headline = {
+        "range_exit": "레인지 이탈",
+        "range_enter": "레인지 진입",
+        "order_block_enter": "오더블록 진입",
+        "order_block_exit": "오더블록 이탈",
+        "phase_change": "국면 전환",
+        "spring_or_lps": "Spring/LPS 확정",
+        "pnf_target_reached": "PNF 측정 목표 도달",
+    }.get(str(event.get("kind")), "구조 변화")
+
+    lines = [f"<b>🏗 구조 이벤트 · {escape(symbol)} ({direction} 보유)</b>"]
+    if event.get("kind") == "phase_change":
+        lines.append(f"· 국면 {escape(str(event.get('from')))} → {escape(str(event.get('to')))}")
+    elif event.get("kind") in {"range_exit", "range_enter"}:
+        bound = wyckoff.get("range_low") if event.get("to") == "below" else wyckoff.get("range_high")
+        lines.append(f"· {headline} (경계 {bound})")
+    else:
+        lines.append(f"· {headline}")
+    entry = relation.get("entry_price")
+    invalidation = relation.get("invalidation_price")
+    if entry is not None:
+        tail = f" · 무효화 {invalidation}" if invalidation is not None else ""
+        lines.append(f"· 내 진입 {entry}{tail}")
+    markers = wyckoff.get("recent_markers") or []
+    if markers:
+        lines.append(f"· 최근 마커: {escape(str(markers[0].get('label') or '-'))}")
+    if (context.get("repaint") or {}).get("repainted"):
+        lines.append("· 국면 재해석됨 — 이전 판정과 상이")
+    lines.append("관측 정보이며 매매 신호가 아닙니다.")
+    return "\n".join(lines)

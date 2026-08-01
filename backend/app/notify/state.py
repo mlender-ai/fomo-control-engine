@@ -37,6 +37,9 @@ class NotificationState:
     # 같은 고래의 짧은 시간 내 진입 체결을 Telegram 한 건으로 묶기 위한 대기열.
     # 원시 체결 원장은 DB에 그대로 남고, 이 상태는 알림 표현만 지연한다.
     whale_alert_events: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    # WO-FCE-STRUCTURE-CONTEXT-01: 심볼별 직전 구조 컨텍스트. 전이 감지에 쓰며,
+    # 이것이 없으면 매 틱 같은 구조 상태를 재발송하게 된다(C6 스팸 금지).
+    structure_contexts: dict[str, dict[str, Any]] = field(default_factory=dict)
     # WO-FCE-PAPER-OBSERVABILITY-01 (D3): 페이퍼 트랙 skipped 이벤트의 스팸 억제 상태.
     # key = "track:kind:reason" → {last_sent_date, suppressed, first_seen}.
     # 연속 동일 사유는 억제하고, 상태 전이(최초) + 일 1회 리마인더만 발송한다.
@@ -101,6 +104,7 @@ class NotificationState:
                 "pending_redelivery": self.pending_redelivery[-50:],
                 "whale_alert_events": {address: events[-200:] for address, events in self.whale_alert_events.items() if events},
                 "paper_skip_state": self.paper_skip_state,
+                "structure_contexts": self.structure_contexts,
                 "alert_rule_states": {
                     key: {
                         "status": rule.status,
@@ -141,6 +145,7 @@ class NotificationState:
             if isinstance(events, list)
         }
         self.paper_skip_state = {str(key): value for key, value in (payload.get("paper_skip_state") or {}).items() if isinstance(value, dict)}
+        self.structure_contexts = {str(key): value for key, value in (payload.get("structure_contexts") or {}).items() if isinstance(value, dict)}
         for key, raw in (payload.get("alert_rule_states") or {}).items():
             if not isinstance(raw, dict):
                 continue

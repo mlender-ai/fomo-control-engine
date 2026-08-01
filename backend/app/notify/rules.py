@@ -64,6 +64,9 @@ RULE_LABELS: dict[str, str] = {
     "full_alignment": "만장일치 정렬 발굴",
     "flow_divergence": "현물·선물 흐름 역행",
     "whale_entry": "Hyperliquid 고래 3분 다중체결 관측",
+    # WO-FCE-STRUCTURE-CONTEXT-01: 보유 포지션이 있을 때만 발화하는 구조 관계 알림.
+    # 시장 전체 와이코프 이벤트(wyckoff_event)와 별개다 — 그쪽은 변경하지 않는다.
+    "position_structure_event": "포지션 구조 이벤트",
 }
 
 RULE_SEVERITY: dict[str, AlertSeverity] = {
@@ -102,6 +105,7 @@ RULE_SEVERITY: dict[str, AlertSeverity] = {
     "flow_divergence": "warn",
     "full_alignment": "info",
     "whale_entry": "info",
+    "position_structure_event": "info",
 }
 
 

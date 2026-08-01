@@ -192,3 +192,17 @@ WO 본문의 D1("주식 진입이 0이므로 `opened` 이벤트가 없다")은 *
 - 도구: `scripts/void_orphan_stock_positions.py`(기본 dry-run)
 
 폴리 정산도 같은 원칙을 따른다: 정산되지 않은 사유를 `settlement_skips`로 집계해 "만기 미도래"인지 "가격이 확정 극단값에 미달"인지 구분 가능하게 한다.
+
+## 구조 컨텍스트 알림 규격 (WO-FCE-STRUCTURE-CONTEXT-01)
+
+`position_structure_event` — **보유 포지션이 있을 때만** 발화하는 구조 관계 알림.
+
+- **화이트리스트 등록**: `RULE_LABELS`·`RULE_SEVERITY`(info)·`alert_rules_enabled` 기본값에 명시 등록됐다. 거부 알림은 추가하지 않는다(진입 중심 알림 원칙 유지).
+- **전이 시에만 발송**: 같은 구조 상태가 100틱 반복돼도 0건이다. 최초 관측은 전이가 아니므로 첫 틱에 알림이 쏟아지지 않는다. 상태 키는 `{종목}:{이벤트유형}:{레인지ID}`.
+- **직전 상태 영속화**: `NotificationState.structure_contexts`에 심볼별로 저장되어 재기동에도 억제가 유지된다.
+- **메시지 마지막 줄 고정**: `관측 정보이며 매매 신호가 아닙니다.` — 구조는 관측이지 예측이 아니다.
+- **시장 이벤트와 분리**: 시장 전체 와이코프 이벤트는 기존 `wyckoff_event`가 담당하며 변경하지 않았다.
+
+진입·결과 알림의 구조 1줄은 `structure.context.verdict_line`(관측 서술)을 그대로 싣는다. 인과 단정 문구는 회귀 테스트가 금지한다.
+
+정본: [`docs/StructureContext.md`](StructureContext.md)

@@ -877,7 +877,9 @@ class Settings(BaseSettings):
         "trigger_near,invalidation_breach,take_profit_hit,status_worsened,health_drop,liq_proximity,liq_unknown_high_lev,wyckoff_event,data_stall,funding_extreme,oi_divergence,liq_cluster_near,setup_near,setup_triggered,setup_invalidated,intent_approaching,intent_zone_entered,intent_zone_entered_partial,intent_invalidated,universe_discovery,mdd_limit_warn,mdd_limit_critical,"
         "position_opened,position_closed,verdict_changed,stance_flipped,evidence_insufficient,periodic_pulse,full_alignment,flow_divergence,whale_entry,"
         # WO-FCE-ENGINE-LIVENESS-01: 생존 감시 계열은 기본 활성 — 끄면 침묵이 다시 은폐된다.
-        "engine_liveness,job_backoff_stuck,infra_capacity,process_restarted",
+        "engine_liveness,job_backoff_stuck,infra_capacity,process_restarted,"
+        # WO-FCE-STRUCTURE-CONTEXT-01: 보유 포지션 구조 관계 알림(전이 시에만 발화).
+        "position_structure_event",
         validation_alias=AliasChoices("FCE_ALERT_RULES_ENABLED", "ALERT_RULES_ENABLED"),
     )
     # ── WO-FCE-ENGINE-LIVENESS-01 생존 감시 ──────────────────────────────
