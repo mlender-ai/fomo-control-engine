@@ -378,3 +378,101 @@ def test_crypto_exit_path_untouched() -> None:
     source = "\n".join(path.read_text() for path in root.glob("*.py"))
     assert "stock_paper.exit_policy" not in source
     assert "stock_paper" not in source
+
+
+# ══════════════════════════════════════════════════════════════
+# 작업 7.1 — end-to-end: 무효화 이탈 주입 → SELL 생성·체결·기록
+# ══════════════════════════════════════════════════════════════
+
+
+def _seeded_store(tmp_path, *, close_price: float, opened_days_ago: int = 1):
+    """보유 포지션 1건 + 청산계획 + 마크가 있는 저장소를 만든다."""
+    path = tmp_path / "e2e.db"
+    connection = sqlite3.connect(path)
+    connection.row_factory = sqlite3.Row
+    run_migrations(connection)
+    opened = (datetime.now(timezone.utc) - timedelta(days=opened_days_ago)).isoformat()
+    connection.execute(
+        """INSERT INTO stock_paper_positions (market, symbol, quantity, average_price, currency, updated_at, opened_at)
+        VALUES ('US','AAPL',10,110.0,'USD',?,?)""",
+        (opened, opened),
+    )
+    connection.execute(
+        "INSERT INTO stock_paper_marks (market, symbol, price, observed_at) VALUES ('US','AAPL',?,?)",
+        (close_price, datetime.now(timezone.utc).isoformat()),
+    )
+    connection.commit()
+    connection.close()
+    store = StockPaperStore(f"sqlite:///{path}")
+    store.ensure_tracks(universe_version="v1", initial_krw=1e8, initial_usd=1e5)
+    store.set_exit_plan(Market.US, "AAPL", _plan(invalidation=100.0), datetime.fromisoformat(opened))
+    return store
+
+
+def test_end_to_end_invalidation_breach_creates_and_fills_sell(tmp_path, monkeypatch) -> None:
+    """무효화선 100 아래 종가 95 주입 → SELL 주문이 생성·체결·기록되어야 한다.
+
+    작업 7.1의 직접 증명 — 판단 유닛이 아니라 `_process_exits` 전체 경로를 탄다.
+    """
+    from app.stock_paper import service as stock_service
+
+    store = _seeded_store(tmp_path, close_price=95.0)
+    broker = PaperBroker(store)
+    observation = _observation(minute_close=95.0, minute_low=94.0, minute_high=96.0)
+    monkeypatch.setattr(stock_service, "_observation", lambda *args, **kwargs: observation)
+
+    events: list[dict] = []
+    counters = stock_service._process_exits(broker, store, None, {"US": {"market_state": "open"}}, events)
+
+    assert counters["triggered"] == 1, "무효화 이탈이 청산을 발화시켜야 한다"
+    assert counters["filled"] == 1, "SELL 주문이 실제로 체결되어야 한다"
+    assert store.position_quantity(Market.US, "AAPL") == 0, "포지션이 정리되어야 한다"
+    sells = [fill for fill in store.list_fills() if fill.side == Side.SELL]
+    assert len(sells) == 1
+    assert sells[0].price == 95.0  # 관측 종가에서 파생 — 무효화가 100이 아니다
+    closed = [event for event in events if event["kind"] == "closed"]
+    assert closed and closed[0]["detail"]["trigger"] == "invalidation_breach"
+
+
+def test_end_to_end_gap_exit_fills_at_session_open(tmp_path, monkeypatch) -> None:
+    """장외 이탈 → 대기 → 다음 세션 시가 92 체결. C1의 end-to-end 증명."""
+    from app.stock_paper import service as stock_service
+
+    store = _seeded_store(tmp_path, close_price=95.0)
+    broker = PaperBroker(store)
+
+    closed_session = _observation(session_open=False)
+    monkeypatch.setattr(stock_service, "_observation", lambda *args, **kwargs: closed_session)
+    stock_service._process_exits(broker, store, None, {"US": {"market_state": "closed"}}, [])
+    assert store.position_quantity(Market.US, "AAPL") == 10, "장외에서는 체결되지 않는다"
+    queued = [order for order in store.list_orders() if order.side == Side.SELL]
+    assert queued and queued[0].reason == "session_closed"
+
+    gap_open = _observation(session_open=True, session_open_price=92.0, minute_low=91.0, minute_high=93.0)
+    monkeypatch.setattr(stock_service, "_observation", lambda *args, **kwargs: gap_open)
+    processed = stock_service._process_pending_orders(broker, None, {"US": {"market_state": "open"}})
+
+    assert processed >= 1
+    sells = [fill for fill in store.list_fills() if fill.side == Side.SELL]
+    assert sells, "다음 세션에 체결되어야 한다"
+    assert sells[0].price == 92.0, "무효화가(100)가 아니라 다음 세션 시가(92)에 체결"
+
+
+def test_end_to_end_time_stop_closes_stale_position(tmp_path, monkeypatch) -> None:
+    """8일 방치 재발 방지 — 보유일 상한 초과 시 실제로 정리된다."""
+    from app.stock_paper import service as stock_service
+
+    store = _seeded_store(tmp_path, close_price=110.0, opened_days_ago=15)
+    broker = PaperBroker(store)
+    monkeypatch.setattr(
+        stock_service,
+        "_observation",
+        lambda *args, **kwargs: _observation(minute_close=110.0, minute_low=109.0, minute_high=111.0),
+    )
+
+    events: list[dict] = []
+    counters = stock_service._process_exits(broker, store, None, {"US": {"market_state": "open"}}, events)
+
+    assert counters["filled"] == 1
+    assert store.position_quantity(Market.US, "AAPL") == 0
+    assert [event for event in events if event["detail"].get("trigger") == "time_stop"]
