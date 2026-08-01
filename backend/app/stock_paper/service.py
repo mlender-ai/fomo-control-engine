@@ -64,6 +64,7 @@ def run_stock_paper_engine(settings: Settings, market_payloads: dict[str, dict[s
     evaluated = rejected = strict_entered = coverage_evaluated = coverage_attempted = coverage_entered = 0
     events: list[dict[str, Any]] = []
     reject_gate_counts: dict[str, int] = {}
+    exit_parameters = load_exit_parameters()
     # 청산을 진입보다 먼저 처리한다 — 자본과 포지션 슬롯을 먼저 회수해야 진입 한도가 정확해진다.
     exits = _process_exits(broker, store, toss_store, payloads, events)
     for market_name in ("KR", "US"):
@@ -72,9 +73,13 @@ def run_stock_paper_engine(settings: Settings, market_payloads: dict[str, dict[s
         observed_at = _timestamp(payload.get("observed_at") or datetime.now(timezone.utc))
         store.update_market_state(market, str(payload.get("market_state") or payload.get("status") or "unknown"), observed_at)
         if payload.get("status") == "observed":
+            # 검증 시계는 진입 정책과 청산 정책을 함께 식별한다. 청산 경로가 없던 구간은
+            # 출구가 없어 승률·실현 R이 원리적으로 산출 불가였으므로 그 구간의 경과를
+            # 그대로 이어 세면 안 된다. 청산 정책이 도입/변경되면 시계가 사유와 함께
+            # 재시작된다(validation_clock_restarted).
             store.activate_clock(
                 market,
-                parameter_version=parameters.version,
+                parameter_version=f"{parameters.version}+{exit_parameters.version}",
                 observed_at=observed_at,
             )
         strict_candidates = _unique_candidates(payload.get("trade_groups") if "trade_groups" in payload else payload.get("groups"))
@@ -300,7 +305,7 @@ def run_stock_paper_engine(settings: Settings, market_payloads: dict[str, dict[s
         "coverage_entered": coverage_entered,
         "pending_processed": processed,
         "exits": exits,
-        "exit_parameter_version": load_exit_parameters().version,
+        "exit_parameter_version": exit_parameters.version,
         "universe_version": universe.version,
         "parameter_version": parameters.version,
         "live_orders_enabled": False,

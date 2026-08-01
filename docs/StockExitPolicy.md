@@ -96,6 +96,14 @@ base = observation.session_open_price if order.reason == "session_closed" else o
 
 ## 검증 시계 재시작
 
+**기구**: `activate_clock`은 `parameter_version`이 바뀌면 시계를 재시작하고 `validation_clock_restarted` 이벤트를 사유와 함께 남긴다. 이 WO는 시계 식별자를 **진입+청산 조합**으로 바꿨다:
+
+```python
+parameter_version=f"{parameters.version}+{exit_parameters.version}"   # 예: "stock-v4+stock-exit-v1"
+```
+
+기존 트랙은 `stock-v4`로 저장돼 있으므로 배포 후 첫 정상 관측에서 자동으로 재시작되며, 사유는 `parameter_version_changed:stock-v4->stock-v4+stock-exit-v1`로 원장에 남는다. 별도 수동 조작이 필요 없다.
+
 주식 트랙의 4주 검증은 **청산 경로가 생긴 시점부터 재시작**한다. 이전 구간은 출구가 없어 승률·실현 R이 원리적으로 산출 불가였으므로 "검증 불능"으로 기록한다. 유실일 처리 규격은 [`docs/PaperObservability.md`](PaperObservability.md), 시계 계산은 `app/worker/liveness.py::elapsed_excluding_gaps()`.
 
 ## 커버리지 레인
