@@ -154,6 +154,20 @@ def _wyckoff_signatures(analysis: dict[str, Any], asset_class: str, timeframe: s
     # WO-FCE-PNF-TARGET-01 (C3): PNF 측정 목표를 실제로 채택한 진입은 candidate 시그니처로
     # 등록되어 원장 채점·부패 감지에 합류한다. 새 감지기가 아니라 기존 와이코프 국면의 목표
     # 계산기이므로 engine="wyckoff"를 재사용한다(C2). 승격은 N>=30·CI 하한 충족 시에만.
+    # WO-FCE-STRUCTURE-CONTEXT-01: 구조 컨텍스트를 candidate 로 등록해 원장 채점 대상에
+    # 포함시킨다. **게이트에는 넣지 않는다**(C2) — "레인지 내부 진입이 밖보다 나은가"를
+    # 나중에 실측할 데이터를 지금부터 쌓기 위함이며, 승격 전까지 진입 판단에 영향이 없다.
+    context = analysis.get("structure_context")
+    if isinstance(context, dict):
+        relation = context.get("position_relation") if isinstance(context.get("position_relation"), dict) else {}
+        if relation.get("entry_range_position") == "inside":
+            result.append(_signature("structure_context", "range_inside_entry", "candidate", "long", asset_class, timeframe))
+        if relation.get("entry_in_order_block"):
+            blocks = context.get("order_blocks") if isinstance(context.get("order_blocks"), dict) else {}
+            zone = blocks.get("entry_zone") if isinstance(blocks.get("entry_zone"), dict) else {}
+            event = "ob_demand_entry" if zone.get("kind") == "demand" else "ob_supply_entry"
+            result.append(_signature("structure_context", event, "candidate", "long", asset_class, timeframe))
+
     objective = analysis.get("pnf_measured_objective")
     if isinstance(objective, dict) and objective.get("adopted"):
         result.append(

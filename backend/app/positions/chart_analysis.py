@@ -19,6 +19,7 @@ from app.structure.liquidity.engine import (
     analyze_liquidity_structure,
     attach_liquidity_crosscheck_to_wyckoff,
 )
+from app.structure.candidates.engine import order_block_zones as detect_order_block_zones
 from app.structure.wyckoff.engine import analyze_wyckoff
 
 
@@ -123,6 +124,9 @@ def build_chart_analysis(
         "liquidity": liquidity,
         "wyckoff": wyckoff,
         "wyckoff_range": wyckoff.get("range"),
+        # WO-FCE-STRUCTURE-CONTEXT-01: 기존 오더블록 엔진의 존을 그대로 노출한다(신규 감지기 아님).
+        # 리테스트 이벤트는 발화 순간만 알려주므로 "내 포지션이 어느 존 안인가"를 답할 수 없었다.
+        "order_block_zones": detect_order_block_zones(analysis_recent),
         "wyckoff_phase": {
             "phase": wyckoff.get("phase", "undetermined"),
             "side": wyckoff.get("side", "neutral"),

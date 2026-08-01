@@ -99,6 +99,54 @@ def _active_fvgs(candles: list[MarketCandle]) -> list[dict[str, Any]]:
     return active[-8:]
 
 
+def order_block_zones(candles: list[MarketCandle], *, limit: int = 4) -> list[dict[str, Any]]:
+    """미시험 오더블록 존을 반환한다 (WO-FCE-STRUCTURE-CONTEXT-01).
+
+    **신규 감지기가 아니다.** `_order_block_retest`가 이미 쓰던 존 도출 로직(구조 파괴 →
+    직전 반대 캔들의 실체 구간)을 그대로 쓰되, "지금 이 캔들이 존을 터치했는가"라는 발화
+    조건만 떼어냈다. 리테스트 이벤트는 발화 순간만 알려주므로 "내 포지션이 어느 존 안에
+    있나"를 답할 수 없었다 — 그 빈자리를 메우기 위한 노출이다.
+
+    확정 캔들만 사용한다(호출자가 확정분만 넘긴다 — C3).
+    """
+    if len(candles) < 12:
+        return []
+    current_index = len(candles) - 1
+    zones: list[dict[str, Any]] = []
+    seen: set[tuple[float, float]] = set()
+    for break_index in range(current_index - 1, max(7, current_index - 35), -1):
+        shift = detect_structure_shift(candles[: break_index + 1])
+        if shift.get("state") != "structure_break" or not shift.get("direction"):
+            continue
+        direction = "long" if shift["direction"] == "up" else "short"
+        opposite = (lambda candle: candle.close < candle.open) if direction == "long" else (lambda candle: candle.close > candle.open)
+        anchor_index = next((index for index in range(break_index - 1, max(-1, break_index - 12), -1) if opposite(candles[index])), None)
+        if anchor_index is None:
+            continue
+        anchor = candles[anchor_index]
+        zone_low, zone_high = sorted((anchor.open, anchor.close))
+        key = (round(zone_low, 8), round(zone_high, 8))
+        if key in seen:
+            continue
+        seen.add(key)
+        retests = sum(1 for candle in candles[break_index + 1 :] if _touches(candle, zone_low, zone_high))
+        zones.append(
+            {
+                "kind": "demand" if direction == "long" else "supply",
+                "direction": direction,
+                "zone_low": round(zone_low, 8),
+                "zone_high": round(zone_high, 8),
+                "formed_at": anchor.timestamp.isoformat(),
+                "break_event": shift.get("event"),
+                "retests": retests,
+                "untested": retests == 0,
+            }
+        )
+        if len(zones) >= limit:
+            break
+    return zones
+
+
 def _order_block_retest(candles: list[MarketCandle]) -> list[dict[str, Any]]:
     if len(candles) < 12:
         return []

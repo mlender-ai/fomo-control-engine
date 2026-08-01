@@ -7,6 +7,7 @@ from statistics import pstdev
 from typing import Any
 
 from app.db.models import Position
+from app.structure.context import build_structure_context
 
 
 SOURCE_BADGES = {
@@ -83,6 +84,8 @@ def build_entry_snapshot_claim(
     toss_candles = _toss_candles(joined)
     last_toss_close = toss_candles[-1][1] if toss_candles else None
     funding = _funding_rate(raw_analysis)
+    # 리페인팅 감지용 이전 국면(C3): 저장된 진입 스냅샷의 국면과 비교한다.
+    previous_phase = _previous_phase(joined_analysis)
     thesis = (position.thesis_text or position.entry_memo or "").strip()
     if thesis:
         thesis_source = "user"
@@ -104,6 +107,17 @@ def build_entry_snapshot_claim(
             "overall_stance": _overall_stance(raw_analysis),
             "mark_price": _number(raw_analysis.get("mark_price")),
             "invalidation": _plan_price(raw_analysis.get("price_levels"), "invalidation"),
+            # WO-FCE-STRUCTURE-CONTEXT-01: 와이코프 국면·레인지·오더블록과 내 포지션의 관계.
+            # 시스템은 알고 있었지만 보여주지 않던 정보다. 관측 서술이며 예측이 아니다(C4).
+            "context": build_structure_context(
+                analysis=raw_analysis,
+                entry_price=_number(position.entry_price),
+                mark_price=_number(raw_analysis.get("mark_price")),
+                invalidation_price=_plan_price(raw_analysis.get("price_levels"), "invalidation"),
+                order_block_zones=_order_block_zones(raw_analysis),
+                pnf_objective=raw_analysis.get("pnf_measured_objective") if isinstance(raw_analysis.get("pnf_measured_objective"), dict) else None,
+                previous_phase=previous_phase,
+            ),
         },
         "derivatives": {
             "funding_rate": funding,
@@ -667,3 +681,19 @@ def _number(value: Any) -> float | None:
     except (TypeError, ValueError):
         return None
     return parsed if math.isfinite(parsed) else None
+
+
+def _order_block_zones(raw_analysis: dict[str, Any]) -> list[dict[str, Any]]:
+    """차트 분석이 이미 실은 오더블록 존을 꺼낸다. 없으면 빈 리스트(억지 생성 금지)."""
+    zones = raw_analysis.get("order_block_zones")
+    return [zone for zone in zones if isinstance(zone, dict)] if isinstance(zones, list) else []
+
+
+def _previous_phase(joined_analysis: dict[str, Any]) -> str | None:
+    """이전 관측의 와이코프 국면. 현재와 다르면 재해석(리페인팅)으로 표시한다."""
+    snapshot = joined_analysis.get("entry_snapshot") if isinstance(joined_analysis.get("entry_snapshot"), dict) else {}
+    structure = snapshot.get("structure") if isinstance(snapshot.get("structure"), dict) else {}
+    context = structure.get("context") if isinstance(structure.get("context"), dict) else {}
+    wyckoff = context.get("wyckoff") if isinstance(context.get("wyckoff"), dict) else {}
+    phase = wyckoff.get("phase")
+    return str(phase) if phase else None

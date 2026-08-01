@@ -121,6 +121,9 @@ def _without_phase_l_fields(payload: dict) -> dict:
     cleaned.pop("liquidity", None)
     # WO-43 추가 필드 (1줄 판정·혼합 신호 노트) — 리팩토링 전 픽스처엔 없는 의도된 추가.
     cleaned.pop("one_liners", None)
+    # WO-FCE-STRUCTURE-CONTEXT-01: 오더블록 존 노출 — 기존 감지기 출력의 추가 노출이며
+    # 리팩토링 전 픽스처엔 없는 의도된 추가다(기존 필드는 그대로 바이트 동일해야 한다).
+    cleaned.pop("order_block_zones", None)
     wyckoff = cleaned.get("wyckoff")
     if isinstance(wyckoff, dict):
         wyckoff.pop("liquidity_crosscheck", None)
