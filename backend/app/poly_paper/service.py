@@ -17,6 +17,16 @@ from .parameters import load_poly_parameters
 from .store import PolyPaperStore
 
 TRACK = "poly"
+
+# ── 제외 사유 분류 (WO-FCE-ALERT-WHITELIST-02 작업 2, C3) ────────────────────
+# 거부 지표의 분모는 "실제 판정 대상"이어야 한다. 아래 셋은 거부가 아니다.
+UNIVERSE_EXIT_EXPIRED = "resolved_or_expired"
+# 만료·종료 — 유니버스에서 나간다. 매 사이클 재평가하지 않는다.
+UNIVERSE_EXIT_REASONS = frozenset({UNIVERSE_EXIT_EXPIRED, "resolution_time_invalid", "market_inactive"})
+# 범위 외 — 애초에 파싱·판정 대상이 아니다.
+OUT_OF_SCOPE_REASONS = frozenset({"unsupported_crypto_question", "clob_token_missing"})
+# 한도 도달 — 설계된 정상 동작이다. 5개 보유 중이면 6번째를 안 잡는 게 맞다.
+CAPACITY_REASONS = frozenset({"position_capacity", "coverage_capacity", "insufficient_cash"})
 # 마지막 정산 시도의 미정산 사유 집계 — 진단 표면·리포트에서 (a)/(b) 판별에 쓴다.
 _LAST_SETTLEMENT_SKIPS: dict[str, int] = {}
 
@@ -84,9 +94,16 @@ async def run_poly_paper_engine(
     def _exclude(reason: str) -> None:
         exclusion_counts[reason] = exclusion_counts.get(reason, 0) + 1
 
+    universe_exits: dict[str, int] = {}
     for source_market in markets:
         observed += 1
         market = _apply_market_gates(source_market, now=now)
+        # 작업 2-1: 만료·종료 시장은 유니버스 이탈이다. 평가하지 않고 재평가도 하지 않는다.
+        # 거부 카운트에도 넣지 않는다 — 판정 대상이 아니었기 때문이다(C3).
+        if market.exclusion_reason in UNIVERSE_EXIT_REASONS:
+            universe_exits[str(market.exclusion_reason)] = universe_exits.get(str(market.exclusion_reason), 0) + 1
+            store.save_market(market)
+            continue
         latest_at = store.latest_estimate_at(market.id)
         retry_unexecuted = (
             store.latest_estimate_needs_execution_retry(market.id)
@@ -221,8 +238,17 @@ async def run_poly_paper_engine(
             )
     if settled:
         events.append(track_event(TRACK, "closed", "*", detail={"settled": settled}))
-    # 제외(exclusion)는 개별 발송하면 스팸이므로 집계 이벤트 1건으로 요약한다 (작업3).
-    top_exclusion = max(exclusion_counts.items(), key=lambda kv: kv[1])[0] if exclusion_counts else None
+    # 거부 집계는 **텔레그램에 도달하지 않는다**(화이트리스트, 작업 1). 진단 표면과
+    # 일 1회 요약이 읽을 수 있도록 이벤트 자체는 계속 생성한다 — 침묵 금지(C4)와
+    # 거부 미발송(C1)은 양립한다: 조회는 되고 알림만 안 간다.
+    # 작업 2-4: 지표 분모 정정 — 만료·범위외·한도도달을 거부에서 분리한다.
+    buckets: dict[str, dict[str, int]] = {"rejected": {}, "out_of_scope": {}, "capacity_full": {}, "universe_exit": dict(universe_exits)}
+    for reason, count in exclusion_counts.items():
+        buckets[classify_exclusion(reason)][reason] = buckets[classify_exclusion(reason)].get(reason, 0) + count
+    true_rejections = sum(buckets["rejected"].values())
+    capacity_waiting = sum(buckets["capacity_full"].values())
+    # 최다 거부는 **진짜 거부**에서만 고른다. 한도 도달이 "최다 거부"로 뜨던 오표기 수리.
+    top_exclusion = max(buckets["rejected"].items(), key=lambda kv: kv[1])[0] if buckets["rejected"] else None
     if excluded > 0:
         events.append(
             track_event(
@@ -230,10 +256,14 @@ async def run_poly_paper_engine(
                 "rejected_summary",
                 "*",
                 detail={
+                    # 정정된 분모(작업 2-4): 만료·범위외·한도도달은 거부가 아니다.
                     "evaluated": estimated,
-                    "rejected": excluded,
+                    "rejected": true_rejections,
+                    "capacity_waiting": capacity_waiting,
+                    "out_of_scope": sum(buckets["out_of_scope"].values()),
+                    "universe_exits": sum(buckets["universe_exit"].values()),
                     "top_reject_gate": top_exclusion,
-                    "gate_counts": exclusion_counts,
+                    "gate_counts": buckets["rejected"],
                     "strict_entered": strict_entered,
                     "coverage_entered": coverage_entered,
                 },
@@ -250,6 +280,13 @@ async def run_poly_paper_engine(
         "coverage_entered": coverage_entered,
         "effective_run": True,
         "settlement_skips": last_settlement_skips(),
+        # 정정된 지표: excluded 는 하위호환 총합, rejected 는 실제 판정 대상 중 미달분.
+        "rejected": true_rejections,
+        "capacity_waiting": capacity_waiting,
+        "out_of_scope": sum(buckets["out_of_scope"].values()),
+        "universe_exits": sum(buckets["universe_exit"].values()),
+        "exclusion_buckets": buckets,
+        "evaluable_markets": estimated,
         "top_reject_gate": top_exclusion,
         "events": events,
         "excluded": excluded,
@@ -279,6 +316,11 @@ def poly_paper_dashboard(settings: Settings) -> dict[str, Any]:
 def _apply_market_gates(market: PolyMarket, *, now: datetime) -> PolyMarket:
     parameters = load_poly_parameters()
     reason = market.exclusion_reason
+    # WO-FCE-ALERT-WHITELIST-02 작업 2-1: 이미 만료·종료된 시장은 유니버스에서 나간다.
+    # 매 사이클 재평가하면 유니버스를 차지한 채 "거부"만 쌓여 평가 가능 시장을 밀어낸다
+    # (2026-08-01 실측: resolution_time_invalid 39건이 평가 0을 만들었다).
+    if reason is None and (market.closed or (market.end_at is not None and market.end_at <= now)):
+        reason = UNIVERSE_EXIT_EXPIRED
     if reason is None and market.liquidity < parameters.min_liquidity:
         reason = "liquidity_below_minimum"
     if reason is None and market.end_at is not None:
@@ -288,6 +330,22 @@ def _apply_market_gates(market: PolyMarket, *, now: datetime) -> PolyMarket:
     if reason is None and not market.active:
         reason = "market_inactive"
     return replace(market, trade_eligible=reason is None, exclusion_reason=reason)
+
+
+def classify_exclusion(reason: str) -> str:
+    """제외 사유를 지표 분류로 매핑한다 (작업 2-4, C3).
+
+    **만료·범위외·한도도달은 "거부"가 아니다.** 거부는 "판정했으나 기준 미달"이며,
+    이 셋은 애초에 판정 대상이 아니거나(만료·범위외) 설계된 정상 동작(한도도달)이다.
+    분모에 섞이면 "거부 73건"처럼 엔진이 고장난 것처럼 보인다.
+    """
+    if reason in UNIVERSE_EXIT_REASONS:
+        return "universe_exit"
+    if reason in OUT_OF_SCOPE_REASONS:
+        return "out_of_scope"
+    if reason in CAPACITY_REASONS:
+        return "capacity_full"
+    return "rejected"
 
 
 async def _settle_due_markets(

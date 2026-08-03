@@ -64,6 +64,13 @@ def run_stock_paper_engine(settings: Settings, market_payloads: dict[str, dict[s
     evaluated = rejected = strict_entered = coverage_evaluated = coverage_attempted = coverage_entered = 0
     events: list[dict[str, Any]] = []
     reject_gate_counts: dict[str, int] = {}
+    # 작업 3-2: 커버리지 레인이 0인 이유를 **추측 없이** 특정하기 위한 단계별 차단 카운터.
+    # 진입 0의 원인이 게이트 미달인지 레인 차단인지 잡 미실행인지 실측으로 갈린다.
+    coverage_blocks: dict[str, int] = {}
+
+    def _coverage_block(stage: str) -> None:
+        coverage_blocks[stage] = coverage_blocks.get(stage, 0) + 1
+
     exit_parameters = load_exit_parameters()
     # 청산을 진입보다 먼저 처리한다 — 자본과 포지션 슬롯을 먼저 회수해야 진입 한도가 정확해진다.
     exits = _process_exits(broker, store, toss_store, payloads, events)
@@ -198,15 +205,29 @@ def run_stock_paper_engine(settings: Settings, market_payloads: dict[str, dict[s
         loss_gate_open = not (
             market_track and market_track.get("engine_return_pct") is not None and float(market_track["engine_return_pct"]) <= -parameters.daily_loss_limit_pct
         )
+        if not parameters.coverage_entry_enabled:
+            _coverage_block("lane_disabled")
+        elif not loss_gate_open:
+            _coverage_block("daily_loss_limit")
+        elif coverage_slots_used >= parameters.coverage_target_open_positions:
+            _coverage_block("coverage_slots_full")
         if parameters.coverage_entry_enabled and loss_gate_open and coverage_slots_used < parameters.coverage_target_open_positions:
             scored: list[tuple[int, int, dict[str, Any], dict[str, Any], Any]] = []
             for candidate in coverage_candidates:
                 symbol = str(candidate.get("symbol") or "").upper()
                 if not symbol or store.position_quantity(market, symbol) > 0 or store.has_active_order(market, symbol):
+                    _coverage_block("already_held_or_ordered")
                     continue
                 warnings = tuple(str(item) for item in candidate.get("warning_badges") or [])
                 allowed, _ = universe.entry_allowed(market, symbol, warnings)
-                if candidate.get("tradable") is False or not allowed or not _is_fresh(candidate.get("observed_at")):
+                if candidate.get("tradable") is False:
+                    _coverage_block("not_tradable")
+                    continue
+                if not allowed:
+                    _coverage_block("universe_entry_blocked")
+                    continue
+                if not _is_fresh(candidate.get("observed_at")):
+                    _coverage_block("observation_stale")
                     continue
                 previous = store.latest_analysis_snapshot(market, symbol) or {}
                 prior = (previous.get("confluence") or {}).get("stance_state") if isinstance(previous.get("confluence"), dict) else None
@@ -227,13 +248,16 @@ def run_stock_paper_engine(settings: Settings, market_payloads: dict[str, dict[s
             scored.sort(key=lambda item: (item[0], item[1], str(item[2].get("symbol") or "")), reverse=True)
             for _, _, candidate, analysis, decision in scored:
                 if coverage_attempted >= parameters.coverage_max_attempts_per_cycle:
+                    _coverage_block("max_attempts_per_cycle")
                     break
                 if (
                     store.mode_position_count(market, "coverage") + store.mode_active_order_count(market, "coverage")
                     >= parameters.coverage_target_open_positions
                 ):
+                    _coverage_block("coverage_target_reached")
                     break
                 if sum(1 for item in store.dashboard()["positions"] if item["market"] == market.value) >= parameters.max_open_positions:
+                    _coverage_block("max_open_positions")
                     break
                 symbol = str(candidate.get("symbol") or "").upper()
                 if store.position_quantity(market, symbol) > 0 or store.has_active_order(market, symbol):
@@ -304,6 +328,8 @@ def run_stock_paper_engine(settings: Settings, market_payloads: dict[str, dict[s
         "coverage_attempted": coverage_attempted,
         "coverage_entered": coverage_entered,
         "pending_processed": processed,
+        # 작업 3-2: 커버리지 진입 0의 원인을 단계별로 드러낸다(진단 표면·리포트에서 조회).
+        "coverage_blocks": coverage_blocks,
         "exits": exits,
         "exit_parameter_version": exit_parameters.version,
         "universe_version": universe.version,

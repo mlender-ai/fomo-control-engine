@@ -206,3 +206,30 @@ WO 본문의 D1("주식 진입이 0이므로 `opened` 이벤트가 없다")은 *
 진입·결과 알림의 구조 1줄은 `structure.context.verdict_line`(관측 서술)을 그대로 싣는다. 인과 단정 문구는 회귀 테스트가 금지한다.
 
 정본: [`docs/StructureContext.md`](StructureContext.md)
+
+## 텔레그램 발송 화이트리스트 (WO-FCE-ALERT-WHITELIST-02)
+
+> **거부는 알림이 아니라 조회 대상이다.** 여기 없는 kind 는 텔레그램에 도달하지 않는다.
+
+| kind | 텔레그램 | 근거 |
+|---|:---:|---|
+| `opened` | ✅ 발송 | 무엇이 **일어났는가** |
+| `closed` | ✅ 발송 | 결과 + 누적 승률 |
+| `rejected_summary` | ❌ **미도달** | 무엇이 **안 일어났는가** — 조회 대상 |
+| `skipped` | ❌ **미도달** | 동일 |
+| `error` | ❌ **미도달** | 엔진 오류는 생존 감시 계열(`engine_liveness` 등)이 담당 |
+
+정본: `app/notify/paper_events.py::TELEGRAM_SENDABLE_KINDS` / `is_telegram_sendable()`
+
+### 왜 억제가 아니라 화이트리스트인가
+
+선행 WO들은 발송 **빈도**를 계속 좁혀 왔다: "개별 → 집계 1건" → "전이 시에만". 그러나 유니버스가 오염되면 최다 거부 게이트가 계속 뒤바뀌어(`unsupported_crypto_question` → `마켓 한도` → `resolution_time_invalid`) **전이 자체가 반복 발생**해 사실상 스팸이 됐다.
+
+**빈도를 조이는 접근은 오염된 입력 앞에서 반복 실패한다.** 그래서 발송 경로에서 원천 제외한다. 거부가 100회 발생해도 텔레그램은 0건이며, 회귀 테스트가 이를 강제한다(`tests/test_alert_whitelist.py`).
+
+### 거부는 어디서 보는가
+
+- `GET /api/system/paper/diagnosis` — `telegram_sendable_kinds`·`rejection_policy`와 트랙별 최다 거부 게이트
+- 일 1회 성과 요약 — 트랙별 평가·진입·거부 집계
+
+**침묵 금지(C4)와 거부 미발송(C1)은 양립한다**: 조회는 되고 알림만 안 간다. 생존·사망·복구 알림은 이 경로가 아니라 `notify/rules.py` 계열이므로 영향받지 않는다.

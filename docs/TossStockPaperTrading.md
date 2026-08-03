@@ -274,3 +274,22 @@ long-only는 동일하다. 운영 표본에서 evidence는 69/69, checklist는 6
 **KR 은 달력 8일 중 7일이 유실됐다** — 검증 시계가 사실상 1일만 돌았다. 4주 검증은
 유실일을 제외한 실측일 기준이므로 이 속도로는 기한 내 표본이 모이지 않는다.
 KR 의 거부 이벤트가 07-22T02:08 이후 한 건도 없는 것도 같은 원인을 가리킨다(평가 미수행).
+
+## 커버리지 레인 단계별 차단 카운터 (WO-FCE-ALERT-WHITELIST-02)
+
+커버리지 진입이 0일 때 **원인을 추측하지 않고 특정**하기 위한 카운터다. 엔진 반환 payload의 `coverage_blocks`에 단계별 건수가 담긴다.
+
+| 단계 | 의미 |
+|---|---|
+| `lane_disabled` | `coverage_entry_enabled=false` |
+| `daily_loss_limit` | 일일 손실 한도 도달로 레인 차단 |
+| `coverage_slots_full` | 커버리지 슬롯이 이미 목표치 |
+| `already_held_or_ordered` | 이미 보유 중이거나 주문 대기 |
+| `not_tradable` | 후보의 `tradable=false` |
+| `universe_entry_blocked` | 유니버스 warnings 차단 |
+| `observation_stale` | 관측 신선도 미달 |
+| `max_attempts_per_cycle` | 사이클당 시도 상한 소진 |
+| `coverage_target_reached` | 목표 보유수 도달 |
+| `max_open_positions` | 시장 전체 포지션 한도 |
+
+**진입 0의 원인 판정**: 이 카운터가 전부 0이면 후보 자체가 없었던 것(수집·게이트 문제), 특정 단계에 몰려 있으면 그 단계가 병목이다. 게이트 미달은 정상이며 **완화하지 않는다** — 원인을 아는 것과 기준을 낮추는 것은 다르다.

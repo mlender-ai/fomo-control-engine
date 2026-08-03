@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.core.config import get_settings
+from app.notify.paper_events import TELEGRAM_SENDABLE_KINDS
 from app.stock_paper.service import _ready_to_start as stock_ready_to_start
 from app.stock_paper.store import StockPaperStore
 from app.worker.runtime import get_worker_status
@@ -119,6 +120,10 @@ def paper_diagnosis() -> dict[str, Any]:
     restarts = _liveness.recent_restarts(settings)
     return {
         "principle": "침묵 금지 — 모든 미발생은 사유와 함께 관측 가능해야 한다.",
+        # WO-FCE-ALERT-WHITELIST-02: 거부는 **알림이 아니라 조회 대상**이다. 텔레그램에
+        # 도달하는 kind 를 여기 명시해 "왜 거부 알림이 안 오는가"가 설계임을 드러낸다.
+        "telegram_sendable_kinds": sorted(TELEGRAM_SENDABLE_KINDS),
+        "rejection_policy": "거부·미발생·오류는 텔레그램 미발송(화이트리스트). 이 진단 표면과 일 1회 요약으로 조회한다.",
         "flag_warnings": worker.get("flag_warnings", []) if isinstance(worker, dict) else [],
         "tracks": {"crypto": crypto, "stock": stock, "poly": poly},
         "liveness": {

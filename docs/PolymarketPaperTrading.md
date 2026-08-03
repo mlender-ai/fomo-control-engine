@@ -63,3 +63,32 @@ coverage calibration이며 모두 실제 ask 깊이, 수수료, 호가 유동성
 수집이 실패하면 마지막 원장을 보존하고 오류 상태만 갱신한다. 첫 정상 공개 시장 수집 시점에 독립 4주 검증 시계가 시작된다.
 
 확률 원장을 쓴 뒤 PaperBroker 주문 원장을 쓰기 전에 프로세스가 중단되면, 다음 수집은 정상 추정 간격을 기다리지 않고 해당 후보를 다시 가격 계산해 체결 가능 여부를 재검증한다. 이 재시도도 새 판단으로 append-only 기록되며 이전 추정을 덮어쓰지 않는다.
+
+## 유니버스 위생 · 지표 분모 (WO-FCE-ALERT-WHITELIST-02)
+
+### 제외 사유 분류 — 거부가 아닌 것들
+
+`poly_paper/service.py::classify_exclusion`
+
+| 분류 | 사유 | 성격 |
+|---|---|---|
+| `universe_exit` | `resolved_or_expired`, `resolution_time_invalid`, `market_inactive` | **판정 대상이 아니다.** 만료·종료 시장은 유니버스에서 나간다 |
+| `out_of_scope` | `unsupported_crypto_question`, `clob_token_missing` | **파싱 대상이 아니다.** 질문 형식이 지원 범위 밖 |
+| `capacity_full` | `position_capacity`, `coverage_capacity`, `insufficient_cash` | **설계된 정상 동작.** 5개 보유 중이면 6번째를 안 잡는 게 맞다 |
+| `rejected` | `after_cost_edge_low`, `liquidity_below_minimum` 등 | **실제 판정 미달** — 이것만 거부다 |
+
+### 만료 시장 제거
+
+`_apply_market_gates`가 `closed` 또는 `end_at <= now`를 `resolved_or_expired`로 판정하고, 평가 루프는 이런 시장을 **진입 전에 걸러낸다**. 재평가 비용도 쓰지 않고 거부 카운트에도 넣지 않는다.
+
+수리 전에는 만료 시장이 유니버스를 차지한 채 매 사이클 "거부"만 쌓아 실제 평가 가능 시장을 밀어냈다(2026-08-01 실측: `resolution_time_invalid` 39건 → 평가 0).
+
+### 지표 분모 정의
+
+```
+거부율 분모 = 실제 판정 대상 = 전체 관측 − (만료 + 범위외 + 한도도달)
+```
+
+`rejected_summary` 이벤트와 엔진 반환 payload는 `rejected`(진짜 거부)·`capacity_waiting`·`out_of_scope`·`universe_exits`를 **분리해서** 싣는다. **최다 거부 게이트는 진짜 거부에서만 고른다** — "마켓 한도"가 최다 거부로 뜨던 오표기를 수리했다.
+
+`max_open_markets` 도달로 진입이 없는 것은 정상이며, 성과 리포트에 `한도 도달 대기 N건`으로 표기한다.
