@@ -702,7 +702,14 @@ def _whale_batch_candidate(
 
     sample_size = int(review.get("sample_size") or 0)
     win_rate = review.get("win_1r_pct")
-    accuracy = f"추종 승률 {win_rate}% (N={sample_size})" if win_rate is not None else f"추종 승률 축적 중 (N={sample_size})"
+    # WO-FCE-ENTRY-THROUGHPUT-01 작업 5: 선정 기준과 사후 채점을 구분해 쓴다.
+    # 고래는 **승률로 뽑지 않는다** — quality_score(월간 PnL·ROI·계좌규모)로 뽑는다.
+    # 하이퍼리퀴드 리더보드가 승률 필드를 주지 않기 때문이다. 여기 승률은 우리가 사후에
+    # 채점한 결과이며 선정에 피드백되지 않는다. 둘을 붙여 쓰면 "승률로 뽑았다"로 오해된다.
+    scored = f"승률 {win_rate}% (N={sample_size})" if win_rate is not None else f"승률 축적 중 (N={sample_size})"
+    if win_rate is not None and sample_size < 30:
+        scored += " · 표본 부족"
+    accuracy = f"선정: quality_score 기준 · 사후 채점 {scored}"
     cumulative_r = float(review.get("cumulative_return_r") or 0.0)
     elapsed_days = int(review.get("validation_days") or 0)
     remaining_days = int(review.get("validation_remaining_days") or max(0, 28 - elapsed_days))

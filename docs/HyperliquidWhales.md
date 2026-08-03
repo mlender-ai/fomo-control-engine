@@ -50,3 +50,64 @@ The relevant settings are `FCE_HYPERLIQUID_WHALE_TRACKING_ENABLED`, `FCE_HYPERLI
 - Labels are user-provided aliases and never claim verified ownership or identity.
 
 Official API references: Hyperliquid info endpoint and rate-limit documentation.
+
+---
+
+## 선정 기준 확정 (WO-FCE-ENTRY-THROUGHPUT-01 작업 5, 2026-08-03)
+
+> **고래는 승률로 뽑지 않는다.** 월간 PnL·ROI·계좌규모 복합 점수(`quality_score`)로 뽑는다.
+
+사용자 질문("상위 승률 고래 선정하고 있는 거 맞아?")에 대한 코드 기준 답이다.
+
+### 선정 경로
+
+`discover_whale_leaderboard` 잡 → `services.runtime.discover_whales`
+→ `onchain/service.py::discover` → `onchain/hyperliquid/leaderboard.py::discover_leaderboard_wallets`
+→ **`select_candidates(rows, criteria)`** → `select_directional_cohort(...)`
+
+### 1단계 — 자격 필터 (`select_candidates`, 전부 통과해야 후보)
+
+| 조건 | 설정 |
+| --- | --- |
+| 계좌 가치 ≥ | `hyperliquid_whale_discovery_min_account_usd` |
+| 월간 PnL ≥ | `hyperliquid_whale_discovery_min_month_pnl_usd` |
+| 월간 ROI ≥ | `hyperliquid_whale_discovery_min_month_roi` |
+| 월간 거래대금 ≥ | `hyperliquid_whale_discovery_min_month_volume_usd` |
+| 회전율(거래대금/계좌) ≤ | `hyperliquid_whale_discovery_max_turnover` |
+
+**승률 조건은 없다.**
+
+### 2단계 — 정렬 점수
+
+```python
+quality_score = log10(max(1, month_pnl)) * 30 + min(month_roi, 1.0) * 100 + log10(max(1, account_value)) * 8
+```
+
+PnL 절대액 · ROI · 계좌 규모의 가중합이다. 승률은 들어가지 않는다.
+
+### 왜 승률이 아닌가
+
+**하이퍼리퀴드 리더보드 API 가 승률 필드를 주지 않는다.** 응답에는 창별 `pnl`·`roi`·`vlm`
+만 있다. 승률로 뽑으려면 지갑별 체결 이력을 직접 재구성해야 하며, 그것은 이 WO 범위 밖이다.
+
+우리가 표기하는 **추종 승률은 선정 후 사후 채점 결과**이며 선정에 피드백되지 않는다.
+알림 문구도 둘을 구분해 쓴다:
+
+```
+선정: quality_score 기준 · 사후 채점 승률 40.0% (N=10) · 표본 부족
+```
+
+붙여 쓰면 "승률로 고래를 뽑았다"로 오해된다. 현재 N=10 은 표본 부족이므로
+**선정 기준 변경의 근거로 쓸 수 없다.**
+
+### `service.py:439` 의 `size_usd` 정렬은 선정과 무관
+
+```python
+ranked = sorted(grouped, key=lambda item: item.size_usd, reverse=True)
+```
+
+이 줄은 차트 마커 묶음 안에서 체결을 크기순으로 **표시**하는 코드다. 지갑 선정에 쓰이지
+않는다. D4 의 의심(규모 기준 선정)은 이 줄에 대해서는 해소된다 — 다만 실제 선정 기준
+역시 승률이 아니라 PnL·ROI·규모 복합이므로, "규모가 섞여 있다"는 취지 자체는 맞다.
+
+승률 기반 선정으로 전환할지는 별도 판단이다(이 WO 는 규명까지).

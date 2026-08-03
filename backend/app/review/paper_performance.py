@@ -218,6 +218,7 @@ def poly_track(dashboard: dict[str, Any]) -> dict[str, Any]:
     track = dashboard.get("track") or {}
     positions = [row for row in (dashboard.get("positions") or []) if isinstance(row, dict)]
     settled = [row for row in positions if str(row.get("status") or "") == "resolved"]
+    expiry = _poly_expiry(positions, track)
     calibration = dashboard.get("calibration") or {}
     brier_values = [float(row["brier_score"]) for row in settled if row.get("brier_score") is not None]
     return {
@@ -226,9 +227,12 @@ def poly_track(dashboard: dict[str, Any]) -> dict[str, Any]:
         "currency": "USDC",
         "clock": _clock(track),
         "holding": {"count": sum(1 for row in positions if str(row.get("status") or "") == "open")},
-        "closed": closed_metrics([float(row["pnl"]) for row in settled if row.get("pnl") is not None]),
+        # 폴리 정산 손익은 USDC 금액이지 R 이 아니다 — avg_r 로 실으면 -42.51R 처럼
+        # 완전히 다른 단위의 숫자가 R 로 표기된다. 단위를 명시해 분리한다.
+        "closed": _poly_closed_metrics([float(row["pnl"]) for row in settled if row.get("pnl") is not None]),
         "excluded": {},
         "today": {},
+        "expiry": expiry,
         "brier": {
             "settled_positions": {
                 "n": len(brier_values),
@@ -237,6 +241,43 @@ def poly_track(dashboard: dict[str, Any]) -> dict[str, Any]:
             },
             "estimates": _estimate_brier(calibration, int(dashboard.get("resolution_count") or 0)),
         },
+    }
+
+
+def _poly_closed_metrics(pnl_values: list[float]) -> dict[str, Any]:
+    """폴리 정산 손익 지표. 승률은 R 이 아니라 **USDC 손익 부호** 기준이다.
+
+    `avg_r` 을 비워두는 것이 핵심이다 — 폴리에는 무효화 거리 개념이 없어 R 이 정의되지
+    않는다. 금액을 R 자리에 넣으면 -42.51R 같은 단위 오표기가 그대로 사용자에게 간다.
+    """
+    metrics = closed_metrics(pnl_values)
+    metrics["avg_pnl"] = metrics.pop("avg_r")
+    metrics["avg_r"] = None
+    return metrics
+
+
+def _poly_expiry(positions: list[dict[str, Any]], track: dict[str, Any]) -> dict[str, Any]:
+    """보유 포지션의 만기 분포와 4주 검증 창 내 정산 가능 여부 (작업 4).
+
+    2026-08-03 실측: 보유 8건 전부 만기 2027-01-01 로, 검증 종료(2026-08-19)보다 5개월
+    뒤다. 정산 로직은 정상이다(만기 도래한 건은 실제로 정산됐다) — 표본이 안 생기는
+    이유는 로직이 아니라 **만기가 검증 창 밖**이기 때문이다. 이것이 "언제 성과가
+    나오는가"에 대한 답이므로 리포트에 싣는다.
+    """
+    open_rows = [row for row in positions if str(row.get("status") or "") == "open"]
+    ends = sorted(str(row.get("end_at") or "") for row in open_rows if row.get("end_at"))
+    nearest = ends[0] if ends else None
+    track_ends_at = str(track.get("ends_at") or "")
+    within_window = None
+    if nearest and track_ends_at:
+        within_window = sum(1 for value in ends if value <= track_ends_at)
+    return {
+        "open_count": len(open_rows),
+        "nearest_end_at": nearest,
+        "validation_ends_at": track_ends_at or None,
+        "settling_within_window": within_window,
+        # 창 안에 만기가 하나도 없으면 표본은 구조적으로 생길 수 없다.
+        "sample_possible_in_window": None if within_window is None else within_window > 0,
     }
 
 

@@ -418,7 +418,9 @@ class PolyPaperStore:
                 ORDER BY trade_eligible DESC, liquidity DESC"""
             ).fetchall()
             positions = connection.execute(
-                """SELECT p.*, m.question, m.slug FROM poly_positions p
+                # end_at: 만기 분포 표기용 (WO-FCE-ENTRY-THROUGHPUT-01 작업 4) —
+                # 4주 검증 창 안에 만기가 있는지가 "표본이 생길 수 있는가"를 결정한다.
+                """SELECT p.*, m.question, m.slug, m.end_at FROM poly_positions p
                 JOIN poly_markets m ON m.market_id=p.market_id ORDER BY p.opened_at DESC"""
             ).fetchall()
             fills = connection.execute("SELECT payload FROM poly_fills ORDER BY filled_at DESC LIMIT 20").fetchall()

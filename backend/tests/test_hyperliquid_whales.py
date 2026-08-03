@@ -829,7 +829,11 @@ async def test_whale_alert_batches_same_wallet_fills_for_three_minutes() -> None
     assert "숏→롱 전환" in sender.messages[0]
     assert "ETH" in sender.messages[0]
     assert "숏 신규" in sender.messages[0]
-    assert "추종 승률 50.0%" in sender.messages[0]
+    # WO-FCE-ENTRY-THROUGHPUT-01 작업 5: 선정 기준(quality_score)과 사후 채점(승률)을
+    # 구분해 표기한다 — 붙여 쓰면 "승률로 고래를 뽑았다"로 오해된다.
+    assert "선정: quality_score 기준" in sender.messages[0]
+    assert "사후 채점 승률 50.0% (N=4)" in sender.messages[0]
+    assert "표본 부족" in sender.messages[0]
     assert "누적 +0.50R" in sender.messages[0]
     assert "따라가기 신호가 아닙니다" in sender.messages[0]
     alert = repo.list_alerts()[0]

@@ -50,6 +50,12 @@ def _closed_line(closed: dict[str, Any]) -> str | None:
     avg_r = closed.get("avg_r")
     if avg_r is not None:
         parts.append(f"평균 {avg_r:+.2f}R")
+    else:
+        # 폴리처럼 R 이 정의되지 않는 트랙은 금액 단위를 명시해 쓴다 — R 자리에 금액을
+        # 넣으면 -42.51R 같은 단위 오표기가 그대로 나간다.
+        avg_pnl = closed.get("avg_pnl")
+        if avg_pnl is not None:
+            parts.append(f"평균 손익 {avg_pnl:+.2f}")
     return " · ".join(parts)
 
 
@@ -76,11 +82,23 @@ def _brier_lines(track: dict[str, Any]) -> list[str]:
     if not isinstance(brier, dict):
         return []
     lines: list[str] = []
+    # 만기 분포 — "언제 성과가 나오는가"의 답 (WO-FCE-ENTRY-THROUGHPUT-01 작업 4).
+    expiry = track.get("expiry") or {}
+    nearest = expiry.get("nearest_end_at")
+    if nearest:
+        lines.append(f"· 정산 대기 {int(expiry.get('open_count') or 0)}건 · 최근접 만기 {escape(str(nearest)[:10])}")
+    if expiry.get("sample_possible_in_window") is False:
+        lines.append(f"⚠️ 검증 종료({escape(str(expiry.get('validation_ends_at') or '')[:10])}) 내 만기 0건 — <b>검증 기간 내 표본 불가</b>")
     settled = brier.get("settled_positions") or {}
     settled_avg = settled.get("avg")
     settled_n = int(settled.get("n") or 0)
     if settled_avg is None:
-        lines.append("· 브라이어 표본 없음 — 정산 완료 포지션 0건")
+        # 정산은 됐는데 브라이어가 없는 경우와 정산 자체가 없는 경우를 구분한다.
+        settled_trades = int((track.get("closed") or {}).get("n") or 0)
+        if settled_trades:
+            lines.append(f"· 브라이어 미산출 — 정산 {settled_trades}건에 브라이어 기록 없음")
+        else:
+            lines.append("· 브라이어 표본 없음 — 정산 완료 포지션 0건")
     else:
         lines.append(f"· 브라이어 평균 {settled_avg:.4f} (정산 {settled_n}건)")
     estimates = brier.get("estimates") or {}

@@ -293,3 +293,39 @@ KR 의 거부 이벤트가 07-22T02:08 이후 한 건도 없는 것도 같은 �
 | `max_open_positions` | 시장 전체 포지션 한도 |
 
 **진입 0의 원인 판정**: 이 카운터가 전부 0이면 후보 자체가 없었던 것(수집·게이트 문제), 특정 단계에 몰려 있으면 그 단계가 병목이다. 게이트 미달은 정상이며 **완화하지 않는다** — 원인을 아는 것과 기준을 낮추는 것은 다르다.
+
+---
+
+## 후보 파이프라인 실측 (WO-FCE-ENTRY-THROUGHPUT-01, 2026-08-03)
+
+### 진입 기아의 병목은 게이트가 아니라 슬롯 포화였다
+
+증상 "평가 1 · 진입 0 · 거부 1"의 원인은 랭킹 필터로 추정됐으나, 실측 결과 병목은
+**coverage 레인이 슬롯 포화로 꺼져 있었던 것**이다.
+
+`coverage_slots_used(3) >= coverage_target_open_positions(3)` 이면 coverage 레인 전체가
+건너뛰어진다. 그런데 **coverage 레인이 곧 유니버스 200종목 순환 레인**이므로, 그것이
+꺼지면 심사대에 남는 것은 strict 레인뿐이다.
+
+| 레인 | 후보 풀 | 상한 | 유니버스 사용 |
+| --- | --- | --- | --- |
+| strict (`_build_ranked_candidates`) | 랭킹 API(MARKET/TOSS_TRADING_AMOUNT) ∩ 가격 | `_MAX_CANDIDATES_PER_MARKET=18` | **분류 라벨로만** (`universe.classify`) |
+| coverage (`_build_coverage_candidates`) | **유니버스 200종목** ∩ 가격 − 제외 | `coverage_scan_batch_size=2` / 사이클 | 후보 소스 |
+
+**랭킹은 strict 레인에서 정렬이 아니라 필터로 동작한다** — 랭킹에 없으면 심사조차 되지
+않는다. 유니버스를 심사하는 것은 coverage 레인뿐이다.
+
+슬롯이 포화된 이유는 청산 경로 부재였고, 그것은 **WO-FCE-STOCK-EXIT-01** 에서 수리됐다
+(정본: `app/stock_paper/exit_policy.py` — 판단/체결 분리, 갭은 다음 세션 시가 체결).
+
+### 후보 확대의 선결 조건
+
+후보 소스를 넓혀도 `max_open_positions(5)` 의 남은 칸을 채우고 다시 잠긴다.
+**청산이 돌아 슬롯이 회전해야 후보 확대가 의미를 갖는다.** 따라서 순서는
+
+1. 청산 엔진 가동 (완료 — WO-FCE-STOCK-EXIT-01)
+2. 라이브 청산 발생 → 슬롯 회전율 실측
+3. 그래도 평가 건수가 부족하면 후보 소스 확대 착수
+
+`max_open_positions` 와 `coverage_target_open_positions` 는 회전율 실측 전까지 건드리지
+않는다. 지금 올리면 무엇이 병목이었는지 영영 알 수 없게 된다.
