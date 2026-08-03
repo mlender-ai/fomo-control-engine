@@ -19,7 +19,7 @@ from app.notify.alerts import AlertEngine
 from app.notify.bot.bot import TelegramBotSupervisor
 from app.notify.bot.formatters import format_paper_event
 from app.notify.state import NotificationState
-from app.notify.paper_events import SUPPRESSIBLE_KINDS, suppression_key
+from app.notify.paper_events import SUPPRESSIBLE_KINDS, is_telegram_sendable, suppression_key
 from app.notify.telegram import TelegramSender
 from app.services import runtime as service
 from app.worker import liveness
@@ -313,7 +313,11 @@ class WorkerManager:
         # "결과 뭐였다 → 승률 어떻다" 를 한 메시지에서 보게 한다.
         track_records = self._track_record_suffixes() if any(str(event.get("kind") or "") == "closed" for event in events) else {}
         for event in events:
-            # skipped/미발생 계열은 연속 동일 사유 스팸을 막기 위해 억제 정책을 통과해야 발송한다.
+            # 화이트리스트(작업 1): 거부·미발생·오류는 여기서 원천 차단된다. 억제가 아니라
+            # 미도달이므로 유니버스가 오염돼 전이가 반복돼도 텔레그램에는 0건이다(C1).
+            if not is_telegram_sendable(event):
+                continue
+            # 화이트리스트 통과분에 대한 추가 빈도 제한(현재 대상 없음 — 계약 유지).
             if str(event.get("kind") or "") in SUPPRESSIBLE_KINDS and event.get("track"):
                 if not self.state.register_paper_skip(suppression_key(event)):
                     continue

@@ -130,14 +130,22 @@ def test_skip_state_survives_persistence(tmp_path) -> None:
     assert key in reloaded.paper_skip_state
 
 
-def test_non_events_are_suppressible_but_real_events_are_not() -> None:
-    # WO-FCE-PAPER-ENTRY-REALITY-01 명세 정정: rejected_summary 도 억제 대상이다.
-    # 선행 WO는 "집계 1건"만 규정하고 발송 빈도를 빠뜨려 60초마다 1건(일 1,440건)이 나갔다.
-    # "무엇이 안 일어났는가"는 조회 대상이고, "무엇이 일어났는가"만 알림 대상이다.
-    assert "skipped" in SUPPRESSIBLE_KINDS
-    assert "rejected_summary" in SUPPRESSIBLE_KINDS
-    assert "opened" not in SUPPRESSIBLE_KINDS
-    assert "closed" not in SUPPRESSIBLE_KINDS
+def test_non_events_never_reach_telegram() -> None:
+    """WO-FCE-ALERT-WHITELIST-02: 억제(빈도 제한) → **화이트리스트**(원천 제외)로 전환.
+
+    빈도를 조이는 접근은 유니버스가 오염돼 최다 거부 게이트가 계속 뒤바뀌면 전이가 반복
+    발생해 실패했다(2026-08-01 실측). 이제 "무엇이 안 일어났는가"는 발송 경로에 아예
+    들어가지 않는다. 상세 계약은 tests/test_alert_whitelist.py.
+    """
+    from app.notify.paper_events import TELEGRAM_SENDABLE_KINDS, is_telegram_sendable
+
+    assert TELEGRAM_SENDABLE_KINDS == frozenset({"opened", "closed"})
+    for kind in ("skipped", "rejected_summary", "error"):
+        assert is_telegram_sendable({"kind": kind}) is False
+    for kind in ("opened", "closed"):
+        assert is_telegram_sendable({"kind": kind}) is True
+    # 억제 목록은 화이트리스트가 대체했으므로 비어 있다.
+    assert SUPPRESSIBLE_KINDS == frozenset()
 
 
 # ── 포맷터 (크립토 회귀 방지 + 트랙 렌더) ────────────────────────

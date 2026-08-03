@@ -33,8 +33,16 @@ def _rejected(gate: str, rejected: int) -> dict:
 # ── D2: 거부 스팸 차단 ──────────────────────────────────────────────
 
 
-def test_rejected_summary_is_suppressible() -> None:
-    assert "rejected_summary" in SUPPRESSIBLE_KINDS, "거부 집계가 억제 대상에서 빠지면 60초마다 스팸"
+def test_rejected_summary_never_reaches_telegram() -> None:
+    """WO-FCE-ALERT-WHITELIST-02: 억제(빈도 제한)가 아니라 화이트리스트(원천 제외)로 격상.
+
+    억제 방식은 유니버스 오염으로 최다 거부 게이트가 계속 바뀌면 전이가 반복돼 실패했다.
+    이제 거부는 발송 경로에 아예 들어가지 않는다. 아래 억제 키 테스트들은 이벤트 생성·
+    상태 계약이 그대로임을 지키는 회귀 가드로 남긴다(조회 표면이 이 값을 쓴다).
+    """
+    from app.notify.paper_events import is_telegram_sendable
+
+    assert is_telegram_sendable({"kind": "rejected_summary"}) is False
 
 
 def test_reject_count_churn_does_not_create_new_state() -> None:

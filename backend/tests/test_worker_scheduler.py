@@ -217,8 +217,11 @@ async def test_send_paper_events_delivers_track_events(tmp_path) -> None:
         ],
     }
     delivered = await manager._send_paper_events(result)
-    assert delivered == 2
+    # WO-FCE-ALERT-WHITELIST-02: 화이트리스트가 rejected_summary 를 원천 차단하므로
+    # opened 1건만 도달한다. 거부는 진단 표면·일 1회 요약으로 조회한다.
+    assert delivered == 1
     assert any("주식 페이퍼" in text for text in sent)
+    assert not any("평가 요약" in text for text in sent)
 
 
 @pytest.mark.asyncio
@@ -237,8 +240,9 @@ async def test_send_paper_events_suppresses_repeated_skips(tmp_path) -> None:
     }
     first = await manager._send_paper_events(skip_result)
     second = await manager._send_paper_events(skip_result)
-    # 최초 스킵은 발송, 같은 사유 반복은 억제 → 스팸 0.
-    assert first == 1
+    # WO-FCE-ALERT-WHITELIST-02: skipped 는 화이트리스트 밖이므로 **최초부터** 미발송이다.
+    # 억제(1회는 보냄)가 아니라 원천 제외(0회)로 계약이 바뀌었다.
+    assert first == 0
     assert second == 0
 
 

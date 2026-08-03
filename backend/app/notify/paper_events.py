@@ -20,17 +20,35 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-# 스팸 방지를 위해 억제 대상이 되는 "미발생" kind — 상태 전이 시 1회 + 일 1회 리마인더만.
+# ── 텔레그램 발송 화이트리스트 (WO-FCE-ALERT-WHITELIST-02 작업 1) ──────────────
 #
-# WO-FCE-PAPER-ENTRY-REALITY-01 (D2): rejected_summary 를 여기 포함한다.
-# 선행 WO는 "개별 발송 대신 집계 1건"만 규정하고 **발송 빈도**를 명시하지 않았다.
-# 그 결과 폴리는 60초 폴링마다 집계 1건 = 일 1,440건을 발송했다(2026-07-28 실측).
-# 거부는 "무엇이 일어났는가"가 아니라 "무엇이 안 일어났는가"이므로 알림 대상이 아니라
-# 조회 대상이다(C3). 최다 거부 게이트가 **바뀔 때만** 1건 발송하고, 나머지는 일 1회
-# 요약과 /api/system/paper/diagnosis 로 본다.
-SUPPRESSIBLE_KINDS = frozenset({"skipped", "rejected_summary"})
+# **여기 없는 kind 는 텔레그램에 도달하지 않는다.** 억제(빈도 제한)가 아니라 원천 제외다.
+#
+# 왜 억제가 아니라 화이트리스트인가:
+# 선행 WO들이 "집계 1건" → "전이 시에만"으로 빈도를 계속 좁혀 왔지만, 유니버스가 오염되면
+# 최다 거부 게이트가 계속 뒤바뀌어(unsupported_crypto_question → 마켓 한도 →
+# resolution_time_invalid) **전이 자체가 반복 발생**해 사실상 스팸이 됐다(2026-08-01 실측:
+# 09:01 거부 10 · 09:07 거부 73 · 10:09 거부 39). 빈도를 조이는 접근은 오염된 입력 앞에서
+# 반복 실패한다. 그래서 "무엇이 안 일어났는가"는 **발송 경로에 아예 넣지 않는다**.
+#
+# 거부·미발생은 조회 대상이다: /api/system/paper/diagnosis 와 일 1회 성과 요약.
+TELEGRAM_SENDABLE_KINDS = frozenset({"opened", "closed"})
+
+# 억제 정책이 남아 있는 kind — 화이트리스트를 통과한 뒤 추가로 빈도를 제한할 때 쓴다.
+# 현재 화이트리스트가 opened/closed 뿐이라 실질 대상이 없지만, 계약은 유지한다.
+SUPPRESSIBLE_KINDS: frozenset[str] = frozenset()
 
 VALID_KINDS = frozenset({"opened", "closed", "rejected_summary", "skipped", "error"})
+
+
+def is_telegram_sendable(event: dict[str, Any]) -> bool:
+    """이 이벤트를 텔레그램으로 보낼 수 있는가.
+
+    거부(`rejected_summary`)·미발생(`skipped`)·오류(`error`)는 **어떤 형태로도** False다.
+    집계든 전이든 예외 없다(C1). 생존·사망·복구 알림은 이 경로가 아니라 `notify/rules.py`
+    계열이 담당하므로 영향받지 않는다(C4).
+    """
+    return str(event.get("kind") or "") in TELEGRAM_SENDABLE_KINDS
 
 
 def track_event(
