@@ -969,6 +969,13 @@ class Settings(BaseSettings):
         0.01,
         validation_alias=AliasChoices("FCE_ALERT_FUNDING_EXTREME_ABS_RATE", "ALERT_FUNDING_EXTREME_ABS_RATE"),
     )
+    # WO-FCE-BREACH-ALERT-FIX-01 작업 1: 무효화 이탈 재알림 문턱(%p).
+    # 이탈은 상태이므로 최초 1회만 알리고, 이탈 폭이 이 값 이상 추가로 악화됐을 때만 다시 알린다.
+    # 진입·청산 게이트와 무관한 **알림 표현 파라미터**다(C2 게이트 임계 아님).
+    alert_breach_reescalate_pct: float = Field(
+        1.0,
+        validation_alias=AliasChoices("FCE_ALERT_BREACH_REESCALATE_PCT", "ALERT_BREACH_REESCALATE_PCT"),
+    )
     alert_critical_cooldown_minutes: int = Field(
         30,
         validation_alias=AliasChoices("FCE_ALERT_CRITICAL_COOLDOWN_MINUTES", "ALERT_CRITICAL_COOLDOWN_MINUTES"),

@@ -521,10 +521,31 @@ class StockPaperStore:
         return row is not None
 
     def mode_position_count(self, market: Market, entry_mode: str) -> int:
+        """진입 게이팅용 모드별 보유 수 — **청산 엔진이 관리할 수 없는 포지션은 세지 않는다.**
+
+        WO-FCE-BREACH-ALERT-FIX-01 실측: 청산 경로 부재 시절 진입한 고아 포지션을
+        `excluded_from_stats` 로 통계에서 제외하기로 했으나 슬롯 카운트에서는 제외하지
+        않아 coverage_slots_used 가 KR 3/US 3 으로 고정됐다. 목표가 3이므로 3 >= 3 →
+        coverage 레인 영구 차단이고, 청산 가능 포지션이 0건이라 슬롯이 절대 비지 않았다.
+        **진입 0과 청산 0이 서로를 지탱하는 데드락**이었다.
+
+        관리 대상이 아닌 포지션이 관리 예산을 잡아먹으면 게이트 자체가 죽는다.
+        고아는 자본과 max_open_positions 는 계속 점유하며, 그 한도는 별도로 검사된다.
+        """
         with self._connect() as connection:
             row = connection.execute(
                 """SELECT COUNT(*) AS count FROM stock_paper_mode_positions
-                WHERE market=? AND entry_mode=? AND quantity>0""",
+                WHERE market=? AND entry_mode=? AND quantity>0 AND excluded_from_stats=0""",
+                (market.value, entry_mode),
+            ).fetchone()
+        return int(row["count"]) if row else 0
+
+    def exit_exempt_count(self, market: Market, entry_mode: str) -> int:
+        """청산 엔진 관리 밖에 있는 보유 수 — 침묵 금지: 대시보드·리포트에 노출한다."""
+        with self._connect() as connection:
+            row = connection.execute(
+                """SELECT COUNT(*) AS count FROM stock_paper_mode_positions
+                WHERE market=? AND entry_mode=? AND quantity>0 AND excluded_from_stats=1""",
                 (market.value, entry_mode),
             ).fetchone()
         return int(row["count"]) if row else 0

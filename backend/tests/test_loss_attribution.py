@@ -101,3 +101,31 @@ def test_attribution_summary_ranks_and_states_no_auto_apply() -> None:
     assert "손절폭 재검토 <b>후보</b>" in text
     # 자동 적용 금지 원칙이 리포트 문장에 남아야 한다.
     assert "자동 변경 입력이 아닙니다" in text
+
+
+def test_coverage_slot_count_excludes_exit_exempt_orphans(tmp_path) -> None:
+    """WO-FCE-BREACH-ALERT-FIX-01: 청산 엔진이 관리할 수 없는 고아가 슬롯을 점유하면
+    진입 0과 청산 0이 서로를 지탱하는 데드락이 된다(2026-08-04 실측 KR 3/US 3).
+    """
+    import sqlite3
+
+    from app.db.migrations import run_migrations
+    from app.stock_paper.models import Market
+    from app.stock_paper.store import StockPaperStore
+
+    db = tmp_path / "slots.db"
+    with sqlite3.connect(db) as connection:
+        run_migrations(connection)
+    store = StockPaperStore(f"sqlite:///{db}")
+    with store._connect() as connection:
+        for symbol, excluded in (("AAA", 1), ("BBB", 1), ("CCC", 0)):
+            connection.execute(
+                """INSERT INTO stock_paper_mode_positions
+                (market, symbol, entry_mode, quantity, average_price, currency, updated_at, excluded_from_stats)
+                VALUES ('KR', ?, 'coverage', 1, 100.0, 'KRW', '2026-08-04T00:00:00+00:00', ?)""",
+                (symbol, excluded),
+            )
+
+    # 관리 가능한 것만 슬롯을 소비한다 — 고아 2건은 별도로 노출된다.
+    assert store.mode_position_count(Market.KR, "coverage") == 1
+    assert store.exit_exempt_count(Market.KR, "coverage") == 2

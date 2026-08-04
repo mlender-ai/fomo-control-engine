@@ -387,6 +387,9 @@ class AlertEngine:
             cooldown_done = rule_state.cooldown_until is None or now >= rule_state.cooldown_until
             if cooldown_done and signals.get(key, _generic_rearm_allowed(key)):
                 rule_state.status = "armed"
+                if key.startswith("invalidation_breach:"):
+                    # 무효화선 안으로 복귀했다 — 다음 이탈은 새 상태이므로 깊이 기억을 지운다.
+                    rule_state.last_breach_pct = None
 
     def _rearm_derivatives(self, snapshots: list[dict[str, Any]], candidates: list[AlertCandidate]) -> None:
         active_keys = {candidate.state_key for candidate in candidates}
@@ -419,6 +422,10 @@ class AlertEngine:
         rule_state = self.state.alert_rule_states.setdefault(candidate.state_key, AlertRuleState())
         if candidate.rule_id.startswith("setup_") and rule_state.cooldown_until is not None and now >= rule_state.cooldown_until:
             rule_state.status = "armed"
+        # WO-FCE-BREACH-ALERT-FIX-01 작업 1: 이탈은 상태다 — 같은 깊이를 반복해 알리지 않는다.
+        # 상태 축출·재기동으로 status 가 armed 로 되살아나도 여기서 한 번 더 막는다(이중 방어).
+        if _breach_repeat_suppressed(candidate, rule_state, self.settings):
+            return 0
         if rule_state.status != "armed":
             return 0
         if rule_state.cooldown_until is not None and now < rule_state.cooldown_until:
@@ -429,6 +436,8 @@ class AlertEngine:
         rule_state.last_fired_at = now
         rule_state.cooldown_until = now + _seconds(cooldown)
         rule_state.last_payload = candidate.payload
+        if candidate.rule_id == "invalidation_breach":
+            rule_state.last_breach_pct = _breach_depth_pct(candidate)
 
         enriched = self._with_response_history(candidate)
 
@@ -548,6 +557,38 @@ def _same_position_key(key: str, payload: dict[str, Any]) -> bool:
         return False
     parts = key.split(":", 2)
     return len(parts) >= 2 and parts[1] == position_id
+
+
+def _breach_depth_pct(candidate: AlertCandidate) -> float | None:
+    """이탈 깊이(%) — 부호를 버린 절대값. 무효화선을 얼마나 벗어났는지만 본다."""
+    value = candidate.payload.get("distance_pct") if isinstance(candidate.payload, dict) else None
+    try:
+        return None if value is None else abs(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _breach_repeat_suppressed(candidate: AlertCandidate, rule_state: AlertRuleState, settings: Settings) -> bool:
+    """같은 무효화 이탈 상태의 반복 발송을 막는다 (WO-FCE-BREACH-ALERT-FIX-01 작업 1).
+
+    이탈은 이벤트가 아니라 **상태**다. 최초 1회 알리고, 그 뒤로는 이탈 폭이 임계 이상
+    악화됐을 때만 다시 알린다. 복귀·청산은 각자의 알림이 담당하며, 복귀 시 `_rearm` 이
+    깊이 기억을 지워 다음 이탈이 새 상태로 취급된다.
+
+    2026-08-04 실측: DRAMUSDT 이탈이 01:46/02:22/03:22/04:22 로 4회 발송됐고 내용은
+    완전히 동일했다(50.1710 이탈·현재 49.9100·-0.52%). 새 정보가 0인 반복이었다.
+    """
+    if candidate.rule_id != "invalidation_breach":
+        return False
+    previous = rule_state.last_breach_pct
+    if previous is None:
+        # 최초 이탈은 반드시 발송한다 (C1 — 포지션 위험 신호를 없애지 않는다).
+        return False
+    current = _breach_depth_pct(candidate)
+    if current is None:
+        return True
+    threshold = max(0.0, float(settings.alert_breach_reescalate_pct))
+    return current < previous + threshold
 
 
 def _generic_rearm_allowed(key: str) -> bool:

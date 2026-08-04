@@ -329,3 +329,44 @@ KR 의 거부 이벤트가 07-22T02:08 이후 한 건도 없는 것도 같은 �
 
 `max_open_positions` 와 `coverage_target_open_positions` 는 회전율 실측 전까지 건드리지
 않는다. 지금 올리면 무엇이 병목이었는지 영영 알 수 없게 된다.
+
+---
+
+## 슬롯 회전과 진입 재개 조건 (WO-FCE-BREACH-ALERT-FIX-01, 2026-08-04)
+
+### 진입 0과 청산 0이 서로를 지탱하는 데드락
+
+청산 엔진(WO-FCE-STOCK-EXIT-01)이 배포되고 실행되는데도 진입이 0이었다. 실측 원인:
+
+| 항목 | KR | US |
+| --- | --- | --- |
+| `coverage_slots_used` | **3** / 목표 3 | **3** / 목표 3 |
+| `opened_at` | **NULL** | NULL |
+| `exit_plan` | **NULL** | NULL |
+| `excluded_from_stats` | **0** | 0 |
+
+`0032` 는 `excluded_from_stats`/`exclusion_reason` 컬럼을 만들고 "고아는 엔진 성과가
+아니다"라고 규정했지만 **기존 행에 값을 채우지 않았다.** 그래서:
+
+1. `exit_plan` 이 NULL → 스탑·목표 없음. `_holding_days(NULL)` → **0** → 시간 손절도 미도달.
+   → 청산 트리거가 **영구히** 도달하지 않는다.
+2. 그런데 coverage 슬롯은 계속 점유 → `coverage_slots_used(3) >= coverage_target(3)`
+   → coverage 레인(유니버스 200종목 순환) 영구 차단 → 진입 0.
+3. 진입 0 + 청산 0 이 서로를 지탱한다.
+
+### 수리
+
+- `0033_stock_paper_orphan_exclusion.sql` — 고아를 `excluded_from_stats=1,
+  exclusion_reason='void_no_exit_path'` 로 실제 표시한다. **소급 청산은 하지 않는다.**
+- `mode_position_count()` 가 `excluded_from_stats=0` 만 센다 — **청산 엔진이 관리할 수
+  없는 포지션이 관리 예산을 잡아먹으면 게이트 자체가 죽는다.**
+- `exit_exempt_count()` 로 관리 밖 보유 수를 노출한다(침묵 금지).
+
+고아는 자본과 `max_open_positions` 는 계속 점유한다. 그 한도는 별도로 검사되므로
+KR·US 각각 5칸 중 3칸이 영구 점유된 상태이며, 회전 가능한 슬롯은 2칸이다.
+`max_open_positions`·`coverage_target_open_positions` 는 회전율 실측 전까지 건드리지 않는다.
+
+### 신규 진입분은 정상이다
+
+`_place_entry` 가 체결 시 `exit_plan`·`opened_at` 을 저장하므로, 이 수리 이후 진입하는
+포지션은 청산 판정이 정상 동작한다. 고아만 관리 밖에 남는다.

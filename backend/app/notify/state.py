@@ -17,6 +17,9 @@ class AlertRuleState:
     last_fired_at: datetime | None = None
     cooldown_until: datetime | None = None
     last_payload: dict[str, Any] = field(default_factory=dict)
+    # WO-FCE-BREACH-ALERT-FIX-01: 마지막으로 알린 무효화 이탈 폭(%). 이탈은 상태이므로
+    # 같은 깊이를 반복해 알리지 않고, 유의미하게 악화됐을 때만 다시 알린다.
+    last_breach_pct: float | None = None
 
 
 @dataclass
@@ -105,14 +108,7 @@ class NotificationState:
                 "whale_alert_events": {address: events[-200:] for address, events in self.whale_alert_events.items() if events},
                 "paper_skip_state": self.paper_skip_state,
                 "structure_contexts": self.structure_contexts,
-                "alert_rule_states": {
-                    key: {
-                        "status": rule.status,
-                        "last_fired_at": _iso(rule.last_fired_at),
-                        "cooldown_until": _iso(rule.cooldown_until),
-                    }
-                    for key, rule in list(self.alert_rule_states.items())[-500:]
-                },
+                "alert_rule_states": _retained_rule_states(self.alert_rule_states),
             }
             directory = os.path.dirname(os.path.abspath(path)) or "."
             fd, tmp = tempfile.mkstemp(dir=directory, prefix=".notif_state_")
@@ -153,7 +149,48 @@ class NotificationState:
                 status=str(raw.get("status") or "armed"),
                 last_fired_at=_parse_dt(raw.get("last_fired_at")),
                 cooldown_until=_parse_dt(raw.get("cooldown_until")),
+                last_breach_pct=_optional_float(raw.get("last_breach_pct")),
             )
+
+
+# 영속 상한. 초과분을 삽입 순서로 자르면 **활성 쿨다운이 축출**된다 — 재로드 시 그 키는
+# 사라지고 `setdefault` 가 status="armed" 로 되살려 같은 알림이 다시 나간다.
+# 2026-08-04 실측: 저장 키가 정확히 500 포화, 그중 whale_entry 가 288개(58%)를 점유했고
+# DRAMUSDT 무효화 이탈이 01:46/02:22/03:22/04:22 로 반복됐다. 쿨다운 만료가 아니라 축출이었다.
+_ALERT_RULE_STATE_LIMIT = 2000
+
+
+def _retained_rule_states(states: dict[str, "AlertRuleState"], *, now: datetime | None = None) -> dict[str, dict[str, Any]]:
+    """영속할 규칙 상태를 고른다 — **살아있는 쿨다운을 절대 버리지 않는다.**
+
+    우선순위: ① 쿨다운이 아직 유효한 키(버리면 알림이 부활한다) ② 최근 발사 순.
+    상한을 넘으면 오래 전에 만료된 것부터 버린다. 삽입 순서로 자르지 않는다.
+    """
+    current = now or datetime.now(timezone.utc)
+
+    def sort_key(item: tuple[str, "AlertRuleState"]) -> tuple[int, float]:
+        _, rule = item
+        active = 1 if rule.cooldown_until is not None and rule.cooldown_until > current else 0
+        fired = rule.last_fired_at.timestamp() if rule.last_fired_at else 0.0
+        return (active, fired)
+
+    ordered = sorted(states.items(), key=sort_key, reverse=True)
+    return {
+        key: {
+            "status": rule.status,
+            "last_fired_at": _iso(rule.last_fired_at),
+            "cooldown_until": _iso(rule.cooldown_until),
+            "last_breach_pct": rule.last_breach_pct,
+        }
+        for key, rule in ordered[:_ALERT_RULE_STATE_LIMIT]
+    }
+
+
+def _optional_float(value: Any) -> float | None:
+    try:
+        return None if value is None else float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _iso(value: datetime | None) -> str | None:

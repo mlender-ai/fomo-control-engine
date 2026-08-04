@@ -156,6 +156,8 @@ def rearm_signals(payload: dict[str, Any], settings: Settings) -> dict[str, bool
         identity = trigger["identity"]
         signals[f"trigger_near:{position_id}:{identity}"] = abs(distance) >= settings.alert_trigger_rearm_pct
         if trigger["kind"] == "invalidation":
+            # 이탈은 **상태**다. 상태가 지속되는 동안 재무장하지 않는다 — 복귀했을 때만 재무장.
+            # 쿨다운 만료는 재발송 사유가 아니다(WO-FCE-BREACH-ALERT-FIX-01 작업 1).
             signals[f"invalidation_breach:{position_id}:{identity}"] = not _breached(direction, current, price)
         elif trigger["kind"] == "take_profit":
             if not _is_valid_take_profit_target(direction, position, price):
