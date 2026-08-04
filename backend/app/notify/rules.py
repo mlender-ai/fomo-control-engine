@@ -287,10 +287,25 @@ def quiet_hours_active(settings: Settings, now: datetime | None = None) -> bool:
 
 
 def morning_summary_due(settings: Settings, last_summary_date: str | None, now: datetime | None = None) -> tuple[bool, str]:
+    """일일 요약 발송 시점 판정 — **목표 시각을 지났고 오늘 아직 안 보냈으면 due**.
+
+    과거엔 `strftime("%H:%M") == target` 즉 **분 단위 정확 일치**였다. 그 1분 틱을 한 번
+    놓치면 그날 요약은 통째로 사라졌고, 다음 기회는 다음날 같은 시각이었다.
+    2026-08-04 실측: 잡은 60초 주기로 정상 실행(runs=4544, skipped=46)이었는데
+    last_summary_date 가 08-03 에 멈춰 있었다 — 발송 실패 기록도 없이 하루가 조용히 빠졌다.
+
+    "침묵 금지" 원칙 위반이다. 트리거가 놓친 것을 스스로 복구하지 못하면 침묵이 스스로를
+    은폐한다. 목표 시각 경과 + 당일 미발송을 조건으로 바꿔 **놓친 틱을 따라잡게** 한다.
+    하루 1회 상한은 `last_summary_date` 가 그대로 보장한다.
+    """
     current = (now or datetime.now(timezone.utc)).astimezone(_quiet_timezone(settings))
-    target = settings.telegram_daily_summary_time.strip()
     date_key = current.strftime("%Y-%m-%d")
-    return current.strftime("%H:%M") == target and last_summary_date != date_key, date_key
+    if last_summary_date == date_key:
+        return False, date_key
+    target = _parse_hhmm(settings.telegram_daily_summary_time)
+    if target is None:
+        return False, date_key
+    return current.hour * 60 + current.minute >= target[0] * 60 + target[1], date_key
 
 
 def _trigger_candidates(payload: dict[str, Any], settings: Settings) -> list[AlertCandidate]:
