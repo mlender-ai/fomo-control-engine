@@ -1,49 +1,81 @@
-# Paper Trading Policy
+# 크립토 페이퍼 진입 정책
 
-The paper engine is a deterministic benchmark. It never calls an exchange order endpoint and never changes the read-only safety boundary.
+## 원칙 — 검증 대상을 검증 조건으로 삼을 수 없다
 
-## Time axis
+페이퍼 진입의 목적은 **시그니처를 채점할 표본을 만드는 것**이다. 그런데 "검증된
+시그니처"를 진입 조건으로 요구하면 표본이 영원히 생기지 않는다. 검증 대상이 검증 조건이
+되는 순환 봉쇄다. 주식은 `stock-v2` 에서 이미 이 원리로 수리했고, 크립토는 `crypto-v2`
+에서 같은 수리를 한다.
 
-Every decision is evaluated once per confirmed candle. The engine stores the last evaluated candle by symbol and timeframe. Repeated worker ticks on the same candle are no-ops. Trigger fills use the confirmed trigger candle close; candle highs and lows may only establish that a take-profit level was touched.
+같은 원리가 stance 게이트에도 적용된다. **판정 대상은 판정 조건이 될 수 없다** —
+`flipped`(전환 직후인가)는 사후 채점 대상이지 진입 자격이 아니다.
 
-## Entry
+## crypto-v1 → crypto-v2 diff (WO-FCE-CORE-DEFECTS-01 Phase 1)
 
-All gates must pass:
+정책 파일: `backend/app/paper/params/crypto-v2.json` (신규). 파일이 없으면 `PaperPolicy`
+기본값(= v1 동작)이 그대로 쓰인다 — **옵트인이며 파일 삭제로 즉시 롤백된다.**
 
-1. A confirmed directional stance flip is present, the stance is not transitioning, and at least 4 same-direction evidence items exist.
-2. At least 5 of 6 simulator checklist items pass. Risk/reward is at least 1.5 and invalidation occurs before estimated liquidation.
-3. At least one active same-direction signature is `validated` and its current published regime/statistical scope has a net win-at-1R confidence-interval lower bound of at least 50%.
-4. Market data is fresh. Stock and index entries additionally require an explicit earnings-calendar result outside D-1 through D+1; unavailable earnings data fails closed.
-5. Fewer than 5 paper positions are open.
+| 게이트 | v1 | v2 | 판정 |
+| --- | --- | --- | --- |
+| `confirmed_flip` | `flipped is True` AND `transitioning is not True` AND 방향 일치 AND 확정봉 | 방향 일치 AND `transitioning is not True` AND 확정봉 | **변경** |
+| `validated_signature` | 검증 시그니처 AND `ci_low >= min_ci` | 기록만(항상 통과) | **변경** |
+| `evidence` | `>= min_evidence` | 동일 | diff 0 |
+| `checklist` | `passed >= min_passed` AND `total >= min_total` | 동일 | diff 0 |
+| `invalidation_hygiene` | 동일 | 동일 | diff 0 |
+| `risk_reward` | `rr >= min_rr` | 동일 | diff 0 |
+| `liquidation_safety` | 동일 | 동일 | diff 0 |
+| `earnings_clear` | 동일 | 동일 | diff 0 |
+| `data_fresh` | 동일 | 동일 | diff 0 |
 
-Each trade uses 100 USDT margin and 3x leverage. These values are configurable but identical for every new paper trade.
+diff 0 은 `tests/test_crypto_entry_gate_phase1.py::test_retained_gates_have_zero_diff`
+가 10개 입력 조합에 대해 강제한다. 임계값(`min_rr`·`min_evidence`·`min_checklist_*`)은
+단 하나도 바뀌지 않았다.
 
-## Continuous validation sampler
+### 왜 `flipped` 요구가 결함이었나 — 실측
 
-While the four-week benchmark is active, the engine maintains at most two open validation slots. A slot may be seeded from the current confirmed stance without waiting for a new flip, but only when the existing candidate-bootstrap or validated-signature performance gate, checklist, risk/reward, invalidation, liquidation-safety, event-window, and freshness gates all pass. Closing a scored trade frees a slot; the next confirmed candle may refill it with the highest-ranked eligible symbol. The same symbol cannot re-enter on the same confirmed candle.
+화면 실측: **이번 주 flip 14회 → 진입 0회**, 최다 탈락 "스탠스 전환 미확정" 190회.
+퍼널 실측(600건): `confirmed_flip` 통과 **6.0%**.
 
-This sampler increases paper sample throughput only. It does not use unvalidated events to choose direction, does not promote signatures, and never submits a live order.
+WO 원문은 "`flipped is True` 와 `transitioning is not True` 가 겹치는 창이 구조적으로
+거의 없다"고 봤으나 **그것은 정확하지 않다.** 상태머신(`analyst/confluence.py`)은 flip
+완료 시 `build(cand, transitioning=False, ..., flipped=True)` 로 **둘을 동시에 세운다** —
+모순이 아니다.
 
-## Exit priority
+진짜 제약은 다른 것이다. `flipped=True` 는 **flip 완료 봉 1봉만의 펄스**다:
 
-The first matching rule wins:
+- 이후 봉은 `cand == prior_stance` → `flipped=False`
+- 같은 확정 캔들 재평가는 봉 앵커 동결로 `flipped=False`
 
-1. Confirmed close breaches invalidation, or the breakeven stop after partial profit.
-2. First take-profit is touched: close 50% at that candle close and move the stop to entry.
-3. A confirmed opposite stance flip closes the remainder.
-4. After TP1 has realized a partial profit, high take-profit pressure for two consecutive confirmed candles closes only the remainder. Pressure can never close a pre-TP or losing position.
-5. Thirty confirmed holding candles close the remainder.
+즉 진입 기회가 flip 순간 **1봉**으로 제한됐고, 그 1봉 안에서 나머지 8개 게이트까지 전부
+동시에 통과해야 했다. flip 14회에 진입 0회는 엄격함이 아니라 **평가 불능**이다.
 
-## Costs
+`stable_direction` 은 진입 기회를 "flip 순간"에서 "방향이 안정적으로 유지되는 구간"으로
+넓힌다. 방향 일치·안정·확정봉 요구는 그대로이며, 룩어헤드 금지(확정 캔들만 사용)도 존치한다.
 
-Every entry and exit deducts taker fee plus asset-class slippage from executed notional. Gross PnL and costs are stored separately; all scoreboards use net PnL. No trigger receives a better price than the confirmed candle close.
+### 반사실 재생 (동일 600건 실데이터)
 
-## Audit trail and comparison
+| | 전 게이트 통과 |
+| --- | --- |
+| v1 (실측) | **1건** |
+| v2 (반사실 상한 추정) | **127건** |
 
-The entry snapshot stores the evidence stack, stance, checklist, action levels, and validated signature statistics. Entry is registered in the judgment ledger. Closing produces a judgment score and tags losing trades with the signature, regime when available, and exit reason.
+수리 후 남는 병목 — 이것들은 **정당한 품질 거부이므로 완화하지 않는다**:
 
-Legacy pressure exits that occurred before TP1 are retained in the journal as `policy_invalid:pre_tp_pressure_exit` audit records and excluded from benchmark performance. They are not rewritten as wins or losses.
+| 게이트 | 탈락률 |
+| --- | --- |
+| `checklist` | 62.5% |
+| `risk_reward` | 46.8% |
+| `liquidation_safety` | 32.5% |
+| `action_levels` | 27.8% |
+| `invalidation_hygiene` | 26.7% |
+| `evidence` | 26.5% |
 
-The engine and user are compared over the same date window using return ratios, win rate, profit factor, maximum drawdown, and trade count. Absolute USDT amounts are not compared because sizing and symbol universes differ. The fixed notice is: **Conditions differ; this compares directional and timing judgment, not absolute capital performance.**
+### 원장 기록 — 판정 대상은 남긴다
 
-An `engine_leading` notice requires both higher rolling four-week net return and no greater maximum drawdown. It is informational only and cannot enable live trading.
+게이트에서 뺀 값은 `paper_gate_funnel.policy_observations` 에 남는다:
+`flipped` · `transitioning` · `stance` · `validated_signature_observed` ·
+`signature_ci_low_pct_observed` · `policy_version` · 두 게이트 모드.
+
+이로써 "전환 직후 진입 vs 안정 후 진입 중 어느 쪽 성적이 나은가", "미검증 시그니처로 들어간
+거래의 결과는 어땠나"를 **사후에 채점**할 수 있다. 조건에서 뺐다고 관측까지 버리면 그 질문에
+영원히 답할 수 없다.

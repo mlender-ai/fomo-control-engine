@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal
 from uuid import UUID
 
@@ -34,6 +34,11 @@ class PaperPolicy:
     take_profit_pressure_bars: int = 2
     taker_fee_pct: float = 0.06
     slippage_pct: float = 0.03
+    # WO-FCE-CORE-DEFECTS-01 Phase 1. 기본값은 **기존 동작**이며, crypto-v2.json 이
+    # 로드될 때만 새 모드가 적용된다(옵트인 — 파일 없으면 회귀 0).
+    version: str = "crypto-v1"
+    stance_gate_mode: str = "confirmed_flip"
+    signature_gate_mode: str = "required"
 
     @property
     def execution_cost_rate(self) -> float:
@@ -45,6 +50,8 @@ class EntryDecision:
     enter: bool
     gates: dict[str, bool]
     rejection_reasons: tuple[str, ...]
+    # 판정 조건에서 제외했지만 사후 채점을 위해 원장에 남기는 관측치(Phase 1).
+    observations: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -74,21 +81,58 @@ def evaluate_entry(
 ) -> EntryDecision:
     stance = str(stance_state.get("stance") or "")
     stance_direction = "long" if stance in {"long", "long_leaning"} else "short" if stance in {"short", "short_leaning"} else stance
-    gates = {
-        "confirmed_flip": bool(
+    # Phase 1: flipped 는 **판정 대상이지 판정 조건이 아니다**.
+    #
+    # 실측(2026-08-05, 600건): confirmed_flip 통과 6.0%. 원인은 WO 가정("flipped 와
+    # transitioning 이 겹치는 창이 없다")과 다르다 — 상태머신은 flip 완료 시
+    # build(..., transitioning=False, flipped=True) 로 **둘을 동시에** 세우므로 모순이
+    # 아니다. 진짜 제약은 flipped=True 가 **flip 완료 봉 1봉만의 펄스**라는 것이다
+    # (이후 봉은 cand==prior_stance → flipped=False, 봉 앵커 동결도 False).
+    # 즉 진입 기회가 flip 순간 1봉으로 제한됐고, 그 1봉에서 나머지 게이트까지 동시에
+    # 통과해야 했다. 이번 주 flip 14회 → 진입 0회가 그 결과다.
+    #
+    # stable_direction: 방향 일치 + 안정 상태를 요구한다. 주식 stock-v4
+    # (stance_gate_mode=stable_long)와 같은 원리를 롱·숏 대칭으로 이식한 것이며,
+    # 품질 임계(evidence·checklist·rr 등)는 그대로 둔다 — 완화가 아니라 정합 수리다.
+    if policy.stance_gate_mode == "stable_direction":
+        stance_passed = bool(confirmed_bar and stance_direction == direction.value and stance_state.get("transitioning") is not True)
+    else:
+        stance_passed = bool(
             confirmed_bar and stance_state.get("flipped") is True and stance_state.get("transitioning") is not True and stance_direction == direction.value
-        ),
+        )
+    # 시그니처 검증을 진입 조건에서 뺀다(record_only) — 검증 대상을 검증 조건으로 삼으면
+    # 표본이 영원히 생기지 않는다. 상태는 아래 signature_status 로 원장에 남는다.
+    signature_passed = (
+        True
+        if policy.signature_gate_mode == "record_only"
+        else bool(validated_signature and signature_ci_low_pct is not None and signature_ci_low_pct >= policy.min_signature_ci_low_pct)
+    )
+    gates = {
+        "confirmed_flip": stance_passed,
         "evidence": evidence_count >= policy.min_evidence,
         "checklist": checklist_passed >= policy.min_checklist_passed and checklist_total >= policy.min_checklist_total,
         "invalidation_hygiene": invalidation_hygiene,
         "risk_reward": rr_ratio is not None and rr_ratio >= policy.min_rr,
         "liquidation_safety": survives_to_invalidation,
-        "validated_signature": validated_signature and signature_ci_low_pct is not None and signature_ci_low_pct >= policy.min_signature_ci_low_pct,
+        "validated_signature": signature_passed,
         "earnings_clear": earnings_clear,
         "data_fresh": data_fresh,
     }
     rejected = tuple(name for name, passed in gates.items() if not passed)
-    return EntryDecision(enter=not rejected, gates=gates, rejection_reasons=rejected)
+    # 판정 조건에서 뺀 값들을 **관측치로 원장에 남긴다** — "전환 직후 진입 vs 안정 후 진입",
+    # "미검증 시그니처 진입"을 사후 채점할 수 있어야 한다.
+    observations = {
+        "policy_version": policy.version,
+        "stance_gate_mode": policy.stance_gate_mode,
+        "signature_gate_mode": policy.signature_gate_mode,
+        "stance": stance,
+        "stance_direction": stance_direction,
+        "flipped": stance_state.get("flipped"),
+        "transitioning": stance_state.get("transitioning"),
+        "validated_signature_observed": bool(validated_signature),
+        "signature_ci_low_pct_observed": signature_ci_low_pct,
+    }
+    return EntryDecision(enter=not rejected, gates=gates, rejection_reasons=rejected, observations=observations)
 
 
 def open_trade(

@@ -1,0 +1,10 @@
+{
+  "version": "crypto-v2",
+  "stance_gate_mode": "stable_direction",
+  "signature_gate_mode": "record_only",
+  "_rationale": {
+    "stance_gate_mode": "flipped=True 요구 제거. flipped 는 flip 완료 봉의 단일 펄스라 진입 창이 1봉뿐이었다(실측 6.0%). 방향 일치 + 안정(transitioning 아님)으로 교체 — 주식 stock-v4 stance_gate_mode=stable_long 과 같은 원리이며 롱·숏 대칭으로 이식.",
+    "signature_gate_mode": "검증 대상을 검증 조건으로 삼는 순환 봉쇄 해소. 페이퍼 진입 결과가 시그니처를 채점하는 표본인데, 검증된 시그니처를 진입 조건으로 요구하면 표본이 영원히 생기지 않는다. 주식 stock-v2 와 같은 수리.",
+    "unchanged": "evidence·checklist·invalidation_hygiene·risk_reward·liquidation_safety·earnings_clear·data_fresh 임계는 손대지 않는다(C1)."
+  }
+}

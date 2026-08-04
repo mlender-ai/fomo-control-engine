@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import json
+from pathlib import Path
 from typing import Any, Callable, Iterable
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
@@ -45,6 +47,22 @@ VALIDATION_BOOTSTRAP_MIN_RR = 1.0
 ENTRY_GATE_VERSION = "pooled-signature-v1"
 
 
+CRYPTO_POLICY_PARAMETERS_PATH = Path(__file__).with_name("params") / "crypto-v2.json"
+
+
+def _crypto_policy_modes(path: Path = CRYPTO_POLICY_PARAMETERS_PATH) -> dict[str, str]:
+    """크립토 진입 게이트 모드 (WO-FCE-CORE-DEFECTS-01 Phase 1).
+
+    파일이 없으면 빈 dict 를 돌려 `PaperPolicy` 기본값(= 기존 동작)이 유지된다 —
+    옵트인이므로 파일을 지우면 즉시 이전 정책으로 되돌아간다.
+    """
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return {key: str(payload[key]) for key in ("version", "stance_gate_mode", "signature_gate_mode") if isinstance(payload.get(key), str)}
+
+
 def policy_from_settings(settings: Any, asset_class: str = "crypto") -> PaperPolicy:
     slippage = {
         "stock": float(settings.backtest_slippage_stock_pct),
@@ -63,6 +81,7 @@ def policy_from_settings(settings: Any, asset_class: str = "crypto") -> PaperPol
         take_profit_atr_k2=float(getattr(settings, "paper_take_profit_atr_k2", 2.0)),
         taker_fee_pct=float(settings.backtest_taker_fee_pct),
         slippage_pct=slippage,
+        **_crypto_policy_modes(),
     )
 
 
@@ -1017,6 +1036,9 @@ def _gate_funnel_record(
         "bootstrap_relaxed": signature_gates.get("gate_mode") == "candidate_bootstrap_relaxed",
         "candidate_samples": signature_gates.get("candidate_samples") or [],
         "entry_gate_version": ENTRY_GATE_VERSION,
+        # Phase 1: 판정 조건에서 뺀 flipped·시그니처 상태를 원장에 남긴다 —
+        # "전환 직후 진입 vs 안정 후 진입", "미검증 시그니처 진입"을 사후 채점하기 위해서다.
+        "policy_observations": dict(entry_decision.observations) if entry_decision is not None else {},
     }
 
 
