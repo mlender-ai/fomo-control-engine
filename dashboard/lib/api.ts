@@ -2445,6 +2445,8 @@ export type StockPaperEntryChart = {
     source: string;
     observed_at: string;
   }>;
+  /** 시간축 연속성 — 공백을 조용히 이어 붙이지 않는다. WO-FCE-OBSERVATION-INTEGRITY-01 Phase 2-2. */
+  coverage?: { pct: number; observed: number; expected: number; gap_count: number; missing_bars: number; gaps: Array<{ from: string; to: string; missing_bars: number; backfillable: boolean }> };
   fills: StockPaperFill[];
   empty_reason: "paper_fill_missing" | "observed_candles_missing" | null;
 };

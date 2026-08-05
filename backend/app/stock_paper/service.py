@@ -604,6 +604,54 @@ def stock_paper_entry_chart(settings: Settings, market: Market, symbol: str) -> 
         "candles": candles,
         "fills": [fill.payload() for fill in visible_fills],
         "empty_reason": None,
+        # WO-FCE-OBSERVATION-INTEGRITY-01 Phase 2-2: 결손 구간을 조용히 이어 붙이면 거짓 차트다.
+        "coverage": candle_coverage(candles, timeframe),
+    }
+
+
+def candle_coverage(candles: list[dict[str, Any]], timeframe: str) -> dict[str, Any]:
+    """캔들 시간축 연속성 검사 — 커버리지 %와 공백 구간.
+
+    실측 2026-08-03~05 TSLA 1분봉: 23.6% → 23.1% → **100%**. 낮았던 원인은 캔들 요청
+    `count=200`(3.3시간) 한도가 아니라 KST 롤오버 결함으로 수집 자체가 15:00 UTC 에
+    끊긴 것이었다(수리 `103fd09`). 15초마다 200개를 다시 받으므로 합집합은 정규장 전체를 덮는다.
+
+    그래도 이 검사는 남긴다 — 같은 종류의 정지가 또 나면 **차트가 조용히 이어 붙는 대신
+    갭으로 드러나야** 하기 때문이다.
+    """
+    span = _timeframe_span(timeframe)
+    step = max(1, int(span.total_seconds()))
+    stamps: list[datetime] = []
+    for candle in candles:
+        try:
+            parsed = datetime.fromisoformat(str(candle["opened_at"]).replace("Z", "+00:00"))
+        except (ValueError, KeyError):
+            continue
+        stamps.append(parsed.astimezone(timezone.utc))
+    stamps.sort()
+    if len(stamps) < 2:
+        return {"pct": 100.0 if stamps else 0.0, "observed": len(stamps), "expected": len(stamps), "gaps": []}
+    expected = int((stamps[-1] - stamps[0]).total_seconds() // step) + 1
+    gaps: list[dict[str, Any]] = []
+    for previous, current in zip(stamps, stamps[1:]):
+        missing = int((current - previous).total_seconds() // step) - 1
+        if missing > 0:
+            gaps.append(
+                {
+                    "from": (previous + span).isoformat(),
+                    "to": current.isoformat(),
+                    "missing_bars": missing,
+                    # 1분봉 조회 창(200개)보다 오래된 공백은 재수집으로 못 메운다 — 갭으로 남긴다.
+                    "backfillable": missing <= 200,
+                }
+            )
+    return {
+        "pct": round(len(stamps) / expected * 100, 1) if expected else 0.0,
+        "observed": len(stamps),
+        "expected": expected,
+        "gaps": gaps[:20],
+        "gap_count": len(gaps),
+        "missing_bars": sum(int(gap["missing_bars"]) for gap in gaps),
     }
 
 

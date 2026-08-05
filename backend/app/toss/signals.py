@@ -180,6 +180,11 @@ def resample_candles(rows: list[dict[str, Any]], minutes: int) -> list[dict[str,
                 "low": min(float(item["low"]) for item in ordered),
                 "close": float(ordered[-1]["close"]),
                 "volume": sum(float(item.get("volume") or 0) for item in ordered),
+                # WO-FCE-OBSERVATION-INTEGRITY-01 Phase 2-4: 결손 구간에서 만든 봉을
+                # 온전한 봉처럼 내놓으면 거짓 차트다. 봉을 버리면 구멍이 더 커지므로
+                # **버리지 않고 불완전함을 표시**한다 — 판단은 소비자가 한다.
+                "source_bars": len(ordered),
+                "complete": len(ordered) == minutes,
             }
         )
     return result

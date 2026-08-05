@@ -140,7 +140,7 @@ function EntryChartCanvas({ data }: { data: EntryChartData }) {
     <div className="stockEntryChartBody">
       <div className="stockEntryChartMeta">
         <strong>{data.symbol}</strong>
-        <span>{data.market} · {data.timeframe === "1m" ? "1분봉" : "일봉"} · {data.source}</span>
+        <span>{data.market} · {data.timeframe === "1m" ? "1분봉" : "일봉"} · {data.source}{data.coverage ? ` · 커버리지 ${data.coverage.pct}%` : ""}{data.coverage?.gap_count ? ` · 결손 ${data.coverage.missing_bars}봉(${data.coverage.gap_count}구간)` : ""}</span>
         <small>▲ 진입 · ▼ 청산 · 표시는 실제 페이퍼 체결</small>
       </div>
       <div className="stockEntryChartCanvas" ref={containerRef} />

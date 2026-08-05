@@ -134,6 +134,10 @@ def test_four_hour_resample_preserves_ohlcv() -> None:
             "low": 99.0,
             "close": 340.0,
             "volume": 2400.0,
+            # WO-FCE-OBSERVATION-INTEGRITY-01 Phase 2-4: 결손 구간에서 만든 봉을
+            # 온전한 봉처럼 내놓지 않기 위해 출처 봉 수·완전성을 함께 싣는다.
+            "source_bars": 240,
+            "complete": True,
         }
     ]
 
