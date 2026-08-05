@@ -436,8 +436,13 @@ class PolyPaperStore:
         # 날만 경과로 센다 — WO-FCE-TOSS-US-STALL-01 작업 5(3트랙 공통 적용).
         clock: dict[str, Any] = {"calendar_days": 0, "effective_days": 0, "lost_days": 0, "label": "첫 수집 대기"}
         if track and bool(track["clock_valid"]) and track["started_at"]:
+            # WO-FCE-OBSERVATION-INTEGRITY-01: 커버리지 게이트를 통과한 날만 검증일로 센다.
+            # 이전 근거였던 poly_markets 는 PK 가 market_id 인 **upsert** 테이블이라 시계열이 아니다.
             with self._connect() as connection:
-                observed = connection.execute("SELECT DISTINCT substr(observed_at, 1, 10) AS day FROM poly_markets").fetchall()
+                try:
+                    observed = connection.execute("SELECT day FROM observation_coverage WHERE track='poly' AND valid=1").fetchall()
+                except sqlite3.OperationalError:
+                    observed = []
             clock = _liveness_clock(
                 _datetime(track["started_at"]),
                 {str(row["day"]) for row in observed if row["day"]},

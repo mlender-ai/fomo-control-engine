@@ -537,7 +537,27 @@ def stock_paper_dashboard(settings: Settings) -> dict[str, Any]:
             "sources": universe.sources,
             "refresh_policy": "quarterly_manual",
         },
+        # WO-FCE-OBSERVATION-INTEGRITY-01 1-3: 코드로 못 고치는 손실은 화면에 상시 올린다.
+        # 조용히 유실로만 세면 영원히 안 고쳐진다.
+        "manual_actions": _manual_actions(settings),
     }
+
+
+def _manual_actions(settings: Settings) -> list[dict[str, Any]]:
+    """수동 조치 필요 항목(호스트 절전 등). 조회 실패는 빈 목록 — 화면을 죽이지 않는다."""
+    try:
+        from app.db.maintenance import sqlite_path
+        from app.db.sqlite_utils import connect_sqlite
+        from app.worker import observation
+
+        path = sqlite_path(settings.database_url)
+        if path is None or not path.exists():
+            return []
+        with connect_sqlite(str(path)) as connection:
+            rows = [dict(row) for row in connection.execute("SELECT * FROM observation_coverage")]
+        return observation.manual_action_items(rows)
+    except Exception:  # 관측 표면이 화면 장애 원인이 되면 안 된다
+        return []
 
 
 def stock_paper_entry_chart(settings: Settings, market: Market, symbol: str) -> dict[str, Any]:

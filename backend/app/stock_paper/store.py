@@ -120,18 +120,27 @@ class StockPaperStore:
             )
 
     def effective_days(self, market: Market) -> set[str]:
-        """실제 평가가 있었던 날짜(UTC, ISO date) 집합 — 검증 시계 보정용(C5).
+        """검증일로 카운트되는 날짜(UTC, ISO date) 집합.
 
-        WO-FCE-TOSS-US-STALL-01 작업 5. 달력일로 경과를 세면 "28일 검증했다"가 거짓이 된다.
-        실측 2026-07-28~29: 인증 래치로 US 정규장 잔여 6시간·KR 정규장 6.5시간이 통째로 유실됐다.
+        WO-FCE-OBSERVATION-INTEGRITY-01: **커버리지 게이트를 통과한 날만** 센다.
+        이전엔 "분석 스냅샷이 하루 한 건이라도 있으면 그 날은 검증일"이었는데, 그 기준으로는
+        정규장 6.5시간 중 1.5시간만 수집한 날(KST 롤오버 결함)도 온전한 검증일로 세어졌다.
+        실측 2026-08-04 US 커버리지 23% — 그런 날 3주치가 "검증했다"로 집계되고 있었다.
+
+        커버리지 테이블이 아직 없으면(첫 기동·마이그레이션 직후) **빈 집합**을 돌려준다.
+        모르면서 아는 척하느니 "아직 0일"이 정직하다.
         """
         if not self.enabled:
             return set()
+        track = "stock_kr" if market == Market.KR else "stock_us"
         with self._connect() as connection:
-            rows = connection.execute(
-                "SELECT DISTINCT substr(observed_at, 1, 10) AS day FROM stock_paper_analysis_snapshots WHERE market=?",
-                (market.value,),
-            ).fetchall()
+            try:
+                rows = connection.execute(
+                    "SELECT day FROM observation_coverage WHERE track=? AND valid=1",
+                    (track,),
+                ).fetchall()
+            except sqlite3.OperationalError:
+                return set()
         return {str(row["day"]) for row in rows if row["day"]}
 
     def latest_analysis_at(self, market: Market) -> str | None:

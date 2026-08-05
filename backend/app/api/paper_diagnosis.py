@@ -24,6 +24,34 @@ def _top_reject_gate(distribution: dict[str, Any]) -> str | None:
     return str(first.get("gate")) if isinstance(first, dict) else None
 
 
+def _observation_integrity(settings: Any) -> dict[str, Any]:
+    """저장된 커버리지로 트랙별 검증 시계를 낸다(WO-FCE-OBSERVATION-INTEGRITY-01 Phase 1).
+
+    계산은 워커 잡(`observation_coverage`)이 하고 여기선 읽기만 한다 — 진단 호출이 무거워지면
+    관측 표면 자체가 장애 원인이 된다.
+    """
+    from app.db.maintenance import sqlite_path
+    from app.db.sqlite_utils import connect_sqlite
+    from app.worker import observation
+
+    path = sqlite_path(settings.database_url)
+    if path is None or not path.exists():
+        return {"available": False, "reason": "sqlite_only"}
+    try:
+        with connect_sqlite(str(path)) as connection:
+            rows = [dict(row) for row in connection.execute("SELECT * FROM observation_coverage ORDER BY day")]
+    except Exception as exc:  # 진단 실패가 나머지 진단을 못 죽이게 한다
+        return {"available": False, "reason": str(exc)[:120]}
+    return {
+        "available": True,
+        "principle": "검증일은 커버리지 게이트를 통과한 날만 센다 — 통과 못 한 날은 유실일이다.",
+        "min_coverage_pct": observation.MIN_COVERAGE_PCT,
+        "bin_seconds": observation.BIN_SECONDS,
+        "tracks": {track: observation.verification_clock([row for row in rows if row["track"] == track]) for track in observation.TRACK_SPECS},
+        "manual_actions": observation.manual_action_items(rows),
+    }
+
+
 def paper_diagnosis() -> dict[str, Any]:
     settings = get_settings()
     worker = get_worker_status()
@@ -133,6 +161,8 @@ def paper_diagnosis() -> dict[str, Any]:
             "backoff_stuck": _liveness.backoff_stuck_jobs(worker),
             "restarts_24h": {"count": len(restarts), "events": restarts[-10:]},
         },
+        # WO-FCE-OBSERVATION-INTEGRITY-01: 검증일은 커버리지 게이트를 통과한 날만 센다.
+        "observation_integrity": _observation_integrity(settings),
         # 자기잠금 래치 재발 감시용. blocked 가 있는데 retry_in_seconds 가 줄지 않으면 이상이다.
         "toss_collection": {
             "principle": "모든 차단에는 자동 재시도 경로가 있다 — 재시작 없이 스스로 풀려야 한다.",

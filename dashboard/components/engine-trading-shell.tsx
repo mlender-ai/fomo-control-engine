@@ -171,6 +171,11 @@ function StockPaperView({ data }: { data: StockPaperDashboard | null }) {
         <div><span className="engineSectionLabel">독립 검증 시계 · 4주</span><h2>나스닥100 · 코스피100</h2><p>같은 판단 게이트, 시장별 실제 체결 제약. 크립토 성적과 합산하지 않습니다.</p></div>
         <div><Building2 size={17} /><strong>{data.universe.total}종목</strong><span>{data.universe.version} · {data.parameter_version}</span></div>
       </header>
+      {(data.manual_actions ?? []).map((action) => (
+        <TerminalWarning key={action.kind} tone="error">
+          <strong>수동 조치 필요 — {action.title}</strong>{" "}{action.detail}{" "}→ {action.remedy}
+        </TerminalWarning>
+      ))}
       <TerminalWarning tone="warning">엄격 신호는 기존 임계를 유지합니다. 탐색 진입은 실제 체결 파이프라인 표본을 빠르게 만들기 위한 별도 소액 계정이며 전략 적중 성적에 합산하지 않습니다.</TerminalWarning>
       <section className="stockTrackGrid">
         {data.tracks.map((track) => <StockTrackCard key={track.market} track={track} modes={modePerformance.filter((item) => item.market === track.market)} />)}

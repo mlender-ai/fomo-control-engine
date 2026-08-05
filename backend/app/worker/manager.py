@@ -503,6 +503,14 @@ class WorkerManager:
                 self.settings.db_backup_interval_seconds,
                 lambda: asyncio.to_thread(service.database_backup),
             ),
+            # WO-FCE-OBSERVATION-INTEGRITY-01 Phase 1: 하루가 검증일로 카운트되려면
+            # 커버리지 게이트를 통과해야 한다. 매시간 최근 구간을 다시 재서 저장한다
+            # (오늘은 진행 중이라 값이 계속 바뀌고, 어제는 지연 기록으로 늦게 채워질 수 있다).
+            "observation_coverage": WorkerJob(
+                "observation_coverage",
+                3600,
+                lambda: asyncio.to_thread(self._refresh_observation_coverage),
+            ),
             # WO-FCE-ENGINE-LIVENESS-01(D1): sync_and_analyze 를 훅 잡으로 등록해 실패를 격리한다.
             # 이 잡이 실패해도 아래 단계(페이퍼·알림·펄스·일일요약)는 계속 실행된다.
             "sync_and_analyze": WorkerJob(
@@ -654,6 +662,28 @@ class WorkerManager:
         except Exception as exc:
             logger.debug("stock market data probe failed: %s", exc)
             return {}
+
+    def _refresh_observation_coverage(self, *, lookback_days: int = 30) -> dict[str, Any]:
+        """관측 커버리지 재계산·저장. 저장된 관측 이력만 쓰므로 과거도 그대로 다시 잰다."""
+        from app.db.maintenance import sqlite_path
+        from app.db.sqlite_utils import connect_sqlite
+        from app.worker import observation
+
+        path = sqlite_path(self.settings.database_url)
+        if path is None:
+            return {"effective_run": False, "reason": "sqlite_only"}
+        today = datetime.now(timezone.utc).date()
+        start = today - timedelta(days=lookback_days)
+        with connect_sqlite(str(path)) as connection:
+            rows = observation.compute_range(connection, start, today)
+            observation.save_coverage(connection, rows)
+            connection.commit()
+        clocks = {track: observation.verification_clock([row for row in rows if row["track"] == track]) for track in observation.TRACK_SPECS}
+        return {
+            "days": len(rows),
+            "effective_days": {track: clock["effective_days"] for track, clock in clocks.items()},
+            "action_items": len(observation.manual_action_items(rows)),
+        }
 
     def _stock_market_reasons(self) -> dict[str, str]:
         """시장별 정지 사유(차단 래치·조기 반환) — 감시가 "왜"까지 말하게 한다(작업 3)."""

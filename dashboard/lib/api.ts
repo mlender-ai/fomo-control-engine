@@ -2365,6 +2365,8 @@ export type StockPaperDashboard = {
   positions: Array<{ market: "KR" | "US"; symbol: string; quantity: number; average_price: number; current_price: number | null; currency: "KRW" | "USD"; updated_at: string }>;
   recent_fills: StockPaperFill[];
   fill_count: number;
+  /** 코드로 못 고치는 손실(호스트 절전 등) — 상시 노출용. WO-FCE-OBSERVATION-INTEGRITY-01 1-3. */
+  manual_actions?: Array<{ kind: string; severity: string; title: string; detail: string; remedy: string; affected_days: string[]; lost_seconds: number }>;
   mode_performance: Array<{
     market: "KR" | "US";
     entry_mode: "strict_signal" | "coverage";
