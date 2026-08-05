@@ -314,3 +314,66 @@ def test_asyncio_loopless_token_invalidation_is_safe() -> None:
 
 async def _noop() -> None:
     return None
+
+
+# ── 5. KST 자정 롤오버 (실측 2026-08-05) ────────────────────────────
+#
+# 토스 캘린더는 KST 날짜 기준이라 미국 정규장이 자정을 넘겨 이어진다. `today` 만 보면
+# 00:00 KST(=15:00 UTC)에 아직 열려 있는 세션이 시야에서 사라져 closed 오판 → 수집 중단.
+# 실측: US 는 매일 13:30 UTC 시작 → 14:57~14:59 UTC 정지(정규장 6.5h 중 1.5h만, 77% 유실).
+#   07-29 13:30~14:40 · 07-31 13:30~14:59 · 08-03 13:30~14:59 · 08-04 13:30~14:57
+
+# 자정 직후 실제 응답: today 가 08-06 으로 굴러가고, 열려 있는 세션은 previousBusinessDay 에 있다.
+_US_AFTER_KST_MIDNIGHT = {
+    "result": {
+        "today": {
+            "date": "2026-08-06",
+            "regularMarket": {"startTime": "2026-08-06T22:30:00.000+09:00", "endTime": "2026-08-07T05:00:00.000+09:00"},
+        },
+        "previousBusinessDay": {
+            "date": "2026-08-05",
+            "regularMarket": {"startTime": "2026-08-05T22:30:00.000+09:00", "endTime": "2026-08-06T05:00:00.000+09:00"},
+        },
+        "nextBusinessDay": {
+            "date": "2026-08-07",
+            "regularMarket": {"startTime": "2026-08-07T22:30:00.000+09:00", "endTime": "2026-08-08T05:00:00.000+09:00"},
+        },
+    }
+}
+
+
+@pytest.mark.parametrize(
+    "moment,expected,label",
+    [
+        (datetime(2026, 8, 5, 14, 59, tzinfo=timezone.utc), "open", "23:59 KST · 자정 직전"),
+        (datetime(2026, 8, 5, 15, 1, tzinfo=timezone.utc), "open", "00:01 KST · 여기서 매일 끊겼다"),
+        (datetime(2026, 8, 5, 17, 0, tzinfo=timezone.utc), "open", "02:00 KST · 13:00 ET 한창 장중"),
+        (datetime(2026, 8, 5, 19, 59, tzinfo=timezone.utc), "open", "04:59 KST · 마감 1분 전"),
+        (datetime(2026, 8, 5, 20, 1, tzinfo=timezone.utc), "closed", "05:01 KST · 실제 마감 후"),
+        (datetime(2026, 8, 5, 12, 0, tzinfo=timezone.utc), "closed", "21:00 KST · 개장 전"),
+    ],
+)
+def test_us_session_survives_kst_midnight_rollover(moment, expected, label) -> None:
+    assert service._session_state(_US_AFTER_KST_MIDNIGHT, "US", now=moment) == expected, label
+
+
+def test_rollover_regression_reproduces_the_old_bug() -> None:
+    """today 만 봤다면 00:01 KST 에 closed 였다 — 이 대비가 수리의 증거다."""
+    moment = datetime(2026, 8, 5, 15, 1, tzinfo=timezone.utc)
+    today_only = {"result": {"today": _US_AFTER_KST_MIDNIGHT["result"]["today"]}}
+
+    assert service._session_state(today_only, "US", now=moment) == "closed"  # 과거 동작
+    assert service._session_state(_US_AFTER_KST_MIDNIGHT, "US", now=moment) == "open"  # 수리 후
+
+
+def test_extra_day_candidates_never_invent_an_open_session() -> None:
+    """후보를 늘려도 없는 개장을 만들면 안 된다 — 주말·휴장에 오탐이 나면 더 나쁘다."""
+    weekend = datetime(2026, 8, 8, 15, 1, tzinfo=timezone.utc)  # 토요일
+    assert service._session_state(_US_AFTER_KST_MIDNIGHT, "US", now=weekend) == "closed"
+
+
+def test_kr_is_unaffected_by_the_rollover_fix() -> None:
+    """KR 정규장은 자정을 넘지 않는다 — 후보 확장이 KR 판정을 흔들지 않아야 한다."""
+    payload = {"result": {"today": _KR_CALENDAR["today"], "previousBusinessDay": {"date": "2026-07-28"}}}
+    assert service._session_state(payload, "KR", now=datetime(2026, 7, 29, 3, 0, tzinfo=timezone.utc)) == "open"
+    assert service._session_state(payload, "KR", now=datetime(2026, 7, 29, 10, 43, tzinfo=timezone.utc)) == "closed"

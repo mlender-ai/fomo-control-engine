@@ -328,14 +328,15 @@ def _session_reason(payload: dict[str, Any], market: str, session: str) -> str:
 
     미국 정규장인데 holiday 가 나오는 상황을 진단 API 에서 즉시 식별할 수 있어야 한다.
     """
-    window = _session_window(_regular_market(payload, market))
-    if window is None:
+    windows = _session_windows(payload, market)
+    if not windows:
         return f"{market} 정규장 창을 응답에서 찾지 못했습니다(휴장 또는 응답 구조 변경)."
-    return f"{market} 정규장 {window[0].isoformat()} ~ {window[1].isoformat()} (UTC) 기준 {session}"
+    spans = " · ".join(f"{start.isoformat()} ~ {end.isoformat()}" for start, end in windows)
+    return f"{market} 정규장 후보 {spans} (UTC) 기준 {session}"
 
 
-def _regular_market(payload: dict[str, Any], market: str) -> Any:
-    """정규장 창을 응답에서 꺼낸다. **KR·US 구조가 실제로 다르다** (작업 4 실측 2026-07-29).
+def _regular_market(day: Any, market: str) -> Any:
+    """하루치 항목에서 정규장 창을 꺼낸다. **KR·US 구조가 실제로 다르다** (실측 2026-07-29).
 
     비대칭은 버그가 아니라 토스 응답 스펙이다. 지우면 KR 이 즉시 영구 holiday 가 된다.
 
@@ -344,21 +345,49 @@ def _regular_market(payload: dict[str, Any], market: str) -> Any:
 
     검증: 같은 시각 반대 분기를 적용하면 양쪽 모두 `holiday` 로 오판했다.
     """
-    result = payload.get("result") or payload.get("data") or payload
-    today = result.get("today", result) if isinstance(result, dict) else {}
-    if not isinstance(today, dict):
+    if not isinstance(day, dict):
         return None
     if market == "US":
-        return today.get("regularMarket")
-    return (today.get("integrated") or {}).get("regularMarket")
+        return day.get("regularMarket")
+    return (day.get("integrated") or {}).get("regularMarket")
+
+
+def _session_windows(payload: dict[str, Any], market: str) -> list[tuple[datetime, datetime]]:
+    """정규장 창 **후보 전부**. today 하나만 보면 미국장이 매일 잘린다.
+
+    토스 캘린더는 **KST 날짜 기준**이다. 미국 정규장은 KST 자정을 넘겨 이어진다:
+
+        today(2026-08-05).regularMarket = 08-05 22:30 KST ~ 08-06 05:00 KST
+                                        = 08-05 13:30 UTC ~ 08-05 20:00 UTC
+
+    KST 자정(=15:00 UTC)을 넘기는 순간 응답의 `today` 가 다음 날로 굴러가고, **아직 열려 있는
+    그 세션이 시야에서 사라진다** → `closed` 오판 → 수집 중단. 실측(2026-07-29~08-04):
+    US 는 매일 13:30 UTC 에 시작해 **14:57~14:59 UTC 에 정확히 끊겼다**(=00:00 KST 직전).
+    정규장 6.5시간 중 1.5시간만 관측 = 매일 77% 유실.
+
+    응답에는 `previousBusinessDay`·`nextBusinessDay` 가 함께 온다. 셋을 모두 후보로 두고
+    `now` 를 포함하는 창이 하나라도 있으면 개장으로 본다. 창은 시각 포함 여부로만 판정하므로
+    후보를 늘려도 없는 개장을 만들어내지 않는다 — 놓친 개장을 되찾을 뿐이다.
+    """
+    result = payload.get("result") or payload.get("data") or payload
+    if not isinstance(result, dict):
+        return []
+    candidates: list[Any] = [result.get("today", result)]
+    candidates.extend(result.get(key) for key in ("previousBusinessDay", "nextBusinessDay"))
+    windows: list[tuple[datetime, datetime]] = []
+    for day in candidates:
+        window = _session_window(_regular_market(day, market))
+        if window is not None and window not in windows:
+            windows.append(window)
+    return windows
 
 
 def _session_state(payload: dict[str, Any], market: str, *, now: datetime | None = None) -> str:
-    window = _session_window(_regular_market(payload, market))
-    if window is None:
+    windows = _session_windows(payload, market)
+    if not windows:
         return "holiday"
     current = now or datetime.now(timezone.utc)
-    return "open" if window[0] <= current <= window[1] else "closed"
+    return "open" if any(start <= current <= end for start, end in windows) else "closed"
 
 
 async def _load_rankings(client: TossReadOnlyClient, store: TossStockStore, market: str, observed_at: str) -> dict[str, dict[str, Any]]:
