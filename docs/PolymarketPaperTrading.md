@@ -92,3 +92,40 @@ coverage calibration이며 모두 실제 ask 깊이, 수수료, 호가 유동성
 `rejected_summary` 이벤트와 엔진 반환 payload는 `rejected`(진짜 거부)·`capacity_waiting`·`out_of_scope`·`universe_exits`를 **분리해서** 싣는다. **최다 거부 게이트는 진짜 거부에서만 고른다** — "마켓 한도"가 최다 거부로 뜨던 오표기를 수리했다.
 
 `max_open_markets` 도달로 진입이 없는 것은 정상이며, 성과 리포트에 `한도 도달 대기 N건`으로 표기한다.
+
+## 미실현 산출·만기 분포 (WO-FCE-OBSERVATION-INTEGRITY-01 Phase 4)
+
+### 실측 — 폴리는 이번 검증에서 정산 표본을 만들 수 없다
+
+2026-08-05 기준 보유 9건 중 **8건이 2027-01-01 만기**로, 검증 종료(08-19)보다 5개월 뒤다.
+
+| 항목 | 값 |
+| --- | --- |
+| 보유(open) | 8건 |
+| 최근접 만기 | 2027-01-01 |
+| **검증 기간 내 정산 예정** | **0건** |
+| 관측 유니버스 중 08-19 이전 만기 시장 | 4,847개 |
+
+정산 로직 자체는 정상이다 — 08-01 만기 1건(`Will Bitcoin reach $75,000 in July?`)이
+`poly_resolutions` 에 정상 기록됐다(pnl −42.5). 문제는 **선정된 시장의 만기가 검증 창 밖**이라는 것.
+유니버스에는 단기 만기 시장이 4,847개나 있으므로 선정 기준의 문제이지 데이터 부족이 아니다.
+**유니버스 선정 기준 변경은 이 WO 범위 밖**이며, 위 실측을 별도 WO 판단 근거로 남긴다.
+
+### 미실현 산출 규격
+
+정산 전이라도 현재 시장가 기준 미실현을 낸다. **정산 손익과 절대 합산하지 않는다**(C3) —
+미실현은 확정이 아니고, 합쳐 표기하면 없는 성적을 있는 것처럼 보이게 한다.
+
+- 현재가: YES 포지션 = `market_probability`, **NO 포지션 = `1 − market_probability`**.
+  NO 를 YES 확률로 평가하면 손익 부호가 뒤집힌다.
+- 미실현 가치 = `shares × 현재가`, 미실현 손익 = `가치 − cost`.
+- 시장 확률이 없으면 미실현도 **없다**(`null`) — 지어내지 않는다.
+- 정산된 포지션에는 미실현을 붙이지 않는다(이중 계상 방지).
+
+응답: `unrealized {basis, is_settled:false, note, open_positions, cost, value, pnl, return_pct}`,
+`expiry {open_positions, nearest_end_at, settling_within_validation, label, sample_possible}`.
+
+포지션별로 `unrealized_value`·`unrealized_pnl`·`unrealized_return_pct`·`settles_within_validation`.
+
+화면은 `미실현 (미확정)` 라벨과 함께 표기하고, `sample_possible=false` 이면
+"검증 기간 안에 정산되는 보유 시장이 없어 이번 검증에서 정산 표본을 만들 수 없습니다"를 상시 노출한다.

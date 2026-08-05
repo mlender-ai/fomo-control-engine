@@ -39,8 +39,16 @@ export function PolymarketPaperView({
           <p><span>USDC 잔액</span><strong>{money(cash)}</strong></p>
           <p><span>검증 시계</span><strong>{track.clock_valid ? `${track.elapsed_days ?? 0}/28일${track.lost_days ? ` (유실 ${track.lost_days}일 제외)` : ""}` : "첫 수집 대기"}</strong></p>
           <p><span>정산 표본</span><strong>N={data.calibration.n}</strong></p>
+          {data.unrealized ? <p><span>미실현 (미확정)</span><strong className={data.unrealized.pnl >= 0 ? "positive" : "negative"}>{money(data.unrealized.pnl)}{data.unrealized.return_pct === null ? "" : ` · ${data.unrealized.return_pct}%`}</strong></p> : null}
         </div>
       </header>
+      {data.expiry ? (
+        <TerminalWarning tone={data.expiry.sample_possible ? "info" : "warning"}>
+          {data.expiry.label}
+          {data.expiry.sample_possible ? "" : " — 검증 기간 안에 정산되는 보유 시장이 없어 이번 검증에서 정산 표본을 만들 수 없습니다."}
+          {data.unrealized ? ` · ${data.unrealized.note}` : ""}
+        </TerminalWarning>
+      ) : null}
       <TerminalWarning tone="warning">비용 후 edge 5% 이상은 엄격 진입, 근거·정산·CLOB가 완비된 edge 미달 시장은 0.5% 소액 캘리브레이션 표본으로 분리합니다.</TerminalWarning>
 
       <section className="polyCalibration" data-testid="poly-calibration-card">

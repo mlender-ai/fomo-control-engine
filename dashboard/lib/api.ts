@@ -2525,6 +2525,9 @@ export type PolyPaperDashboard = {
     lost_days?: number;
     elapsed_label?: string;
   };
+  /** 미실현 — 정산과 합산하지 않는다. WO-FCE-OBSERVATION-INTEGRITY-01 Phase 4. */
+  unrealized?: { basis: string; is_settled: boolean; note: string; open_positions: number; cost: number; value: number; pnl: number; return_pct: number | null };
+  expiry?: { open_positions: number; nearest_end_at: string | null; settling_within_validation: number; validation_ends_at: string | null; label: string; sample_possible: boolean };
   markets: PolyPaperMarket[];
   positions: Array<{
     market_id: string;

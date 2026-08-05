@@ -23,6 +23,77 @@ def _liveness_clock(started_at: datetime, effective_days: set[str], now: datetim
 POLY_LEDGER_POSITION_ID = uuid5(NAMESPACE_URL, "fce:polymarket:paper:ledger")
 
 
+def _position_view(
+    rows: list[sqlite3.Row],
+    *,
+    validation_ends_at: Any,
+) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
+    """보유 포지션에 미실현 손익과 만기 정보를 붙인다 (WO-FCE-OBSERVATION-INTEGRITY-01 Phase 4).
+
+    실측 2026-08-05: 보유 9건 중 **8건이 2027-01-01 만기** — 검증 종료(08-19)보다 5개월 뒤다.
+    검증 기간 내 만기 도래 보유 시장은 0건(1건은 08-01 에 이미 정산됨).
+    즉 **폴리는 이번 검증에서 정산 표본을 만들 수 없다.**
+
+    그래서 미실현을 낸다. 다만 **정산 손익과 절대 섞지 않는다** — 미실현은 확정이 아니고,
+    합쳐 표기하면 없는 성적을 있는 것처럼 보이게 한다(C3).
+    """
+    deadline = _datetime(validation_ends_at) if validation_ends_at else None
+    payload: list[dict[str, Any]] = []
+    unrealized_cost = unrealized_value = 0.0
+    open_count = 0
+    within_deadline = 0
+    expiries: list[str] = []
+    for row in rows:
+        item = dict(row)
+        probability = item.get("market_probability")
+        shares = float(item.get("shares") or 0)
+        cost = float(item.get("cost") or 0)
+        is_open = str(item.get("status") or "") == "open"
+        if is_open and probability is not None:
+            # NO 포지션의 현재가는 1 - YES 확률이다.
+            unit = float(probability) if str(item.get("direction") or "").upper() == "YES" else 1.0 - float(probability)
+            value = shares * unit
+            item["unrealized_value"] = round(value, 4)
+            item["unrealized_pnl"] = round(value - cost, 4)
+            item["unrealized_return_pct"] = round((value / cost - 1) * 100, 2) if cost else None
+            unrealized_cost += cost
+            unrealized_value += value
+        else:
+            item["unrealized_value"] = None
+            item["unrealized_pnl"] = None
+            item["unrealized_return_pct"] = None
+        if is_open:
+            open_count += 1
+            end_at = _datetime(item.get("end_at")) if item.get("end_at") else None
+            if end_at is not None:
+                expiries.append(end_at.isoformat())
+                if deadline is not None and end_at <= deadline:
+                    within_deadline += 1
+        item["settles_within_validation"] = bool(is_open and item.get("end_at") and deadline is not None and (_datetime(item["end_at"]) <= deadline))
+        payload.append(item)
+
+    unrealized = {
+        "basis": "current_market_probability",
+        "is_settled": False,
+        "note": "미실현은 확정 손익이 아닙니다. 정산 손익과 합산하지 않습니다.",
+        "open_positions": open_count,
+        "cost": round(unrealized_cost, 4),
+        "value": round(unrealized_value, 4),
+        "pnl": round(unrealized_value - unrealized_cost, 4),
+        "return_pct": round((unrealized_value / unrealized_cost - 1) * 100, 2) if unrealized_cost else None,
+    }
+    expiry = {
+        "open_positions": open_count,
+        "nearest_end_at": min(expiries) if expiries else None,
+        "settling_within_validation": within_deadline,
+        "validation_ends_at": deadline.isoformat() if deadline else None,
+        "label": (f"정산 대기 {open_count}건 · 최근접 만기 {min(expiries)[:10] if expiries else '—'} · 검증 기간 내 정산 예정 {within_deadline}건"),
+        # 0이면 "폴리는 이번 검증에서 표본을 만들 수 없다"가 사실이다 — 숨기지 않는다.
+        "sample_possible": within_deadline > 0,
+    }
+    return payload, unrealized, expiry
+
+
 class PolyPaperStore:
     def __init__(self, database_url: str) -> None:
         self.path = database_url.removeprefix("sqlite:///") if database_url.startswith("sqlite:///") else ""
@@ -420,7 +491,8 @@ class PolyPaperStore:
             positions = connection.execute(
                 # end_at: 만기 분포 표기용 (WO-FCE-ENTRY-THROUGHPUT-01 작업 4) —
                 # 4주 검증 창 안에 만기가 있는지가 "표본이 생길 수 있는가"를 결정한다.
-                """SELECT p.*, m.question, m.slug, m.end_at FROM poly_positions p
+                # market_probability: 미실현 산출용 (WO-FCE-OBSERVATION-INTEGRITY-01 Phase 4).
+                """SELECT p.*, m.question, m.slug, m.end_at, m.market_probability FROM poly_positions p
                 JOIN poly_markets m ON m.market_id=p.market_id ORDER BY p.opened_at DESC"""
             ).fetchall()
             fills = connection.execute("SELECT payload FROM poly_fills ORDER BY filled_at DESC LIMIT 20").fetchall()
@@ -453,6 +525,7 @@ class PolyPaperStore:
         track_payload["calendar_days"] = clock["calendar_days"]
         track_payload["lost_days"] = clock["lost_days"]
         track_payload["elapsed_label"] = clock["label"]
+        position_payload, unrealized_summary, expiry_summary = _position_view(positions, validation_ends_at=track_payload.get("ends_at"))
         market_payload = []
         for row in markets:
             item = {key: row[key] for key in row.keys() if key not in {"payload", "estimate_payload", "category_rank"}}
@@ -462,7 +535,11 @@ class PolyPaperStore:
         return {
             "track": track_payload,
             "markets": market_payload,
-            "positions": [dict(row) for row in positions],
+            "positions": position_payload,
+            # Phase 4: 정산 전이라도 현재 시장가 기준 미실현을 낸다. **정산 손익과 명확히 구분**한다 —
+            # 미실현은 확정이 아니고, 섞어 표기하면 없는 성적을 있는 것처럼 보이게 한다(C3).
+            "unrealized": unrealized_summary,
+            "expiry": expiry_summary,
             "recent_fills": [json.loads(row["payload"]) for row in fills],
             "calibration": _calibration([dict(row) for row in resolutions]),
             "resolution_count": len(resolutions),
