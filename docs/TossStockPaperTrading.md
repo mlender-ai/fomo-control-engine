@@ -17,7 +17,7 @@ heartbeat의 오류에서 확인한다.
 
 체결 순서는 정규장 → warnings/VI/정지 → 가격제한 잠김 → 당분 거래량 5% → 반스프레드 → 호가단위 → 당분 고저 invariant다. 장외 주문은 `session_closed`로 큐잉되고 다음 정규장 첫 관측 시가를 사용한다. 첫 시가, 1분 OHLCV, 호가 중 하나라도 없으면 `market_data_missing`이며 체결하지 않는다. Toss가 아직 거래가 없는 현재 분봉을 거래량 0으로 반환하면 체결 근거로 쓰지 않고, 가장 최근의 거래량 있는 확정 1분봉을 사용한다.
 
-세션 판정은 KR `today.integrated.regularMarket`, US `today.regularMarket`만 사용한다. 미국 day/pre/after market은 수집은 가능하지만 PaperBroker 체결 세션으로 보지 않는다.
+세션 판정은 KR `integrated.regularMarket`, US `regularMarket` 만 사용한다(프리·애프터 제외). 다만 **`today` 한 항목만 보지 않는다** — 미국 정규장은 KST 자정을 넘겨 이어지므로 `today`·`previousBusinessDay`·`nextBusinessDay` 세 후보의 정규장 창을 모두 보고 현재 시각을 포함하는 창이 있으면 개장으로 본다(아래 'KST 자정 롤오버' 참조). 미국 day/pre/after market은 수집은 가능하지만 PaperBroker 체결 세션으로 보지 않는다.
 
 KR 체결은 원화 수수료와 매도 거래세, US 체결은 달러 수수료를 저장한다. USD→KRW 환율은 Toss의 1분 유효 참고 환율이 실제로 응답한 경우에만 fill에 관측 시각과 함께 저장한다. 환율이 없으면 빈칸이다.
 
@@ -73,7 +73,7 @@ KR/US 각 100종목과 시장별 프록시 1개는 200건 배치 한도 안에�
 
 주식 트랙의 검증 경과일은 달력일이 아니라 **엔진이 정상적으로 평가를 수행한 날**(effective run)로 세는 것이 정직하다. 워커가 죽었거나 구동 잡이 꺼져 있던 날 = 원장 미축적 = 검증일 유실이며, 이를 정상 경과로 계산하면 안 된다.
 
-이 WO에서 관측 기반을 놓았다: 워커 하트비트 `last_effective_run_at`(마이그레이션 `0031`)이 엔진이 실제로 평가한 마지막 시각을 기록한다. `last_success_at`과의 괴리가 유실 구간을 드러낸다. 검증 시계를 유실일 제외 기준으로 재계산하는 계산부는 **WO-FCE-ENGINE-LIVENESS-01에서 구현 완료**했다 — `app/worker/liveness.py::elapsed_excluding_gaps()` 가 `{calendar_days, effective_days, lost_days, label}` 을 반환하며 라벨은 "경과 N일 (유실 M일 제외)" 형식이다. 대시보드 표기 연결은 화면 작업이라 별도 UI WO로 남긴다.
+이 WO에서 관측 기반을 놓았다: 워커 하트비트 `last_effective_run_at`(마이그레이션 `0031`)이 엔진이 실제로 평가한 마지막 시각을 기록한다. `last_success_at`과의 괴리가 유실 구간을 드러낸다. 검증 시계를 유실일 제외 기준으로 재계산하는 계산부는 `app/worker/liveness.py::elapsed_excluding_gaps()` 가 `{calendar_days, effective_days, lost_days, label}` 을 반환하며 라벨은 "경과 N일 (유실 M일 제외)" 형식이다. **배선·표기까지 완료됐다**(WO-FCE-TOSS-US-STALL-01 작업 5): 주식은 분석 스냅샷 날짜, 폴리는 `poly_markets.observed_at` 날짜를 근거로 3트랙 모두 계산하고, API 가 `elapsed_days`(유실 제외)·`calendar_days`·`lost_days`·`elapsed_label` 을 함께 낸다. 대시보드는 주식 트랙 카드·폴리 뷰·리뷰 개요 3곳에서 유실일을 표시한다. 이전에는 `elapsed_excluding_gaps` 가 정의만 있고 어디서도 호출되지 않는 죽은 코드였다.
 
 ## RR 정의 — 분할 청산 가중 (WO-FCE-PNF-TARGET-01)
 
