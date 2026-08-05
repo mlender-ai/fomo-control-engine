@@ -210,6 +210,9 @@ function StockPaperView({ data }: { data: StockPaperDashboard | null }) {
 }
 
 function StockTrackCard({ track, modes }: { track: StockPaperTrack; modes: StockPaperDashboard["mode_performance"] }) {
+  // WO-FCE-OBSERVATION-INTEGRITY-01 Phase 3-2: 이 값은 진입 **거부** 누계이지 미체결 주문이 아니다.
+  // 실측 결과 미체결 주문은 0건(생성된 주문 전부 체결)이었는데 화면은 '미체결'로 표기해
+  // 체결 파이프라인이 막힌 것처럼 보였다.
   const rejectionCount = Object.values(track.rejection_reasons).reduce((sum, value) => sum + value, 0);
   return (
     <article className={`stockTrackCard ${track.status}`}>
@@ -220,7 +223,7 @@ function StockTrackCard({ track, modes }: { track: StockPaperTrack; modes: Stock
       </div>
       <div className="stockTrackProgress"><i style={{ width: `${Math.min(100, track.elapsed_days / 28 * 100)}%` }} /></div>
       {!track.clock_valid ? <em>검증 시계 대기 · {track.clock_invalidation_reason || "인증 후 첫 정상 관측 필요"}</em> : null}
-      <footer><span>{shortDate(track.started_at)} → {shortDate(track.ends_at)}</span><b className={track.last_market_state === "open" ? "positive" : "neutral"}>{track.last_market_state === "open" ? "정규장 OPEN" : "정규장 대기"}</b><small>최근 {track.last_market_observed_at ? shortDateTime(track.last_market_observed_at) : "—"} · 미체결 {rejectionCount}건</small></footer>
+      <footer><span>{shortDate(track.started_at)} → {shortDate(track.ends_at)}</span><b className={track.last_market_state === "open" ? "positive" : "neutral"}>{track.last_market_state === "open" ? "정규장 OPEN" : "정규장 대기"}</b><small>최근 {track.last_market_observed_at ? shortDateTime(track.last_market_observed_at) : "—"} · 진입 거부 {rejectionCount}건</small></footer>
       {track.status === "stopped" ? <em>체결 invariant 정지 · {rejectionLabel(track.stop_reason || "unknown")}</em> : null}
     </article>
   );

@@ -211,7 +211,19 @@ async def collect_market(settings: Settings, market: str) -> dict[str, Any]:
                     exchange_rate = None
                 if exchange_rate:
                     stock_store.record_fx(exchange_rate, datetime.fromisoformat(now))
-        candidates = await _build_ranked_candidates(client, store, market, rankings, investor_payloads, price_rows, stock_rows, now)
+        pipeline_counters: dict[str, int] = {"universe": len(universe_symbols), "symbols_requested": len(symbols)}
+        candidates = await _build_ranked_candidates(
+            client,
+            store,
+            market,
+            rankings,
+            investor_payloads,
+            price_rows,
+            stock_rows,
+            now,
+            limit=int(getattr(settings, "stock_candidates_per_market", _MAX_CANDIDATES_PER_MARKET)),
+            counters=pipeline_counters,
+        )
         coverage_candidates = []
         if settings.stock_paper_engine_enabled:
             stock_store = StockPaperStore(settings.database_url)
@@ -249,6 +261,8 @@ async def collect_market(settings: Settings, market: str) -> dict[str, Any]:
             "groups": group_candidates(candidates),
             "trade_groups": group_candidates(item for item in candidates if item.get("tradable") is True),
             "coverage_candidates": coverage_candidates,
+            # Phase 3-2: 단계별 탈락을 추측 없이 특정하기 위한 파이프라인 카운터.
+            "pipeline": {**pipeline_counters, "coverage_candidates": len(coverage_candidates)},
         }
         _latest_market[market] = response
         blocks.record_outcome(market, "observed", reason=None)
@@ -447,13 +461,34 @@ async def _build_ranked_candidates(
     price_rows: list[dict[str, Any]],
     stock_rows: list[dict[str, Any]],
     observed_at: str,
+    *,
+    limit: int = _MAX_CANDIDATES_PER_MARKET,
+    counters: dict[str, int] | None = None,
 ) -> list[dict[str, Any]]:
     universe = load_universe()
     market_rows = _ranking_rows(rankings.get("MARKET_TRADING_AMOUNT", {}))
     retail_rows = _ranking_rows(rankings.get("TOSS_SECURITIES_TRADING_AMOUNT", {}))
     price_by_symbol = {str(row.get("symbol")): row for row in price_rows}
     stock_by_symbol = {str(row.get("symbol")): row for row in stock_rows}
-    symbols = (set(market_rows) | set(retail_rows)) & set(price_by_symbol)
+    # WO-FCE-OBSERVATION-INTEGRITY-01 Phase 3-2: **랭킹은 필터가 아니라 정렬이다.**
+    #
+    # 이전: `(랭킹 ∪ 리테일랭킹) ∩ 가격` — 랭킹 30위 밖의 유니버스 종목은 후보가 될 기회조차
+    # 없었다. 실측 결과 KOSPI100 탐색 표본 3개, NASDAQ100 5개(유니버스 200종목 대비 4%).
+    # 지금: 가격을 받은 종목 전체가 후보 풀이고, 랭킹은 우선순위 정렬에만 쓴다.
+    # 정밀 평가(warnings·evidence)는 상위 N개로 제한하므로 **TPS 는 늘지 않는다** —
+    # 오히려 검산표가 이미 전제한 "시장별 18종목" 예산을 이제야 실제로 채운다.
+    # 게이트 임계는 손대지 않는다(C1) — 같은 잣대로 더 많이 잴 뿐이다.
+    symbols = set(price_by_symbol)
+    pool_counters = {
+        "priced": len(price_by_symbol),
+        "ranked": len(set(market_rows) | set(retail_rows)),
+        "ranked_and_priced": len((set(market_rows) | set(retail_rows)) & set(price_by_symbol)),
+    }
+    # **선정과 후보 구성을 분리한다.**
+    # 이전엔 예비 단계에서 곧바로 `build_candidate` 를 불렀는데, 그 단계의 유일한 신호가
+    # 랭킹 기반(attention_gap)이라 **랭킹이 없는 종목은 신호 0개 → None → 탈락**이었다.
+    # 즉 풀만 넓혀도 소용이 없었다. 여기서는 가벼운 선정 레코드만 만들고, 신호 판정은
+    # 증거(모멘텀·호가·투자자 흐름)를 받은 뒤 정밀 단계에서 한다.
     preliminary = []
     for symbol in symbols:
         tradable, role = universe.classify(Market(market), symbol)
@@ -462,28 +497,51 @@ async def _build_ranked_candidates(
         price_row = price_by_symbol.get(symbol, {})
         raw_ranked_price = market_row.get("price")
         ranked_price: dict[str, Any] = raw_ranked_price if isinstance(raw_ranked_price, dict) else {}
+        price = _float(price_row.get("lastPrice") or ranked_price.get("lastPrice"))
+        if price is None:
+            continue  # 가격 없는 종목은 어떤 게이트도 정직하게 잴 수 없다
+        preliminary.append(
+            {
+                "symbol": symbol,
+                "name": str(stock_by_symbol.get(symbol, {}).get("name") or symbol),
+                "price": price,
+                "market_rank": _int(market_row.get("rank")),
+                "retail_rank": _int(retail_row.get("rank")),
+                "tradable": tradable,
+                "role": role,
+            }
+        )
+    preliminary.sort(key=lambda item: (item.get("market_rank") is None, item.get("market_rank") or 10_000, item["symbol"]))
+    if counters is not None:
+        counters.update(pool_counters)
+        counters["candidates"] = len(preliminary)
+        counters["tradable"] = sum(1 for item in preliminary if item.get("tradable") is True)
+        counters["observation_only"] = sum(1 for item in preliminary if item.get("tradable") is not True)
+        counters["limit"] = limit
+    # 관측 전용(유니버스 밖)은 종전대로 랭킹 신호만으로 판단을 기록한다 — 정밀 호출을 쓰지 않는다.
+    result: list[dict[str, Any]] = []
+    for item in [row for row in preliminary if row.get("tradable") is not True][:limit]:
         candidate = build_candidate(
             market=market,
-            symbol=symbol,
-            name=str(stock_by_symbol.get(symbol, {}).get("name") or symbol),
-            price=_float(price_row.get("lastPrice") or ranked_price.get("lastPrice")),
+            symbol=item["symbol"],
+            name=item["name"],
+            price=item["price"],
             observed_at=observed_at,
-            market_rank=_int(market_row.get("rank")),
-            retail_rank=_int(retail_row.get("rank")),
+            market_rank=item["market_rank"],
+            retail_rank=item["retail_rank"],
             warnings=[],
-            tradable=tradable,
-            role=role,
+            tradable=False,
+            role=str(item.get("role") or "observation_only"),
         )
-        if candidate:
-            preliminary.append(candidate)
-    preliminary.sort(key=lambda item: (item.get("market_rank") is None, item.get("market_rank") or 10_000, item["symbol"]))
-    observation_only = [item for item in preliminary if item.get("tradable") is not True][:_MAX_CANDIDATES_PER_MARKET]
-    for candidate in observation_only:
+        if not candidate:
+            continue
+        result.append(candidate)
         for signal in candidate["signals"]:
             if signal.get("tone") == "candidate":
                 store.record_judgment(candidate, signal)
-    result = list(observation_only)
-    tradable_candidates = [item for item in preliminary if item.get("tradable") is True][:_MAX_CANDIDATES_PER_MARKET]
+    tradable_candidates = [item for item in preliminary if item.get("tradable") is True][:limit]
+    if counters is not None:
+        counters["evaluated"] = len(tradable_candidates)
     for candidate in tradable_candidates:
         warnings_payload = await _load_warnings(client, store, market, candidate["symbol"], observed_at)
         warnings = [str(item.get("warningType") or item.get("type") or "") for item in _result_list(warnings_payload)]

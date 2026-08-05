@@ -87,6 +87,48 @@ TSLA 1분봉 정규장(390분) 커버리지 실측:
 `resample_candles` 는 5분 중 1봉만 있어도 5분봉을 만든다. 봉을 **버리지는 않는다**(구멍이 더
 커진다). 대신 `source_bars`·`complete` 를 함께 실어 **불완전함을 드러낸다** — 판단은 소비자가 한다.
 
+## 후보 파이프라인 — 랭킹은 필터가 아니라 정렬 (Phase 3-2)
+
+실측: KOSPI100 탐색 표본 **3개**, NASDAQ100 **5개**. 유니버스 200종목 대비 4%.
+
+원인은 게이트가 아니라 **후보 풀**이었고, 두 겹이었다.
+
+1. 풀 자체: `(랭킹 ∪ 리테일랭킹) ∩ 가격` — 랭킹 30위 밖 유니버스 종목은 후보가 될 기회조차 없었다.
+2. 더 깊은 층: 예비 단계에서 곧바로 `build_candidate` 를 부르는데, 그 단계의 유일한 신호가
+   랭킹 기반(`attention_gap`)이다. **랭킹이 없으면 신호 0개 → None → 탈락.**
+   그래서 풀만 넓혀도 아무 효과가 없었다.
+
+수리:
+
+- 풀 = 가격을 받은 종목 전체. 랭킹은 **우선순위 정렬**에만 쓴다.
+- **선정과 후보 구성을 분리**한다. 예비 단계는 가벼운 선정 레코드만 만들고, 신호 판정은
+  증거(모멘텀·호가·투자자 흐름)를 받은 정밀 단계에서 한다.
+- 정밀 평가 대상은 `FCE_STOCK_CANDIDATES_PER_MARKET`(기본 18)로 상한. **게이트 임계 무변경(C1)**
+  — 같은 잣대로 더 많이 재는 것이지 완화가 아니다.
+
+### TPS
+
+검산표는 이미 "후보 36종목(시장별 18)×3콜/15초 = 최대 9.4 TPS / 한도 10"을 전제하고 있었다.
+실제로는 8종목만 평가되어 **예산의 22%만 쓰고 있었다.** 이 변경은 한도를 올리는 게 아니라
+이미 계산된 예산을 실제로 채운다. 따라서 검산표 수치는 그대로다.
+
+다만 실사용 TPS 는 실제로 오른다(약 2.1 → 9.4 TPS 수준). 안전판은 그대로 유효하다:
+`X-RateLimit-Remaining` 20% 미만 시 공유 버킷 선제 감속, 429 는 Retry-After + 지수 백오프.
+상한을 낮추려면 `FCE_STOCK_CANDIDATES_PER_MARKET` 를 줄인다(게이트가 아니라 표본 폭 값이다).
+
+### 단계별 카운터
+
+`collect_market` 응답의 `pipeline` 블록이 단계별 수를 낸다:
+`universe · symbols_requested · priced · ranked · ranked_and_priced · candidates · tradable ·
+observation_only · evaluated · limit · coverage_candidates`.
+"어디서 몇 개가 떨어졌는가"를 추측 없이 특정하기 위한 것이다.
+
+### "미체결 N건" 표기 정정
+
+화면 트랙 카드의 `미체결 N건` 은 **진입 거부 누계**였다(`rejection_reasons` 합). 실측 결과
+미체결 주문은 **0건**(생성된 주문 10건 전부 체결)인데 표기 때문에 체결 파이프라인이 막힌
+것처럼 보였다. `진입 거부 N건` 으로 정정했다.
+
 ## 구동 잡·엔진 플래그 관계 (침묵 금지)
 
 주식 페이퍼는 두 플래그로 나뉜다.
@@ -102,7 +144,7 @@ TSLA 1분봉 정규장(390분) 커버리지 실측:
 
 주식 트랙의 검증 경과일은 달력일이 아니라 **엔진이 정상적으로 평가를 수행한 날**(effective run)로 세는 것이 정직하다. 워커가 죽었거나 구동 잡이 꺼져 있던 날 = 원장 미축적 = 검증일 유실이며, 이를 정상 경과로 계산하면 안 된다.
 
-이 WO에서 관측 기반을 놓았다: 워커 하트비트 `last_effective_run_at`(마이그레이션 `0031`)이 엔진이 실제로 평가한 마지막 시각을 기록한다. `last_success_at`과의 괴리가 유실 구간을 드러낸다. 검증 시계를 유실일 제외 기준으로 재계산하는 계산부는 `app/worker/liveness.py::elapsed_excluding_gaps()` 가 `{calendar_days, effective_days, lost_days, label}` 을 반환하며 라벨은 "경과 N일 (유실 M일 제외)" 형식이다. **배선·표기까지 완료됐다**(WO-FCE-TOSS-US-STALL-01 작업 5): 주식은 분석 스냅샷 날짜, 폴리는 `poly_markets.observed_at` 날짜를 근거로 3트랙 모두 계산하고, API 가 `elapsed_days`(유실 제외)·`calendar_days`·`lost_days`·`elapsed_label` 을 함께 낸다. 대시보드는 주식 트랙 카드·폴리 뷰·리뷰 개요 3곳에서 유실일을 표시한다. 이전에는 `elapsed_excluding_gaps` 가 정의만 있고 어디서도 호출되지 않는 죽은 코드였다.
+이 WO에서 관측 기반을 놓았다: 워커 하트비트 `last_effective_run_at`(마이그레이션 `0031`)이 엔진이 실제로 평가한 마지막 시각을 기록한다. `last_success_at`과의 괴리가 유실 구간을 드러낸다. 검증 시계를 유실일 제외 기준으로 재계산하는 계산부는 `app/worker/liveness.py::elapsed_excluding_gaps()` 가 `{calendar_days, effective_days, lost_days, label}` 을 반환하며 라벨은 "경과 N일 (유실 M일 제외)" 형식이다. **배선·표기까지 완료됐다**: 검증일 근거는 이제 `observation_coverage`(커버리지 게이트 통과일)이며 3트랙 공통이다 — 정본은 [`docs/ObservationIntegrity.md`](ObservationIntegrity.md). API 가 API 가 `elapsed_days`(유실 제외)·`calendar_days`·`lost_days`·`elapsed_label` 을 함께 낸다. 대시보드는 주식 트랙 카드·폴리 뷰·리뷰 개요 3곳에서 유실일을 표시한다. 이전에는 `elapsed_excluding_gaps` 가 정의만 있고 어디서도 호출되지 않는 죽은 코드였다.
 
 ## RR 정의 — 분할 청산 가중 (WO-FCE-PNF-TARGET-01)
 

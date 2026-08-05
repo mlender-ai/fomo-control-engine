@@ -1158,6 +1158,16 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("FCE_STOCK_LIVE_TRADING_ENABLED", "STOCK_LIVE_TRADING_ENABLED"),
         description="Sealed until a separate WO approves a stock paper 4-week benchmark; true is invalid while LiveBroker is absent.",
     )
+    # WO-FCE-OBSERVATION-INTEGRITY-01 Phase 3-2: 시장별로 매 주기 정밀 평가할 후보 수.
+    # **게이트 임계가 아니라 표본 폭이다** — 같은 잣대로 더 많이 재기 위한 값이며 완화가 아니다.
+    # TPS 검산표는 이미 "후보 36종목(시장별 18)"을 전제로 계산돼 있는데 실제로는 3~5개만
+    # 평가되고 있었다(랭킹이 필터로 작동). 기본값 18은 그 예산을 실제로 채운다.
+    stock_candidates_per_market: int = Field(
+        18,
+        gt=0,
+        le=50,
+        validation_alias=AliasChoices("FCE_STOCK_CANDIDATES_PER_MARKET", "STOCK_CANDIDATES_PER_MARKET"),
+    )
     stock_paper_initial_krw: float = Field(
         100_000_000.0,
         gt=0,
