@@ -32,6 +32,34 @@ Polymarket 트랙은 크립토·주식 페이퍼와 별개인 예측시장 확�
 - 비용 차감 edge가 `poly-v2` 엄격 임계 이상이면 capped Kelly로 크기를 계산한다.
 - 기본 청산은 공식 만기 결과다. 중도 청산 최적화는 범위 밖이다.
 
+### poly-v3 만기 상한 (WO-FCE-SAMPLE-VIABILITY-01 PHASE 2, 2026-08-06)
+
+**v2 까지 만기 조건은 아래쪽(`min_days_to_resolution`)에만 있었다.** 그래서 만기가 5개월 뒤인
+시장이 얼마든지 선정됐고, 실측 2026-08-05 보유 9건 중 **8건이 2027-01-01 만기**였다. 검증
+종료는 08-19 다 — 검증 창 안에 정산되는 건이 0이면 유효 관측일을 다 채워도 **채점 가능한
+표본이 0**이다. 유니버스에는 창 안 만기 시장이 4,847개 있었으므로 데이터 문제가 아니라
+선정 기준 문제였다.
+
+```
+채점 마감 = min(now + max_days_to_resolution, 검증 종료일 - settlement_buffer_days)
+만기 > 채점 마감  →  exclusion_reason = resolution_beyond_scoring_window
+```
+
+- `max_days_to_resolution` = 28.0 · `settlement_buffer_days` = 2.0 (`params/poly-v3.json`)
+- 안전 여유의 근거는 `PolyPaperStore.settlement_latency()` 로 다시 잰다 — 만기 당일에 정산이
+  확정되지 않는다(`resolved_outcome` 은 가격이 확정 극단값에 도달한 뒤에 참이 된다).
+  현재 N 이 작으므로 보수적으로 올려 잡은 값이며, 표본이 쌓이면 실측 중앙값으로 갱신한다.
+- **기존 임계값은 하나도 바뀌지 않았다.** v3 는 v2 의 모든 값을 그대로 두고 조건을 **추가**한다
+  (`tests/test_poly_expiry_filter.py` 가 필드별로 고정). 완화가 아니라 후보를 줄이는 방향이다.
+- **기존 보유는 청산하지 않는다.** 필터는 신규 진입 선정에만 관여하며, 기존 9건은 관측을
+  계속하고 미실현으로 표기한다(미실현과 실현은 합산하지 않는다).
+- 창 밖 만기 제외는 **"거부"가 아니다.** `window_filtered` 버킷으로 따로 센다 — 판정 기준 미달이
+  아니라 표본이 될 수 없는 시장이기 때문이고, 거부 분모에 섞으면 엔진이 고장난 것처럼 보인다.
+
+수정 전후 대조는 엔진 응답의 `expiry_filter` 블록(필터 적용 전 만기 분포 + 걸러낸 건수)과
+`PolyPaperStore.expiry_bias_diagnosis()`(만기 구간별 유동성·엣지·통과율)로 한다.
+**후보가 지나치게 줄면 그것도 결과다. 필터를 느슨하게 하지 않고 보고한다.**
+
 ### poly-v2 캘리브레이션 커버리지
 
 `strict_edge`는 기존 비용 후 edge 5% 기준을 그대로 사용한다. `coverage_calibration`은

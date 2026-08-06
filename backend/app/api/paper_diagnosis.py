@@ -52,6 +52,27 @@ def _observation_integrity(settings: Any) -> dict[str, Any]:
     }
 
 
+def _sample_viability(settings: Any) -> dict[str, Any]:
+    """검증 완료 판정 (WO-FCE-SAMPLE-VIABILITY-01 PHASE 1·6).
+
+    유효 관측일만으로는 검증이 되지 않는다 — 채점 가능한 표본이 나와야 검증이다.
+    폴리처럼 선정 기준상 표본이 생성될 수 없는 트랙은 여기서 `STRUCTURALLY_BLOCKED` 로 뜬다.
+    """
+    from app.db.maintenance import sqlite_path
+    from app.db.sqlite_utils import connect_sqlite
+    from app.validation import sample_viability
+
+    path = sqlite_path(settings.database_url)
+    if path is None or not path.exists():
+        return {"available": False, "reason": "sqlite_only"}
+    try:
+        with connect_sqlite(str(path)) as connection:
+            report = sample_viability.sample_viability_report(connection)
+    except Exception as exc:  # 진단 실패가 나머지 진단을 못 죽이게 한다
+        return {"available": False, "reason": str(exc)[:120]}
+    return {"available": True, **report}
+
+
 def paper_diagnosis() -> dict[str, Any]:
     settings = get_settings()
     worker = get_worker_status()
@@ -163,6 +184,8 @@ def paper_diagnosis() -> dict[str, Any]:
         },
         # WO-FCE-OBSERVATION-INTEGRITY-01: 검증일은 커버리지 게이트를 통과한 날만 센다.
         "observation_integrity": _observation_integrity(settings),
+        # WO-FCE-SAMPLE-VIABILITY-01: 관측일은 필요조건이다. 채점 가능 표본이 나와야 검증이다.
+        "sample_viability": _sample_viability(settings),
         # 자기잠금 래치 재발 감시용. blocked 가 있는데 retry_in_seconds 가 줄지 않으면 이상이다.
         "toss_collection": {
             "principle": "모든 차단에는 자동 재시도 경로가 있다 — 재시작 없이 스스로 풀려야 한다.",

@@ -73,7 +73,9 @@ test("all product routes keep production CSS and bounded controls", async ({ pag
     "/engine",
     "/performance",
     "/settings",
-    "/trades"
+    "/trades",
+    // WO-FCE-SAMPLE-VIABILITY-01 PHASE 6 — 검증 완료 3조건 화면.
+    "/validation"
   ];
 
   for (const route of routes) {

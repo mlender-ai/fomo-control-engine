@@ -2184,13 +2184,24 @@ export type PaperGateFunnel = {
   top_rejection: { id: string; label: string; count: number } | null;
   rejection_counts: Record<string, number>;
   entry_block_count?: number;
+  // WO-FCE-SAMPLE-VIABILITY-01 PHASE 4: 항목별 통과율만으로는 "한 항목이 전부를 막는가"를
+  // 알 수 없다. sole_block_count = 이 항목 하나만 실패해서 탈락한 건수.
   checklist_pass_rates?: Array<{
     key: string;
     label: string;
     passed: number;
     evaluated: number;
     pass_rate_pct: number;
+    sole_block_count?: number;
   }>;
+  checklist_bottleneck?: {
+    evaluated: number;
+    checklist_gate_failed: number;
+    checklist_gate_pass_rate_pct: number | null;
+    checklist_only_blocked: number;
+    top_sole_blocker: { key: string; label: string; sole_block_count: number; pass_rate_pct: number } | null;
+    policy: string;
+  };
   signature_gate_note?: string | null;
   pill_diagnostics?: {
     rendered: number;
@@ -2735,6 +2746,77 @@ export type DecisionMemory = {
   created_at: string;
 };
 
+// WO-FCE-SAMPLE-VIABILITY-01 PHASE 6 — 검증 완료는 3조건이다.
+// 유효 관측일만 보는 화면은 "거의 다 됐다"는 거짓 진술을 만든다. 표본·국면을 같이 낸다.
+export type ValidationCondition = {
+  label: string;
+  current: number;
+  target: number;
+  met: boolean;
+};
+
+export type SampleViabilityTrack = {
+  track: string;
+  label: string;
+  scoring_definition: string;
+  effective_days: number;
+  effective_days_target: number;
+  entries_total: number;
+  entries_in_effective_days: number;
+  entries_per_effective_day: number;
+  entries_per_effective_day_ci95: [number, number];
+  scored_samples: number;
+  scored_samples_target: number;
+  exit_completion_rate: number;
+  projected_samples_at_target: number;
+  reaches_target: boolean;
+  effective_days_to_target: number;
+  calendar_days_to_target: number | null;
+  verdict: "VIABLE" | "SLOW" | "STRUCTURALLY_BLOCKED" | "INSUFFICIENT_DATA" | string;
+  verdict_reason: string;
+  notes: string[];
+  sample_sufficient: boolean;
+  statement: string;
+  structural_block: { blocked?: boolean; reason?: string; detail?: string } | null;
+};
+
+export type ValidationCompletion = {
+  track: string;
+  label: string;
+  complete: boolean;
+  conditions: { effective_days: ValidationCondition; scored_samples: ValidationCondition; regimes: ValidationCondition };
+  unmet: string[];
+  laggard: string;
+  verdict: string;
+  regimes: { available: boolean; distinct: number; target: number; reason: string | null };
+  line: string;
+};
+
+export type SampleViability = {
+  available: boolean;
+  reason?: string;
+  as_of?: string;
+  principle?: string;
+  target_effective_days?: number;
+  target_samples?: number;
+  target_regimes?: number;
+  tracks?: Record<string, SampleViabilityTrack>;
+  completion?: Record<string, ValidationCompletion>;
+  blocked_tracks?: string[];
+};
+
+export type PaperDiagnosis = {
+  principle: string;
+  observation_integrity: {
+    available: boolean;
+    reason?: string;
+    min_coverage_pct?: number;
+    tracks?: Record<string, { label?: string; effective_days: number; lost_days: number; average_coverage_pct: number; effective_rate: number; label_text?: string }>;
+    manual_actions?: Array<{ kind: string; severity: string; title: string; detail: string; remedy: string }>;
+  };
+  sample_viability: SampleViability;
+};
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers);
   if (init?.body != null && !headers.has("Content-Type")) {
@@ -2764,6 +2846,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   systemStatus: () => request<SystemStatus>("/api/system/status"),
+  paperDiagnosis: () => request<PaperDiagnosis>("/api/system/paper/diagnosis"),
   tossAuthDiagnosis: () => request<TossAuthDiagnosis>("/api/system/toss/auth-diagnosis"),
   testBitgetConnection: () =>
     request<BitgetConnectionTest>("/api/system/bitget/test-connection", {

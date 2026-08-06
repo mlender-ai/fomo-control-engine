@@ -8762,3 +8762,71 @@ button.actionPlanRow:not(:disabled):hover {
   color: var(--terminal-warning, #e0a94f);
   font-size: 11.5px;
 }
+
+/* WO-FCE-SAMPLE-VIABILITY-01 PHASE 6 — 검증 완료 3조건 표시.
+   유효일만 크게 보이면 "거의 다 됐다"는 착시가 생긴다. 세 칸을 같은 크기로 두고
+   가장 뒤처진 조건만 강조한다. */
+.validationLines {
+  display: grid;
+  gap: 10px;
+}
+
+.validationLine {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--terminal-line);
+  border-radius: 8px;
+  background: rgba(13, 18, 26, 0.58);
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.validationLine.blocked {
+  border-color: var(--terminal-negative, #d9534f);
+}
+
+.validationLine strong {
+  min-width: 132px;
+  font-family: var(--font-sans);
+}
+
+.validationCell {
+  min-width: 96px;
+  color: var(--terminal-muted);
+}
+
+.validationCell.met {
+  color: var(--terminal-positive, #4fbf7b);
+}
+
+.validationCell.laggard {
+  color: var(--terminal-warning, #e0a94f);
+  font-weight: 600;
+}
+
+.validationVerdict {
+  margin-left: auto;
+  color: var(--terminal-warning, #e0a94f);
+}
+
+.validationLine.blocked .validationVerdict {
+  color: var(--terminal-negative, #d9534f);
+}
+
+.validationStatement {
+  flex-basis: 100%;
+  font-family: var(--font-sans);
+  font-size: 11px;
+}
+
+.validationNotes {
+  display: grid;
+  gap: 6px;
+  margin: 12px 0 0;
+  padding-left: 18px;
+  color: var(--terminal-muted);
+  font-size: 11.5px;
+}

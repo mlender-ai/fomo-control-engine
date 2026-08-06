@@ -290,6 +290,9 @@ def run_paper_engine(
                                 "candidate_bootstrap": str(signature_gates.get("gate_mode") or "").startswith("candidate_bootstrap"),
                                 "bootstrap_relaxed": signature_gates.get("gate_mode") == "candidate_bootstrap_relaxed",
                                 "exit_policy": "ATR TP1 부분익절 · TP2 전량익절 · 시간 만료 시 stance 재검토",
+                                # WO-FCE-SAMPLE-VIABILITY-01 PHASE 6: 완료 조건 3(국면)의 근거.
+                                # **진입 시점에** 기록한다 — 사후 라벨링은 룩어헤드다.
+                                "market_regime": _entry_regime(payload),
                             }
                         }
                     )
@@ -451,6 +454,7 @@ def _bootstrap_validation_positions(
                     "symbol": symbol,
                     "timeframe": timeframe,
                     "analysis": analysis,
+                    "payload": payload,
                     "bar": bar,
                     "direction": direction,
                     "evidence": evidence,
@@ -497,6 +501,8 @@ def _bootstrap_validation_positions(
                 "bootstrap_relaxed": signature_gates.get("gate_mode") == "candidate_bootstrap_relaxed",
                 "note": "4주 대결 검증 슬롯 표본 수집용 · 성적 시그니처 게이트 통과",
                 "exit_policy": "ATR TP1 부분익절 · TP2 전량익절 · 시간 만료 시 stance 재검토",
+                # PHASE 6 완료 조건 3(국면) — 진입 시점 라벨. 두 진입 경로가 같은 근거를 남긴다.
+                "market_regime": _entry_regime(candidate["payload"]),
             },
             checklist={
                 "entry_mode": entry_mode,
@@ -948,6 +954,7 @@ def paper_gate_funnel(repo: Any, *, days: int = 7, now: datetime | None = None) 
         if bottleneck:
             pill_bottlenecks[bottleneck] = pill_bottlenecks.get(bottleneck, 0) + 1
     pill_bottleneck = max(pill_bottlenecks, key=pill_bottlenecks.get) if pill_bottlenecks else None
+    checklist_pass_rates = _checklist_pass_rates(rows)
     validated_count = sum(1 for state in repo.latest_autonomy_states().values() if state == "validated")
     signature_stage = next((stage for stage in stages if stage.get("id") == "signature_gate"), None)
     signature_gate_note = None
@@ -966,7 +973,9 @@ def paper_gate_funnel(repo: Any, *, days: int = 7, now: datetime | None = None) 
         "top_rejection": ({"id": top_gate, "label": GATE_REJECTION_LABELS.get(top_gate, top_gate), "count": rejection_counts[top_gate]} if top_gate else None),
         "rejection_counts": rejection_counts,
         "entry_block_count": len(block_logs),
-        "checklist_pass_rates": _checklist_pass_rates(rows),
+        "checklist_pass_rates": checklist_pass_rates,
+        # PHASE 4: 항목별 통과율만으로는 "한 항목이 전부를 막는가"를 알 수 없다.
+        "checklist_bottleneck": _checklist_bottleneck(rows, checklist_pass_rates),
         "signature_gate_note": signature_gate_note,
         "pill_diagnostics": {
             "rendered": len(rendered_ids),
@@ -1106,21 +1115,73 @@ def _entry_block_detail(record: dict[str, Any], gate: str) -> str:
     return GATE_REJECTION_LABELS.get(gate, gate)
 
 
+def _entry_regime(payload: dict[str, Any]) -> str | None:
+    """진입 시점의 시장 국면 라벨 (WO-FCE-SAMPLE-VIABILITY-01 PHASE 6).
+
+    "표본이 최소 2개 이상의 시장 국면을 포함한다"를 사후에 확인하려면 진입 시점 라벨이
+    원장에 남아야 한다. 나중에 다시 라벨링하면 룩어헤드이고, 라벨이 없으면 완료 조건 3은
+    영원히 판정 불가로 남는다. 판정에는 쓰지 않는다 — **기록만 한다.**
+    """
+    current = _dict(_dict(payload.get("historical_backtest")).get("current_regime"))
+    regime = str(current.get("regime") or "") or None
+    return regime if regime and regime != "unknown" else None
+
+
 def _checklist_pass_rates(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """checklist 항목별 계측 (WO-FCE-SAMPLE-VIABILITY-01 PHASE 4).
+
+    **이 함수는 고치는 것이 아니라 보이게 하는 것이다.** checklist 는 품질 게이트이며
+    통과율이 낮다는 이유로 임계값을 건드리지 않는다 — 엄격한 게 맞을 수도 있다.
+
+    핵심 지표는 `sole_block_count` 다: **이 항목 하나만 실패해서 탈락한 건수.** 항목별
+    통과율만 보면 "여러 항목이 골고루 낮다"와 "한 항목이 전부를 막는다"가 구분되지 않는다.
+    후자면 그 항목이 올바르게 교정됐는지를 따로 봐야 한다.
+    """
     counts: dict[str, dict[str, Any]] = {}
     for row in rows:
-        for item in _list(row.get("checklist_items")):
+        items = [item for item in _list(row.get("checklist_items")) if str(item.get("status") or "") in {"pass", "fail"}]
+        failed = [item for item in items if str(item.get("status")) == "fail"]
+        sole_key = str(failed[0].get("key") or failed[0].get("label") or "unknown") if len(failed) == 1 else None
+        for item in items:
             status = str(item.get("status") or "")
-            if status not in {"pass", "fail"}:
-                continue
             key = str(item.get("key") or item.get("label") or "unknown")
-            bucket = counts.setdefault(key, {"key": key, "label": str(item.get("label") or key), "passed": 0, "evaluated": 0})
+            bucket = counts.setdefault(
+                key,
+                {"key": key, "label": str(item.get("label") or key), "passed": 0, "evaluated": 0, "sole_block_count": 0},
+            )
             bucket["evaluated"] += 1
             bucket["passed"] += int(status == "pass")
+            if sole_key == key:
+                bucket["sole_block_count"] += 1
     return [
         {**bucket, "pass_rate_pct": round(bucket["passed"] / bucket["evaluated"] * 100.0, 1)}
         for bucket in sorted(counts.values(), key=lambda item: (item["passed"] / item["evaluated"], item["key"]))
     ]
+
+
+def _checklist_bottleneck(rows: list[dict[str, Any]], pass_rates: list[dict[str, Any]]) -> dict[str, Any]:
+    """checklist 게이트가 병목인지, 그 안에서 무엇이 병목인지 (PHASE 4-2).
+
+    판정하지 않는다. "통과율이 낮다 = 너무 엄격하다"로 자동 결론내지 않으며, 임계값 변경
+    제안은 근거와 함께 **보고만** 한다 — 적용은 사람이 결정한다(PHASE 4-3).
+    """
+    evaluated = [row for row in rows if _list(row.get("checklist_items"))]
+    checklist_failed = [row for row in evaluated if not _dict(row.get("gates")).get("checklist")]
+    # checklist 가 **유일한** 미통과 게이트였던 건수 — 이 게이트만 풀리면 진입했을 건수다.
+    sole_gate_blocks = [row for row in evaluated if _list(row.get("rejection_reasons")) == ["checklist"]]
+    top = max(pass_rates, key=lambda item: int(item.get("sole_block_count") or 0), default=None)
+    return {
+        "evaluated": len(evaluated),
+        "checklist_gate_failed": len(checklist_failed),
+        "checklist_gate_pass_rate_pct": round((len(evaluated) - len(checklist_failed)) / len(evaluated) * 100.0, 1) if evaluated else None,
+        "checklist_only_blocked": len(sole_gate_blocks),
+        "top_sole_blocker": (
+            {"key": top.get("key"), "label": top.get("label"), "sole_block_count": top.get("sole_block_count"), "pass_rate_pct": top.get("pass_rate_pct")}
+            if top and int(top.get("sole_block_count") or 0) > 0
+            else None
+        ),
+        "policy": "checklist 는 품질 게이트다. 통과율이 낮아도 임계값을 완화하지 않는다 — 계측만 하고 판단은 사람이 한다.",
+    }
 
 
 def _format_gate_number(value: Any) -> str:
