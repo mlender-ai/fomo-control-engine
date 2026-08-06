@@ -85,11 +85,32 @@ FCE_SAMPLES=360 FCE_INTERVAL=10 scripts/local/measure-resources.sh   # 1시간 �
 
 ## 5. 임시 조치 (결정 전까지)
 
-A 를 적용하되 **재부팅 후에도 유지되는지 확인**한다.
+선택과 무관하게 **지금** 적용한다. 호스트 이전은 시간이 걸리고, 그 사이에도 US 표본은 깎인다.
 
 ```bash
-caffeinate -dimsu &          # 즉시 적용
-pmset -g assertions | head   # PreventUserIdleSystemSleep 이 1 인지 확인
+scripts/local/check-sleep-guard.sh --apply
+```
+
+이 스크립트가 하는 일:
+
+```bash
+sudo pmset -a sleep 0 disksleep 0 standby 0 powernap 0   # AC 전원 기준 유휴 절전 해제
+nohup caffeinate -dimsu &                                # wake lock (중복 실행 방지 포함)
+```
+
+- 배터리 구동 시 `Low Power Sleep` 이 별도로 걸리므로 **전원 상시 연결**이 필요하다.
+- 클램셸(덮개 닫고 사용)이면 외부 전원 + 디스플레이가 있어야 한다.
+
+### 자가 점검이 붙어 있다
+
+**재부팅 후에도 유지되는지 반드시 확인한다.** 자동 복구가 안 되면 "적용됐다"고 말할 수
+없고, 그 경우 사고는 반드시 재발한다. 확인은 사람 기억이 아니라 코드가 한다 —
+`app/worker/sleep_guard.py` 가 매 진단마다 `pmset` 을 읽어 미적용이면
+`manual_actions` 에 `sleep_guard_off` 를 올린다.
+
+```bash
+scripts/local/check-sleep-guard.sh           # 종료 코드 0=보호 중 / 1=미적용 / 2=판정 불가
+curl -s localhost:8875/api/system/paper/diagnosis | python3 -m json.tool | grep -A 8 sleep_guard
 ```
 
 재부팅 후 자동 복구가 안 되면 A 는 "적용됐다"고 말할 수 없다 — 그 경우 사고는 반드시

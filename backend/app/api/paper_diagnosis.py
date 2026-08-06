@@ -42,13 +42,23 @@ def _observation_integrity(settings: Any) -> dict[str, Any]:
             rows = [dict(row) for row in connection.execute("SELECT * FROM observation_coverage ORDER BY day")]
     except Exception as exc:  # 진단 실패가 나머지 진단을 못 죽이게 한다
         return {"available": False, "reason": str(exc)[:120]}
+    from app.worker import sleep_guard
+
+    actions = observation.manual_action_items(rows)
+    # WO-FCE-VALIDATION-VERDICT-01 Phase 2: 조치를 적용했다는 사실보다 **지금도 살아 있다는
+    # 사실**이 중요하다. 설정이 풀리면 아무 소리 없이 손실이 다시 시작된다.
+    guard = sleep_guard.sleep_guard_status()
+    guard_action = sleep_guard.guard_action_item(guard)
+    if guard_action:
+        actions.append(guard_action)
     return {
         "available": True,
         "principle": "검증일은 커버리지 게이트를 통과한 날만 센다 — 통과 못 한 날은 유실일이다.",
         "min_coverage_pct": observation.MIN_COVERAGE_PCT,
         "bin_seconds": observation.BIN_SECONDS,
         "tracks": {track: observation.verification_clock([row for row in rows if row["track"] == track]) for track in observation.TRACK_SPECS},
-        "manual_actions": observation.manual_action_items(rows),
+        "manual_actions": actions,
+        "sleep_guard": guard,
     }
 
 
