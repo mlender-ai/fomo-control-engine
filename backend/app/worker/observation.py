@@ -37,6 +37,8 @@ from datetime import date, datetime, time, timedelta, timezone
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from app.worker import market_calendar
+
 # 커버리지 판정 구간. 관측 주기(10초~15분)보다 크되 세션(6.5시간)보다 충분히 잘게.
 BIN_SECONDS = 900
 # 유효 관측일 임계(%). 미달일은 유실일.
@@ -81,6 +83,11 @@ def session_bounds(track: str, day: date, *, now: datetime | None = None) -> tup
     """그날 그 트랙이 관측했어야 하는 UTC 창. 비거래일이면 None(분모에서 제외).
 
     24/7 트랙은 하루 전체. 오늘은 아직 안 지난 시간까지 요구하면 항상 미달이므로 `now` 로 자른다.
+
+    WO-FCE-SAMPLE-VIABILITY-01 PHASE 3: 주말뿐 아니라 **확정 휴장일**도 분모에서 뺀다.
+    휴장일을 유실로 세면 커버리지가 실제보다 나쁘게 나오고, 그러면 멀쩡한 수집기를 고치게 된다.
+    미확정 휴장 후보는 여기서 빼지 않는다(`market_calendar` 참조) — 추정으로 분모를 바꾸면
+    진짜 유실일이 사라져 검증 진행도가 부풀려진다.
     """
     now = now or datetime.now(timezone.utc)
     spec = TRACK_SPECS[track]
@@ -92,6 +99,9 @@ def session_bounds(track: str, day: date, *, now: datetime | None = None) -> tup
         local_day = datetime.combine(day, time(12, 0), tzinfo=zone)
         if local_day.weekday() >= 5:
             return None
+        if market_calendar.is_market_holiday(spec.market, local_day.date()):
+            return None
+        close_at = market_calendar.early_close(spec.market, local_day.date()) or close_at
         start = datetime.combine(local_day.date(), open_at, tzinfo=zone).astimezone(timezone.utc)
         end = datetime.combine(local_day.date(), close_at, tzinfo=zone).astimezone(timezone.utc)
     if start >= now:
@@ -134,6 +144,13 @@ def _late_session_overlap(gap_start: datetime, gap_end: datetime) -> int:
     return total
 
 
+def _non_trading_reason(spec: TrackSpec, day: date) -> str:
+    """분모에서 빠진 이유를 구분해 남긴다 — 주말과 휴장을 같은 말로 적으면 감사할 수 없다."""
+    if spec.market is not None and market_calendar.is_market_holiday(spec.market, day):
+        return "비거래일(휴장)"
+    return "비거래일(주말) 또는 세션 미개시"
+
+
 def daily_coverage(connection: sqlite3.Connection, track: str, day: date, *, now: datetime | None = None) -> dict[str, Any]:
     """하루치 커버리지. 비거래일은 `trading_day=0` 으로 분모에서 빠진다."""
     now = now or datetime.now(timezone.utc)
@@ -155,7 +172,7 @@ def daily_coverage(connection: sqlite3.Connection, track: str, day: date, *, now
             "late_session_gap_seconds": 0,
             "valid": 0,
             "trading_day": 0,
-            "reason": "비거래일(주말) 또는 세션 미개시",
+            "reason": _non_trading_reason(spec, day),
             "computed_at": computed_at,
         }
 
@@ -184,8 +201,9 @@ def daily_coverage(connection: sqlite3.Connection, track: str, day: date, *, now
     if valid:
         reason = None
     elif not stamps:
-        # 휴장 달력을 보관하지 않으므로 공휴일도 여기 걸린다 — 소급 리포트에서 사람이 식별한다.
-        reason = "관측 0건 (정지 또는 미확인 휴장)"
+        # 확정 휴장일은 위에서 분모에서 빠졌다. 여기 남는 것은 정지이거나 **미확정 휴장 후보**다.
+        pending = market_calendar.pending_holiday_reason(spec.market, day) if spec.market else None
+        reason = f"관측 0건 (정지 또는 휴장 확인 필요: {pending})" if pending else "관측 0건 (정지)"
     else:
         reason = f"커버리지 {coverage_pct}% < 임계 {MIN_COVERAGE_PCT}% · 최장 공백 {longest_gap // 60}분"
 
@@ -284,6 +302,155 @@ def verification_clock(rows: list[dict[str, Any]], *, target_days: int = VALIDAT
             else f"검증 미개시 — 유효 관측일 0일 (커버리지 {MIN_COVERAGE_PCT}% 이상인 날이 아직 없음)"
         ),
         "lost_day_details": [{"day": row["day"], "coverage_pct": row["coverage_pct"], "reason": row["reason"]} for row in lost],
+    }
+
+
+# ── PHASE 3: 커버리지 저하 원인 축 분해 ─────────────────────────────────
+#
+# 직전 WO 교훈: "US 45시간을 절전 탓으로 돌리면 오귀인"이었다. 같은 함정을 피하려면
+# **축을 먼저 분리**해야 한다. 원인을 모른 채 수집 주기를 올리는 것은 추측이지 수리가 아니다.
+
+
+def _host_sleep_overlap_seconds(start: datetime, end: datetime) -> int:
+    """세션 창이 절전 구간(17:00~20:00 UTC)과 **구조적으로** 겹치는 초.
+
+    이 값이 0이면 그 트랙의 유실은 절전으로 설명될 수 없다 — 실측을 볼 것도 없이 그렇다.
+    KR 정규장(00:00~06:30 UTC)이 그 예다.
+    """
+    total = 0
+    cursor = start.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=1)
+    for _ in range(3):
+        window_start = datetime.combine(cursor.date(), LATE_SESSION_UTC[0], tzinfo=timezone.utc)
+        window_end = datetime.combine(cursor.date(), LATE_SESSION_UTC[1], tzinfo=timezone.utc)
+        overlap = (min(end, window_end) - max(start, window_start)).total_seconds()
+        if overlap > 0:
+            total += int(overlap)
+        cursor += timedelta(days=1)
+    return total
+
+
+def gap_axes(connection: sqlite3.Connection, track: str, day: date, *, now: datetime | None = None) -> dict[str, Any]:
+    """하루치 커버리지 저하를 원인 축으로 쪼갠다 (PHASE 3-2).
+
+    | 축 | 판별 |
+    | --- | --- |
+    | 휴장일 | 확정 휴장은 분모에서 빠짐 · 미확정 후보는 여기서 표시 |
+    | 호스트 절전 | 세션 창이 17:00~20:00 UTC 와 겹치는가 (겹치지 않으면 절전 설명 불가) |
+    | 장 시간 경계 | 공백이 세션 앞/뒤에 몰리는가 (롤오버 유사 결함의 지문) |
+    | 소스 응답 | 같은 시각 24/7 트랙은 살아 있었는가 (수집기 문제 vs 호스트 문제) |
+    """
+    now = now or datetime.now(timezone.utc)
+    spec = TRACK_SPECS[track]
+    bounds = session_bounds(track, day, now=now)
+    pending = market_calendar.pending_holiday_reason(spec.market, day) if spec.market else None
+    if bounds is None:
+        return {
+            "day": day.isoformat(),
+            "track": track,
+            "trading_day": 0,
+            "axes": {"holiday": {"confirmed": bool(spec.market and market_calendar.is_market_holiday(spec.market, day)), "pending": pending}},
+        }
+    start, end = bounds
+    stamps = _observation_times(connection, spec, start, end)
+    leading = int(((stamps[0] if stamps else end) - start).total_seconds())
+    trailing = int((end - (stamps[-1] if stamps else start)).total_seconds())
+    interior = 0
+    cursor = stamps[0] if stamps else start
+    for stamp in stamps[1:]:
+        gap = int((stamp - cursor).total_seconds())
+        if gap > BIN_SECONDS:
+            interior += gap
+        cursor = stamp
+    # 같은 벽시계 창에서 24/7 트랙이 살아 있었는지 — 호스트 정지와 트랙 고유 결함을 가른다.
+    host_alive_stamps = _observation_times(connection, TRACK_SPECS["crypto"], start, end)
+    span = max(1, int((end - start).total_seconds()))
+    host_bins = max(1, -(-span // BIN_SECONDS))
+    host_covered = len({int((stamp - start).total_seconds()) // BIN_SECONDS for stamp in host_alive_stamps})
+    host_coverage_pct = round(min(host_covered, host_bins) / host_bins * 100, 2)
+    structural_sleep_overlap = _host_sleep_overlap_seconds(start, end)
+    return {
+        "day": day.isoformat(),
+        "track": track,
+        "trading_day": 1,
+        "observations": len(stamps),
+        "session_seconds": span,
+        "axes": {
+            "holiday": {
+                "confirmed": False,
+                "pending": pending,
+                # 미확정 후보인데 그날 24/7 트랙은 정상이었다면 "우리가 죽은" 게 아니라
+                # "시장이 닫혔을" 가능성이 크다. 자동 반영하지 않고 사람 확인용으로 올린다.
+                "suspected_closure": bool(pending and not stamps and host_coverage_pct >= MIN_COVERAGE_PCT),
+            },
+            "host_sleep": {
+                "session_overlaps_sleep_window": structural_sleep_overlap > 0,
+                "structural_overlap_seconds": structural_sleep_overlap,
+                "explanation_possible": structural_sleep_overlap > 0,
+            },
+            "session_edge": {
+                "leading_gap_seconds": leading if leading > BIN_SECONDS else 0,
+                "trailing_gap_seconds": trailing if trailing > BIN_SECONDS else 0,
+                "interior_gap_seconds": interior,
+                # 앞·뒤 공백이 내부 공백보다 크면 세션 경계 결함(롤오버 계열)의 지문이다.
+                # 관측이 0건이면 세션 전체가 공백이라 이 판별이 성립하지 않는다 — 그건 경계
+                # 결함이 아니라 종일 정지다. 오귀인을 막기 위해 관측이 있는 날만 본다.
+                "edge_dominant": bool(stamps) and (leading + trailing) > max(interior, BIN_SECONDS),
+            },
+            "source_response": {
+                "host_247_coverage_pct": host_coverage_pct,
+                "host_alive": host_coverage_pct >= MIN_COVERAGE_PCT,
+                # 호스트는 살아 있는데 이 트랙만 비었다 = 수집기·소스 문제다.
+                "track_specific_failure": bool(host_coverage_pct >= MIN_COVERAGE_PCT and len(stamps) == 0),
+            },
+        },
+    }
+
+
+def axis_breakdown(connection: sqlite3.Connection, track: str, days: list[date], *, now: datetime | None = None) -> dict[str, Any]:
+    """기간 축 분해 요약 — "무엇을 고쳐야 하는가"의 근거 (PHASE 3-2).
+
+    축이 분리되지 않은 채로는 어떤 수리도 추측이다. 이 표가 나오기 전에 수집 주기를 올리지 않는다.
+    """
+    now = now or datetime.now(timezone.utc)
+    rows = [gap_axes(connection, track, day, now=now) for day in days]
+    trading = [row for row in rows if row["trading_day"] == 1]
+    holiday_rows = [row for row in rows if row["trading_day"] == 0]
+    suspected = [row["day"] for row in trading if row["axes"]["holiday"]["suspected_closure"]]
+    pending_days = [row["day"] for row in rows if row["axes"]["holiday"].get("pending")]
+    sleep_capable = [row for row in trading if row["axes"]["host_sleep"]["explanation_possible"]]
+    edge_dominant = [row["day"] for row in trading if row["axes"]["session_edge"]["edge_dominant"]]
+    track_specific = [row["day"] for row in trading if row["axes"]["source_response"]["track_specific_failure"]]
+    return {
+        "track": track,
+        "days_examined": len(rows),
+        "non_trading_days": len(holiday_rows),
+        "trading_days": len(trading),
+        "holiday": {
+            "confirmed_excluded": len([row for row in holiday_rows if row["axes"]["holiday"]["confirmed"]]),
+            "pending_candidates": pending_days,
+            "suspected_closure_days": suspected,
+            "verdict": (
+                f"휴장 확인 필요 {len(suspected)}일 — 수집기는 살아 있었고 이 트랙만 비었다. 확정되면 유실일이 아니다"
+                if suspected
+                else f"미확정 휴장 후보 {len(pending_days)}일 — 사람 확인 필요(호스트 생존 근거는 없음)"
+                if pending_days
+                else "유실일에 휴장 후보 없음 — 원인은 다른 축이다"
+            ),
+        },
+        "host_sleep": {
+            "days_where_sleep_can_explain": len(sleep_capable),
+            # 0이면 이 트랙의 유실을 절전으로 설명하는 것은 오귀인이다. 구조적으로 겹치지 않는다.
+            "verdict": (
+                "세션 창이 절전 구간과 겹친다 — 절전이 원인일 수 있다"
+                if sleep_capable
+                else "세션 창이 절전 구간(17:00~20:00 UTC)과 겹치지 않는다 — 절전으로 설명 불가"
+            ),
+        },
+        "session_edge": {"edge_dominant_days": edge_dominant, "verdict": ("세션 경계 결함 의심(롤오버 계열)" if edge_dominant else "경계 편중 없음")},
+        "source_response": {
+            "track_specific_failure_days": track_specific,
+            "verdict": ("호스트는 살아 있는데 이 트랙만 비었다 — 수집기·소스 축" if track_specific else "트랙 고유 실패일 없음"),
+        },
     }
 
 

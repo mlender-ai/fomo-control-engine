@@ -1,5 +1,11 @@
 # Validation — 자율 검증 루프 (WO-FCE-37)
 
+> **"검증 완료"의 정의는 이 문서가 아니라
+> [`docs/validation/COMPLETION_DEFINITION.md`](validation/COMPLETION_DEFINITION.md) 가 정본이다**
+> (유효 관측일 ≥ 28 AND 채점 가능 표본 ≥ 30 AND 시장 국면 ≥ 2). 이 문서는 시그니처 상태
+> 머신과 부패 감지를 다룬다. 트랙이 표본을 만들 수 있는지는
+> [`docs/validation/SAMPLE_VIABILITY.md`](validation/SAMPLE_VIABILITY.md) 를 본다.
+
 사용자 목표 "자율적으로 검증하고 성장하는 엔진"의 구현부. WO-36이 숫자를 통계적으로
 정직하게 만든 위에서, 이 루프는 **나빠진 신호를 스스로 강등·격리하되 좋아지는 방향은
 전부 사람 승인을 거치게** 한다.

@@ -137,6 +137,123 @@ class PolyPaperStore:
             )
         return True
 
+    def validation_ends_at(self) -> datetime | None:
+        """검증 종료일. 만기 필터의 채점 마감을 여기서 끌어온다 (PHASE 2-3)."""
+        with self._connect() as connection:
+            row = connection.execute("SELECT ends_at FROM poly_paper_track WHERE id=1").fetchone()
+        return _datetime(row["ends_at"]) if row and row["ends_at"] else None
+
+    def settlement_latency(self) -> dict[str, Any]:
+        """만기(end_at) → 정산 확정(resolved_at) 지연 실측 (PHASE 2-3 '안전 여유').
+
+        안전 여유를 추측으로 정하지 않기 위한 근거다. 만기 당일에 정산이 확정되지 않는다 —
+        `resolved_outcome` 는 가격이 확정 극단값에 도달한 뒤에야 참이 된다. 표본이 적으면
+        적다고 쓴다(N 을 항상 같이 낸다).
+        """
+        with self._connect() as connection:
+            try:
+                rows = connection.execute(
+                    """SELECT r.resolved_at, m.end_at FROM poly_resolutions r
+                    JOIN poly_markets m ON m.market_id=r.market_id WHERE m.end_at IS NOT NULL"""
+                ).fetchall()
+            except sqlite3.OperationalError:
+                rows = []
+        deltas: list[float] = []
+        for row in rows:
+            resolved = _datetime(row["resolved_at"])
+            end = _datetime(row["end_at"])
+            if resolved and end:
+                deltas.append((resolved - end).total_seconds() / 86_400)
+        ordered = sorted(deltas)
+        return {
+            "n": len(ordered),
+            "median_days": round(ordered[len(ordered) // 2], 3) if ordered else None,
+            "max_days": round(ordered[-1], 3) if ordered else None,
+            "sample_sufficient": len(ordered) >= 30,
+            "note": "N<30 이면 중앙값을 안전 여유의 근거로 쓰되 보수적으로 올려 잡는다." if len(ordered) < 30 else "",
+        }
+
+    def expiry_distribution(self, *, now: datetime | None = None) -> dict[str, Any]:
+        """저장된 유니버스의 만기 분포 — 수정 전후 대조의 '전' 쪽 근거 (PHASE 2-4)."""
+        now = now or datetime.now(timezone.utc)
+        deadline = self.validation_ends_at()
+        with self._connect() as connection:
+            rows = connection.execute("SELECT end_at, trade_eligible, exclusion_reason FROM poly_markets WHERE closed=0").fetchall()
+        buckets: dict[str, int] = {"<=7d": 0, "8-28d": 0, "29-90d": 0, ">90d": 0, "unknown": 0}
+        within = 0
+        for row in rows:
+            end = _datetime(row["end_at"]) if row["end_at"] else None
+            if end is None:
+                buckets["unknown"] += 1
+                continue
+            days = (end - now).total_seconds() / 86_400
+            key = "<=7d" if days <= 7 else "8-28d" if days <= 28 else "29-90d" if days <= 90 else ">90d"
+            buckets[key] += 1
+            if deadline is not None and end <= deadline:
+                within += 1
+        return {
+            "as_of": now.isoformat(),
+            "validation_ends_at": deadline.isoformat() if deadline else None,
+            "open_markets": len(rows),
+            "buckets": buckets,
+            "within_validation_window": within,
+        }
+
+    def expiry_bias_diagnosis(self, *, now: datetime | None = None) -> dict[str, Any]:
+        """**왜** 장기 만기가 선호되는지 실측한다 (PHASE 2-2).
+
+        원인을 모른 채 만기 필터만 씌우면 다른 항이 다시 왜곡을 만든다. 그래서 수정 전에
+        만기 구간별로 선정 점수의 재료(유동성·총엣지·비용후엣지·통과율)를 비교한다.
+
+        선정 점수 함수에 만기 항이 직접 들어 있지는 않다. 따라서 편향이 있다면 **간접 경로**,
+        즉 장기 시장의 유동성이 더 크거나 가격 괴리(엣지)가 더 크게 산출되는 구조여야 한다.
+        이 표가 그 가설을 지지하는지 반증하는지 보여준다.
+        """
+        now = now or datetime.now(timezone.utc)
+        with self._connect() as connection:
+            try:
+                rows = connection.execute(
+                    """SELECT m.end_at, m.liquidity, m.trade_eligible, e.gross_edge, e.after_cost_edge, e.estimate_quality
+                    FROM poly_markets m
+                    LEFT JOIN poly_estimates e ON e.id=(
+                        SELECT id FROM poly_estimates WHERE market_id=m.market_id ORDER BY observed_at DESC LIMIT 1
+                    )
+                    WHERE m.closed=0"""
+                ).fetchall()
+            except sqlite3.OperationalError:
+                rows = []
+        buckets: dict[str, list[sqlite3.Row]] = {"<=7d": [], "8-28d": [], "29-90d": [], ">90d": [], "unknown": []}
+        for row in rows:
+            end = _datetime(row["end_at"]) if row["end_at"] else None
+            if end is None:
+                buckets["unknown"].append(row)
+                continue
+            days = (end - now).total_seconds() / 86_400
+            buckets["<=7d" if days <= 7 else "8-28d" if days <= 28 else "29-90d" if days <= 90 else ">90d"].append(row)
+
+        def _median(values: list[float]) -> float | None:
+            ordered = sorted(values)
+            return round(ordered[len(ordered) // 2], 5) if ordered else None
+
+        table = []
+        for key, group in buckets.items():
+            table.append(
+                {
+                    "bucket": key,
+                    "n": len(group),
+                    "median_liquidity": _median([float(row["liquidity"] or 0) for row in group]),
+                    "median_gross_edge": _median([float(row["gross_edge"]) for row in group if row["gross_edge"] is not None]),
+                    "median_after_cost_edge": _median([float(row["after_cost_edge"]) for row in group if row["after_cost_edge"] is not None]),
+                    "trade_eligible_pct": round(sum(int(row["trade_eligible"] or 0) for row in group) / len(group) * 100, 1) if group else None,
+                }
+            )
+        return {
+            "as_of": now.isoformat(),
+            "hypothesis": "선정 점수에 만기 항은 없다. 편향이 있다면 유동성·엣지를 통한 간접 경로여야 한다.",
+            "buckets": table,
+            "note": "구간별 N 을 함께 본다. N 이 한 자리인 구간의 중앙값 차이는 근거가 되지 않는다.",
+        }
+
     def record_collection(self, *, status: str, observed_at: datetime, error: str | None = None) -> None:
         with self._connect() as connection:
             connection.execute(

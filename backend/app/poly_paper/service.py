@@ -27,6 +27,11 @@ UNIVERSE_EXIT_REASONS = frozenset({UNIVERSE_EXIT_EXPIRED, "resolution_time_inval
 OUT_OF_SCOPE_REASONS = frozenset({"unsupported_crypto_question", "clob_token_missing"})
 # 한도 도달 — 설계된 정상 동작이다. 5개 보유 중이면 6번째를 안 잡는 게 맞다.
 CAPACITY_REASONS = frozenset({"position_capacity", "coverage_capacity", "insufficient_cash"})
+# 채점 창 밖 만기 — 판정 기준 미달이 아니라 **표본이 될 수 없는 시장**이다(PHASE 2-3).
+# "거부"에 섞으면 엔진이 기준 미달로 떨어뜨린 것처럼 보인다. 필터가 몇 건을 걸렀는지를
+# 따로 세야 수정 전후 대조가 된다(규칙 5).
+RESOLUTION_BEYOND_SCORING_WINDOW = "resolution_beyond_scoring_window"
+WINDOW_FILTER_REASONS = frozenset({RESOLUTION_BEYOND_SCORING_WINDOW})
 # 마지막 정산 시도의 미정산 사유 집계 — 진단 표면·리포트에서 (a)/(b) 판별에 쓴다.
 _LAST_SETTLEMENT_SKIPS: dict[str, int] = {}
 
@@ -94,10 +99,14 @@ async def run_poly_paper_engine(
     def _exclude(reason: str) -> None:
         exclusion_counts[reason] = exclusion_counts.get(reason, 0) + 1
 
+    # PHASE 2-3: 채점 마감. 이 시각 이후 만기인 시장은 진입해도 표본이 되지 않는다.
+    # 수정 전후 대조를 위해 필터 적용 전 만기 분포를 같은 사이클에서 함께 남긴다(규칙 5).
+    scoring_deadline = scoring_cutoff(parameters, now=now, deadline=store.validation_ends_at())
+    expiry_before = expiry_histogram(markets, now=now, scoring_deadline=scoring_deadline)
     universe_exits: dict[str, int] = {}
     for source_market in markets:
         observed += 1
-        market = _apply_market_gates(source_market, now=now)
+        market = _apply_market_gates(source_market, now=now, scoring_deadline=scoring_deadline)
         # 작업 2-1: 만료·종료 시장은 유니버스 이탈이다. 평가하지 않고 재평가도 하지 않는다.
         # 거부 카운트에도 넣지 않는다 — 판정 대상이 아니었기 때문이다(C3).
         if market.exclusion_reason in UNIVERSE_EXIT_REASONS:
@@ -242,7 +251,13 @@ async def run_poly_paper_engine(
     # 일 1회 요약이 읽을 수 있도록 이벤트 자체는 계속 생성한다 — 침묵 금지(C4)와
     # 거부 미발송(C1)은 양립한다: 조회는 되고 알림만 안 간다.
     # 작업 2-4: 지표 분모 정정 — 만료·범위외·한도도달을 거부에서 분리한다.
-    buckets: dict[str, dict[str, int]] = {"rejected": {}, "out_of_scope": {}, "capacity_full": {}, "universe_exit": dict(universe_exits)}
+    buckets: dict[str, dict[str, int]] = {
+        "rejected": {},
+        "out_of_scope": {},
+        "capacity_full": {},
+        "window_filtered": {},
+        "universe_exit": dict(universe_exits),
+    }
     for reason, count in exclusion_counts.items():
         buckets[classify_exclusion(reason)][reason] = buckets[classify_exclusion(reason)].get(reason, 0) + count
     true_rejections = sum(buckets["rejected"].values())
@@ -286,6 +301,16 @@ async def run_poly_paper_engine(
         "out_of_scope": sum(buckets["out_of_scope"].values()),
         "universe_exits": sum(buckets["universe_exit"].values()),
         "exclusion_buckets": buckets,
+        # PHASE 2-4: 필터가 실제로 무엇을 걸렀는지. 후보가 크게 줄면 그것도 결과다 — 보고만 한다.
+        "expiry_filter": {
+            "scoring_deadline": scoring_deadline.isoformat() if scoring_deadline else None,
+            "parameter_version": parameters.version,
+            "max_days_to_resolution": parameters.max_days_to_resolution,
+            "settlement_buffer_days": parameters.settlement_buffer_days,
+            "filtered_out": sum(buckets["window_filtered"].values()),
+            "expiry_distribution_before_filter": expiry_before,
+            "note": "필터 적용 전 만기 분포와 걸러낸 건수. 후보가 줄어드는 것은 완화 사유가 아니다.",
+        },
         "evaluable_markets": estimated,
         "top_reject_gate": top_exclusion,
         "events": events,
@@ -313,7 +338,25 @@ def poly_paper_dashboard(settings: Settings) -> dict[str, Any]:
     }
 
 
-def _apply_market_gates(market: PolyMarket, *, now: datetime) -> PolyMarket:
+def scoring_cutoff(parameters: Any, *, now: datetime, deadline: datetime | None) -> datetime | None:
+    """이 시각까지 정산되어야 채점 표본이 된다 (PHASE 2-3).
+
+    ```
+    cutoff = min(now + max_days_to_resolution, 검증 종료일 - 안전 여유)
+    ```
+
+    둘 다 없으면 상한이 없다는 뜻이고 필터는 동작하지 않는다 — 그 사실을 감추지 않는다.
+    안전 여유는 만기와 정산 확정 사이의 지연이다(만기 당일에 확정되지 않는다).
+    """
+    candidates: list[datetime] = []
+    if parameters.max_days_to_resolution is not None:
+        candidates.append(now + timedelta(days=float(parameters.max_days_to_resolution)))
+    if deadline is not None:
+        candidates.append(deadline - timedelta(days=float(parameters.settlement_buffer_days)))
+    return min(candidates) if candidates else None
+
+
+def _apply_market_gates(market: PolyMarket, *, now: datetime, scoring_deadline: datetime | None = None) -> PolyMarket:
     parameters = load_poly_parameters()
     reason = market.exclusion_reason
     # WO-FCE-ALERT-WHITELIST-02 작업 2-1: 이미 만료·종료된 시장은 유니버스에서 나간다.
@@ -327,9 +370,48 @@ def _apply_market_gates(market: PolyMarket, *, now: datetime) -> PolyMarket:
         remaining_days = (market.end_at - now).total_seconds() / 86_400
         if remaining_days < parameters.min_days_to_resolution:
             reason = "resolution_too_near"
+    # WO-FCE-SAMPLE-VIABILITY-01 PHASE 2-3: 채점 창 밖 만기는 **표본이 될 수 없다.**
+    # 진입해도 검증 안에 정산되지 않으므로 미실현으로만 남는다. 기존 보유는 건드리지 않고
+    # 신규 진입부터 적용한다.
+    if reason is None and scoring_deadline is not None and market.end_at is not None and market.end_at > scoring_deadline:
+        reason = RESOLUTION_BEYOND_SCORING_WINDOW
     if reason is None and not market.active:
         reason = "market_inactive"
     return replace(market, trade_eligible=reason is None, exclusion_reason=reason)
+
+
+def expiry_histogram(markets: list[PolyMarket], *, now: datetime, scoring_deadline: datetime | None) -> dict[str, Any]:
+    """후보 시장의 만기 분포 (PHASE 2-4 대조용).
+
+    수정 전후를 대조하려면 **필터를 적용하지 않은 상태의 분포**가 필요하다. 그래서 이 함수는
+    게이트를 거치지 않은 원본 목록을 받는다. 실측 2026-08-05 의 문제는 유니버스에 창 안
+    만기가 없어서가 아니라(4,847개 존재) 상한 조건이 없어서였다 — 그 대비가 여기서 보인다.
+    """
+    buckets = {"<=7d": 0, "8-28d": 0, "29-90d": 0, ">90d": 0, "unknown": 0}
+    within_deadline = 0
+    total = 0
+    for market in markets:
+        total += 1
+        if market.end_at is None:
+            buckets["unknown"] += 1
+            continue
+        days = (market.end_at - now).total_seconds() / 86_400
+        if days <= 7:
+            buckets["<=7d"] += 1
+        elif days <= 28:
+            buckets["8-28d"] += 1
+        elif days <= 90:
+            buckets["29-90d"] += 1
+        else:
+            buckets[">90d"] += 1
+        if scoring_deadline is not None and market.end_at <= scoring_deadline:
+            within_deadline += 1
+    return {
+        "observed_markets": total,
+        "buckets": buckets,
+        "within_scoring_deadline": within_deadline,
+        "beyond_scoring_deadline": total - within_deadline - buckets["unknown"] if scoring_deadline else None,
+    }
 
 
 def classify_exclusion(reason: str) -> str:
@@ -345,6 +427,8 @@ def classify_exclusion(reason: str) -> str:
         return "out_of_scope"
     if reason in CAPACITY_REASONS:
         return "capacity_full"
+    if reason in WINDOW_FILTER_REASONS:
+        return "window_filtered"
     return "rejected"
 
 
