@@ -36,6 +36,7 @@ from app.notify.rules import (
     rearm_signals,
 )
 from app.notify.performance_report import format_weekly_performance
+from app.validation import verdict_watch
 from app.notify.state import AlertRuleState, NotificationState
 from app.structure.context import build_structure_context, detect_structure_transitions, transition_state_key
 from app.notify.telegram import TelegramSender, inline_keyboard
@@ -342,11 +343,33 @@ class AlertEngine:
         if not due:
             return 0
         payload = await asyncio.to_thread(service.paper_performance)
-        count = await self.sender.send_to_all(format_weekly_performance(payload))
+        # 판정은 주간 리포트에 **상시** 포함한다 — 전이 알림은 변화만 담당하므로,
+        # 이 블록이 없으면 판정이 유지되는 동안 사용자는 아무것도 못 본다.
+        verdicts = await asyncio.to_thread(service.sample_verdicts)
+        count = await self.sender.send_to_all(format_weekly_performance(payload, verdicts=verdicts))
         if count:
             self.state.last_weekly_performance_date = date_key
             self._persist()
         return count
+
+    async def maybe_send_verdict_transition(self) -> int:
+        """완주 판정이 바뀌었을 때만 1건 (WO-FCE-VALIDATION-VERDICT-01 Phase 1-3).
+
+        같은 판정이 유지되는 동안에는 아무것도 보내지 않는다 — 상시 보고는 주간 리포트가
+        담당하고 이 알림은 **변화**만 담당한다. 첫 관측은 전이가 아니다(초기화이지 변화가 아니다).
+        """
+        if not self.settings.telegram_alerts_enabled or self.state.is_muted():
+            return 0
+        verdicts = await asyncio.to_thread(service.sample_verdicts)
+        if not verdicts:
+            return 0
+        transitions = verdict_watch.detect_transitions(self.state.sample_verdicts, verdicts)
+        # 판정을 먼저 기록한다 — 발송이 실패해도 같은 전이를 무한 재시도하지 않는다.
+        self.state.sample_verdicts = {track: str(row["verdict"]) for track, row in verdicts.items()}
+        self._persist()
+        if not transitions:
+            return 0
+        return await self.sender.send_to_all(verdict_watch.format_transition_message(transitions))
 
     async def maybe_send_weekly_calibration_report(self) -> int:
         if not self.settings.telegram_alerts_enabled or self.state.is_muted() or not self.settings.telegram_weekly_calibration_enabled:

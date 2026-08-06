@@ -133,10 +133,13 @@ def format_paper_performance(payload: dict[str, Any], *, date_label: str) -> lis
     return lines
 
 
-def format_weekly_performance(payload: dict[str, Any]) -> str:
+def format_weekly_performance(payload: dict[str, Any], *, verdicts: dict[str, Any] | None = None) -> str:
     """주간 성과 리포트 — 4주 검증 진행도와 N>=30 도달 예상 여부를 매주 반복 보고(§2-2).
 
     도달 불가로 판정되면 그 사실을 매주 다시 말한다. 문제를 잊지 않게 하는 것이 목적이다.
+
+    WO-FCE-VALIDATION-VERDICT-01 Phase 1-3: 트랙별 **완주 가능성 판정**과 D+28 예상 표본을
+    같은 리포트에 상시 포함한다. 대시보드를 열어야만 보이는 판정은 안 보이는 판정이다.
     """
     sample_min_n = int(payload.get("sample_min_n") or 30)
     lines = ["<b>📆 페이퍼 주간 성과</b>"]
@@ -174,6 +177,10 @@ def format_weekly_performance(payload: dict[str, Any]) -> str:
         if start and current:
             change = (float(current) - float(start)) / float(start) * 100.0
             lines.append(f"· 벤치마크 {change:+.2f}% (기준 {escape(str(benchmark.get('symbol') or '-'))})")
+    if verdicts:
+        from app.validation.verdict_watch import format_weekly_verdict_lines
+
+        lines.extend(format_weekly_verdict_lines(verdicts, target_samples=sample_min_n))
     lines.append("")
     lines.append("<i>트랙별 원통화 성적이며 서로 합산하지 않습니다. 실계좌 성과와도 분리됩니다.</i>")
     return "\n".join(lines)

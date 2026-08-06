@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import logging
 import threading
 import time
 from typing import Any
@@ -88,6 +89,9 @@ _coinglass_round_robin_cursor = 0
 _unified_heatmap_cache: dict[tuple[Any, ...], tuple[float, dict[str, Any]]] = {}
 _unified_heatmap_cache_lock = threading.Lock()
 _UNIFIED_HEATMAP_CACHE_SECONDS = 4.0
+
+
+logger = logging.getLogger(__name__)
 
 
 def provider_name() -> str:
@@ -1238,6 +1242,27 @@ def paper_performance() -> dict[str, Any]:
         stock_dashboard=stock_store.dashboard() if stock_store.enabled else {},
         poly_dashboard=poly_store.dashboard() if poly_store.enabled else {},
     )
+
+
+def sample_verdicts() -> dict[str, dict[str, Any]]:
+    """트랙별 완주 가능성 판정 (WO-FCE-VALIDATION-VERDICT-01 Phase 1).
+
+    발행(주간 리포트)과 전이 감지(알림)가 **같은 값**을 봐야 한다. 두 경로가 각자 계산하면
+    "리포트는 SLOW 인데 알림은 VIABLE" 같은 어긋남이 생긴다.
+    """
+    from app.db.maintenance import sqlite_path
+    from app.db.sqlite_utils import connect_sqlite
+    from app.validation import verdict_watch
+
+    path = sqlite_path(runtime.settings.database_url)
+    if path is None or not path.exists():
+        return {}
+    try:
+        with connect_sqlite(str(path)) as connection:
+            return verdict_watch.current_verdicts(connection)
+    except Exception as exc:  # 판정 실패가 리포트·알림 경로를 죽이지 않게 한다
+        logger.warning("sample verdict computation failed: %s", exc)
+        return {}
 
 
 def run_paper_engine() -> dict[str, Any]:
