@@ -115,9 +115,17 @@ def whale_dashboard(repo: Any, settings: Any) -> dict[str, Any]:
         instrument = str(payload["instrument"])
         if len(recent_events_by_instrument[instrument]) < 10:
             recent_events_by_instrument[instrument].append(payload)
+    # Phase 5: 승률은 **선정 기준이 아니라 사후 채점 지표**다. quality_score 를 바꾸지 않고
+    # 병행 관측(A/B)으로만 노출한다 — 실측에서 승률과 수익성의 역상관 사례가 나왔다.
+    from app.onchain.win_rate import observed_win_rates, selection_disclosure
+
+    win_rates = observed_win_rates(raw_events)
+    for row in rows:
+        row["observed_win_rate"] = win_rates.get(str(row.get("address") or "").lower())
     return {
         "enabled": bool(settings.hyperliquid_whale_tracking_enabled),
         "wallet_count": len(wallets),
+        "selection_disclosure": selection_disclosure(win_rates),
         "max_wallets": int(settings.hyperliquid_whale_max_wallets),
         "minimum_event_size_usd": float(settings.hyperliquid_whale_min_size_usd),
         "wallets": rows,

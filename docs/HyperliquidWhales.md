@@ -111,3 +111,53 @@ ranked = sorted(grouped, key=lambda item: item.size_usd, reverse=True)
 역시 승률이 아니라 PnL·ROI·규모 복합이므로, "규모가 섞여 있다"는 취지 자체는 맞다.
 
 승률 기반 선정으로 전환할지는 별도 판단이다(이 WO 는 규명까지).
+
+## 선정 기준과 승률의 관계 (WO-FCE-OBSERVATION-INTEGRITY-01 Phase 5)
+
+> **선정은 `quality_score`(월간 PnL·ROI·계좌규모)로 한다. 승률은 사후 채점 지표이며 선정에 쓰지 않는다.**
+
+### 승률 데이터 가용성: 가능
+
+리더보드 응답(`windowPerformances`)에는 승률 필드가 **없다** — pnl·roi·vlm 뿐이다.
+그러나 `userFillsByTime` 이 체결별 `closedPnl` 을 주고, 수집기가 이미
+`whale_events.payload.payload.closed_pnl` 로 저장하고 있다.
+
+실측 2026-08-05:
+
+| 항목 | 값 |
+| --- | --- |
+| `close`/`reduce` 이벤트 | 6,382건 |
+| `closed_pnl` 보유율 | **100%** |
+| 지갑 수 | 62개 (표본 20건 이상 33개) |
+| 전체 승률 | 64.7% |
+
+### 왜 `quality_score` 에 승률 항을 넣지 않는가
+
+넣을 수 **있지만** 실측이 넣지 말라고 말한다. 승률과 수익성이 역상관인 사례가 실재한다.
+
+| 지갑 | 승률 | 누적 closed PnL |
+| --- | --- | --- |
+| `0xd04f9719…` | **4.3%** (n=47) | **+$2,108,265** |
+| `0x2437529…` | 100.0% (n=204) | +$1,227,485 |
+| `0x77375a8c…` | 51.1% (n=174) | **−$415,726** |
+| `0xfc667adb…` | 36.7% (n=251) | −$135,835 |
+
+승률 4.3%로 210만 달러를 번 지갑은 **비대칭 손익 트레이더**다. 승률 항을 점수에 더했다면
+이 지갑이 강등됐을 것이다. 반대로 승률 51%인 지갑은 41만 달러를 잃었다.
+
+따라서 승률은 **병행 관측(A/B)** 으로만 노출하고 선정 로직은 건드리지 않는다.
+선별 기준 변경은 이 관측이 충분히 쌓인 뒤 별도 WO 에서 판단한다.
+
+### 사후 재선별의 재료
+
+`app/onchain/win_rate.py` 가 지갑별 `{sample_size, wins, win_rate_pct, closed_pnl_usd,
+sample_low, profitable}` 을 낸다.
+
+- 표본 20건(`MIN_SAMPLE`) 미만이면 `win_rate_pct=None` — **모르면 모른다고 낸다.**
+- 승률과 누적 손익을 **분리해서** 낸다. 하나로 합치면 위 표의 지갑들을 잘못 판단한다.
+- 대시보드 `whale_dashboard` 응답: 지갑별 `observed_win_rate`, 전역 `selection_disclosure`.
+
+### 표기 규약
+
+화면·알림은 `선정: quality_score(PnL·ROI·규모) · 승률은 사후 채점(N=xx)` 형식으로 고지한다.
+승률 수치를 선정 근거처럼 배치하지 않는다.
