@@ -68,11 +68,23 @@ def test_confirmed_holiday_leaves_the_denominator(conn) -> None:
 
 def test_pending_holiday_does_not_change_the_denominator(conn) -> None:
     """추정으로 분모를 바꾸면 진짜 유실일이 사라져 검증 진행도가 부풀려진다."""
-    row = obs.daily_coverage(conn, "stock_kr", date(2026, 7, 17), now=NOW)
+    row = obs.daily_coverage(conn, "stock_kr", date(2026, 6, 3), now=NOW)  # 지방선거일 — 미확정
 
     assert row["trading_day"] == 1, "미확정 후보는 여전히 거래일로 세고 유실로 남긴다"
     assert row["valid"] == 0
     assert "확인 필요" in (row["reason"] or "")
+
+
+def test_constitution_day_is_a_confirmed_kr_holiday(conn) -> None:
+    """2026 제헌절 재지정 확정(2026-04-28 국무회의) — KRX 전 시장 휴장.
+
+    WO-FCE-SAMPLE-VIABILITY-01 에서 "확인 필요"로 올렸던 항목이 확정으로 내려왔다.
+    검증 창 안의 날짜라 분모에서 빠지는 것이 실제 수치에 영향을 준다.
+    """
+    row = obs.daily_coverage(conn, "stock_kr", date(2026, 7, 17), now=NOW)
+
+    assert row["trading_day"] == 0
+    assert "휴장" in (row["reason"] or "")
 
 
 def test_early_close_shortens_the_session_window(conn) -> None:
@@ -84,11 +96,19 @@ def test_early_close_shortens_the_session_window(conn) -> None:
 
 
 def test_holiday_audit_reports_candidates_without_applying_them(conn) -> None:
-    audit = market_calendar.holiday_audit("KR", [date(2026, 7, 16), date(2026, 7, 17)])
+    audit = market_calendar.holiday_audit("KR", [date(2026, 7, 16), date(2026, 6, 3)])
 
     assert audit["confirmed_holidays_in_list"] == []
-    assert audit["pending_holiday_candidates"][0]["day"] == "2026-07-17"
+    assert audit["pending_holiday_candidates"][0]["day"] == "2026-06-03"
     assert "확인 필요" in audit["verdict"]
+
+
+def test_holiday_audit_flags_a_confirmed_holiday_counted_as_lost(conn) -> None:
+    """확정 휴장일이 유실일 목록에 남아 있으면 계산 경로에 달력이 안 걸린 것이다."""
+    audit = market_calendar.holiday_audit("KR", [date(2026, 7, 17)])
+
+    assert audit["confirmed_holidays_in_list"] == ["2026-07-17"]
+    assert "계산식을 고쳐야 한다" in audit["verdict"]
 
 
 # ── 2. 절전 귀인 ────────────────────────────────────────────────────────

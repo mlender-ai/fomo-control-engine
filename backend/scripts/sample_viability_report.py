@@ -19,6 +19,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from app.db.sqlite_utils import connect_sqlite
+from app.poly_paper.parameters import load_poly_parameters
 from app.validation import sample_viability as sv
 from app.worker import market_calendar, observation
 
@@ -111,8 +112,45 @@ def _phase2(connection, now: datetime) -> str:
         _table(table, ["만기 구간", "N", "유동성 중앙값", "총엣지 중앙값", "비용후엣지 중앙값", "통과율"]),
         "",
         "> N 이 한 자리인 구간의 중앙값 차이는 근거가 되지 않는다.",
+        "",
+        _settlement_latency(connection),
     ]
     return "\n".join(out)
+
+
+def _settlement_latency(connection) -> str:
+    """정산 지연 실측 — `settlement_buffer_days` 의 근거 (WO-FCE-VALIDATION-VERDICT-01 Phase 5).
+
+    만기 당일에 정산이 확정되지 않는다. 버퍼를 추측으로 두지 않기 위해 실측을 같이 낸다.
+    """
+    try:
+        rows = connection.execute(
+            """SELECT r.resolved_at, m.end_at FROM poly_resolutions r
+            JOIN poly_markets m ON m.market_id=r.market_id WHERE m.end_at IS NOT NULL"""
+        ).fetchall()
+    except Exception as exc:
+        return f"### 정산 지연 실측\n\n- 산출 실패: {exc}"
+    deltas = []
+    for row in rows:
+        try:
+            resolved = datetime.fromisoformat(str(row["resolved_at"]).replace("Z", "+00:00"))
+            end = datetime.fromisoformat(str(row["end_at"]).replace("Z", "+00:00"))
+        except (TypeError, ValueError):
+            continue
+        deltas.append((resolved - end).total_seconds() / 86_400)
+    parameters = load_poly_parameters()
+    lines = ["### 정산 지연 실측 — `settlement_buffer_days` 근거", "", f"- 현재 설정값: **{parameters.settlement_buffer_days}일**"]
+    if not deltas:
+        lines.append("- 실측 표본 **0건** — 재측정 불가. 현재 값은 보수적 추정이며 정산이 쌓이면 다시 잰다.")
+        return "\n".join(lines)
+    ordered = sorted(deltas)
+    median = ordered[len(ordered) // 2]
+    lines += [
+        f"- 실측 N={len(ordered)} · 중앙값 {median:.3f}일 · 최대 {ordered[-1]:.3f}일",
+        f"- 표본 충분(N≥30): {'예' if len(ordered) >= 30 else '**아니오 — 판정 유보**'}",
+        "- N<30 이면 중앙값을 그대로 쓰지 않고 보수적으로 올려 잡는다.",
+    ]
+    return "\n".join(lines)
 
 
 def _phase3(connection, now: datetime, days: int) -> str:
