@@ -1,5 +1,11 @@
 # Wyckoff Engine v2
 
+> **정석 대비 실사 결과: [`WyckoffStandardAudit.md`](WyckoffStandardAudit.md)** (WYCKOFF-AUDIT-01, main @ dc1687b).
+> 결함 15건(S1 5 · S2 5 · S3 5)이 코드 대조로 확인됐다. 특히 **감지 조건과 거래량 채점이
+> 서로 반대 방향을 본다**(D5) — 저볼륨을 요구해 감지한 Test 에 최저 신뢰도를 준다.
+> 수리 착수 전 그 문서 §5의 사용자 결정 3건이 선행한다.
+
+
 FOMO Control Engine의 와이코프 엔진은 주문 실행 신호가 아니라 보유 포지션의 구조 점검 근거를 만든다. 결과는 모두 결정론 계산이며, 마커의 `confidence`는 고정 상수가 아니라 아래 컴포넌트 합산으로 산출한다.
 
 ## Trading Range
