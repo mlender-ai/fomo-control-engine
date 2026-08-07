@@ -36,7 +36,8 @@ from app.notify.rules import (
     rearm_signals,
 )
 from app.notify.performance_report import format_weekly_performance
-from app.validation import verdict_watch
+from app.validation import live_trading_gate, pending_decisions, verdict_watch
+from app.worker import sleep_guard
 from app.notify.state import AlertRuleState, NotificationState
 from app.structure.context import build_structure_context, detect_structure_transitions, transition_state_key
 from app.notify.telegram import TelegramSender, inline_keyboard
@@ -346,7 +347,11 @@ class AlertEngine:
         # 판정은 주간 리포트에 **상시** 포함한다 — 전이 알림은 변화만 담당하므로,
         # 이 블록이 없으면 판정이 유지되는 동안 사용자는 아무것도 못 본다.
         verdicts = await asyncio.to_thread(service.sample_verdicts)
-        count = await self.sender.send_to_all(format_weekly_performance(payload, verdicts=verdicts))
+        pending = pending_decisions.pending_decisions(
+            gate_approved=live_trading_gate.GATE_APPROVED,
+            sleep_guard=sleep_guard.sleep_guard_status(),
+        )
+        count = await self.sender.send_to_all(format_weekly_performance(payload, verdicts=verdicts, pending=pending))
         if count:
             self.state.last_weekly_performance_date = date_key
             self._persist()

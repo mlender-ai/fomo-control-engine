@@ -104,6 +104,34 @@ def _live_trading_gate(settings: Any) -> dict[str, Any]:
     return {"available": True, **report}
 
 
+def _rate_gap(settings: Any) -> dict[str, Any]:
+    """표본 생성 속도 격차 (WO-FCE-SAMPLE-RATE-01 Phase 1)."""
+    from app.db.maintenance import sqlite_path
+    from app.db.sqlite_utils import connect_sqlite
+    from app.validation import sample_rate
+
+    path = sqlite_path(settings.database_url)
+    if path is None or not path.exists():
+        return {"available": False, "reason": "sqlite_only"}
+    try:
+        with connect_sqlite(str(path)) as connection:
+            return {"available": True, **sample_rate.rate_gap_report(connection)}
+    except Exception as exc:
+        return {"available": False, "reason": str(exc)[:120]}
+
+
+def _pending_decisions(settings: Any) -> dict[str, Any]:
+    """사람을 기다리는 결정들 (Phase 5). 잊힌 결정은 없는 결정과 같다."""
+    from app.validation import live_trading_gate, pending_decisions
+    from app.worker import sleep_guard
+
+    items = pending_decisions.pending_decisions(
+        gate_approved=live_trading_gate.GATE_APPROVED,
+        sleep_guard=sleep_guard.sleep_guard_status(),
+    )
+    return pending_decisions.pending_summary(items)
+
+
 def paper_diagnosis() -> dict[str, Any]:
     settings = get_settings()
     worker = get_worker_status()
@@ -219,6 +247,10 @@ def paper_diagnosis() -> dict[str, Any]:
         "sample_viability": _sample_viability(settings),
         # WO-FCE-VALIDATION-VERDICT-01: 자동매매 전환 조건은 결과를 보기 전에 확정됐다.
         "live_trading_gate": _live_trading_gate(settings),
+        # WO-FCE-SAMPLE-RATE-01: 부족분은 기준을 낮춰서가 아니라 속도·기간·회전으로 메운다.
+        "sample_rate_gap": _rate_gap(settings),
+        # 잊힌 결정은 없는 결정과 같다 — 사람을 기다리는 항목을 상시 노출한다.
+        "pending_decisions": _pending_decisions(settings),
         # 자기잠금 래치 재발 감시용. blocked 가 있는데 retry_in_seconds 가 줄지 않으면 이상이다.
         "toss_collection": {
             "principle": "모든 차단에는 자동 재시도 경로가 있다 — 재시작 없이 스스로 풀려야 한다.",

@@ -2841,6 +2841,23 @@ export type LiveTradingGate = {
   ready_tracks?: string[];
 };
 
+// WO-FCE-SAMPLE-RATE-01 Phase 5 — 잊힌 결정은 없는 결정과 같다.
+export type PendingDecision = {
+  id: string;
+  severity: "blocking" | "impacting" | string;
+  title: string;
+  detail: string;
+  document: string;
+  resolved_when: string;
+};
+
+export type PendingDecisions = {
+  count: number;
+  blocking_count: number;
+  items: PendingDecision[];
+  line: string;
+};
+
 export type PaperDiagnosis = {
   principle: string;
   observation_integrity: {
@@ -2852,6 +2869,7 @@ export type PaperDiagnosis = {
   };
   sample_viability: SampleViability;
   live_trading_gate: LiveTradingGate;
+  pending_decisions: PendingDecisions;
 };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {

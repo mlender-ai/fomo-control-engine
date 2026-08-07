@@ -51,6 +51,7 @@ export function ValidationStatusShell() {
   const tracks = viability?.tracks ?? {};
   const funnel = paper?.gate_funnel;
   const gate = diagnosis?.live_trading_gate;
+  const pending = diagnosis?.pending_decisions;
 
   return (
     <div className="page" data-testid="validation-status-page">
@@ -156,6 +157,33 @@ export function ValidationStatusShell() {
               ))}
             </div>
           </>
+        )}
+      </TerminalPanel>
+
+      <TerminalPanel
+        title={`결정 대기 ${pending?.count ?? 0}건`}
+        subtitle="코드로 풀 수 없는 결정입니다. 결정 전까지 매주 다시 보고합니다."
+        status={pending?.blocking_count ? "error" : pending?.count ? "warning" : "ok"}
+      >
+        {pending?.items?.length ? (
+          <ul className="validationNotes">
+            {pending.items.map((item) => (
+              <li key={item.id}>
+                <b>
+                  {item.severity === "blocking" ? "⛔ " : "⚠️ "}
+                  {item.title}
+                </b>
+                <br />
+                {item.detail}
+                <br />
+                <span className="subtle">
+                  {item.document} · 닫히는 조건: {item.resolved_when}
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <div className="terminalEmpty">결정 대기 항목이 없습니다.</div>
         )}
       </TerminalPanel>
 
