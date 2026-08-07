@@ -11,7 +11,7 @@
 import { useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import { TerminalPanel, TerminalTable, TerminalWarning } from "@/components/terminal";
-import { api, type PaperDashboard, type PaperDiagnosis, type SampleViabilityTrack, type ValidationCompletion } from "@/lib/api";
+import { api, type LiveGateTrack, type PaperDashboard, type PaperDiagnosis, type SampleViabilityTrack, type ValidationCompletion } from "@/lib/api";
 
 const TRACK_ORDER = ["crypto", "poly", "stock_kr", "stock_us"];
 
@@ -50,6 +50,7 @@ export function ValidationStatusShell() {
   const completion = viability?.completion ?? {};
   const tracks = viability?.tracks ?? {};
   const funnel = paper?.gate_funnel;
+  const gate = diagnosis?.live_trading_gate;
 
   return (
     <div className="page" data-testid="validation-status-page">
@@ -136,6 +137,28 @@ export function ValidationStatusShell() {
         />
       </TerminalPanel>
 
+      <TerminalPanel
+        title="자동매매 전환 게이트"
+        subtitle={gate?.principle ?? "결과를 보기 전에 정한 기준만이 기준입니다. 이 판정은 아무것도 해제하지 않습니다."}
+        status={gate?.gate_approved ? "warning" : "neutral"}
+      >
+        {gate?.available === false ? (
+          <div className="terminalEmpty">게이트 판정을 산출할 수 없습니다 ({gate.reason ?? "unknown"}).</div>
+        ) : (
+          <>
+            <p className="subtle">
+              인적 승인: <b>{gate?.gate_approved ? "승인" : "미승인"}</b> · 서명란 {gate?.document ?? "docs/validation/LIVE_TRADING_GATE.md"} §5 ·{" "}
+              {gate?.ready_tracks?.length ? `준비 완료 트랙: ${gate.ready_tracks.join(", ")}` : "준비 완료 트랙 없음"}
+            </p>
+            <div className="validationLines">
+              {TRACK_ORDER.filter((track) => gate?.tracks?.[track]).map((track) => (
+                <GateRow gate={gate!.tracks![track]} key={track} label={completion[track]?.label ?? track} />
+              ))}
+            </div>
+          </>
+        )}
+      </TerminalPanel>
+
       {diagnosis?.observation_integrity?.manual_actions?.length ? (
         <TerminalPanel title="수동 조치 필요" subtitle="코드로 해결할 수 없는 관측 손실입니다" status="error">
           <ul className="validationNotes">
@@ -149,6 +172,26 @@ export function ValidationStatusShell() {
           </ul>
         </TerminalPanel>
       ) : null}
+    </div>
+  );
+}
+
+function GateRow({ gate, label }: { gate: LiveGateTrack; label: string }) {
+  return (
+    <div className="validationLine" data-testid={`gate-line-${gate.track}`}>
+      <strong>{label}</strong>
+      <span className="validationCell">
+        측정 축 {gate.measured_met}/{gate.measured_total}
+      </span>
+      {gate.axes
+        .filter((axis) => axis.kind === "measured")
+        .map((axis) => (
+          <span className={`validationCell${axis.met ? " met" : ""}`} key={axis.axis} title={axis.detail}>
+            {axis.met ? "✓" : axis.available ? "·" : "—"} {axis.label}
+          </span>
+        ))}
+      <span className="validationVerdict">{gate.ready ? "[준비 완료]" : `[미달: ${gate.unmet.join(", ")}]`}</span>
+      <span className="subtle validationStatement">{gate.seal}</span>
     </div>
   );
 }

@@ -47,6 +47,9 @@ class NotificationState:
     # key = "track:kind:reason" → {last_sent_date, suppressed, first_seen}.
     # 연속 동일 사유는 억제하고, 상태 전이(최초) + 일 1회 리마인더만 발송한다.
     paper_skip_state: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # WO-FCE-VALIDATION-VERDICT-01 Phase 1-3: 트랙별 직전 완주 판정. 전이가 있을 때만
+    # 알리기 위한 상태이며, 이것이 없으면 매 주기 같은 판정을 재발송한다(스팸 금지).
+    sample_verdicts: dict[str, str] = field(default_factory=dict)
 
     def is_muted(self) -> bool:
         return self.muted_until is not None and datetime.now(timezone.utc) < self.muted_until
@@ -108,6 +111,7 @@ class NotificationState:
                 "whale_alert_events": {address: events[-200:] for address, events in self.whale_alert_events.items() if events},
                 "paper_skip_state": self.paper_skip_state,
                 "structure_contexts": self.structure_contexts,
+                "sample_verdicts": self.sample_verdicts,
                 "alert_rule_states": _retained_rule_states(self.alert_rule_states),
             }
             directory = os.path.dirname(os.path.abspath(path)) or "."
@@ -131,6 +135,7 @@ class NotificationState:
         self.last_summary_date = payload.get("last_summary_date")
         self.last_weekly_calibration_date = payload.get("last_weekly_calibration_date")
         self.last_weekly_performance_date = payload.get("last_weekly_performance_date")
+        self.sample_verdicts = {str(key): str(value) for key, value in (payload.get("sample_verdicts") or {}).items() if value}
         self.suppressed_alerts = [item for item in payload.get("suppressed_alerts", []) if isinstance(item, dict)]
         self.lifecycle_positions = {str(key): value for key, value in (payload.get("lifecycle_positions") or {}).items() if isinstance(value, dict)}
         self.last_pulse_at = _parse_dt(payload.get("last_pulse_at"))

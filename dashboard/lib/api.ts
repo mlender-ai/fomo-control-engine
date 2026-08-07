@@ -2805,6 +2805,42 @@ export type SampleViability = {
   blocked_tracks?: string[];
 };
 
+// WO-FCE-VALIDATION-VERDICT-01 Phase 4 — 자동매매 전환 게이트.
+// 판정만 노출한다. 이 타입 어디에도 봉인을 푸는 경로가 없다.
+export type LiveGateAxis = {
+  axis: string;
+  label: string;
+  kind: "measured" | "policy" | "human" | string;
+  met: boolean;
+  available: boolean;
+  current: string | null;
+  target: string | null;
+  detail: string;
+};
+
+export type LiveGateTrack = {
+  track: string;
+  axes: LiveGateAxis[];
+  measured_met: number;
+  measured_total: number;
+  progress_pct: number;
+  ready: boolean;
+  unmet: string[];
+  gate_approved: boolean;
+  seal: string;
+  line: string;
+};
+
+export type LiveTradingGate = {
+  available: boolean;
+  reason?: string;
+  gate_approved?: boolean;
+  principle?: string;
+  document?: string;
+  tracks?: Record<string, LiveGateTrack>;
+  ready_tracks?: string[];
+};
+
 export type PaperDiagnosis = {
   principle: string;
   observation_integrity: {
@@ -2815,6 +2851,7 @@ export type PaperDiagnosis = {
     manual_actions?: Array<{ kind: string; severity: string; title: string; detail: string; remedy: string }>;
   };
   sample_viability: SampleViability;
+  live_trading_gate: LiveTradingGate;
 };
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {

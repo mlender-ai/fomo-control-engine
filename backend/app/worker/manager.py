@@ -366,6 +366,15 @@ class WorkerManager:
         sent = await self.alerts.maybe_send_weekly_performance_report()
         return {"count": sent}
 
+    async def _verdict_transition_watch(self) -> dict[str, Any]:
+        """완주 판정이 바뀌면 1건 알린다 (WO-FCE-VALIDATION-VERDICT-01 Phase 1-3).
+
+        상시 보고는 주간 리포트가 담당한다. 이 잡은 **변화**만 담당하므로 판정이 유지되는
+        동안에는 0건이다.
+        """
+        sent = await self.alerts.maybe_send_verdict_transition()
+        return {"count": sent}
+
     async def _collect_derivatives(self) -> dict[str, Any]:
         payload = await asyncio.to_thread(service.refresh_derivative_data)
         snapshots = payload.get("snapshots", [])
@@ -578,6 +587,13 @@ class WorkerManager:
                 "weekly_performance_report",
                 60,
                 self._weekly_performance_report,
+            ),
+            # WO-FCE-VALIDATION-VERDICT-01 Phase 1-3: 판정 전이 감시. 관측 커버리지가
+            # 1시간 주기로 갱신되므로 같은 주기로 본다 — 더 자주 봐도 판정이 안 바뀐다.
+            "verdict_transition_watch": WorkerJob(
+                "verdict_transition_watch",
+                3600,
+                self._verdict_transition_watch,
             ),
             "refresh_calibration_cache": WorkerJob(
                 "refresh_calibration_cache",
@@ -852,6 +868,7 @@ class WorkerManager:
             "daily_summary": 12,
             "weekly_calibration_report": 18,
             "weekly_performance_report": 20,
+            "verdict_transition_watch": 22,
             "discover_whale_leaderboard": 24,
             "regen_stale_insights": 28,
             "collect_derivatives": 40,

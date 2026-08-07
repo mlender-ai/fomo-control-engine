@@ -75,8 +75,10 @@
 
 ## 사람 확인이 필요한 항목
 
-1. **2026-07-17 제헌절 공휴일 재지정 시행 여부.** 휴장이면 KR 유실일 하나가 유실이 아니다.
-   확인되면 `market_calendar.KR_PENDING` → `KR_CONFIRMED` 로 옮긴다. 그때까지 유실로 센다.
+1. ~~**2026-07-17 제헌절 공휴일 재지정 시행 여부.**~~ → **확인 완료**
+   (WO-FCE-VALIDATION-VERDICT-01 Phase 5): 2026-04-28 국무회의 의결로 재지정 확정, KRX 전
+   시장 휴장. `KR_CONFIRMED` 로 이동했다. KR 검증 시계는 첫 유효일(07-22) 이후만 세므로
+   유효일·유실일 수치는 불변이고, 창 전체 커버리지 평균과 소급 표기만 바뀐다.
 2. **호스트 지속성 안 선택** (A/B/C/D). `docs/validation/HOST_PERSISTENCE.md` §3.
 3. **`settlement_buffer_days=2.0` 의 타당성.** 정산 지연 실측 표본이 적어 보수적으로 잡았다.
    `PolyPaperStore.settlement_latency()` 로 다시 재서 갱신한다.

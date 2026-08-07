@@ -808,7 +808,10 @@ test("manual scout tracking is one click and stays separate from engine detectio
 test("engine trading workspace contains the absorbed calibration surface", async ({ page }) => {
   await page.goto("/engine");
   await expect(page.getByTestId("engine-trading-page")).toBeVisible({ timeout: 30_000 });
-  await expect(page.getByTestId("engine-battle-tab")).toBeVisible();
+  // 페이지 셸이 뜬 뒤 `paperDashboard()` 왕복이 끝나야 BattleView 가 붙는다. 셸에는 30초를
+  // 주면서 이 요소에는 기본 5초만 주던 것이 CI 부하에서 깨졌다(2026-08-07). 같은 testid 를
+  // 보는 아래 테스트(엔진 코어 생존 경로)는 이미 30초를 쓰고 있었다 — 예산을 맞춘다.
+  await expect(page.getByTestId("engine-battle-tab")).toBeVisible({ timeout: 30_000 });
   await page.getByRole("link", { name: "엔진 포지션" }).click();
   await expect(page).toHaveURL(/tab=positions/);
   await expect(page.getByTestId("paper-validation-slots")).toBeVisible();

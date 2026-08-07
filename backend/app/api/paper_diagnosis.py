@@ -42,13 +42,23 @@ def _observation_integrity(settings: Any) -> dict[str, Any]:
             rows = [dict(row) for row in connection.execute("SELECT * FROM observation_coverage ORDER BY day")]
     except Exception as exc:  # 진단 실패가 나머지 진단을 못 죽이게 한다
         return {"available": False, "reason": str(exc)[:120]}
+    from app.worker import sleep_guard
+
+    actions = observation.manual_action_items(rows)
+    # WO-FCE-VALIDATION-VERDICT-01 Phase 2: 조치를 적용했다는 사실보다 **지금도 살아 있다는
+    # 사실**이 중요하다. 설정이 풀리면 아무 소리 없이 손실이 다시 시작된다.
+    guard = sleep_guard.sleep_guard_status()
+    guard_action = sleep_guard.guard_action_item(guard)
+    if guard_action:
+        actions.append(guard_action)
     return {
         "available": True,
         "principle": "검증일은 커버리지 게이트를 통과한 날만 센다 — 통과 못 한 날은 유실일이다.",
         "min_coverage_pct": observation.MIN_COVERAGE_PCT,
         "bin_seconds": observation.BIN_SECONDS,
         "tracks": {track: observation.verification_clock([row for row in rows if row["track"] == track]) for track in observation.TRACK_SPECS},
-        "manual_actions": observation.manual_action_items(rows),
+        "manual_actions": actions,
+        "sleep_guard": guard,
     }
 
 
@@ -68,6 +78,27 @@ def _sample_viability(settings: Any) -> dict[str, Any]:
     try:
         with connect_sqlite(str(path)) as connection:
             report = sample_viability.sample_viability_report(connection)
+    except Exception as exc:  # 진단 실패가 나머지 진단을 못 죽이게 한다
+        return {"available": False, "reason": str(exc)[:120]}
+    return {"available": True, **report}
+
+
+def _live_trading_gate(settings: Any) -> dict[str, Any]:
+    """자동매매 전환 게이트 진행도 (WO-FCE-VALIDATION-VERDICT-01 Phase 4).
+
+    **판정만 노출한다.** 이 블록에는 봉인을 푸는 경로가 없다 — `LiveBroker` 는 미구현이고
+    `FCE_STOCK_LIVE_TRADING_ENABLED=true` 는 기동 자체가 거부된다.
+    """
+    from app.db.maintenance import sqlite_path
+    from app.db.sqlite_utils import connect_sqlite
+    from app.validation import live_trading_gate
+
+    path = sqlite_path(settings.database_url)
+    if path is None or not path.exists():
+        return {"available": False, "reason": "sqlite_only"}
+    try:
+        with connect_sqlite(str(path)) as connection:
+            report = live_trading_gate.live_trading_gate_report(connection)
     except Exception as exc:  # 진단 실패가 나머지 진단을 못 죽이게 한다
         return {"available": False, "reason": str(exc)[:120]}
     return {"available": True, **report}
@@ -186,6 +217,8 @@ def paper_diagnosis() -> dict[str, Any]:
         "observation_integrity": _observation_integrity(settings),
         # WO-FCE-SAMPLE-VIABILITY-01: 관측일은 필요조건이다. 채점 가능 표본이 나와야 검증이다.
         "sample_viability": _sample_viability(settings),
+        # WO-FCE-VALIDATION-VERDICT-01: 자동매매 전환 조건은 결과를 보기 전에 확정됐다.
+        "live_trading_gate": _live_trading_gate(settings),
         # 자기잠금 래치 재발 감시용. blocked 가 있는데 retry_in_seconds 가 줄지 않으면 이상이다.
         "toss_collection": {
             "principle": "모든 차단에는 자동 재시도 경로가 있다 — 재시작 없이 스스로 풀려야 한다.",
