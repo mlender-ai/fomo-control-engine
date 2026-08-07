@@ -207,7 +207,47 @@ WO 본문의 D1("주식 진입이 0이므로 `opened` 이벤트가 없다")은 *
 
 정본: [`docs/StructureContext.md`](StructureContext.md)
 
-## 텔레그램 발송 화이트리스트 (WO-FCE-ALERT-WHITELIST-02)
+## 텔레그램 발송 통합 관문 (WO-FCE-ALERT-WHITELIST-02 → WO-FCE-WHALE-ALERT-DEMOTE-01)
+
+> **관문은 하나다.** 두 개면 그중 하나는 반드시 잊힌다.
+
+### 왜 통합했나 (2026-08-08)
+
+화이트리스트가 **경로마다 하나씩** 있었다. `TELEGRAM_SENDABLE_KINDS` 는 페이퍼 트랙 이벤트
+(`kind` 를 가진 dict)에만 적용됐고, `notify/alerts.py::_fire_if_allowed` 경로(`AlertCandidate`)는
+그 화이트리스트를 **아예 호출하지 않았다.** 그래서 고래 다중체결 알림(`whale_entry`)이 원칙을
+우회한 채 발송됐다. 한 건의 버그가 아니라 구조의 문제였다 — 새 알림이 다른 경로로 들어오면
+원칙이 적용되지 않는다.
+
+정본: `app/notify/delivery_gate.py`. 두 경로를 같은 모듈이 판정한다.
+
+| 공간 | 식별자 | 판정 함수 | 예 |
+|---|---|---|---|
+| 페이퍼 트랙 이벤트 | `kind` | `evaluate_event()` | `opened` · `closed` · `rejected_summary` |
+| 포지션·시스템 알림 | `rule_id` | `evaluate_rule()` | `invalidation_breach` · `whale_entry` |
+
+**둘은 다른 이름 공간이다.** 페이퍼 이벤트 허용 목록을 `rule_id` 공간에 그대로 적용하면
+무효화 이탈·청산 접근 같은 critical 포지션 경보가 전부 끊긴다.
+
+### 기본 차단 (default-deny)
+
+`PUSH_ALLOWED_RULES` 에 없는 `rule_id` 는 **차단**된다. "새 알림이 다른 경로로 들어오면 원칙이
+적용되지 않는다"가 결함의 본질이었고, 기본 차단이 그 구멍을 막는다. 새 알림을 푸시하려면 명시적
+등록이 필요하며 **그 등록 행위가 곧 검토 지점**이다.
+
+### 강등 (`DEMOTED_RULES`)
+
+| rule_id | 텔레그램 | 사유 |
+|---|:---:|---|
+| `whale_entry` | ❌ **미도달** | 미검증 신호 · 사후 채점 표본 부족(N=5). 수집·저장·조회는 그대로 |
+
+강등된 신호는 **사유와 함께** `NotificationState.blocked_alerts` 에 남고, 원장에도
+`delivered=False` 로 기록된다. 발송하지 않은 것과 발생하지 않은 것은 다르다. 24h 집계는 일 1회
+요약에 1줄로만 나간다(개별 건·지갑명 없음, N<30 이면 "표본 부족" 병기).
+승격 조건: [`docs/validation/WHALE_ALERT_PROMOTION.md`](validation/WHALE_ALERT_PROMOTION.md) —
+자동 승격은 없다.
+
+### 페이퍼 이벤트 kind
 
 > **거부는 알림이 아니라 조회 대상이다.** 여기 없는 kind 는 텔레그램에 도달하지 않는다.
 
@@ -219,7 +259,8 @@ WO 본문의 D1("주식 진입이 0이므로 `opened` 이벤트가 없다")은 *
 | `skipped` | ❌ **미도달** | 동일 |
 | `error` | ❌ **미도달** | 엔진 오류는 생존 감시 계열(`engine_liveness` 등)이 담당 |
 
-정본: `app/notify/paper_events.py::TELEGRAM_SENDABLE_KINDS` / `is_telegram_sendable()`
+정본: `app/notify/paper_events.py::TELEGRAM_SENDABLE_KINDS` / `is_telegram_sendable()` —
+관문 진입점은 `delivery_gate.evaluate_event()` 다.
 
 ### 왜 억제가 아니라 화이트리스트인가
 
@@ -229,7 +270,7 @@ WO 본문의 D1("주식 진입이 0이므로 `opened` 이벤트가 없다")은 *
 
 ### 거부는 어디서 보는가
 
-- `GET /api/system/paper/diagnosis` — `telegram_sendable_kinds`·`rejection_policy`와 트랙별 최다 거부 게이트
+- `GET /api/system/paper/diagnosis` — `telegram_sendable_kinds`·`rejection_policy`와 트랙별 최다 거부 게이트, 그리고 `whale_observations`(미발송 고래 이벤트 + 미발송 사유)·`gate`(관문 레지스트리 스냅샷)
 - 일 1회 성과 요약 — 트랙별 평가·진입·거부 집계
 
 **침묵 금지(C4)와 거부 미발송(C1)은 양립한다**: 조회는 되고 알림만 안 간다. 생존·사망·복구 알림은 이 경로가 아니라 `notify/rules.py` 계열이므로 영향받지 않는다.
