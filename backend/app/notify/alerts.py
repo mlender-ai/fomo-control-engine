@@ -35,6 +35,7 @@ from app.notify.rules import (
     quiet_hours_active,
     rearm_signals,
 )
+from app.notify import delivery_gate
 from app.notify.performance_report import format_weekly_performance
 from app.validation import live_trading_gate, pending_decisions, verdict_watch
 from app.worker import sleep_guard
@@ -322,6 +323,11 @@ class AlertEngine:
             if performance_lines:
                 lines.append("")
                 lines.extend(performance_lines)
+            # WO-FCE-WHALE-ALERT-DEMOTE-01 Phase 3: 강등된 고래 관측을 1줄로 갚는다.
+            whale_line = _whale_observation_line(self.state.blocked_alerts, now=self._now())
+            if whale_line:
+                lines.append("")
+                lines.append(whale_line)
         else:
             lines.append("<b>생존 신호</b> (뮤트 중 — 조건 알림은 억제됨)")
         if liveness_lines:
@@ -447,6 +453,13 @@ class AlertEngine:
 
     async def _fire_if_allowed(self, candidate: AlertCandidate) -> int:
         now = self._now()
+        # WO-FCE-WHALE-ALERT-DEMOTE-01 Phase 1: 발송 통합 관문. **모든 알림이 여기를 지난다.**
+        # 억제(빈도 제한)가 아니라 원천 제외다 — 빈도를 조이는 접근은 선행 WO 에서 실패했다.
+        # 차단해도 원장에는 남긴다(C3): 무엇이 왜 안 왔는지 조회 가능해야 한다.
+        decision = delivery_gate.evaluate_rule(candidate.rule_id)
+        if not decision.allowed:
+            self._record_blocked(candidate, decision, now=now)
+            return 0
         rule_state = self.state.alert_rule_states.setdefault(candidate.state_key, AlertRuleState())
         if candidate.rule_id.startswith("setup_") and rule_state.cooldown_until is not None and now >= rule_state.cooldown_until:
             rule_state.status = "armed"
@@ -530,6 +543,27 @@ class AlertEngine:
                 "payload": candidate.payload,
             }
         )
+
+    def _record_blocked(self, candidate: AlertCandidate, decision: delivery_gate.PushDecision, *, now: datetime) -> None:
+        """관문이 막은 알림을 조회 큐와 원장에 남긴다 (C3 침묵 금지).
+
+        발송하지 않은 것과 발생하지 않은 것은 다르다. 사유 없이 사라지면 다음 사람이
+        "왜 고래 알림이 안 오지"를 코드에서 찾아야 한다.
+        """
+        self.state.blocked_alerts.append(
+            {
+                "rule_id": candidate.rule_id,
+                "symbol": candidate.symbol,
+                "title": candidate.title,
+                "severity": candidate.severity,
+                "reason": decision.reason,
+                "demoted": decision.demoted,
+                "blocked_at": now.isoformat(),
+                "payload": candidate.payload,
+            }
+        )
+        # 원장에도 delivered=False 로 남겨 사후 감사 경로를 하나로 유지한다.
+        self._record(candidate, delivered=False, fired_at=now)
 
     def _record(self, candidate: AlertCandidate, *, delivered: bool, fired_at: datetime) -> None:
         record = AlertRecord(
@@ -813,6 +847,13 @@ def _whale_batch_candidate(
             "window_seconds": window_seconds,
             "fill_count": len(ordered),
             "instrument_count": len(coins),
+            # Phase 2 조회 API 필수 필드 — 강등된 알림도 전부 조회 가능해야 한다(C3).
+            "total_notional": total_notional,
+            "coins": coins,
+            "sample_size": sample_size,
+            "win_1r_pct": win_rate,
+            "cumulative_return_r": cumulative_r,
+            "validated": validated,
             "event_ids": [item["id"] for item in compact_events],
             "events": compact_events,
             "summary": f"{minutes}분 다중체결 {len(ordered)}건 · {len(coins)}종목 · {_compact_usd(total_notional)} · {accuracy}",
@@ -953,3 +994,37 @@ def format_structure_event(symbol: str, position: dict[str, Any], event: dict[st
         lines.append("· 국면 재해석됨 — 이전 판정과 상이")
     lines.append("관측 정보이며 매매 신호가 아닙니다.")
     return "\n".join(lines)
+
+
+def _whale_observation_line(blocked: list[dict[str, Any]], *, now: datetime, window_hours: int = 24) -> str | None:
+    """강등된 고래 관측의 24시간 집계 **한 줄** (WO-FCE-WHALE-ALERT-DEMOTE-01 Phase 3).
+
+    개별 건도 지갑명도 나열하지 않는다 — 나열하면 강등한 스팸이 요약으로 자리를 옮길 뿐이다.
+    승률은 N<30 이면 반드시 `표본 부족`을 병기한다(C6).
+    """
+    cutoff = now - _seconds(window_hours * 3600)
+    recent = [item for item in blocked if str(item.get("rule_id") or "") == "whale_entry" and (_parse_iso(item.get("blocked_at")) or now) >= cutoff]
+    if not recent:
+        return None
+    payloads = [_as_dict(item.get("payload")) for item in recent]
+    wallets = {str(payload.get("wallet_address") or "") for payload in payloads}
+    fills = sum(int(payload.get("fill_count") or 0) for payload in payloads)
+    largest = max((float(payload.get("total_notional") or 0.0) for payload in payloads), default=0.0)
+    samples = [int(payload.get("sample_size") or 0) for payload in payloads]
+    line = (
+        f"🐋 고래 관측 {window_hours}h · 다중체결 {len(recent)}건 · 지갑 {len([item for item in wallets if item])}개"
+        f" · 체결 {fills}건 · 최대 명목가 {_compact_usd(largest)} · 전부 미검증"
+    )
+    if samples and max(samples) < 30:
+        line += f" · 사후 채점 N={max(samples)} 표본 부족"
+    return line + " (푸시 강등 · 상세는 진단 API)"
+
+
+def _parse_iso(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)

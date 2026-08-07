@@ -821,26 +821,29 @@ async def test_whale_alert_batches_same_wallet_fills_for_three_minutes() -> None
     clock["now"] = started_at + timedelta(minutes=2, seconds=59)
     assert await engine.evaluate_whale_events([second, first], dashboard) == 0
     clock["now"] = started_at + timedelta(minutes=3)
-    assert await engine.evaluate_whale_events([], dashboard) == 1
+    # WO-FCE-WHALE-ALERT-DEMOTE-01: 배치는 그대로 성립하지만 발송은 0건이다.
+    # 강등 전에는 여기서 1건이 나갔다 — 그 1건이 텔레그램 스팸의 단위였다.
     assert await engine.evaluate_whale_events([], dashboard) == 0
-    assert len(sender.messages) == 1
-    assert "3분 다중체결 2건 · 2종목" in sender.messages[0]
-    assert "미검증 관측" in sender.messages[0]
-    assert "숏→롱 전환" in sender.messages[0]
-    assert "ETH" in sender.messages[0]
-    assert "숏 신규" in sender.messages[0]
-    # WO-FCE-ENTRY-THROUGHPUT-01 작업 5: 선정 기준(quality_score)과 사후 채점(승률)을
-    # 구분해 표기한다 — 붙여 쓰면 "승률로 고래를 뽑았다"로 오해된다.
-    assert "선정: quality_score 기준" in sender.messages[0]
-    assert "사후 채점 승률 50.0% (N=4)" in sender.messages[0]
-    assert "표본 부족" in sender.messages[0]
-    assert "누적 +0.50R" in sender.messages[0]
-    assert "따라가기 신호가 아닙니다" in sender.messages[0]
+    assert await engine.evaluate_whale_events([], dashboard) == 0
+    assert sender.messages == []
+
+    # 그러나 조용히 사라지지는 않는다(C3). 사유와 함께 조회 큐에 남는다.
+    blocked = engine.state.blocked_alerts
+    assert len(blocked) == 1
+    assert blocked[0]["rule_id"] == "whale_entry"
+    assert blocked[0]["demoted"] is True
+    assert "미검증" in blocked[0]["reason"]
+
+    # 원장은 손대지 않는다(C2) — 집계 결과가 delivered=False 로 그대로 남는다.
     alert = repo.list_alerts()[0]
     assert alert.rule_id == "whale_entry"
     assert alert.severity == "info"
+    assert alert.delivered is False
     assert alert.payload["fill_count"] == 2
     assert len(alert.payload["event_ids"]) == 2
+    # 사후 채점 표본은 페이로드에 남아 승격 판단(WHALE_ALERT_PROMOTION.md)의 입력이 된다.
+    assert alert.payload["sample_size"] == 4
+    assert alert.payload["win_1r_pct"] == 50.0
 
 
 @pytest.mark.asyncio
@@ -906,10 +909,17 @@ async def test_whale_alert_drops_single_fill_and_keeps_increase_in_multi_fill() 
     clock["now"] += timedelta(minutes=1)
     assert await engine.evaluate_whale_events([second_increase], dashboard) == 0
     clock["now"] += timedelta(minutes=2)
-    assert await engine.evaluate_whale_events([], dashboard) == 1
-    assert "HYPE" in sender.messages[0]
-    assert "숏 증액 2건" in sender.messages[0]
-    assert "184" in sender.messages[0]
+    # WO-FCE-WHALE-ALERT-DEMOTE-01: 단건 드롭(수집 단계)과 강등(발송 단계)은 다른 층이다.
+    # 단건은 애초에 후보가 되지 않고, 다중체결은 후보가 되지만 관문에서 막힌다.
+    assert await engine.evaluate_whale_events([], dashboard) == 0
+    assert sender.messages == []
+    assert len(engine.state.blocked_alerts) == 1
+
+    # 집계 자체는 살아 있다 — 강등은 발송 경로만이다(C2).
+    alert = repo.list_alerts()[0]
+    assert alert.delivered is False
+    assert alert.payload["fill_count"] == 2
+    assert alert.payload["total_notional"] == pytest.approx(184.0)
 
 
 @pytest.mark.asyncio

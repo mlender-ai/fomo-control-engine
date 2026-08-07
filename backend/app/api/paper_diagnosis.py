@@ -132,6 +132,53 @@ def _pending_decisions(settings: Any) -> dict[str, Any]:
     return pending_decisions.pending_summary(items)
 
 
+def _whale_observations(settings: Any) -> dict[str, Any]:
+    """강등된 고래 다중체결 관측 조회 (WO-FCE-WHALE-ALERT-DEMOTE-01 Phase 2).
+
+    **발송하지 않은 것과 발생하지 않은 것은 다르다**(C3). 푸시에서 뺐으므로 여기서 반드시
+    조회 가능해야 하고, 각 건에 미발송 사유가 붙어야 한다. 수집·저장은 그대로다(C2).
+    """
+    from app.notify import delivery_gate
+    from app.notify.state import NotificationState
+
+    state = NotificationState()
+    try:
+        state.load(settings.notification_state_path)
+    except Exception as exc:  # 조회 실패가 나머지 진단을 못 죽이게 한다
+        return {"available": False, "reason": str(exc)[:120]}
+    items = []
+    for entry in reversed(state.blocked_alerts):
+        if str(entry.get("rule_id") or "") != "whale_entry":
+            continue
+        payload = entry.get("payload") if isinstance(entry.get("payload"), dict) else {}
+        items.append(
+            {
+                "blocked_at": entry.get("blocked_at"),
+                "wallet_address": payload.get("wallet_address"),
+                "wallet_label": payload.get("wallet_label"),
+                "window_seconds": payload.get("window_seconds"),
+                "fill_count": payload.get("fill_count"),
+                "coins": payload.get("coins") or [],
+                "total_notional": payload.get("total_notional"),
+                "validated": payload.get("validated"),
+                "validation_state": payload.get("validation_state"),
+                "win_1r_pct": payload.get("win_1r_pct"),
+                "sample_size": payload.get("sample_size"),
+                "sample_sufficient": int(payload.get("sample_size") or 0) >= 30,
+                "cumulative_return_r": payload.get("cumulative_return_r"),
+                "not_delivered_reason": entry.get("reason"),
+            }
+        )
+    return {
+        "available": True,
+        "principle": "푸시에서 뺐으므로 여기서 조회된다 — 조용히 사라지지 않는다(C3).",
+        "count": len(items),
+        "sample_rule": "사후 채점 승률은 N<30 이면 표본 부족입니다. 선정은 quality_score 기준이며 승률로 뽑지 않습니다.",
+        "items": items[:100],
+        "gate": delivery_gate.registry_snapshot(),
+    }
+
+
 def paper_diagnosis() -> dict[str, Any]:
     settings = get_settings()
     worker = get_worker_status()
@@ -251,6 +298,8 @@ def paper_diagnosis() -> dict[str, Any]:
         "sample_rate_gap": _rate_gap(settings),
         # 잊힌 결정은 없는 결정과 같다 — 사람을 기다리는 항목을 상시 노출한다.
         "pending_decisions": _pending_decisions(settings),
+        # WO-FCE-WHALE-ALERT-DEMOTE-01: 강등된 고래 관측은 조회로 갚는다.
+        "whale_observations": _whale_observations(settings),
         # 자기잠금 래치 재발 감시용. blocked 가 있는데 retry_in_seconds 가 줄지 않으면 이상이다.
         "toss_collection": {
             "principle": "모든 차단에는 자동 재시도 경로가 있다 — 재시작 없이 스스로 풀려야 한다.",
