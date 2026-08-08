@@ -210,9 +210,22 @@ def test_statistical_method_stays_pending_until_a_human_picks() -> None:
 def test_summary_counts_blocking_separately() -> None:
     summary = pd.pending_summary(pd.pending_decisions(gate_approved=False, sleep_guard={"available": True, "guarded": False}))
 
-    assert summary["count"] == 3
-    assert summary["blocking_count"] == 2
+    # 게이트 서명 + 통계 방법 + DIRECTIONAL-INTEGRITY 3건 = 차단 5건, 호스트 지속성은 영향 항목.
+    assert summary["count"] == 6
+    assert summary["blocking_count"] == 5
     assert "진행 차단" in summary["line"]
+
+
+def test_directional_integrity_decisions_block_until_a_human_picks() -> None:
+    """WO-FCE-DIRECTIONAL-INTEGRITY-01 §0 — 이 3건 전에는 Phase 0 외 착수하지 않는다."""
+    items = pd.pending_decisions(gate_approved=True, sleep_guard={"available": True, "guarded": True})
+
+    required = {"validation_window_contamination", "wyckoff_role", "directional_coverage_thresholds"}
+    by_id = {item["id"]: item for item in items}
+
+    assert required <= set(by_id)
+    for item_id in required:
+        assert by_id[item_id]["severity"] == pd.BLOCKING, f"{item_id} 는 진행 차단 항목이어야 한다"
 
 
 def test_weekly_lines_name_each_pending_item() -> None:
