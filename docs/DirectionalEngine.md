@@ -26,6 +26,29 @@ analysis (기존 엔진 출력, 재계산 없음)
 
 **상태 흐름 (WO-53):** `build_confluence`는 순수 함수 — `prior_state`를 주입받아 `stance_state`(새 상태)를 반환할 뿐 I/O 없음. 라이브는 `load_directional_prior(repo, symbol, tf)`가 최근 스카우트 스냅샷의 `confluence.stance_state`를 읽어 주입하고, 새 상태는 스냅샷에 브리핑이 실려 자연 영속(별도 테이블 없음). 백테스트는 인메모리로 스레딩. **전환 로직은 `_resolve_stance_state` 한 곳에만 있어 이중화가 없다.**
 
+## 커버리지 — 현재 판정에 반영되지 않는다 (WO-FCE-DIRECTIONAL-INTEGRITY-01)
+
+`long_score` 는 증거 점수의 **단순 합**이다(`confluence.py:145`). `coverage` ·
+`available_engines` · `missing` 은 이 파일에 **한 번도 등장하지 않는다.**
+
+침묵한 엔진(패턴 없음·데이터 부족)은 양쪽에 0을 기여하고 끝난다. 그래서 **9개 엔진이 모두
+판정한 상태와 절반이 침묵한 상태가 같은 점수 체계에서 비교된다.** 보유 포지션 경로에는 이미
+게이트가 있으나(`lifecycle.py:296` — 판정 가능 모듈 3 미만이면 관측 보류) 스카우트 경로에는 없다.
+
+- 임계 3종은 **미확정 — 사용자 결정**: [`docs/validation/DIRECTIONAL_COVERAGE.md`](validation/DIRECTIONAL_COVERAGE.md)
+- 실측 분포 산출 도구: [`docs/validation/REPLAY_HARNESS.md`](validation/REPLAY_HARNESS.md)
+
+게이트 배선은 Phase 2 이며 **아직 하지 않았다.** 현재는 계측과 문서까지다.
+
+### 선행 추세는 계산되지만 국면 판정에 전달되지 않는다
+
+`wyckoff/engine.py:65` 가 `trend` 를 계산하고 `:99` 가 출력에 싣지만,
+`_phase_from_events(events)` 는 **추세를 인자로 받지 않는다.** 국면 판정은 이벤트만 본다.
+
+추가로 추세 측정 창(최근 28봉)이 거래 박스 탐지 창(최근 60봉) **안에 완전히 들어 있다** —
+현행 `trend.direction` 은 박스로 들어오기 전의 선행 추세가 아니라 박스 내부를 포함한 최근
+흐름이다. 근거: [`REPLAY_HARNESS.md`](validation/REPLAY_HARNESS.md) §8.
+
 ## WO-51 · 증거 시간 가중 (recency)
 
 방향 기여는 "마지막으로 발생/터치한 시각" 기준으로 감쇠한다. 3주 전 저항 터치가 방금 반등과 동일 무게로 숏을 카운트하던 결함을 제거한다.

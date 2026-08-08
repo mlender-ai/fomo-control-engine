@@ -70,6 +70,45 @@ def pending_decisions(*, gate_approved: bool, sleep_guard: dict[str, Any] | None
             "resolved_when": "방법을 택하고 COMPLETION_DEFINITION.md 의 표본 기준을 그 방법 기준으로 갱신한다",
         }
     )
+
+    # WO-FCE-DIRECTIONAL-INTEGRITY-01 §0 — Phase 0 외 어떤 작업도 이 3건 전에 착수하지 않는다.
+    # 코드가 문서의 확정 여부를 알 수 없으므로 상시 노출하고, 사람이 문서를 고칠 때 뺀다.
+    items.append(
+        {
+            "id": "validation_window_contamination",
+            "severity": BLOCKING,
+            "title": "검증 창 오염 처리 (A/B/C)",
+            "detail": (
+                "방향 판정 로직을 바꾸면 검증 창 전반부(구 로직)와 후반부(신 로직) 표본이 섞인다. "
+                "혼합 표본으로는 어떤 판정도 나오지 않는다. C안(계측·표시만 먼저)이 기본 권고다."
+            ),
+            "document": "docs/validation/DIRECTIONAL_COVERAGE.md §4",
+            "resolved_when": "안을 택해 COMPLETION_DEFINITION.md 에 검증 창 처리 결과를 기록한다",
+        }
+    )
+    items.append(
+        {
+            "id": "wyckoff_role",
+            "severity": BLOCKING,
+            "title": "와이코프의 지위 — 투표자 유지 vs 진입 규칙 승격",
+            "detail": "이 결정이 진입 지점(Spring·LPS) 도입 여부의 전제다. 미정이면 정합화는 투표자 전제에서 멈춘다.",
+            "document": "docs/WYCKOFF-AUDIT-01.md §5",
+            "resolved_when": "지위를 확정해 docs/DirectionalEngine.md 에 기록한다",
+        }
+    )
+    items.append(
+        {
+            "id": "directional_coverage_thresholds",
+            "severity": BLOCKING,
+            "title": "커버리지 임계 3종 확정",
+            "detail": (
+                "최소 판정 가능 엔진 수 · 최대 허용 침묵 가중 비율 · 엔진 수 기준 최소 근거. "
+                "현재 커버리지는 판정에 전혀 반영되지 않는다 — 7개가 살아있을 때와 4개만 살아있을 때가 구분되지 않는다."
+            ),
+            "document": "docs/validation/DIRECTIONAL_COVERAGE.md §2",
+            "resolved_when": "재판정 실측 분포를 본 뒤 임계 3종을 문서에 확정 기록한다",
+        }
+    )
     return items
 
 
