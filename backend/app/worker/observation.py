@@ -267,12 +267,17 @@ def save_coverage(connection: sqlite3.Connection, rows: list[dict[str, Any]]) ->
     return len(rows)
 
 
-def verification_clock(rows: list[dict[str, Any]], *, target_days: int = VALIDATION_TARGET_DAYS) -> dict[str, Any]:
+def verification_clock(rows: list[dict[str, Any]], *, target_days: int = VALIDATION_TARGET_DAYS, anchor_day: str | None = None) -> dict[str, Any]:
     """검증 시계를 **유효 관측일 기준**으로 계산한다(1-4).
 
     숫자가 나빠져도 정직한 재계산이 우선이다. "D+21인데 유효 6일"이 사실이면 그대로 낸다.
     시계는 **첫 유효일부터** 시작한다 — 그 전은 관측 자체가 성립하지 않았다.
+
+    WO-FCE-WINDOW-ANCHOR-01: `anchor_day` 가 주어지면 그 날 이후만 센다. 즉 "최초 유효일"이
+    아니라 **"앵커 이후 최초 유효일"** 부터 시작한다. 앵커가 `None` 이면 현행과 동일하다(C7).
     """
+    if anchor_day is not None:
+        rows = [row for row in rows if str(row["day"]) >= str(anchor_day)]
     ordered = sorted(rows, key=lambda row: str(row["day"]))
     trading = [row for row in ordered if int(row.get("trading_day") or 0) == 1]
     valid_days = [row for row in trading if int(row.get("valid") or 0) == 1]

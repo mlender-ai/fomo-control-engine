@@ -683,6 +683,7 @@ class WorkerManager:
         """관측 커버리지 재계산·저장. 저장된 관측 이력만 쓰므로 과거도 그대로 다시 잰다."""
         from app.db.maintenance import sqlite_path
         from app.db.sqlite_utils import connect_sqlite
+        from app.validation import window_anchor
         from app.worker import observation
 
         path = sqlite_path(self.settings.database_url)
@@ -694,7 +695,15 @@ class WorkerManager:
             rows = observation.compute_range(connection, start, today)
             observation.save_coverage(connection, rows)
             connection.commit()
-        clocks = {track: observation.verification_clock([row for row in rows if row["track"] == track]) for track in observation.TRACK_SPECS}
+            # 검증 창 앵커를 같은 연결에서 읽는다 — 표면마다 다른 창을 보면 D3 이 재발한다.
+            anchors = {track: window_anchor.current_anchor(connection, track) for track in observation.TRACK_SPECS}
+        clocks = {
+            track: observation.verification_clock(
+                [row for row in rows if row["track"] == track],
+                anchor_day=anchors[track].anchor_day if anchors.get(track) else None,
+            )
+            for track in observation.TRACK_SPECS
+        }
         return {
             "days": len(rows),
             "effective_days": {track: clock["effective_days"] for track, clock in clocks.items()},

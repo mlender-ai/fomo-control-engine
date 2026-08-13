@@ -32,6 +32,7 @@ def _observation_integrity(settings: Any) -> dict[str, Any]:
     """
     from app.db.maintenance import sqlite_path
     from app.db.sqlite_utils import connect_sqlite
+    from app.validation import window_anchor
     from app.worker import observation
 
     path = sqlite_path(settings.database_url)
@@ -40,6 +41,8 @@ def _observation_integrity(settings: Any) -> dict[str, Any]:
     try:
         with connect_sqlite(str(path)) as connection:
             rows = [dict(row) for row in connection.execute("SELECT * FROM observation_coverage ORDER BY day")]
+            # 진단 표면도 검증 판정과 **같은 창**을 본다. 다른 창을 보면 화면끼리 어긋난다.
+            anchors = {track: window_anchor.current_anchor(connection, track) for track in observation.TRACK_SPECS}
     except Exception as exc:  # 진단 실패가 나머지 진단을 못 죽이게 한다
         return {"available": False, "reason": str(exc)[:120]}
     from app.worker import sleep_guard
@@ -56,7 +59,14 @@ def _observation_integrity(settings: Any) -> dict[str, Any]:
         "principle": "검증일은 커버리지 게이트를 통과한 날만 센다 — 통과 못 한 날은 유실일이다.",
         "min_coverage_pct": observation.MIN_COVERAGE_PCT,
         "bin_seconds": observation.BIN_SECONDS,
-        "tracks": {track: observation.verification_clock([row for row in rows if row["track"] == track]) for track in observation.TRACK_SPECS},
+        "tracks": {
+            track: observation.verification_clock(
+                [row for row in rows if row["track"] == track],
+                anchor_day=anchors[track].anchor_day if anchors.get(track) else None,
+            )
+            for track in observation.TRACK_SPECS
+        },
+        "windows": {track: (anchor.as_dict() if anchor else None) for track, anchor in anchors.items()},
         "manual_actions": actions,
         "sleep_guard": guard,
     }

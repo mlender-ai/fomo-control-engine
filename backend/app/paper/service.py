@@ -35,6 +35,7 @@ from app.paper.user_fills import (
     sync_user_fills as _sync_user_fills,
 )
 from app.review.coverage import judgment_coverage
+from app.validation import window_anchor
 
 
 AnalysisLoader = Callable[[str, str], dict[str, Any]]
@@ -618,7 +619,46 @@ def start_paper_benchmark(repo: Any, *, reset: bool = False, now: datetime | Non
         "updated_at": now.isoformat(),
     }
     repo.upsert_paper_engine_state(BENCHMARK_SYMBOL, BENCHMARK_TIMEFRAME, state)
-    return {**paper_benchmark(repo), "created": True, "target_count": len(paper_universe(repo))}
+    # WO-FCE-WINDOW-ANCHOR-01: 재시작은 스코어보드만 옮기면 안 된다. 검증 판정(유효일·표본)에도
+    # 창이 있어야 하고, **같은 시각**이어야 한다. 두 창이 어긋나면 화면 둘이 서로 다른 창을
+    # 말하는 분열 상태가 재발한다. 행은 하나도 지우지 않는다 — 창은 필터다(C1).
+    windows = _open_validation_windows(repo, anchored_at=now, reason=f"paper_benchmark_reset#{reset_count}")
+    return {**paper_benchmark(repo), "created": True, "target_count": len(paper_universe(repo)), "validation_windows": windows}
+
+
+def _open_validation_windows(repo: Any, *, anchored_at: datetime, reason: str) -> list[dict[str, Any]]:
+    """4트랙 전부 새 창을 연다. 한 트랙이라도 빠지면 그 트랙만 구 창에 남는다."""
+    opener = getattr(repo, "open_validation_window", None)
+    if not callable(opener):
+        return []
+    return [opener(track, anchored_at=anchored_at, reason=reason) for track in window_anchor.VALIDATION_TRACKS]
+
+
+def validation_window_alignment(repo: Any, *, now: datetime | None = None) -> dict[str, Any]:
+    """스코어보드 창과 검증 창이 같은 시각을 가리키는지 (D3 재발 방지).
+
+    어긋난 트랙을 **이름으로** 보고한다. 불린 하나로 뭉치면 어느 트랙이 뒤처졌는지 모른 채
+    "정합 실패"만 남는다.
+    """
+    started_at = _parse_datetime(paper_benchmark(repo).get("started_at"))
+    reader = getattr(repo, "current_validation_window", None)
+    tracks: dict[str, Any] = {}
+    for track in window_anchor.VALIDATION_TRACKS:
+        window = reader(track) if callable(reader) else None
+        anchored = _parse_datetime((window or {}).get("anchored_at"))
+        tracks[track] = {
+            "window_seq": (window or {}).get("window_seq"),
+            "anchored_at": anchored.isoformat() if anchored else None,
+            "aligned": (anchored == started_at) if (anchored and started_at) else (anchored is None and started_at is None),
+        }
+    misaligned = sorted(track for track, item in tracks.items() if not item["aligned"])
+    return {
+        "scoreboard_started_at": started_at.isoformat() if started_at else None,
+        "tracks": tracks,
+        "aligned": not misaligned,
+        "misaligned_tracks": misaligned,
+        "note": "스코어보드 effective_start 와 검증 앵커가 어긋나면 두 화면이 서로 다른 창을 말한다.",
+    }
 
 
 def sync_user_fills(repo: Any, provider: Any, *, now: datetime | None = None) -> dict[str, Any]:
@@ -667,6 +707,7 @@ def paper_scoreboard(repo: Any, settings: Any, *, now: datetime | None = None) -
         "as_of": now.isoformat(),
         "started_at": started_at.isoformat() if started_at else None,
         "benchmark": benchmark,
+        "validation_window_alignment": validation_window_alignment(repo, now=now),
         "engine": paper_metrics,
         "user": user_metrics,
         "user_fill_sync": fill_sync,
