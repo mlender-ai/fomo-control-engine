@@ -113,6 +113,16 @@ check_heartbeat_hang() {
   recent="$(restarts_last_hour)"
   if [ "$recent" -ge "$HB_MAX_PER_HOUR" ] 2>/dev/null; then
     if [ "$HB_GIVEUP_NOTIFIED" = "0" ]; then
+      # WO-FCE-WORKER-HANG-02: **포기 상태야말로 증거가 가장 필요한 순간이다.**
+      # "재시작으로 해결되지 않는다"는 판단을 내린 시점인데 여기서 return 하면
+      # 스택을 뜰 기회가 영영 없다. 포착은 프로세스를 죽이지 않으므로 안전하다.
+      # HB_GIVEUP_NOTIFIED 가드 안에 두어 15초마다 반복 포착하지 않는다.
+      giveup_pids="$(lsof -ti :8875 -sTCP:LISTEN 2>/dev/null || true)"
+      for giveup_pid in $giveup_pids; do
+        timeout "${FCE_HANG_CAPTURE_TIMEOUT:-20}" /bin/bash "$REPO_DIR/scripts/local/capture-hang.sh" \
+          "$giveup_pid" "$LOG_DIR" "giveup_${age}s" >/dev/null 2>&1 || \
+          log "hang capture 실패/타임아웃(포기 경로) pid=$giveup_pid"
+      done
       log "heartbeat stale ${age}s BUT 1시간 재시작 ${recent}회 — 자동 복구 포기(수동 개입 필요)"
       FCE_DEADMAN_FORCE_MESSAGE="🛑 <b>자동 복구 포기 · 수동 개입 필요</b>
 하트비트 ${age}초 정체가 지속되는데 최근 1시간 재시작이 ${recent}회입니다.

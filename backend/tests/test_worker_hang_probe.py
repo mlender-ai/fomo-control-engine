@@ -47,6 +47,19 @@ def test_capture_runs_before_kill() -> None:
     assert kill_at > capture_at, "kill -9 가 포착보다 먼저 실행되면 증거가 파괴된다"
 
 
+def test_capture_also_runs_on_the_giveup_path() -> None:
+    """ "자동 복구 포기"야말로 증거가 가장 필요한 순간이다.
+
+    그 분기는 재시작 없이 `return` 하므로, 포착을 넣지 않으면 "재시작으로 해결되지 않는다"고
+    판단한 바로 그 시점에 스택을 뜰 기회가 영영 없다. 실측에서 포기가 6회 있었다.
+    """
+    source = SUPERVISOR.read_text(encoding="utf-8")
+    giveup_at = source.find("자동 복구 포기(수동 개입 필요)")
+    assert giveup_at > 0
+    block = source[max(0, giveup_at - 1200) : giveup_at]
+    assert "capture-hang.sh" in block, "포기 경로에 증거 포착이 없다"
+
+
 def test_capture_script_exists_and_is_executable() -> None:
     assert CAPTURE.exists()
     assert CAPTURE.stat().st_mode & 0o111, "실행 권한이 없으면 supervisor 가 호출해도 아무 일도 안 일어난다"
