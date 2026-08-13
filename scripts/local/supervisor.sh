@@ -126,6 +126,17 @@ check_heartbeat_hang() {
   HB_LAST_RESTART=$now
   take_restart_lock            # A7: 재기동 완료 전까지 포트 감시가 끼어들지 않게 한다
   pids="$(lsof -ti :8875 -sTCP:LISTEN 2>/dev/null || true)"
+  # ── WO-FCE-WORKER-HANG-02 (D5·C2): 포착이 파괴에 선행한다 ──────────────
+  # 여기가 kill -9 **바로 앞**이어야 하는 이유: 감지와 파괴 사이에 아무것도 없었기 때문에
+  # 실측 101회의 매달림에서 단 한 번도 스택을 못 떴다. 증상이 잡힐 때마다 증거가 사라졌다.
+  # C3: 전체 예산(기본 10초 + 여유) 안에서만 시도하고, 실패·타임아웃해도 재시작을 막지 않는다.
+  if [ -n "$pids" ]; then
+    for hang_pid in $pids; do
+      timeout "${FCE_HANG_CAPTURE_TIMEOUT:-20}" /bin/bash "$REPO_DIR/scripts/local/capture-hang.sh" \
+        "$hang_pid" "$LOG_DIR" "heartbeat_stale_${age}s" >/dev/null 2>&1 || \
+        log "hang capture 실패/타임아웃 pid=$hang_pid — 재시작은 정상 진행"
+    done
+  fi
   [ -n "$pids" ] && echo "$pids" | xargs kill -9 2>/dev/null || true
   sleep 2
   nohup /bin/bash "$REPO_DIR/scripts/local/run-backend.sh" >> "$LOG_DIR/backend.log" 2>&1 &

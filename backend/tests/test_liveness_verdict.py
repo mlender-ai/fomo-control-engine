@@ -383,10 +383,19 @@ def test_watcher_stays_outside_the_worker() -> None:
         assert "from app." not in source and "import app" not in source
 
 
-def test_backend_app_is_untouched() -> None:
-    """C7 — 이 WO 는 감시 계층 전용. 검증 창·판정 로직 무영향."""
+def test_verdict_layer_is_untouched_by_watcher_work() -> None:
+    """C7 — 감시 계층 작업이 **검증 창·판정 로직**을 건드리지 않는다.
+
+    처음에는 `backend/app/` 전체를 origin/main 과 동일하게 고정했으나, 그것은 이 WO 한정의
+    일회성 범위 확인이지 영구 불변이 아니었다. 그대로 두면 이후 모든 백엔드 작업이
+    막힌다(WO-FCE-WORKER-HANG-02 의 루프 지연 계측이 실제로 여기에 걸렸다).
+
+    영구히 지켜야 하는 것은 "감시 계층을 고치면서 판정을 함께 바꾸지 않는다"이므로
+    대상을 판정 모듈로 좁힌다. 감시자가 워커 밖에 있다는 계약은
+    `test_watcher_stays_outside_the_worker` 가 따로 고정한다.
+    """
     diff = subprocess.run(
-        ["git", "diff", "origin/main", "--stat", "--", "backend/app/"],
+        ["git", "diff", "origin/main", "--stat", "--", "backend/app/validation/"],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
@@ -395,7 +404,7 @@ def test_backend_app_is_untouched() -> None:
     if diff.returncode != 0:
         pytest.skip("origin/main 을 참조할 수 없는 환경")
 
-    assert diff.stdout.strip() == "", f"backend/app 이 변경됐다:\n{diff.stdout}"
+    assert diff.stdout.strip() == "", f"검증 판정 계층이 변경됐다:\n{diff.stdout}"
 
 
 def test_no_new_push_alert_was_added() -> None:

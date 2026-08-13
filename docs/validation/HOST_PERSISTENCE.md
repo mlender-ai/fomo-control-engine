@@ -148,5 +148,22 @@ curl -s localhost:8875/api/system/paper/diagnosis | python3 -m json.tool | grep 
 > 호스트 지속성을 해결해도 매달림은 남는다. 재시작 전에 둘 다 닫아야 새 창의 유효 관측일이
 > 무엇 때문에 깎였는지 알 수 있다.
 
+### 매달림 실측 (WO-FCE-WORKER-HANG-02 Phase 0, 2026-08-14)
+
+`logs/restarts.jsonl` 122건을 사유별로 집계했다.
+
+| 사유 | 횟수 |
+| --- | --- |
+| `heartbeat_stale` (**매달림**) | **101회** |
+| `port_down` | 13회 |
+| 초기(사유 미기록) | 8회 |
+| 자동 복구 포기 | 6회 |
+
+최근 재발 간격은 **17~30분**이다. 발생 시각(01:27·09:17·10:38·15:21·16:20)은
+절전 구간(02:00~05:00 KST)이 **아니다** — 이 문서가 다루는 절전 손실과는 별개 원인이며,
+**절전 대책만으로는 해결되지 않는다**는 것이 수치로 확인됐다.
+
+증거 포착 절차와 판독법은 [`../WorkerHangEvidence.md`](../WorkerHangEvidence.md) 가 정본이다.
+
 관련: [`../RESTART_RUNBOOK.md`](../RESTART_RUNBOOK.md) §4-2 — 생존 판정 문턱 2종
 

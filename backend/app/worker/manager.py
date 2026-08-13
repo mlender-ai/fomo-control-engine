@@ -22,7 +22,7 @@ from app.notify.state import NotificationState
 from app.notify.paper_events import SUPPRESSIBLE_KINDS, is_telegram_sendable, suppression_key
 from app.notify.telegram import TelegramSender
 from app.services import runtime as service
-from app.worker import liveness
+from app.worker import hang_probe, liveness
 from app.worker.heartbeat import HeartbeatRecord, SQLiteHeartbeatStore
 from app.toss.service import collect_market as collect_toss_market
 from app.stock_paper.service import run_stock_paper_engine
@@ -84,6 +84,11 @@ class WorkerManager:
         self._locks = {name: asyncio.Lock() for name in self.jobs}
         self._telegram_task: asyncio.Task | None = None
         self._started = False
+        # WO-FCE-WORKER-HANG-02: 매달림 증거 경로. 하트비트 파일과 같은 logs 디렉터리를 쓴다.
+        log_dir = Path(str(settings.worker_liveness_path)).expanduser().parent
+        self._log_dir = log_dir
+        self._job_trace_path: Path | None = log_dir / "job-trace.jsonl"
+        self.loop_lag = hang_probe.LoopLagMonitor(log_dir)
         # D2: 스플릿 플래그 불일치(엔진 켜짐 · 구동 잡 꺼짐)를 조용히 두지 않는다.
         self.flag_warnings = self._flag_consistency_warnings()
 
@@ -109,12 +114,18 @@ class WorkerManager:
                 continue
             self._schedule_job(job.name, job.interval_seconds, self._first_run_at(job.name, next_run))
 
+        # 매달림 증거는 사고 순간에 자동으로 남아야 한다 — 사람이 붙어 있을 수 없다(Phase 0).
+        self.hang_dump = hang_probe.install_signal_dump(self._log_dir)
+        # 루프 지연 계측은 **잡이 아니라 독립 태스크**다. 잡으로 만들면 측정 대상(루프)에
+        # 측정기가 함께 갇혀 정작 정체 구간에서 기록이 끊긴다(Phase 1).
+        self.loop_lag.start()
         self._telegram_task = asyncio.create_task(self._telegram_bot_loop(), name="fce-telegram-bot")
         for warning in self.flag_warnings:
             logger.warning("worker flag inconsistency: %s", warning["message"])
         logger.info("worker scheduler started jobs=%s", sorted(self.jobs))
 
     async def stop(self) -> None:
+        await self.loop_lag.stop()
         self.bot.stop()
         if self._telegram_task is not None:
             self._telegram_task.cancel()
@@ -141,6 +152,9 @@ class WorkerManager:
                 "is_muted": self.state.is_muted(),
             },
             "flag_warnings": self.flag_warnings,
+            # Phase 1: 루프 지연은 조회로만 노출한다(C8 — 새 푸시를 만들지 않는다).
+            "loop_lag": self.loop_lag.snapshot(),
+            "hang_dump": getattr(self, "hang_dump", {"registered": False, "reason": "not_started"}),
         }
 
     def _flag_consistency_warnings(self) -> list[dict[str, Any]]:
@@ -185,6 +199,23 @@ class WorkerManager:
     async def _run_hook(self, name: str, runner: JobRunner) -> Any:
         return await self._run_job(name, runner, scheduled=False)
 
+    def _trace_job(self, name: str, phase: str) -> None:
+        """잡 시작·종료를 append-only 파일에 남긴다 (WO-FCE-WORKER-HANG-02 Phase 1-2).
+
+        정체 구간에서 **마지막으로 시작됐으나 끝나지 않은 잡**이 곧 용의자다.
+        `kill -9` 로 프로세스가 죽으면 메모리 상태는 사라지므로 즉시 디스크로 내린다.
+
+        C3: 기록 실패가 잡 실행을 막으면 관측기가 장애 원인이 된다 — 조용히 넘기되 로그는 남긴다.
+        """
+        path = self._job_trace_path
+        if path is None:
+            return
+        try:
+            with open(path, "a", encoding="utf-8") as handle:
+                handle.write(f'{{"at":"{datetime.now(timezone.utc).isoformat()}","job":"{name}","phase":"{phase}"}}\n')
+        except OSError as exc:
+            logger.debug("job trace write failed: %s", exc)
+
     async def _run_job(self, name: str, runner: JobRunner, *, scheduled: bool) -> Any:
         heartbeat = self.heartbeats[name]
         lock = self._locks[name]
@@ -197,6 +228,10 @@ class WorkerManager:
             return None
 
         async with lock:
+            # WO-FCE-WORKER-HANG-02 Phase 1-2: 어느 잡이 도는 동안 하트비트가 멎었는지
+            # 대조하려면 시작·종료 시각이 파일에 남아 있어야 한다. 프로세스가 kill -9 로
+            # 죽으면 메모리 상태는 사라지므로 append-only 파일에 즉시 쓴다.
+            self._trace_job(name, "start")
             heartbeat.status = "running"
             heartbeat.last_started_at = datetime.now(timezone.utc)
             heartbeat.next_run_at = self._next_run_at(name)
@@ -222,6 +257,7 @@ class WorkerManager:
                 if scheduled:
                     self._restore_interval_if_needed(name)
                 logger.info("worker.%s ok result=%s", name, _compact_result(result))
+                self._trace_job(name, "ok")
                 return result
             except asyncio.CancelledError:
                 raise

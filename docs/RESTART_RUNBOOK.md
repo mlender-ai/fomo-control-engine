@@ -224,3 +224,17 @@ grep -c 'liveness.sh' scripts/local/supervisor.sh    # 1 이상이면 새 코드
 - [`validation/SAMPLE_RATE.md`](validation/SAMPLE_RATE.md) — 계수 범위가 생애 누적에서 창 기준으로 바뀐 사실
 - [`validation/REPLAY_HARNESS.md`](validation/REPLAY_HARNESS.md) — 앵커가 재판정 범위에 미치는 영향
 - [`validation/REQUIRED_SAMPLE.md`](validation/REQUIRED_SAMPLE.md) — 목표 N 미확정 상태의 근거
+
+
+## 매달림 덤프 (WO-FCE-WORKER-HANG-02)
+
+매달림 감지 시 `kill -9` **직전에** 증거가 자동으로 저장된다. 사람이 붙어 있을 필요가 없다.
+
+- 위치: `logs/hang-dumps/<UTC타임스탬프>-<pid>.txt` (누적 원본 `faulthandler.log`)
+- 도구: `faulthandler` + SIGUSR1(주, 파이썬 파일:라인) · `sample`(보조, 네이티브 프레임)
+  - `py-spy` 는 macOS 에서 root 가 필요해 쓰지 않는다(실측).
+  - 설치 불필요 — 둘 다 기본 제공(`sample` 은 macOS 내장, `faulthandler` 는 표준 라이브러리).
+- 판독 순서·기준선·보존 정책: [`WorkerHangEvidence.md`](WorkerHangEvidence.md) §3
+
+**스크립트는 머지만으로 반영되지 않는다.** `supervisor.sh` 변경 후에는 반드시 재기동하고
+`GET /api/system/worker` 의 `hang_dump.registered == true` 를 확인한다.
