@@ -10,6 +10,15 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 LOG_DIR="$REPO_DIR/logs"
 LIVENESS_FILE="$LOG_DIR/liveness.json"
 mkdir -p "$LOG_DIR"
+# WO-FCE-LIVENESS-VERDICT-01: 문턱·집계 규약은 공용 파일 하나. deadman.sh 와 같은 것을 본다.
+# shellcheck source=lib/liveness.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/liveness.sh"
+
+# A7: 매달림 재시작이 kill 한 직후, 백엔드가 아직 리스닝하지 않는 구간에 메인 루프의
+# `start_backend` 가 끼어들어 **두 번째 run-backend.sh** 를 띄울 수 있다. 그 창을 표식으로 막되
+# TTL 을 반드시 둔다 — 표식이 남아 영구히 재시작을 막으면 그게 새로운 침묵이다(C5).
+RESTART_LOCK="$LOG_DIR/restart.lock"
+RESTART_LOCK_TTL="${FCE_SUPERVISOR_RESTART_LOCK_TTL:-120}"
 INTERVAL="${FCE_SUPERVISOR_INTERVAL:-15}"
 
 log() { echo "$(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOG_DIR/supervisor.log"; }
@@ -21,6 +30,23 @@ listening() { lsof -ti :"$1" -sTCP:LISTEN >/dev/null 2>&1; }
 record_restart() {
   printf '{"at":"%s","target":"%s","reason":"%s"}\n' \
     "$(date -u '+%Y-%m-%dT%H:%M:%S+00:00')" "$1" "${2:-port_down}" >> "$LOG_DIR/restarts.jsonl"
+}
+
+# ── 재시작 진행 표식 (A7) ────────────────────────────────────────────
+take_restart_lock() { date +%s > "$RESTART_LOCK"; }
+
+restart_lock_held() {
+  [ -f "$RESTART_LOCK" ] || return 1
+  local started now
+  started="$(cat "$RESTART_LOCK" 2>/dev/null || echo 0)"
+  now=$(date +%s)
+  if [ $((now - ${started:-0})) -lt "$RESTART_LOCK_TTL" ] 2>/dev/null; then
+    return 0
+  fi
+  # TTL 만료는 조용히 넘기지 않는다 — 표식이 왜 풀렸는지 남아야 한다(C5).
+  log "restart lock TTL 만료($(( now - ${started:-0} ))s > ${RESTART_LOCK_TTL}s) — 포트 감시 재개"
+  rm -f "$RESTART_LOCK"
+  return 1
 }
 
 start_backend() {
@@ -40,62 +66,49 @@ start_frontend() {
 #   기존엔 감지=하트비트(deadman), 조치=포트(listening) 로 **어긋나 있었다.**
 #   그래서 포트는 열린 채 워커만 매달린 11.7시간 동안 supervisor 가 개입하지 않았다.
 # C5(복구 폭주 금지): 쿨다운 10분 · 1시간 3회 상한. 초과 시 자동 복구를 포기하고 사람을 부른다.
-HB_STALE_LIMIT="${FCE_SUPERVISOR_HB_STALE_SECONDS:-900}"
+# 사망 문턱은 공용 규약과 같은 값을 쓴다(따로 두면 두 감시자가 다른 판정을 한다).
+# **올리지 않는다**(C1).
+HB_STALE_LIMIT="${FCE_SUPERVISOR_HB_STALE_SECONDS:-$FCE_STALE_LIMIT}"
 HB_COOLDOWN="${FCE_SUPERVISOR_HB_COOLDOWN_SECONDS:-600}"
 HB_MAX_PER_HOUR="${FCE_SUPERVISOR_HB_MAX_RESTARTS_PER_HOUR:-3}"
 HB_LAST_RESTART=0
 HB_GIVEUP_NOTIFIED=0
+# A2: 포기 래치는 **단발 하트비트로 풀리지 않는다.** 복구 문턱 이내가 지속돼야 해제한다 —
+# 래치를 더 오래 유지하는 방향이므로 복구 폭주 금지(C5 원칙)를 약화시키지 않는다.
+HB_FRESH_SINCE=0
 
-heartbeat_age() {
-  [ -f "$LIVENESS_FILE" ] || { echo -1; return; }
-  python3 - "$LIVENESS_FILE" <<'PYEOF' 2>/dev/null || echo -1
-import json, sys
-from datetime import datetime, timezone
-try:
-    written = json.load(open(sys.argv[1]))["written_at"]
-    stamp = datetime.fromisoformat(written.replace("Z", "+00:00"))
-    print(int((datetime.now(timezone.utc) - stamp).total_seconds()))
-except Exception:
-    print(-1)
-PYEOF
-}
+# 하트비트 판독도 공용 규약을 쓴다 — deadman 과 다른 계산을 하면 두 감시자가 다른 나이를 본다.
+heartbeat_age() { liveness_heartbeat_age "$LIVENESS_FILE"; }
 
+# 포기 판정용 집계. **알림 카운터와 같은 원장·같은 함수**를 쓴다(A4) — 예전에는 알림이
+# supervisor.log grep, 포기 판정이 restarts.jsonl 이라 두 숫자가 서로를 설명하지 못했다.
 restarts_last_hour() {
-  [ -f "$LOG_DIR/restarts.jsonl" ] || { echo 0; return; }
-  python3 - "$LOG_DIR/restarts.jsonl" <<'PYEOF' 2>/dev/null || echo 0
-import json, sys
-from datetime import datetime, timedelta, timezone
-cut = datetime.now(timezone.utc) - timedelta(hours=1)
-count = 0
-try:
-    for line in open(sys.argv[1]).read().splitlines()[-200:]:
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            row = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if str(row.get("reason") or "") != "heartbeat_stale":
-            continue
-        try:
-            stamp = datetime.fromisoformat(str(row.get("at")).replace("Z", "+00:00"))
-        except Exception:
-            continue
-        if stamp >= cut:
-            count += 1
-except OSError:
-    pass
-print(count)
-PYEOF
+  liveness_restarts_in_window "$LOG_DIR/restarts.jsonl" heartbeat_stale 1
 }
 
 check_heartbeat_hang() {
   local age recent now
   age="$(heartbeat_age)"
   [ "$age" -lt 0 ] 2>/dev/null && return 0          # 하트비트 없음 → deadman.sh 가 알린다
-  [ "$age" -le "$HB_STALE_LIMIT" ] 2>/dev/null && { HB_GIVEUP_NOTIFIED=0; return 0; }
   now=$(date +%s)
+
+  # A2: 신선 지속을 추적한다. 예전에는 `age <= 900` 한 틱만으로 래치가 풀렸고, 그래서
+  # 16:52 의 단발 하트비트 하나가 16:20 의 포기를 해제했다.
+  if liveness_is_fresh "$age"; then
+    [ "$HB_FRESH_SINCE" -eq 0 ] 2>/dev/null && HB_FRESH_SINCE=$now
+  else
+    HB_FRESH_SINCE=0
+  fi
+
+  if [ "$age" -le "$HB_STALE_LIMIT" ] 2>/dev/null; then
+    if liveness_recovery_confirmed "$HB_FRESH_SINCE" "$now"; then
+      if [ "$HB_GIVEUP_NOTIFIED" = "1" ]; then
+        log "heartbeat 신선 지속 확인(${age}s ≤ ${FCE_FRESH_LIMIT}s, $((now - HB_FRESH_SINCE))s 유지) — 자동 복구 포기 해제"
+      fi
+      HB_GIVEUP_NOTIFIED=0
+    fi
+    return 0
+  fi
   if [ $((now - HB_LAST_RESTART)) -lt "$HB_COOLDOWN" ]; then return 0; fi   # C5 쿨다운
   recent="$(restarts_last_hour)"
   if [ "$recent" -ge "$HB_MAX_PER_HOUR" ] 2>/dev/null; then
@@ -111,6 +124,7 @@ check_heartbeat_hang() {
   log "heartbeat stale ${age}s (>${HB_STALE_LIMIT}s) — 포트는 열려 있으나 워커 매달림 → 재시작"
   record_restart "backend:8875:heartbeat_stale" "heartbeat_stale"
   HB_LAST_RESTART=$now
+  take_restart_lock            # A7: 재기동 완료 전까지 포트 감시가 끼어들지 않게 한다
   pids="$(lsof -ti :8875 -sTCP:LISTEN 2>/dev/null || true)"
   [ -n "$pids" ] && echo "$pids" | xargs kill -9 2>/dev/null || true
   sleep 2
@@ -120,7 +134,11 @@ check_heartbeat_hang() {
 log "supervisor started (pid $$, interval ${INTERVAL}s)"
 deadman_tick=0
 while true; do
-  listening 8875 || start_backend
+  # A7: 매달림 재시작이 진행 중이면 포트 감시는 손을 뗀다(이중 기동 방지). TTL 이 있으므로
+  # 표식이 남아도 최대 RESTART_LOCK_TTL 초 뒤에는 감시가 반드시 재개된다.
+  if ! restart_lock_held; then
+    listening 8875 || start_backend
+  fi
   listening 8876 || start_frontend
   # 포트가 열려 있어도 심장박동이 멎었으면 매달림이다 — 감지 신호와 조치 신호를 일치시킨다(C4).
   check_heartbeat_hang

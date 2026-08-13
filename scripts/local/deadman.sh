@@ -20,8 +20,14 @@ STATE_FILE="$LOG_DIR/deadman.state"     # 재발송 억제·복구 알림 1회�
 DEADMAN_LOG="$LOG_DIR/deadman.log"
 ENV_FILE="$REPO_DIR/backend/.env"
 
+# WO-FCE-LIVENESS-VERDICT-01: 문턱·집계 규약은 공용 파일 하나에만 둔다.
+# 두 스크립트에 따로 두면 갈라진다 — 실제로 갈라져 있었다(A4).
+# shellcheck source=lib/liveness.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/liveness.sh"
+
 # 하트비트가 이 시간(초)을 넘겨 낡으면 사망으로 판정. 워커 기대 주기(300s)의 3배.
-STALE_LIMIT="${FCE_DEADMAN_STALE_SECONDS:-900}"
+# **올리지 않는다**(C1) — 900을 늘리면 사망 판정이 줄 뿐 매달림은 그대로다.
+STALE_LIMIT="$FCE_STALE_LIMIT"
 # 사망 지속 시 리마인더 간격(초).
 REMIND_EVERY="${FCE_DEADMAN_REMIND_SECONDS:-3600}"
 # 감시자 자체 생존 확인 주기(초, 기본 7일) — 감시자가 조용한 게 정상인지 확인 불능이면 안 된다.
@@ -43,32 +49,48 @@ send_telegram() {
   token="$(read_env FCE_TELEGRAM_BOT_TOKEN)"; [[ -z "$token" ]] && token="$(read_env TELEGRAM_BOT_TOKEN)"
   chat="$(read_env FCE_TELEGRAM_CHAT_ID)";    [[ -z "$chat"  ]] && chat="$(read_env TELEGRAM_CHAT_ID)"
   if [[ -z "$token" || -z "$chat" ]]; then
-    log "텔레그램 자격증명 없음 — 발송 불가: ${text:0:60}"
+    # 바이트 단위 절단(${text:0:60})은 UTF-8 문자를 반으로 잘라 로그를 깨뜨렸다.
+    # 발송 실패는 **전문을 남긴다** — 못 보낸 내용을 여기서 못 보면 어디서도 못 본다(C5).
+    log "텔레그램 자격증명 없음 — 발송 불가:"
+    printf '%s\n' "$text" >> "$DEADMAN_LOG"
     return 1
   fi
   local code
   code=$(curl -s -m 15 -o /dev/null -w "%{http_code}" \
     -X POST "https://api.telegram.org/bot${token}/sendMessage" \
     -d "chat_id=${chat}" -d "parse_mode=HTML" --data-urlencode "text=${text}")
-  log "telegram HTTP $code :: ${text:0:80}"
+  # 성공 경로는 첫 줄만 — 절단 대신 줄 단위로 자른다(문자 경계가 깨지지 않는다).
+  log "telegram HTTP $code :: ${text%%$'\n'*}"
   [[ "$code" == "200" ]]
 }
 
-# state: "<status>|<last_notified_epoch>|<last_selfcheck_epoch>"
+# state: "<status>|<last_notified_epoch>|<last_selfcheck_epoch>|<fresh_since_epoch>"
+#
+# `fresh_since` 는 하트비트가 **복구 문턱 이내로 들어온 시각**이다. 복구는 이 시각으로부터
+# 지속 조건을 만족해야 선언된다 — 단발 갱신 하나로는 복구가 아니다(A1).
+# 4번째 필드가 없는 구 상태 파일도 그대로 읽힌다(0으로 취급).
 read_state() {
-  if [[ -f "$STATE_FILE" ]]; then cat "$STATE_FILE"; else echo "ok|0|0"; fi
+  if [[ -f "$STATE_FILE" ]]; then cat "$STATE_FILE"; else echo "ok|0|0|0"; fi
 }
-write_state() { echo "$1|$2|$3" > "$STATE_FILE"; }
-
-# supervisor 가 "자동 복구 포기"를 알릴 때 쓰는 강제 메시지 경로(C5).
-if [ -n "${FCE_DEADMAN_FORCE_MESSAGE:-}" ]; then
-  send_telegram "$FCE_DEADMAN_FORCE_MESSAGE"
-  exit 0
-fi
+write_state() { echo "$1|$2|$3|${4:-0}" > "$STATE_FILE"; }
 
 now_epoch=$(date +%s)
-IFS='|' read -r prev_status last_notified last_selfcheck <<< "$(read_state)"
-last_notified=${last_notified:-0}; last_selfcheck=${last_selfcheck:-0}
+IFS='|' read -r prev_status last_notified last_selfcheck fresh_since <<< "$(read_state)"
+last_notified=${last_notified:-0}; last_selfcheck=${last_selfcheck:-0}; fresh_since=${fresh_since:-0}
+
+# supervisor 가 "자동 복구 포기"를 알릴 때 쓰는 강제 메시지 경로(C5).
+#
+# A5: 예전에는 상태 파일을 **읽지도 쓰지도 않고** 빠져나갔다. 그래서 `last_notified` 가
+# 갱신되지 않았고, 60초 뒤 정규 틱의 `사망 감지` 가 리마인더 억제를 그대로 통과했다 —
+# 16:20 에 두 메시지가 같은 분에 도착한 원인이다. 이제 같은 상태 규약을 쓴다.
+if [ -n "${FCE_DEADMAN_FORCE_MESSAGE:-}" ]; then
+  if send_telegram "$FCE_DEADMAN_FORCE_MESSAGE"; then
+    write_state "dead" "$now_epoch" "$last_selfcheck" "$fresh_since"
+  else
+    log "포기 메시지 발송 실패 — 상태 유지(재시도 대상)"
+  fi
+  exit 0
+fi
 
 # ── 1. 하트비트 판독 ────────────────────────────────────────────────
 reason=""
@@ -101,7 +123,11 @@ fi
 
 # 프로세스 생존 여부(부가 정보)
 if lsof -ti :8875 -sTCP:LISTEN >/dev/null 2>&1; then proc="8875 리스닝 중"; else proc="8875 응답 없음"; fi
-restarts_24h=$(grep -c "down → restart" "$LOG_DIR/supervisor.log" 2>/dev/null || echo 0)
+# A3·A4·A8: 예전에는 supervisor.log 에서 재시작 문자열을 grep 으로 셌다. 그 문자열은 포트 다운
+# 경로에만 있어 **매달림 재시작을 한 건도 세지 않았고**, 창도 없어 파일 전체를 셌으며,
+# 0건일 때 `grep -c` 가 exit 1 이라 `|| echo 0` 이 겹쳐 "0 0회"로 표시됐다.
+# 이제 원장(`restarts.jsonl`) 하나만 보고, 사유·대상·창을 문구에 박는다.
+restart_line="$(liveness_restart_line "$LOG_DIR/restarts.jsonl")"
 
 # ── 2. 사망 판정 / 복구 판정 ────────────────────────────────────────
 if [[ -n "$reason" ]]; then
@@ -111,18 +137,46 @@ if [[ -n "$reason" ]]; then
   text="🚨 <b>엔진 사망 감지 (외부 감시자)</b>
 사유: ${reason}
 프로세스: ${proc}
-최근 재시작: ${restarts_24h}회
+${restart_line}
 감시자: deadman.sh (워커 외부)
 → 워커가 하트비트를 갱신하지 못하고 있습니다. 프로세스·로그를 확인하세요."
-  send_telegram "$text" && write_state "dead" "$now_epoch" "$last_selfcheck" || write_state "dead" "$last_notified" "$last_selfcheck"
+  # 사망 구간에서는 신선 지속을 처음부터 다시 센다.
+  send_telegram "$text" && write_state "dead" "$now_epoch" "$last_selfcheck" 0 || write_state "dead" "$last_notified" "$last_selfcheck" 0
   exit 0
 fi
 
+# ── 2-2. 신선 지속 추적 (A1) ────────────────────────────────────────
+#
+# 사망 문턱(900) 아래라고 해서 살아난 것이 아니다. **복구 문턱(300) 이내**여야 신선이고,
+# 그 신선이 지속(180초)돼야 복구다. 709초는 900 아래지만 300 위이므로 지속이 시작조차 되지 않는다.
+if liveness_is_fresh "$age"; then
+  (( fresh_since == 0 )) && fresh_since=$now_epoch
+else
+  fresh_since=0
+fi
+
 if [[ "$prev_status" == "dead" ]]; then
-  send_telegram "✅ <b>엔진 복구</b>
-하트비트가 다시 갱신되고 있습니다 (경과 ${age}초).
-프로세스: ${proc}"
-  write_state "ok" "$now_epoch" "$last_selfcheck"
+  if ! liveness_recovery_confirmed "$fresh_since" "$now_epoch"; then
+    # C5 침묵 금지: 알림을 새로 만들지 않되, 중간 상태를 로그로 관측 가능하게 남긴다.
+    if (( fresh_since > 0 )); then
+      log "복구 대기 — 하트비트 ${age}초(신선), 지속 $((now_epoch - fresh_since))/${FCE_RECOVERY_SUSTAIN_SECONDS}초"
+    else
+      log "복구 미달 — 하트비트 ${age}초 (복구 문턱 ${FCE_FRESH_LIMIT}초 초과, 사망 문턱 ${STALE_LIMIT}초 이내)"
+    fi
+    write_state "dead" "$last_notified" "$last_selfcheck" "$fresh_since"
+    exit 0
+  fi
+  # A6: 복구도 사망과 대칭으로 발송 실패를 처리한다. 예전에는 성공 여부를 보지 않고 상태를
+  # ok 로 넘겨, curl 이 죽으면 복구 알림이 영영 오지 않았다.
+  if send_telegram "✅ <b>엔진 복구</b>
+하트비트가 ${FCE_RECOVERY_SUSTAIN_SECONDS}초 이상 신선하게 유지되고 있습니다 (경과 ${age}초 · 복구 문턱 ${FCE_FRESH_LIMIT}초).
+프로세스: ${proc}
+${restart_line}"; then
+    write_state "ok" "$now_epoch" "$last_selfcheck" "$fresh_since"
+  else
+    log "복구 알림 발송 실패 — 상태를 dead 로 유지해 재시도한다"
+    write_state "dead" "$last_notified" "$last_selfcheck" "$fresh_since"
+  fi
   exit 0
 fi
 
@@ -139,10 +193,10 @@ except Exception:
   send_telegram "🩺 <b>외부 감시자 자가 점검</b>
 데드맨 스위치 정상 작동 중입니다.
 하트비트 경과: ${age}초 · 정지 트랙: ${stale_tracks}
-최근 재시작: ${restarts_24h}회"
-  write_state "ok" "$last_notified" "$now_epoch"
+${restart_line}"
+  write_state "ok" "$last_notified" "$now_epoch" "$fresh_since"
   exit 0
 fi
 
-write_state "ok" "$last_notified" "$last_selfcheck"
+write_state "ok" "$last_notified" "$last_selfcheck" "$fresh_since"
 exit 0
