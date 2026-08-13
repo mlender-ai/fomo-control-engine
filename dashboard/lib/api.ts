@@ -2790,6 +2790,11 @@ export type ValidationCompletion = {
   verdict: string;
   regimes: { available: boolean; distinct: number; target: number; reason: string | null };
   line: string;
+  // WO-FCE-WINDOW-ANCHOR-01 — 어느 창의 숫자인지 모르면 두 화면이 서로 다른 창을 말한다.
+  window?: { window_seq: number | null; anchored_at: string | null; anchor_day: string | null; label: string };
+  window_excluded?: { applied: boolean; entries: number; scored_samples: number; coverage_days: number; note: string };
+  window_state?: "running" | "complete" | "overrun";
+  window_state_label?: string;
 };
 
 export type SampleViability = {

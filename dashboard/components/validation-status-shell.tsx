@@ -227,24 +227,60 @@ function GateRow({ gate, label }: { gate: LiveGateTrack; label: string }) {
 function ConditionRow({ completion, viability }: { completion: ValidationCompletion; viability?: SampleViabilityTrack }) {
   const { conditions } = completion;
   const blocked = completion.verdict === "STRUCTURALLY_BLOCKED";
+  // WO-FCE-WINDOW-ANCHOR-01: 목표 유효일을 넘겨도 카운터는 계속 올라간다. 28에서 멈춰 보이면
+  // 창이 이미 지났다는 사실이 화면에서 사라지므로 상한 처리하지 않는다.
+  const overrun = completion.window_state === "overrun";
+  const seq = completion.window?.window_seq ?? null;
   return (
     <div className={`validationLine${blocked ? " blocked" : ""}`} data-testid={`validation-line-${completion.track}`}>
+      {seq ? (
+        <span className="subtle validationWindow" data-testid={`validation-window-${completion.track}`}>
+          창 {seq}회차 · 앵커 {completion.window?.anchor_day ?? "-"}
+        </span>
+      ) : null}
       <strong>{completion.label}</strong>
-      <Cell condition={conditions.effective_days} laggard={completion.laggard === "effective_days"} name="유효일" />
+      <Cell
+        condition={conditions.effective_days}
+        laggard={completion.laggard === "effective_days"}
+        name="유효일"
+        suffix={overrun && conditions.effective_days.current > conditions.effective_days.target ? " (목표일 경과)" : ""}
+      />
       <Cell condition={conditions.scored_samples} laggard={completion.laggard === "scored_samples"} name="표본" />
       <Cell condition={conditions.regimes} laggard={completion.laggard === "regimes"} name="국면" available={completion.regimes.available} />
       <span className="validationVerdict">
-        {blocked ? "[구조적 차단]" : completion.complete ? "[완료]" : `[미달: ${completion.unmet.join(", ")}]`}
+        {blocked
+          ? "[구조적 차단]"
+          : completion.complete
+            ? "[완료]"
+            : `[${overrun ? "목표일 경과 · " : ""}미달: ${completion.unmet.join(", ")}]`}
       </span>
       {viability ? <span className="subtle validationStatement">{viability.statement}</span> : null}
+      {completion.window_excluded?.applied ? (
+        <span className="subtle validationStatement">
+          창 밖 제외 — 진입 {completion.window_excluded.entries}건 · 표본 {completion.window_excluded.scored_samples}건 · 관측일{" "}
+          {completion.window_excluded.coverage_days}일 (삭제 아님)
+        </span>
+      ) : null}
     </div>
   );
 }
 
-function Cell({ condition, laggard, name, available = true }: { condition: { current: number; target: number; met: boolean }; laggard: boolean; name: string; available?: boolean }) {
+function Cell({
+  condition,
+  laggard,
+  name,
+  available = true,
+  suffix = "",
+}: {
+  condition: { current: number; target: number; met: boolean };
+  laggard: boolean;
+  name: string;
+  available?: boolean;
+  suffix?: string;
+}) {
   return (
     <span className={`validationCell${laggard ? " laggard" : ""}${condition.met ? " met" : ""}`}>
-      {name} {available ? `${condition.current}/${condition.target}` : "-"}
+      {name} {available ? `${condition.current}/${condition.target}${suffix}` : "-"}
     </span>
   );
 }

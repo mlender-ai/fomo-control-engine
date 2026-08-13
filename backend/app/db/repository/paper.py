@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import UUID
 from app.db.models import PaperTrade, Trade, UserTrade, utc_now
+from app.validation import window_anchor
 from .base import _aware_dt, _dump_model, _json_cache_default, _timestamp_or_min
 
 
@@ -75,6 +76,29 @@ class MemoryPaperRepositoryMixin:
             return False
         self.paper_engine_states[key] = dict(state)
         return True
+
+    # ── 검증 창 앵커 (WO-FCE-WINDOW-ANCHOR-01) ──────────────────────
+    def open_validation_window(self, track: str, *, anchored_at: datetime, reason: str | None = None) -> dict:
+        windows = self.validation_windows.setdefault(track, [])
+        anchored = anchored_at if anchored_at.tzinfo else anchored_at.replace(tzinfo=timezone.utc)
+        record = {
+            "track": track,
+            "window_seq": len(windows) + 1,
+            "anchored_at": anchored.isoformat(),
+            "anchor_day": anchored.date().isoformat(),
+            "reason": reason,
+        }
+        windows.append(record)
+        return dict(record)
+
+    def current_validation_window(self, track: str) -> dict | None:
+        windows = self.validation_windows.get(track) or []
+        return dict(windows[-1]) if windows else None
+
+    def list_validation_windows(self, track: str | None = None) -> list[dict]:
+        if track is not None:
+            return [dict(item) for item in (self.validation_windows.get(track) or [])]
+        return [dict(item) for windows in self.validation_windows.values() for item in windows]
 
     def upsert_paper_gate_funnel(self, record: dict) -> bool:
         key = (
@@ -278,6 +302,21 @@ class SQLitePaperRepositoryMixin:
         with self._connect() as connection:
             rows = connection.execute(query, tuple(params)).fetchall()
         return [json.loads(row["payload"]) for row in rows]
+
+    # ── 검증 창 앵커 (WO-FCE-WINDOW-ANCHOR-01) ──────────────────────
+    def open_validation_window(self, track: str, *, anchored_at: datetime, reason: str | None = None) -> dict:
+        with self._connect() as connection:
+            return window_anchor.open_window(connection, track, anchored_at=anchored_at, reason=reason).as_dict()
+
+    def current_validation_window(self, track: str) -> dict | None:
+        with self._connect() as connection:
+            anchor = window_anchor.current_anchor(connection, track)
+        return anchor.as_dict() if anchor else None
+
+    def list_validation_windows(self, track: str | None = None) -> list[dict]:
+        tracks = [track] if track is not None else list(window_anchor.VALIDATION_TRACKS)
+        with self._connect() as connection:
+            return [anchor.as_dict() for name in tracks for anchor in window_anchor.anchor_history(connection, name)]
 
     def get_paper_engine_state(self, symbol: str, timeframe: str) -> dict | None:
         with self._connect() as connection:

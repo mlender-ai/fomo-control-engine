@@ -125,6 +125,24 @@ curl -s localhost:8875/api/system/paper/diagnosis | python3 -m json.tool | grep 
 Phase 3 은 **양방향으로** 변화시킬 수 있는 유일한 Phase 다 — 증가분이 있으면 건별로 사유가
 설명 가능해야 한다(C1).
 
+## 3-3. 계수 범위 — 생애 누적에서 창 기준으로 (WO-FCE-WINDOW-ANCHOR-01)
+
+이 문서의 진입률·표본 수치는 **창 앵커가 설정되면 그 창 안의 값**이다. 앵커 이전에는
+트랙의 생애 누적을 셌다.
+
+| 구분 | 앵커 없음 (현행) | 앵커 있음 |
+|---|---|---|
+| 유효 관측일 | 역사상 모든 유효일 | 앵커 이후 유효일 |
+| 진입 건수 | 테이블 전체 | `t >= anchored_at` |
+| 채점 가능 표본 | 테이블 전체 | `t >= anchored_at` |
+
+**두 창의 숫자를 같은 표에 섞지 않는다.** 재시작 전후 값을 나란히 적을 때는 창 회차를 함께
+적는다 — 회차 없이 비교하면 무엇이 줄었는지 알 수 없다.
+
+창 밖으로 나간 건수는 `window_excluded` 로 조회 가능하다. **행은 지워지지 않았다.**
+
+절차: [`../RESTART_RUNBOOK.md`](../RESTART_RUNBOOK.md) · 정의: [`COMPLETION_DEFINITION.md`](COMPLETION_DEFINITION.md) §3-2
+
 ## 4. 금지
 
 - 실적이 0인 트랙을 유니버스 크기로 추정하기

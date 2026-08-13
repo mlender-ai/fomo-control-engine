@@ -40,6 +40,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from typing import Any
 
+from app.validation import window_anchor
 from app.worker import observation
 
 # 통계적 판정이 가능해지는 최소 표본. 도메인 불변("정직한 표본")의 N<30 유보 기준과 같은 수다.
@@ -114,10 +115,14 @@ def _parse(value: Any) -> datetime | None:
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
 
 
-def _timestamps(connection: sqlite3.Connection, sql: str) -> list[datetime]:
-    """증거 쿼리 실행. 테이블이 아직 없으면 0건으로 본다 — 없는 것은 0이지 추정 대상이 아니다."""
+def _timestamps(connection: sqlite3.Connection, sql: str, *, anchor: window_anchor.WindowAnchor | None = None) -> list[datetime]:
+    """증거 쿼리 실행. 테이블이 아직 없으면 0건으로 본다 — 없는 것은 0이지 추정 대상이 아니다.
+
+    앵커가 있으면 창 하한을 씌운다. 앵커가 `None` 이면 원본 SQL 그대로 — 현행과 동일 동작(C7).
+    """
+    query, params = window_anchor.since_clause(anchor, inner_sql=sql)
     try:
-        rows = connection.execute(sql).fetchall()
+        rows = connection.execute(query, params).fetchall()
     except sqlite3.OperationalError:
         return []
     stamps = [_parse(row["t"] if isinstance(row, sqlite3.Row) else row[0]) for row in rows]
@@ -140,12 +145,47 @@ def poisson_rate_ci(count: int, exposure: float, *, z: float = 1.96) -> tuple[fl
     return (round(max(0.0, lower), 3), round(upper, 3))
 
 
-def _coverage_rows(connection: sqlite3.Connection, track: str) -> list[dict[str, Any]]:
+def _coverage_rows(connection: sqlite3.Connection, track: str, *, anchor: window_anchor.WindowAnchor | None = None) -> list[dict[str, Any]]:
+    """관측일 행. 앵커가 있으면 창 시작일 이후만 — **행은 지우지 않고 계수에서만 뺀다**(C1)."""
+    query = "SELECT * FROM observation_coverage WHERE track=?"
+    params: tuple[Any, ...] = (track,)
+    if anchor is not None:
+        query += " AND day >= ?"
+        params = (track, anchor.anchor_day)
     try:
-        rows = connection.execute("SELECT * FROM observation_coverage WHERE track=? ORDER BY day", (track,)).fetchall()
+        rows = connection.execute(query + " ORDER BY day", params).fetchall()
     except sqlite3.OperationalError:
         return []
     return [dict(row) for row in rows]
+
+
+def _excluded_counts(
+    connection: sqlite3.Connection,
+    spec: "SampleSpec",
+    track: str,
+    anchor: window_anchor.WindowAnchor | None,
+    *,
+    entries: int,
+    scored: int,
+    coverage_days: int,
+) -> dict[str, Any]:
+    """앵커 적용으로 계수에서 빠진 건수 (C2).
+
+    "0건"과 "창 밖 40건"은 완전히 다른 상태다. 제외 건수를 숨기면 재시작 직후의 빈 화면이
+    고장인지 정상인지 구분되지 않는다.
+    """
+    if anchor is None:
+        return {"applied": False, "entries": 0, "scored_samples": 0, "coverage_days": 0, "note": "앵커 없음 — 생애 누적을 그대로 센다"}
+    lifetime_entries = len(_timestamps(connection, spec.entry_sql))
+    lifetime_scored = len(_timestamps(connection, spec.scored_sql))
+    lifetime_days = len(_coverage_rows(connection, track))
+    return {
+        "applied": True,
+        "entries": max(0, lifetime_entries - entries),
+        "scored_samples": max(0, lifetime_scored - scored),
+        "coverage_days": max(0, lifetime_days - coverage_days),
+        "note": f"앵커 {anchor.anchor_day} 이전 데이터는 계수에서 제외됐을 뿐 삭제되지 않았다 — 조회 가능하다",
+    }
 
 
 def _valid_days(rows: list[dict[str, Any]]) -> set[str]:
@@ -167,13 +207,16 @@ def track_sample_viability(
     """
     now = now or datetime.now(timezone.utc)
     spec = TRACK_SAMPLE_SPECS[track]
-    coverage = _coverage_rows(connection, track)
+    anchor = window_anchor.current_anchor(connection, track)
+    coverage = _coverage_rows(connection, track, anchor=anchor)
     clock = observation.verification_clock(coverage, target_days=target_days)
     valid_days = _valid_days(coverage)
     effective_days = len(valid_days)
 
-    entries = _timestamps(connection, spec.entry_sql)
-    scored = _timestamps(connection, spec.scored_sql)
+    entries = _timestamps(connection, spec.entry_sql, anchor=anchor)
+    scored = _timestamps(connection, spec.scored_sql, anchor=anchor)
+    # 창 밖으로 나간 건수 — 사라진 것이 아니라 계수에서 빠진 것이다(C2 침묵 금지).
+    excluded = _excluded_counts(connection, spec, track, anchor, entries=len(entries), scored=len(scored), coverage_days=len(coverage))
     # 유효 관측일에 발생한 진입만 분자로 쓴다 — 분모(유효 관측일)와 같은 창이어야 비율이 성립한다.
     entries_in_window = [stamp for stamp in entries if stamp.date().isoformat() in valid_days]
     entries_total = len(entries)
@@ -213,8 +256,12 @@ def track_sample_viability(
         "track": track,
         "label": spec.label,
         "scoring_definition": spec.scoring_definition,
+        # 창 회차·앵커·제외 건수는 항상 함께 낸다 — 숫자만 보고 어느 창인지 모르면 D3 이 재발한다.
+        "window": anchor.as_dict() if anchor else {"window_seq": None, "anchored_at": None, "anchor_day": None, "label": "창 앵커 없음 (생애 누적 계수)"},
+        "window_excluded": excluded,
         "effective_days": effective_days,
         "effective_days_target": target_days,
+        "effective_days_label": window_anchor.effective_days_label(effective_days, target_days),
         "first_valid_day": clock.get("first_valid_day"),
         "realized_rate": realized_rate,
         "entries_total": entries_total,
@@ -442,17 +489,24 @@ def validation_completion(
     unmet = [value["label"] for value in conditions.values() if not value["met"]]
     # 진행률은 **가장 뒤처진 조건**으로 말한다. 평균을 내면 유효일이 표본 0을 가려버린다.
     laggard = min(conditions.items(), key=lambda item: _progress(item[1]))
+    # D4: 목표 유효일을 넘겼는데 조건이 미충족인 상태에 이름이 없었다. 이름이 없으면 화면은
+    # 계속 "진행 중"으로 보이고, 유효일은 무기한 올라간다. **D+28에 아무 일도 일어나지 않는다.**
+    state = window_anchor.window_state(effective_days=viability["effective_days"], target_days=target_days, complete=not unmet)
     return {
         "track": track,
         "label": viability["label"],
         "complete": not unmet,
+        "window": viability["window"],
+        "window_excluded": viability["window_excluded"],
+        "window_state": state,
+        "window_state_label": window_anchor.WINDOW_STATE_LABELS[state],
         "conditions": conditions,
         "unmet": unmet,
         "laggard": laggard[0],
         "verdict": viability["verdict"],
         "structural_block": viability["structural_block"],
         "regimes": regimes,
-        "line": _completion_line(viability, regimes, conditions, unmet),
+        "line": _completion_line(viability, regimes, conditions, unmet, state),
     }
 
 
@@ -461,16 +515,24 @@ def _progress(condition: dict[str, Any]) -> float:
     return float(condition.get("current") or 0) / target if target else 1.0
 
 
-def _completion_line(viability: dict[str, Any], regimes: dict[str, Any], conditions: dict[str, Any], unmet: list[str]) -> str:
-    """대시보드 한 줄 (PHASE 6-3 형식)."""
+def _completion_line(viability: dict[str, Any], regimes: dict[str, Any], conditions: dict[str, Any], unmet: list[str], state: str) -> str:
+    """대시보드 한 줄 (PHASE 6-3 형식).
+
+    유효일은 목표값에서 **상한 처리하지 않는다** — `31/28 (목표일 경과)` 로 낸다. 28에서
+    멈춰 보이면 창이 이미 지났다는 사실이 화면에서 사라진다(C6).
+    """
     regime_cell = f"{regimes['distinct']}/{TARGET_REGIMES}" if regimes.get("available") else "-"
+    window = viability.get("window") or {}
+    prefix = f"[창 {window['window_seq']}회차 · 앵커 {window['anchor_day']}] " if window.get("window_seq") else ""
     base = (
-        f"{viability['label']}  유효일 {conditions['effective_days']['current']}/{conditions['effective_days']['target']}"
+        f"{prefix}{viability['label']}  유효일 {viability['effective_days_label']}"
         f"  ·  표본 {conditions['scored_samples']['current']}/{conditions['scored_samples']['target']}"
         f"  ·  국면 {regime_cell}"
     )
     if viability["verdict"] == VERDICT_STRUCTURALLY_BLOCKED:
         return f"{base}     [구조적 차단]"
+    if state == window_anchor.WINDOW_OVERRUN:
+        return f"{base}     [목표일 경과 · 미달: {', '.join(unmet)}]"
     return f"{base}     [미달: {', '.join(unmet)}]" if unmet else f"{base}     [완료]"
 
 
@@ -495,6 +557,8 @@ def sample_viability_report(
         "target_regimes": TARGET_REGIMES,
         "tracks": tracks,
         "completion": completion,
+        "windows": {track: row["window"] for track, row in tracks.items()},
+        "window_states": {track: completion[track]["window_state"] for track in TRACK_SAMPLE_SPECS},
         "verdicts": {track: row["verdict"] for track, row in tracks.items()},
         "blocked_tracks": [track for track, row in tracks.items() if row["verdict"] == VERDICT_STRUCTURALLY_BLOCKED],
     }
@@ -502,7 +566,7 @@ def sample_viability_report(
 
 def observation_window(connection: sqlite3.Connection, track: str) -> tuple[date | None, date | None]:
     """유효 관측일의 첫날·마지막날. 리포트에서 창을 명시하기 위한 보조."""
-    days = sorted(_valid_days(_coverage_rows(connection, track)))
+    days = sorted(_valid_days(_coverage_rows(connection, track, anchor=window_anchor.current_anchor(connection, track))))
     if not days:
         return (None, None)
     return (date.fromisoformat(days[0]), date.fromisoformat(days[-1]))
