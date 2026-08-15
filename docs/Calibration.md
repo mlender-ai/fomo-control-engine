@@ -95,3 +95,29 @@ Default Telegram schedule:
 - Timezone: `telegram_quiet_hours_timezone`, default `Asia/Seoul`
 
 The weekly report includes the recent scorecard, confidence curve, highlights, and pending suggestions.
+
+## 파라미터 루프의 시야 경계 (WO-FCE-FULL-AUDIT-01 Phase 3)
+
+> **다이얼을 돌리는 루프는 다이얼이 없다는 것을 알아챌 수 없다.**
+
+4주 실사 결과 복기 루프는 **정상 작동했다**: 판단 원장 138,092건 · 채점 89,408건 ·
+제안 8건(채택 3 · `dwell_blocked` 5) · `engine_params` 5버전 · `autonomy_log` 10건.
+`dwell_blocked` 5건은 자기 완화 방향이라 dwell 창에 걸린 것으로 설계대로다.
+
+그런데 같은 기간 확정된 **구조 결함 5종의 포착 건수는 0건**이다.
+
+| 결함 | 성격 | 캘리브레이션이 볼 수 있나 |
+| --- | --- | --- |
+| 와이코프가 선행 추세를 인자로 안 받음 | 함수 시그니처 | 아니오 |
+| 커버리지 게이트 부재 | 없는 개념 | 아니오 |
+| 재진입 잠금 부재 | 없는 규칙 | 아니오 |
+| `distance_pct` 가 옛 스냅샷 값 | 데이터 흐름 | 아니오 |
+| 이벤트 루프 블로킹 | 실행 모델 | 아니오 |
+
+전부 **임계값이 아니라 구조**다. 캘리브레이션은 존재하는 파라미터의 값을 조정하는 장치이므로,
+"이 파라미터가 애초에 없다" 또는 "입력이 틀린 값이다"를 제안으로 만들 수 없다.
+
+**따라서 자율 루프가 조용하다는 것은 "문제가 없다"는 뜻이 아니다.** 구조 결함 탐지는
+별도 수단(실사·재판정 하네스·정적 감사)이 담당해야 하며, 이 루프에 기대하면 안 된다.
+
+실사 전문: [`validation/FULL_AUDIT_01.md`](validation/FULL_AUDIT_01.md)
