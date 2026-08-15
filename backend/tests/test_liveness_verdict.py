@@ -287,7 +287,9 @@ def test_giveup_message_updates_the_state(host: Path) -> None:
     _heartbeat(host, age_seconds=1010)
     _state(host, "ok|0|0|0")
 
-    _run_deadman(host, FCE_DEADMAN_FORCE_MESSAGE="🛑 자동 복구 포기 테스트")
+    # 이 테스트가 지키는 것은 "발송 실패가 상태를 전진시키지 않는다"이므로 발송 경로를
+    # 명시적으로 켠다. 기본값은 강등(미발송)이며 그것은 별도 테스트가 고정한다.
+    _run_deadman(host, FCE_DEADMAN_FORCE_MESSAGE="🛑 자동 복구 포기 테스트", FCE_DEADMAN_PUSH="1")
 
     log = _deadman_log(host)
     assert "자동 복구 포기 테스트" in log
@@ -304,7 +306,8 @@ def test_recovery_send_failure_keeps_the_dead_state(host: Path) -> None:
     sustained_since = int((datetime.now(timezone.utc) - timedelta(seconds=600)).timestamp())
     _state(host, f"dead|0|0|{sustained_since}")
 
-    _run_deadman(host)
+    # 발송 실패 처리를 검증하는 테스트이므로 발송 경로를 켠다(기본값은 강등·미발송).
+    _run_deadman(host, FCE_DEADMAN_PUSH="1")
 
     assert "복구 알림 발송 실패" in _deadman_log(host)
     assert _read_state(host)[0] == "dead", "발송 실패인데 ok 로 넘기면 복구 알림이 소실된다"
@@ -447,3 +450,19 @@ def test_host_persistence_records_that_hangs_are_not_sleep() -> None:
 
     assert "절전 구간이 아니" in text
     assert "15:21" in text
+
+
+def test_deadman_does_not_push_by_default(host: Path) -> None:
+    """사용자 지시(2026-08-16) — 생존·사망·복구는 푸시하지 않는다.
+
+    감시·판정·기록은 그대로 돌고 **발송만** 로그로 돌린다. 이 테스트가 깨지면
+    "하트비트 죽는거 그만 보고해"가 되돌려진 것이다.
+    """
+    _heartbeat(host, age_seconds=1010)
+    _state(host, "ok|0|0|0")
+
+    _run_deadman(host, FCE_DEADMAN_FORCE_MESSAGE="🛑 이 메시지는 발송되면 안 된다")
+
+    log = _deadman_log(host)
+    assert "생존 알림 미발송(푸시 강등)" in log
+    assert "이 메시지는 발송되면 안 된다" in log, "미발송이어도 내용은 기록돼야 한다(조회 가능)"

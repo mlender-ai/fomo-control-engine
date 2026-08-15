@@ -291,48 +291,59 @@ class AlertEngine:
         liveness_lines: list[str] | None = None,
         performance_lines: list[str] | None = None,
     ) -> int:
-        """WO-FCE-ENGINE-LIVENESS-01 작업 5: 트랙 생존 라인은 뮤트를 관통한다(C2).
+        """일일 요약 — **내용물만 보낸다.**
 
-        뮤트 중이면 조건 알림 다이제스트는 생략하고 **생존 라인만** 보낸다 — 뮤트가 "살아있음"의
-        증거까지 지우면 침묵이 다시 스스로를 은폐한다.
+        사용자 지시(2026-08-16): "하트비트 죽는거 그만 보고해. 살아있다는것도 보고하지마.
+        그냥 포지션을 들어갔냐, 폴리마켓은, 리더보드는 잘 검증되고 있는지만 요약해서 보내라고."
+
+        생존 라인은 여기서 제거했다. 죽었다/살았다는 사용자가 할 수 있는 일이 없는 신호이고,
+        요약의 절반을 차지하면서 정작 읽어야 할 내용(진입·폴리·고래)을 밀어냈다.
+        `liveness_lines` 인자는 호출부 호환을 위해 남기되 **무시한다** — 생존 판정은
+        진단 API·로그로 조회한다.
+
+        뮤트 중에는 아무것도 보내지 않는다. 예전에는 뮤트를 관통해 생존 라인만 보냈는데,
+        그것이 정확히 사용자가 없애달라고 한 신호다.
         """
         if not self.settings.telegram_alerts_enabled:
             return 0
         muted = self.state.is_muted()
-        if muted and not liveness_lines:
+        if muted:
             return 0
         due, date_key = morning_summary_due(self.settings, self.state.last_summary_date, self._now())
         if not due:
             return 0
         lines: list[str] = []
-        if not muted:
-            suppressed = self.state.suppressed_alerts
-            lines.append("<b>밤새 알림 요약</b>")
-            if suppressed:
-                for item in suppressed[:20]:
-                    lines.append(f"• {item.get('emoji', '🟡')} <b>{item.get('symbol', '-')}</b> — {item.get('title', '-')}")
-                    if item.get("summary"):
-                        lines.append(f"  {item['summary']}")
-            else:
-                lines.append("억제된 알림은 없습니다.")
-            lines.append("")
-            lines.append(format_positions_summary(payload))
-            # WO-FCE-PERFORMANCE-REPORT-01 §2-1: 페이퍼 4트랙 성과. 진입이 0인 트랙도
-            # 반드시 등장한다 — 이벤트가 없어서 침묵하던 구조를 여기서 제거한다.
-            # 실계좌 포지션 요약(format_positions_summary)과 별도 블록으로 둔다(C4).
-            if performance_lines:
-                lines.append("")
-                lines.extend(performance_lines)
-            # WO-FCE-WHALE-ALERT-DEMOTE-01 Phase 3: 강등된 고래 관측을 1줄로 갚는다.
-            whale_line = _whale_observation_line(self.state.blocked_alerts, now=self._now())
-            if whale_line:
-                lines.append("")
-                lines.append(whale_line)
+        suppressed = self.state.suppressed_alerts
+        lines.append("<b>밤새 알림 요약</b>")
+        if suppressed:
+            for item in suppressed[:20]:
+                lines.append(f"• {item.get('emoji', '🟡')} <b>{item.get('symbol', '-')}</b> — {item.get('title', '-')}")
+                if item.get("summary"):
+                    lines.append(f"  {item['summary']}")
         else:
-            lines.append("<b>생존 신호</b> (뮤트 중 — 조건 알림은 억제됨)")
-        if liveness_lines:
+            lines.append("억제된 알림은 없습니다.")
+        lines.append("")
+        lines.append(format_positions_summary(payload))
+        # WO-FCE-PERFORMANCE-REPORT-01 §2-1: 페이퍼 4트랙 성과. 진입이 0인 트랙도
+        # 반드시 등장한다 — 이벤트가 없어서 침묵하던 구조를 여기서 제거한다.
+        # 실계좌 포지션 요약(format_positions_summary)과 별도 블록으로 둔다(C4).
+        if performance_lines:
             lines.append("")
-            lines.extend(liveness_lines)
+            lines.extend(performance_lines)
+        # WO-FCE-WHALE-ALERT-DEMOTE-01 Phase 3: 강등된 고래 관측을 1줄로 갚는다.
+        whale_line = _whale_observation_line(self.state.blocked_alerts, now=self._now())
+        if whale_line:
+            lines.append("")
+            lines.append(whale_line)
+        # 사용자가 요구한 내용물: 진입 · 폴리마켓 · 리더보드 검증.
+        # 조회 실패는 해당 줄만 "미산출"이 되고 요약 전체를 막지 않는다.
+        try:
+            from app.notify.content_summary import content_summary_lines
+
+            lines.extend(content_summary_lines(self.settings.database_url, now=self._now()))
+        except Exception as exc:
+            logger.warning("content summary failed: %s", exc, exc_info=True)
+        # 생존 라인은 붙이지 않는다(위 docstring 참조). `liveness_lines` 는 의도적으로 미사용.
         count = await self.sender.send_to_all("\n".join(lines))
         if count:
             self.state.suppressed_alerts.clear()

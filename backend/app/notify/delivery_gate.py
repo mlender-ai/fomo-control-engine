@@ -49,7 +49,22 @@ from app.notify.paper_events import TELEGRAM_SENDABLE_KINDS
 # 도착했다. 빈도를 조이는 접근은 선행 WO 에서 이미 실패했으므로 발송 경로에서 뺀다(C1).
 DEMOTED_RULES: frozenset[str] = frozenset({"whale_entry"})
 
+# 생존·사망·복구 신호 — **푸시에서 뺀다.**
+#
+# 사용자 지시(2026-08-16): "하트비트 죽는거 그만 보고해. 살아있다는것도 보고하지마.
+# 그게 아무런 도움이 안 돼. 죽은 건 보내봤자 내가 그걸 보고 어떠한 인사이트도 얻을 수가 없잖아."
+#
+# 타당한 지적이다. 이 신호들은 **행동을 바꾸지 못한다** — 죽었다는 알림을 받아도 사용자가
+# 할 수 있는 일이 없고(supervisor 가 이미 자동 재시작한다), 살아있다는 알림은 정보가 0이다.
+# 실측 근거: heartbeat_stale 156회. 그 156번의 푸시 중 사용자 조치로 이어진 것은 없다.
+#
+# 강등이지 삭제가 아니다(C2). 감시 자체는 그대로 돌고, 판정은 진단 API·로그·덤프로 조회한다:
+#   GET /api/system/paper/diagnosis → liveness / observation_integrity
+#   logs/supervisor.log · logs/hang-dumps/ · logs/loop-lag.jsonl
+LIVENESS_DEMOTED_RULES: frozenset[str] = frozenset({"data_stall", "engine_liveness", "job_backoff_stuck", "infra_capacity", "process_restarted"})
+
 DEMOTION_REASON = "미검증 신호는 푸시 대상이 아님 (WO-FCE-WHALE-ALERT-DEMOTE-01)"
+LIVENESS_DEMOTION_REASON = "생존·사망 신호는 푸시 대상이 아님 — 진단 API·로그로 조회 (사용자 지시 2026-08-16)"
 UNREGISTERED_REASON = "발송 레지스트리 미등록 rule_id — 기본 차단 (등록 전까지 푸시 불가)"
 
 # 푸시가 허용된 `rule_id`.
@@ -96,12 +111,8 @@ PUSH_ALLOWED_RULES: frozenset[str] = frozenset(
         # 계좌 한도
         "mdd_limit_warn",
         "mdd_limit_critical",
-        # 생존·사망·복구 — C7 이 명시적으로 허용하며 뮤트도 관통한다(C5: 이 경로 무영향).
-        "data_stall",
-        "engine_liveness",
-        "job_backoff_stuck",
-        "infra_capacity",
-        "process_restarted",
+        # 생존·사망·복구는 여기 없다 — LIVENESS_DEMOTED_RULES 로 강등됐다.
+        # 관측은 계속되며 진단 API·로그로 조회한다.
     }
 )
 
@@ -123,6 +134,8 @@ def evaluate_rule(rule_id: str) -> PushDecision:
     """`AlertCandidate` 경로의 관문. 모든 발송이 여기를 지나야 한다."""
     if rule_id in DEMOTED_RULES:
         return PushDecision(allowed=False, reason=DEMOTION_REASON, rule_id=rule_id)
+    if rule_id in LIVENESS_DEMOTED_RULES:
+        return PushDecision(allowed=False, reason=LIVENESS_DEMOTION_REASON, rule_id=rule_id)
     if rule_id in PUSH_ALLOWED_RULES:
         return PushDecision(allowed=True, reason="", rule_id=rule_id)
     return PushDecision(allowed=False, reason=UNREGISTERED_REASON, rule_id=rule_id)
@@ -144,6 +157,8 @@ def registry_snapshot() -> dict[str, Any]:
         "allowed_rules": sorted(PUSH_ALLOWED_RULES),
         "demoted_rules": sorted(DEMOTED_RULES),
         "demotion_reason": DEMOTION_REASON,
+        "liveness_demoted_rules": sorted(LIVENESS_DEMOTED_RULES),
+        "liveness_demotion_reason": LIVENESS_DEMOTION_REASON,
         "paper_event_kinds": sorted(TELEGRAM_SENDABLE_KINDS),
         "note": "강등은 발송 경로만이다. 수집·저장·조회는 그대로 유지된다(C2).",
     }

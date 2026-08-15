@@ -111,9 +111,6 @@ def test_blocked_whale_candidate_is_recorded_not_silently_dropped(monkeypatch) -
         "take_profit_hit",
         "position_opened",
         "position_closed",
-        "engine_liveness",
-        "process_restarted",
-        "data_stall",
         "periodic_pulse",
     ],
 )
@@ -122,20 +119,37 @@ def test_existing_alerts_still_pass(rule_id: str) -> None:
     assert delivery_gate.evaluate_rule(rule_id).allowed is True, f"{rule_id} 가 차단됐다"
 
 
+def test_liveness_family_is_demoted() -> None:
+    """생존·사망 계열은 **의도적으로** 막혀 있다 (사용자 지시 2026-08-16).
+
+    감시는 그대로 돌고 발송만 뺐다 — 판정은 진단 API·로그로 조회한다.
+    이 테스트가 깨지면 생존 푸시가 되살아난 것이다.
+    """
+    for rule in ("engine_liveness", "process_restarted", "data_stall", "infra_capacity", "job_backoff_stuck"):
+        decision = delivery_gate.evaluate_rule(rule)
+        assert decision.allowed is False, f"{rule} 이 다시 푸시된다"
+        assert decision.reason == delivery_gate.LIVENESS_DEMOTION_REASON
+
+
 def test_every_default_enabled_rule_is_classified() -> None:
     """기본 활성 rule 이 레지스트리에 없으면 배포와 동시에 조용히 끊긴다."""
     enabled = Settings().alert_enabled_rule_set
-    unclassified = enabled - delivery_gate.PUSH_ALLOWED_RULES - delivery_gate.DEMOTED_RULES
+    unclassified = enabled - delivery_gate.PUSH_ALLOWED_RULES - delivery_gate.DEMOTED_RULES - delivery_gate.LIVENESS_DEMOTED_RULES
 
     assert unclassified == set(), f"미분류 rule_id: {sorted(unclassified)}"
 
 
-def test_only_whale_is_blocked_among_default_rules() -> None:
-    """예상 밖 차단이 있으면 즉시 드러나야 한다 — 이 목록이 곧 배포 전 확인표다."""
+def test_blocked_rules_are_exactly_the_intended_set() -> None:
+    """예상 밖 차단이 있으면 즉시 드러나야 한다 — 이 목록이 곧 배포 전 확인표다.
+
+    2026-08-16 사용자 지시로 생존·사망 계열이 추가 강등됐다:
+    "하트비트 죽는거 그만 보고해. 살아있다는것도 보고하지마."
+    이 목록이 늘어나면 그것은 의도된 결정이어야 하며, 여기서 드러난다.
+    """
     enabled = Settings().alert_enabled_rule_set
     blocked = sorted(rule for rule in enabled if not delivery_gate.evaluate_rule(rule).allowed)
 
-    assert blocked == ["whale_entry"]
+    assert blocked == sorted({"whale_entry", *(delivery_gate.LIVENESS_DEMOTED_RULES & enabled)})
 
 
 # ── 4. 기본 차단 (구조적 결함 수리) ─────────────────────────────────────

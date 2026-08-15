@@ -43,9 +43,24 @@ read_env() {
   grep -E "^${key}=" "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d '"'"'"' \r'
 }
 
+# 사용자 지시(2026-08-16): 생존·사망·복구 푸시를 보내지 않는다.
+#   "하트비트 죽는거 그만 보고해. 살아있다는것도 보고하지마. 그게 아무런 도움이 안 돼."
+# 타당하다 — 죽었다는 알림을 받아도 사용자가 할 일이 없고(supervisor 가 자동 재시작한다),
+# 살아있다는 알림은 정보가 0이다. 실측 heartbeat_stale 156회 중 사용자 조치로 이어진 것은 없다.
+#
+# **감시는 그대로 돈다.** 판정·재시작·기록 전부 유지되고 발송만 로그로 돌린다(강등이지 삭제가 아님).
+# 조회: logs/deadman.log · logs/supervisor.log · GET /api/system/paper/diagnosis
+# 되돌리려면 FCE_DEADMAN_PUSH=1 로 실행한다.
+DEADMAN_PUSH="${FCE_DEADMAN_PUSH:-0}"
+
 send_telegram() {
   local text="$1"
   local token chat
+  if [[ "$DEADMAN_PUSH" != "1" ]]; then
+    log "생존 알림 미발송(푸시 강등) — 내용은 아래에 기록만 한다:"
+    printf '%s\n' "$text" >> "$DEADMAN_LOG"
+    return 0
+  fi
   token="$(read_env FCE_TELEGRAM_BOT_TOKEN)"; [[ -z "$token" ]] && token="$(read_env TELEGRAM_BOT_TOKEN)"
   chat="$(read_env FCE_TELEGRAM_CHAT_ID)";    [[ -z "$chat"  ]] && chat="$(read_env TELEGRAM_CHAT_ID)"
   if [[ -z "$token" || -z "$chat" ]]; then

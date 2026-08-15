@@ -163,7 +163,16 @@ def test_liveness_snapshot_is_written_atomically_for_external_watchdog(tmp_path)
 
 @pytest.mark.asyncio
 async def test_liveness_alerts_pierce_mute(tmp_path) -> None:
-    """뮤트는 조건 알림만 끈다. 사망 신호까지 끄면 침묵이 스스로를 은폐한다."""
+    """생존·사망 신호는 **더 이상 푸시되지 않는다** (사용자 지시 2026-08-16).
+
+    이 테스트는 원래 "뮤트를 관통해 사망 알림이 도착한다"를 고정했다. 그 설계의 근거는
+    "침묵이 스스로를 은폐한다"였고 당시엔 옳았다. 그러나 실측 156회의 사망 푸시 중
+    사용자 조치로 이어진 것이 없었고, 사용자가 명시적으로 중단을 지시했다:
+    "죽은건 보내봤자 내가 그걸 보고 어떠한 인사이트도 얻을 수가 없잖아."
+
+    은폐 방지는 발송이 아니라 **조회**로 담보한다 — 진단 API·로그·덤프.
+    이 테스트는 이제 "생존 신호가 발송되지 않는다"를 고정한다.
+    """
     settings = _settings(tmp_path)
     state = NotificationState()
     state.muted_until = datetime.now(timezone.utc) + timedelta(hours=6)
@@ -183,12 +192,13 @@ async def test_liveness_alerts_pierce_mute(tmp_path) -> None:
 
     delivered = await engine.evaluate_liveness_alerts(candidates)
 
-    assert delivered == 1, "뮤트 상태에서도 사망 알림은 도착해야 한다"
-    assert "트랙 정지" in sent[0]
+    assert candidates, "감시 자체는 계속 후보를 만들어야 한다 — 강등이지 삭제가 아니다"
+    assert delivered == 0, "생존·사망 신호가 다시 발송된다"
+    assert sent == []
 
 
 @pytest.mark.asyncio
-async def test_daily_summary_sends_liveness_lines_even_when_muted(tmp_path) -> None:
+async def test_daily_summary_is_silent_when_muted(tmp_path) -> None:
     settings = _settings(tmp_path)
     state = NotificationState()
     state.muted_until = datetime.now(timezone.utc) + timedelta(hours=6)
@@ -211,9 +221,10 @@ async def test_daily_summary_sends_liveness_lines_even_when_muted(tmp_path) -> N
 
     count = await engine.maybe_send_daily_summary({"positions": []}, ["<b>트랙 생존</b>", "• 크립토 페이퍼: 🟢 정상"])
 
-    assert count == 1
-    assert "트랙 생존" in sent[0]
-    assert "뮤트 중" in sent[0]
+    # 뮤트 중에는 아무것도 보내지 않는다. 예전에는 생존 라인만 관통시켰는데,
+    # 그것이 정확히 사용자가 없애달라고 한 신호다(2026-08-16).
+    assert count == 0
+    assert sent == []
 
 
 # ── D1: 단일 실패점 제거 ────────────────────────────────────────────
