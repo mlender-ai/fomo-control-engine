@@ -22,6 +22,7 @@ from app.db.models import (
     utc_now,
 )
 from app.exchange.bitget.trades import timeframe_seconds
+from app.paper import window as paper_window
 from app.paper.policy import (
     PaperPolicy,
     apply_exit_decision,
@@ -679,18 +680,30 @@ def paper_scoreboard(repo: Any, settings: Any, *, now: datetime | None = None) -
     all_paper_closed = [item for item in all_paper if item.status == "closed" and item.exit_reason != "duplicate_bootstrap_suppressed"]
     effective_start = started_at or min((item.entry_at for item in all_paper), default=now)
     recent_start = now - timedelta(days=28)
-    comparison_paper = [trade for trade in all_paper_closed if trade.entry_at >= effective_start]
-    comparison_user = repo.list_user_trades(since=effective_start, limit=5000)
-    recent_paper = [trade for trade in all_paper_closed if (trade.exit_at or trade.updated_at) >= recent_start]
-    recent_user = repo.list_user_trades(since=recent_start, limit=5000)
+    # 결정 2: 엔진과 사용자에 **같은 술어**를 건다 — entry_at >= 앵커 AND exit_at 존재.
+    # 두 곳에 각각 구현하면 다시 갈라진다(실측: 술어 차이만으로 사용자 성적이
+    # +36.18%/PF 1.87 ↔ +17.57%/PF 0.55 로 뒤바뀌었다). 정본: app/paper/window.py
+    comparison_paper = paper_window.filter_trades(all_paper_closed, start=effective_start)
+    comparison_user = paper_window.filter_trades(repo.list_user_trades(limit=5000), start=effective_start)
+    recent_paper = paper_window.filter_trades(all_paper_closed, start=recent_start)
+    recent_user = paper_window.filter_trades(repo.list_user_trades(limit=5000), start=recent_start)
     paper_metrics = _paper_metrics(comparison_paper)
     user_metrics = _user_metrics(comparison_user)
     recent_engine = _paper_metrics(recent_paper)
     recent_user_metrics = _user_metrics(recent_user)
     sample_sufficient = bool(paper_metrics["sample_sufficient"] and user_metrics["sample_sufficient"])
-    engine_leading = bool(
-        sample_sufficient and paper_metrics["net_return_pct"] > user_metrics["net_return_pct"] and paper_metrics["mdd_pct"] <= user_metrics["mdd_pct"]
-    )
+    # WO-FCE-METRIC-TRUTH-01 결정 4 — **엔진 vs 사용자 우열은 지금 판정할 수 없다.**
+    #
+    # 자본 기준이 다르다. 엔진은 증거금 500 USDT 가 확정돼 있고, 사용자 운용 자본은 산출 불가다
+    # (계좌 잔고 테이블 없음 · 레버리지 미기록). 자본이 다른 두 계열의 **절대 금액을 비교하면
+    # 규모가 큰 쪽이 자동으로 유리**해지고, 그것은 실력 비교가 아니다.
+    #
+    # 이전 구현은 퍼센트 단순합끼리 비교했는데, 그 지표 자체가 틀렸다는 것이 이 WO 의 출발점이다
+    # (사용자 실제 -261.85 USDT 를 +17.57% 로 표시). 틀린 지표로 우열을 매기면 우열도 틀린다.
+    #
+    # 그래서 판정하지 않는다. 사용자 자본이 확보되면 그때 자본 대비 수익률로 비교한다.
+    engine_leading = None
+    comparison_blocked_reason = "사용자 운용 자본 미산출 — 자본 기준이 다른 두 계열의 절대 금액은 비교할 수 없다. 절대 기준(PF>1·기대값>0)이 선행 조건이다."
     paper_win_rate = _float(paper_metrics.get("win_rate_pct"))
     poor = bool(
         paper_metrics["trade_count"] > 0
@@ -721,7 +734,8 @@ def paper_scoreboard(repo: Any, settings: Any, *, now: datetime | None = None) -
             "engine": paper_metrics,
             "user": user_metrics,
             "engine_leading": engine_leading,
-            "verdict": "insufficient_samples" if not sample_sufficient else "engine_leading" if engine_leading else "no_engine_advantage",
+            "verdict": "comparison_unavailable",
+            "comparison_blocked_reason": comparison_blocked_reason,
             "equity_curve": {
                 "engine": _paper_equity_curve(comparison_paper),
                 "user": _user_equity_curve(comparison_user),
@@ -741,7 +755,8 @@ def paper_scoreboard(repo: Any, settings: Any, *, now: datetime | None = None) -
             "engine": paper_metrics,
             "user": user_metrics,
             "engine_leading": engine_leading,
-            "verdict": "insufficient_samples" if not sample_sufficient else "engine_leading" if engine_leading else "no_engine_advantage",
+            "verdict": "comparison_unavailable",
+            "comparison_blocked_reason": comparison_blocked_reason,
         },
         "poor_performance": poor,
         "autonomy_actions": [item.model_dump(mode="json") for item in autonomy],
@@ -1572,28 +1587,69 @@ def _qualified_signature(repo: Any, settings: Any, analysis: dict[str, Any], pay
     return _dict(_signature_gate_evaluation(repo, settings, analysis, payload, direction).get("qualified")) or None
 
 
+def engine_capital_usdt(policy: PaperPolicy | None = None) -> float:
+    """엔진 운용 자본 = 증거금 × 최대 동시 슬롯.
+
+    하드코딩하지 않는다 — 설정이 바뀌면 자본도 바뀐다(결정 1).
+    """
+    active = policy or PaperPolicy()
+    return float(active.margin_usdt) * float(active.max_open_positions)
+
+
+# 사용자 운용 자본은 **산출할 수 없다**(C5).
+#
+# 계좌 잔고 테이블이 없고, `user_trades` payload 에 레버리지가 없어 명목에서 증거금을 역산할
+# 수도 없다. 확보 가능한 것은 진입 명목뿐이며 그것은 자본이 아니다.
+# 추정치로 채우면 그 순간 이 WO 가 고치려는 오류를 다시 만드는 것이다.
+USER_CAPITAL_NOTE = "사용자 운용 자본 미산출 — 계좌 잔고 테이블 없음, 레버리지 미기록으로 증거금 역산 불가"
+
+
 def _paper_metrics(trades: Iterable[PaperTrade]) -> dict[str, Any]:
     audited_rows = list(trades)
     invalid_rows = [trade for trade in audited_rows if _is_pre_tp_pressure_exit(trade)]
     rows = [trade for trade in audited_rows if not _is_pre_tp_pressure_exit(trade)]
-    returns = [trade.net_return_pct for trade in sorted(rows, key=lambda item: item.exit_at or item.updated_at)]
-    scored = [trade for trade in rows if trade.exit_reason not in {"time_stop", "time_decay"}]
-    wins = [trade for trade in scored if trade.net_pnl_usdt > 0]
+    ordered = sorted(rows, key=lambda item: item.exit_at or item.updated_at)
+    returns = [trade.net_return_pct for trade in ordered]
+    amounts = [float(trade.net_pnl_usdt) for trade in ordered]
+    # 결정 3: time_decay·time_stop 을 계수에서 빼지 않는다. 실제로 발생한 결과다.
+    neutral = [trade for trade in rows if trade.exit_reason in {"time_stop", "time_decay"}]
+    wins = [trade for trade in rows if trade.net_pnl_usdt > 0]
     gross_profit = sum(max(0.0, trade.net_pnl_usdt) for trade in rows)
     gross_loss = abs(sum(min(0.0, trade.net_pnl_usdt) for trade in rows))
-    metrics = _metric_payload(returns, len(wins), gross_profit, gross_loss, scored_count=len(scored), neutral_count=len(rows) - len(scored))
+    metrics = _metric_payload(
+        returns,
+        len(wins),
+        gross_profit,
+        gross_loss,
+        scored_count=len(rows),
+        neutral_count=len(neutral),
+        pnl_usdt=amounts,
+        capital_usdt=engine_capital_usdt(),
+        capital_note="증거금 × 최대 동시 슬롯",
+    )
     metrics["audited_trade_count"] = len(audited_rows)
     metrics["policy_invalid_count"] = len(invalid_rows)
     return metrics
 
 
 def _user_metrics(trades: Iterable[Any]) -> dict[str, Any]:
-    rows = list(trades)
-    returns = [float(trade.net_return_pct) for trade in sorted(rows, key=lambda item: item.exit_at)]
+    rows = sorted(list(trades), key=lambda item: item.exit_at)
+    returns = [float(trade.net_return_pct) for trade in rows]
+    amounts = [float(trade.net_pnl_usdt) for trade in rows]
     wins = [trade for trade in rows if float(trade.net_pnl_usdt) > 0]
     gross_profit = sum(max(0.0, float(trade.net_pnl_usdt)) for trade in rows)
     gross_loss = abs(sum(min(0.0, float(trade.net_pnl_usdt)) for trade in rows))
-    return _metric_payload(returns, len(wins), gross_profit, gross_loss, scored_count=len(rows), neutral_count=0)
+    return _metric_payload(
+        returns,
+        len(wins),
+        gross_profit,
+        gross_loss,
+        scored_count=len(rows),
+        neutral_count=0,
+        pnl_usdt=amounts,
+        capital_usdt=None,
+        capital_note=USER_CAPITAL_NOTE,
+    )
 
 
 def _metric_payload(
@@ -1604,32 +1660,74 @@ def _metric_payload(
     *,
     scored_count: int,
     neutral_count: int,
+    pnl_usdt: list[float] | None = None,
+    capital_usdt: float | None = None,
+    capital_note: str | None = None,
 ) -> dict[str, Any]:
+    """성과 지표 (WO-FCE-METRIC-TRUTH-01 결정 1·3).
+
+    ## 퍼센트 단순합은 성과 지표가 아니다
+
+    이전 정본은 `sum(returns)` — 거래별 퍼센트의 단순 합이었다. 복리도 자본 가중도 아니다.
+    사이즈가 다른 거래에 대해 **금융적 의미가 없다.**
+
+    실측 2026-08-16: 사용자 진입 명목이 11~3,021 USDT 로 **267배** 편차인데 퍼센트를 그냥
+    더해서, 실제로 **−261.85 USDT 를 잃은 것이 화면에 +17.57% 로 표시**됐다.
+    작은 포지션의 큰 %수익이 큰 포지션의 %손실을 상쇄했기 때문이다.
+
+    그래서 대표 지표를 **금액**으로 바꾸고, 자본 대비 수익률을 함께 낸다.
+    자본을 모르면 **`None` 이다** — 추정치로 채우지 않는다(C5).
+
+    `legacy_return_sum_pct` 로 옛 값을 **보존**한다(C4). 지우면 과거 화면과의 연속성이 끊겨
+    이번 같은 오류를 다시 찾지 못한다.
+
+    ## 모집단은 하나다 (결정 3)
+
+    승률·손익비·PF·수익률을 **같은 거래 집합** 위에서 계산한다. 승률만 채점군(19건),
+    수익률은 전체(29건) 위에서 재던 구조가 "손익비 0.42" 오류의 직접 원인이었다.
+    `neutral_count` 는 관측 정보로 계속 표시하되 **계수에서 빼지 않는다.**
+    """
+    # 미제공(None)과 "제공됐으나 0건"([])을 구분한다. 0건이면 손익은 모르는 게 아니라 0이다.
+    amounts = None if pnl_usdt is None else list(pnl_usdt)
+    # 낙폭은 금액 곡선에서 잰다 — 퍼센트 곡선의 낙폭은 사이즈가 다르면 의미가 흐려진다.
+    curve = amounts if amounts is not None else returns
     equity = peak = 0.0
     mdd = 0.0
-    for value in returns:
+    for value in curve:
         equity += value
         peak = max(peak, equity)
         mdd = max(mdd, peak - equity)
     count = len(returns)
+    net_pnl = round(sum(amounts), 4) if amounts is not None else None
+    roc = round(net_pnl / capital_usdt * 100.0, 4) if (net_pnl is not None and capital_usdt) else None
     return {
-        "net_return_pct": round(sum(returns), 4),
-        "win_rate_pct": round((wins / scored_count) * 100.0, 2) if scored_count else None,
+        # 대표 지표 — 가감 없는 사실
+        "net_pnl_usdt": net_pnl,
+        "return_on_capital_pct": roc,
+        "capital_usdt": capital_usdt,
+        "capital_note": capital_note,
+        # 강등 보존 (C4) — 성과 대표 자리에서 내렸지만 값은 남긴다
+        "legacy_return_sum_pct": round(sum(returns), 4),
+        "win_rate_pct": round((wins / count) * 100.0, 2) if count else None,
         "profit_factor": round(gross_profit / gross_loss, 4) if gross_loss > 0 else None,
-        "mdd_pct": round(mdd, 4),
+        "mdd_usdt": round(mdd, 4) if amounts is not None else None,
+        "mdd_pct": round(mdd / capital_usdt * 100.0, 4) if (amounts is not None and capital_usdt) else None,
+        "legacy_mdd_return_sum_pct": None,
         "trade_count": count,
-        "scored_trade_count": scored_count,
+        "scored_trade_count": count,
         "neutral_count": neutral_count,
-        "sample_sufficient": scored_count >= 10,
+        "population": "all_closed_in_window",
+        "sample_sufficient": count >= 10,
     }
 
 
 def _paper_equity_curve(trades: Iterable[PaperTrade]) -> list[dict[str, Any]]:
-    return _return_curve(((trade.exit_at or trade.updated_at, float(trade.net_return_pct)) for trade in trades if not _is_pre_tp_pressure_exit(trade)))
+    """자산 곡선도 **금액 기준**이다 — 낙폭을 금액으로 재는데 곡선만 퍼센트면 둘이 어긋난다."""
+    return _return_curve(((trade.exit_at or trade.updated_at, float(trade.net_pnl_usdt)) for trade in trades if not _is_pre_tp_pressure_exit(trade)))
 
 
 def _user_equity_curve(trades: Iterable[Any]) -> list[dict[str, Any]]:
-    return _return_curve(((trade.exit_at, float(trade.net_return_pct)) for trade in trades))
+    return _return_curve(((trade.exit_at, float(trade.net_pnl_usdt)) for trade in trades))
 
 
 def _return_curve(points: Iterable[tuple[datetime, float]]) -> list[dict[str, Any]]:
@@ -1637,7 +1735,7 @@ def _return_curve(points: Iterable[tuple[datetime, float]]) -> list[dict[str, An
     curve: list[dict[str, Any]] = []
     for timestamp, value in sorted(points, key=lambda item: item[0]):
         total += value
-        curve.append({"ts": timestamp.isoformat(), "return_pct": round(total, 4)})
+        curve.append({"ts": timestamp.isoformat(), "pnl_usdt": round(total, 4), "return_pct": round(total, 4)})
     return curve
 
 

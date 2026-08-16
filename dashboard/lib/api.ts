@@ -2158,13 +2158,22 @@ export type PaperTrade = {
 };
 
 export type PaperMetrics = {
-  net_return_pct: number;
+  /** 대표 지표 — 금액. WO-FCE-METRIC-TRUTH-01 결정 1. */
+  net_pnl_usdt: number | null;
+  /** 자본 대비 수익률. 자본을 모르면 null (추정하지 않는다). */
+  return_on_capital_pct: number | null;
+  capital_usdt: number | null;
+  capital_note: string | null;
+  /** 강등 보존 — 옛 퍼센트 단순합. 성과 대표 자리에서 내렸다. */
+  legacy_return_sum_pct: number;
   win_rate_pct: number | null;
   profit_factor: number | null;
-  mdd_pct: number;
+  mdd_usdt: number | null;
+  mdd_pct: number | null;
   trade_count: number;
   scored_trade_count: number;
   neutral_count: number;
+  population?: string;
   audited_trade_count?: number;
   policy_invalid_count?: number;
   sample_sufficient: boolean;
@@ -2235,8 +2244,10 @@ export type PaperDashboard = {
       started_at: string;
       engine: PaperMetrics;
       user: PaperMetrics;
-      engine_leading: boolean;
+      /** 자본 기준이 다르면 우열 판정 불가 — null 이 정상값이다(결정 4). */
+      engine_leading: boolean | null;
       verdict: string;
+      comparison_blocked_reason?: string;
       equity_curve: { engine: Array<{ ts: string; return_pct: number }>; user: Array<{ ts: string; return_pct: number }> };
     };
     recent_28d: {

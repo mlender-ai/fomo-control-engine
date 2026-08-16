@@ -283,26 +283,31 @@ function BattleView({ data, whales, starting, onStart }: { data: PaperDashboard;
       <section className="engineBattleHero">
         <div>
           <span className="engineSectionLabel">대결 기간 판정 · {shortDate(competition.started_at)} 이후</span>
-          <strong className={competition.engine_leading ? "positive" : "neutral"}>{competition.engine_leading ? "엔진 우세" : competition.verdict === "insufficient_samples" ? "표본 부족" : "우세 미확정"}</strong>
+          <strong className="neutral">{competition.engine_leading === null ? "우열 판정 보류" : competition.engine_leading ? "엔진 우세" : "우세 미확정"}</strong>
           <small>엔진 채점 N={competition.engine.scored_trade_count} · 나 채점 N={competition.user.scored_trade_count}</small>
           {competition.engine.policy_invalid_count ? <small>정책 오류 표본 {competition.engine.policy_invalid_count}건 성과 제외</small> : null}
           {!competition.engine.sample_sufficient || !competition.user.sample_sufficient ? <small>각 N≥10 전까지 우세 판정 유보</small> : null}
         </div>
         <EquityComparison engine={competition.equity_curve.engine} user={competition.equity_curve.user} />
       </section>
-      <div className="engineWindowHeader"><strong>대결 기간 성과</strong><span>판정용 · 동일 시작 앵커</span></div>
+      <div className="engineWindowHeader">
+        <strong>대결 기간 성과</strong>
+        <span>진입·청산이 모두 창 안인 거래만 · 중립 포함 단일 모집단</span>
+      </div>
       <section className="engineMetricGrid">
-        <ComparisonMetric label="수익률" engine={pct(competition.engine.net_return_pct)} user={pct(competition.user.net_return_pct)} />
+        <ComparisonMetric label="손익 (USDT)" engine={usdt(competition.engine.net_pnl_usdt)} user={usdt(competition.user.net_pnl_usdt)} />
+        <ComparisonMetric label="자본 대비" engine={capitalReturn(competition.engine)} user={capitalReturn(competition.user)} />
         <ComparisonMetric label="승률" engine={winRate(competition.engine)} user={winRate(competition.user)} />
         <ComparisonMetric label="수익팩터" engine={ratio(competition.engine.profit_factor)} user={ratio(competition.user.profit_factor)} />
-        <ComparisonMetric label="최대 낙폭" engine={pct(competition.engine.mdd_pct)} user={pct(competition.user.mdd_pct)} inverse />
+        <ComparisonMetric label="최대 낙폭 (USDT)" engine={magnitude(competition.engine.mdd_usdt)} user={magnitude(competition.user.mdd_usdt)} inverse />
       </section>
+      <MetricDefinitionNote engine={competition.engine} user={competition.user} reason={competition.comparison_blocked_reason} />
       <div className="engineWindowHeader"><strong>최근 28일 참고 성과</strong><span>표시용 · 대결 판정에 미사용</span></div>
       <section className="engineMetricGrid engineRecentMetrics">
-        <ComparisonMetric label="수익률" engine={pct(recent.engine.net_return_pct)} user={pct(recent.user.net_return_pct)} />
+        <ComparisonMetric label="손익 (USDT)" engine={usdt(recent.engine.net_pnl_usdt)} user={usdt(recent.user.net_pnl_usdt)} />
         <ComparisonMetric label="승률" engine={winRate(recent.engine)} user={winRate(recent.user)} />
         <ComparisonMetric label="종료 거래" engine={`N=${recent.engine.trade_count}`} user={`N=${recent.user.trade_count}`} />
-        <ComparisonMetric label="중립 종료" engine={`N=${recent.engine.neutral_count}`} user={`N=${recent.user.neutral_count}`} />
+        <ComparisonMetric label="중립 종료(계수 포함)" engine={`N=${recent.engine.neutral_count}`} user={`N=${recent.user.neutral_count}`} />
       </section>
       <p className="engineFairnessNote">{board.fairness_note} · N은 종료 거래 수입니다.</p>
       <WhaleBenchmarkReference data={whales} />
@@ -769,8 +774,28 @@ function direction(value: string): string { return value === "long" ? "롱" : "�
 function exitReason(value: string | null): string { return ({ invalidation_breach: "무효화 이탈", breakeven_stop: "본전 스탑", opposite_stance_flip: "반대 스탠스 전환", take_profit_pressure: "익절 압력 지속", take_profit_2: "익절2 도달", time_decay: "시간 감쇠 · 중립", time_stop: "기존 시간 종료 · 중립" } as Record<string,string>)[value ?? ""] ?? "기록 없음"; }
 function pct(value: number): string { return `${value > 0 ? "+" : ""}${Number(value || 0).toFixed(2)}%`; }
 function signedPct(value: number): string { return `${value > 0 ? "+" : ""}${Number(value || 0).toFixed(2)}%`; }
+function MetricDefinitionNote({ engine, user, reason }: { engine: PaperDashboard["scoreboard"]["engine"]; user: PaperDashboard["scoreboard"]["engine"]; reason?: string }) {
+  return (
+    <section className="metricDefinitionNote" data-testid="metric-definition-note">
+      <p><b>표시 정의</b> — 손익은 금액(USDT)이 대표값입니다. 퍼센트 단순합은 사이즈가 다른 거래에서 부호까지 뒤집혀 성과 지표에서 내렸습니다.</p>
+      <p>모집단: 진입·청산이 모두 창 안인 청산 거래 전량(중립 포함). 승률·수익팩터·손익·낙폭이 같은 집합 위에서 계산됩니다.</p>
+      <p>엔진 N={engine.trade_count} (중립 {engine.neutral_count}) · 나 N={user.trade_count} (중립 {user.neutral_count})</p>
+      {user.capital_note ? <p className="metricCaveat">⚠️ {user.capital_note}</p> : null}
+      {reason ? <p className="metricCaveat">⚠️ 우열 판정 보류 — {reason}</p> : null}
+      <p className="metricLegacy">참고(구 정의, 퍼센트 단순합): 엔진 {engine.legacy_return_sum_pct.toFixed(2)}% · 나 {user.legacy_return_sum_pct.toFixed(2)}%</p>
+    </section>
+  );
+}
+
+function usdt(value: number | null): string { return value === null ? "미산출" : `${value > 0 ? "+" : ""}${Number(value).toFixed(2)}`; }
+// 낙폭은 손실의 크기다 — 부호를 붙이면 "+81.61 낙폭"처럼 이익으로 읽힌다.
+function magnitude(value: number | null): string { return value === null ? "미산출" : Number(value).toFixed(2); }
+// 자본을 모르면 "미산출"이다 — 추정치로 채우지 않는다(WO-FCE-METRIC-TRUTH-01 C5).
+function capitalReturn(m: PaperDashboard["scoreboard"]["engine"]): string {
+  return m.return_on_capital_pct === null ? `미산출 (자본 미상)` : `${pct(m.return_on_capital_pct)} · 자본 ${Number(m.capital_usdt).toFixed(0)}`;
+}
 function ratio(value: number | null): string { return value === null ? "유보" : Number(value).toFixed(2); }
-function winRate(value: PaperDashboard["scoreboard"]["engine"]): string { return value.sample_sufficient && value.win_rate_pct !== null ? pct(value.win_rate_pct) : `유보 · N=${value.scored_trade_count}`; }
+function winRate(value: PaperDashboard["scoreboard"]["engine"]): string { return value.sample_sufficient && value.win_rate_pct !== null ? `${Number(value.win_rate_pct).toFixed(2)}%` : `유보 · N=${value.scored_trade_count}`; }
 function isNeutralExit(value: string | null): boolean { return value === "time_stop" || value === "time_decay"; }
 function isPolicyInvalid(trade: PaperTrade): boolean { return trade.loss_tags.includes("policy_invalid:pre_tp_pressure_exit"); }
 function isNeutralTrade(trade: PaperTrade): boolean { return isNeutralExit(trade.exit_reason) || isPolicyInvalid(trade); }

@@ -172,7 +172,7 @@ def test_sync_persists_all_closed_trades_and_splits_benchmark_from_recent_window
     board = paper_scoreboard(reopened, Settings(), now=BASE + timedelta(hours=14))
     assert board["user"]["trade_count"] == 1
     assert board["recent_28d"]["user"]["trade_count"] == 2
-    assert board["user"]["net_return_pct"] > 0
+    assert board["user"]["net_pnl_usdt"] > 0
     assert board["user_fill_sync"]["pnl_status"] == "reconstructed"
 
 

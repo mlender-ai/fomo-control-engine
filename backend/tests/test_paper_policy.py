@@ -296,7 +296,7 @@ def test_legacy_pre_tp_pressure_exit_is_audited_and_excluded_from_benchmark() ->
     assert scoreboard["engine"]["trade_count"] == 0
     assert scoreboard["engine"]["audited_trade_count"] == 1
     assert scoreboard["engine"]["policy_invalid_count"] == 1
-    assert scoreboard["engine"]["net_return_pct"] == 0
+    assert scoreboard["engine"]["net_pnl_usdt"] == 0
     assert scoreboard["equity_curve"]["engine"] == []
 
 
@@ -1043,13 +1043,14 @@ def test_scoreboard_compares_ratios_and_never_enables_live_orders() -> None:
     repo.upsert_paper_trade(closed)
     result = paper_scoreboard(repo, _settings(), now=BASE_TIME + timedelta(days=1))
     assert result["engine"]["trade_count"] == 1
-    assert result["engine"]["net_return_pct"] > 0
-    assert result["equity_curve"]["engine"][-1]["return_pct"] == result["engine"]["net_return_pct"]
+    assert result["engine"]["net_pnl_usdt"] > 0
+    # 자산 곡선도 금액 기준이다 — 낙폭을 금액으로 재는데 곡선만 퍼센트면 둘이 어긋난다.
+    assert result["equity_curve"]["engine"][-1]["pnl_usdt"] == result["engine"]["net_pnl_usdt"]
     assert result["live_orders_enabled"] is False
     assert "대결 판정" in result["fairness_note"]
 
 
-def test_time_decay_is_neutral_and_excluded_from_win_rate() -> None:
+def test_time_decay_is_counted_but_labelled_neutral() -> None:
     repo = MemoryRepository()
     trade = open_trade(
         trade_id=TRADE_ID,
@@ -1083,12 +1084,21 @@ def test_time_decay_is_neutral_and_excluded_from_win_rate() -> None:
 
     metrics = paper_scoreboard(repo, _settings(), now=BASE_TIME + timedelta(days=1))["engine"]
 
+    # WO-FCE-METRIC-TRUTH-01 결정 3: time_decay 를 **계수에서 빼지 않는다.**
+    #
+    # 이 테스트는 원래 "중립은 승률 분모에서 제외"를 고정했다. 그 구조가
+    # "승률은 19건 · 수익률은 29건" 이라는 모집단 분리를 만들었고, 그것이
+    # EXPECTANCY-01 의 손익비 0.42 오류의 직접 원인이었다.
+    #
+    # 게다가 실측에서 제외되던 time_decay 10건은 합계 **+6.73%(양수)** 였다 —
+    # 빠지는 것이 손실이 아니라 이익이었다. 결과를 범주 이름으로 지우면 안 된다.
+    # neutral_count 는 관측 정보로 계속 표시하되 분모에서는 빼지 않는다.
     assert closed.exit_reason == "time_decay"
     assert closed.net_pnl_usdt > 0
     assert metrics["trade_count"] == 1
-    assert metrics["scored_trade_count"] == 0
-    assert metrics["neutral_count"] == 1
-    assert metrics["win_rate_pct"] is None
+    assert metrics["scored_trade_count"] == 1, "중립을 계수에서 빼면 모집단이 다시 갈라진다"
+    assert metrics["neutral_count"] == 1, "관측 정보로는 계속 보여야 한다"
+    assert metrics["win_rate_pct"] == 100.0
 
 
 def test_benchmark_anchor_and_manual_tracking_join_paper_universe() -> None:
