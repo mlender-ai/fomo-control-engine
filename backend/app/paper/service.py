@@ -736,6 +736,9 @@ def paper_scoreboard(repo: Any, settings: Any, *, now: datetime | None = None) -
             "engine_leading": engine_leading,
             "verdict": "comparison_unavailable",
             "comparison_blocked_reason": comparison_blocked_reason,
+            # 표본 충분 여부는 우열 판정과 별개로 계속 관측한다 — 판정을 보류했다고
+            # 표본 상태까지 안 보이면 "언제 판정 가능해지는지"를 알 수 없다.
+            "sample_sufficient": sample_sufficient,
             "equity_curve": {
                 "engine": _paper_equity_curve(comparison_paper),
                 "user": _user_equity_curve(comparison_user),
@@ -757,6 +760,7 @@ def paper_scoreboard(repo: Any, settings: Any, *, now: datetime | None = None) -
             "engine_leading": engine_leading,
             "verdict": "comparison_unavailable",
             "comparison_blocked_reason": comparison_blocked_reason,
+            "sample_sufficient": sample_sufficient,
         },
         "poor_performance": poor,
         "autonomy_actions": [item.model_dump(mode="json") for item in autonomy],
