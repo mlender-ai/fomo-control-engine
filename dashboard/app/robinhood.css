@@ -5520,3 +5520,18 @@ textarea:focus {
 .metricDefinitionNote b { color: var(--rh-white); }
 .metricDefinitionNote .metricCaveat { color: var(--rh-red); }
 .metricDefinitionNote .metricLegacy { color: var(--rh-dim); }
+
+/* WO-FCE-POSITION-VIEW-01 — 근거 강도·상충을 숨기지 않는다. */
+.taLayerStatus.unconfirmed { border-color: var(--rh-amber); }
+.taLayerStatus .phaseUnconfirmed { color: var(--rh-amber); font-style: normal; font-weight: 600; }
+.taLayerStatus .phaseConflict { color: var(--rh-red); }
+.evidenceRoomConflict {
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--rh-red);
+  border-radius: var(--rh-radius-sm);
+  background: var(--rh-red-soft);
+  color: var(--rh-white);
+  font-size: var(--fce-type-xs);
+  line-height: 1.5;
+}

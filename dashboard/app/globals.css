@@ -1338,6 +1338,16 @@ h3 {
   white-space: nowrap;
 }
 
+/* 손익률 근거(방향·레버리지·출처)는 경고가 아니라 각주다 — 테두리 없이 낮은 대비로. */
+.verdictPnl small.verdictPnlBasis {
+  border: 0;
+  font-weight: 600;
+  padding: 1px 0;
+  white-space: normal;
+  /* 한국어 어절 중간에서 끊기면("증거 / 금 대비") 읽기 비용이 커진다. */
+  word-break: keep-all;
+}
+
 .stripIdentity {
   display: grid;
   gap: 3px;
@@ -5072,6 +5082,19 @@ button.actionPlanRow:not(:disabled):hover {
 .taLayerStatus small {
   color: var(--terminal-muted);
   font-size: 10px;
+  /* 근거 문장이 어절 중간에서 끊기면("상 / 승 추세") 읽기 비용이 커진다. */
+  word-break: keep-all;
+}
+
+/* 상충 경고는 한 줄을 다 쓴다 — 같은 행에 두면 옆 칸의 근거 문장이 눌려 찢어진다(실측). */
+.taLayerStatus .phaseConflict {
+  grid-column: 1 / -1;
+  color: var(--terminal-amber);
+}
+
+.taLayerStatus .phaseUnconfirmed {
+  color: var(--terminal-amber);
+  font-style: normal;
 }
 
 .taLayerStatusPager {
