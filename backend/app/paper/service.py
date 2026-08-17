@@ -52,8 +52,8 @@ ENTRY_GATE_VERSION = "pooled-signature-v1"
 CRYPTO_POLICY_PARAMETERS_PATH = Path(__file__).with_name("params") / "crypto-v2.json"
 
 
-def _crypto_policy_modes(path: Path = CRYPTO_POLICY_PARAMETERS_PATH) -> dict[str, str]:
-    """크립토 진입 게이트 모드 (WO-FCE-CORE-DEFECTS-01 Phase 1).
+def _crypto_policy_modes(path: Path = CRYPTO_POLICY_PARAMETERS_PATH) -> dict[str, Any]:
+    """크립토 진입 게이트 모드와 사이즈 파라미터 (WO-FCE-CORE-DEFECTS-01 · RISK-SIZING-01).
 
     파일이 없으면 빈 dict 를 돌려 `PaperPolicy` 기본값(= 기존 동작)이 유지된다 —
     옵트인이므로 파일을 지우면 즉시 이전 정책으로 되돌아간다.
@@ -62,7 +62,16 @@ def _crypto_policy_modes(path: Path = CRYPTO_POLICY_PARAMETERS_PATH) -> dict[str
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
-    return {key: str(payload[key]) for key in ("version", "stance_gate_mode", "signature_gate_mode") if isinstance(payload.get(key), str)}
+    modes: dict[str, Any] = {
+        key: str(payload[key]) for key in ("version", "stance_gate_mode", "signature_gate_mode", "sizing_mode") if isinstance(payload.get(key), str)
+    }
+    # WO-FCE-RISK-SIZING-01 Phase 1. 사이즈 파라미터도 같은 옵트인 파일에서 읽는다 —
+    # 파일을 지우면 고정 명목(기존 동작)으로 즉시 되돌아간다.
+    for key in ("risk_budget_usdt", "max_notional_usdt", "min_notional_usdt"):
+        value = payload.get(key)
+        if isinstance(value, (int, float)) and not isinstance(value, bool):
+            modes[key] = float(value)
+    return modes
 
 
 def policy_from_settings(settings: Any, asset_class: str = "crypto") -> PaperPolicy:

@@ -5,6 +5,14 @@
   "_rationale": {
     "stance_gate_mode": "flipped=True 요구 제거. flipped 는 flip 완료 봉의 단일 펄스라 진입 창이 1봉뿐이었다(실측 6.0%). 방향 일치 + 안정(transitioning 아님)으로 교체 — 주식 stock-v4 stance_gate_mode=stable_long 과 같은 원리이며 롱·숏 대칭으로 이식.",
     "signature_gate_mode": "검증 대상을 검증 조건으로 삼는 순환 봉쇄 해소. 페이퍼 진입 결과가 시그니처를 채점하는 표본인데, 검증된 시그니처를 진입 조건으로 요구하면 표본이 영원히 생기지 않는다. 주식 stock-v2 와 같은 수리.",
-    "unchanged": "evidence·checklist·invalidation_hygiene·risk_reward·liquidation_safety·earnings_clear·data_fresh 임계는 손대지 않는다(C1)."
-  }
+    "unchanged": "evidence·checklist·invalidation_hygiene·risk_reward·liquidation_safety·earnings_clear·data_fresh 임계는 손대지 않는다(C1).",
+    "sizing_mode": "고정 명목은 수량이 스톱 거리와 무관해 1R 의 금액가치가 스톱 거리에 비례했다(실측 CV 0.522 · 최대/최소 6.16배). 지는 거래의 스톱 거리가 1.28배 커서 같은 −1R 이 더 큰 금액 손실이 됐다. 리스크 기준으로 바꾸면 1R 금액이 예산 상수가 되어 R 회계와 금액 회계가 일치한다. 반사실 실측: R 합계 불변(−2.747R) · 금액 −47.06 → −6.87 · PF 0.591 → 0.835 · MDD 81.61 → 24.98.",
+    "risk_budget_usdt": "자본 500 의 0.5%. C7(리스크 확대 금지)에 따라 현재 평균 1R 금액 5.296 이하여야 하며 2.5 는 그 절반이다. 1.0%(5.0) 는 C7 을 만족하지만 상한에 걸리는 건수가 늘어 왜곡이 부분적으로 되살아난다(1R CV 0.006 → 0.202). 2.0%(10.0) 는 C7 위반이라 배제.",
+    "max_notional_usdt": "스톱 거리가 극히 작으면 수량이 발산한다. 예산 2.5 에서 이 표본의 최대 명목은 308 이라 600 상한에 걸리는 건수가 0 이다 — 상한이 사이징을 왜곡하지 않으면서 발산만 막는다. 현행 고정 명목 300 을 상한으로 쓰면 21/32 건이 걸려 왜곡이 되살아난다.",
+    "version": "진입 게이트 정책 버전이다. RISK-SIZING-01 은 사이즈만 바꾸고 진입 게이트를 건드리지 않으므로(C1) crypto-v2 를 유지한다. 사이즈는 sizing_mode 라는 별도 축이다."
+  },
+  "sizing_mode": "risk_based",
+  "risk_budget_usdt": 2.5,
+  "max_notional_usdt": 600.0,
+  "min_notional_usdt": 10.0
 }

@@ -39,6 +39,17 @@ class PaperPolicy:
     version: str = "crypto-v1"
     stance_gate_mode: str = "confirmed_flip"
     signature_gate_mode: str = "required"
+    # WO-FCE-RISK-SIZING-01 Phase 1. 기본값은 **기존 동작**(고정 명목)이며 옵트인이다.
+    #
+    # 고정 명목에서는 수량이 스톱 거리와 무관하게 정해진다. 그래서 1R 의 금액가치가
+    # 스톱 거리에 비례하고(실측 CV 0.522 · 최대/최소 6.16배), 스톱 거리가 1.28배 큰
+    # 지는 거래가 같은 −1R 로도 더 큰 금액을 잃는다. R 회계와 금액 회계가 어긋난다.
+    #
+    #   수량 = 리스크 예산 / |진입가 − 무효화가|  →  1R 금액 = 리스크 예산 (상수)
+    sizing_mode: str = "fixed_notional"
+    risk_budget_usdt: float = 2.5
+    max_notional_usdt: float = 600.0
+    min_notional_usdt: float = 10.0
 
     @property
     def execution_cost_rate(self) -> float:
@@ -135,6 +146,72 @@ def evaluate_entry(
     return EntryDecision(enter=not rejected, gates=gates, rejection_reasons=rejected, observations=observations)
 
 
+def plan_position_size(
+    *,
+    entry_price: float,
+    invalidation_price: float,
+    policy: PaperPolicy,
+) -> dict[str, Any]:
+    """수량을 정하고 **그 근거를 남긴다** (WO-FCE-RISK-SIZING-01 Phase 1 · C10).
+
+    `fixed_notional`(기본): 기존 동작. `notional = 증거금 × 레버리지`, 스톱 거리와 무관하다.
+    `risk_based`: `수량 = 리스크 예산 / |진입가 − 무효화가|`.
+
+    리스크 기준에서는 1R 의 금액가치가 스톱 거리와 무관하게 **리스크 예산 그 자체**가 된다.
+    그래서 R 합계의 부호가 곧 금액 합계의 부호가 된다 — 지금은 둘이 어긋나 있다.
+
+    **R 회계는 건드리지 않는다.** 수량이 s 배가 되면 손익도 비용도 계획 리스크도 같이 s 배가
+    되므로 R = 손익 / 계획리스크 는 불변이다. 반사실 산출에서 실측으로 확인했다(불변 −2.747R).
+
+    상한·하한에 걸리면 실제 리스크가 예산과 달라진다. 그 사실을 숨기지 않고 기록한다.
+    """
+    fallback_notional = policy.margin_usdt * policy.leverage
+    stop_distance = abs(entry_price - invalidation_price)
+
+    if policy.sizing_mode != "risk_based" or stop_distance <= 0.0 or entry_price <= 0.0:
+        # 무효화가가 없거나 진입가와 같으면 리스크를 나눌 수 없다. 기존 경로로 되돌린다.
+        reason = "mode:fixed_notional" if policy.sizing_mode != "risk_based" else "fallback:no_stop_distance"
+        return {
+            "mode": "fixed_notional",
+            "quantity": fallback_notional / entry_price,
+            "notional_usdt": fallback_notional,
+            "margin_usdt": policy.margin_usdt,
+            "stop_distance": stop_distance,
+            "stop_distance_pct": (stop_distance / entry_price * 100.0) if entry_price > 0 else None,
+            "risk_budget_usdt": None,
+            "planned_risk_usdt": stop_distance * (fallback_notional / entry_price),
+            "constraint": reason,
+        }
+
+    quantity = policy.risk_budget_usdt / stop_distance
+    notional = quantity * entry_price
+    constraint = "none"
+
+    # 스톱 거리가 극히 작으면 수량이 발산한다. 상한이 없으면 한 건이 계좌를 지운다.
+    if notional > policy.max_notional_usdt:
+        quantity = policy.max_notional_usdt / entry_price
+        notional = policy.max_notional_usdt
+        constraint = "max_notional"
+    elif notional < policy.min_notional_usdt:
+        # 거래소 최소 주문 미만. 리스크가 예산을 **넘게** 되므로 그 사실을 남긴다.
+        quantity = policy.min_notional_usdt / entry_price
+        notional = policy.min_notional_usdt
+        constraint = "min_notional"
+
+    return {
+        "mode": "risk_based",
+        "quantity": quantity,
+        "notional_usdt": notional,
+        "margin_usdt": notional / policy.leverage if policy.leverage > 0 else notional,
+        "stop_distance": stop_distance,
+        "stop_distance_pct": stop_distance / entry_price * 100.0,
+        "risk_budget_usdt": policy.risk_budget_usdt,
+        # 상한에 걸리면 실제 리스크가 예산과 다르다. 예산이 아니라 **실제**를 적는다.
+        "planned_risk_usdt": stop_distance * quantity,
+        "constraint": constraint,
+    }
+
+
 def open_trade(
     *,
     trade_id: UUID,
@@ -154,8 +231,13 @@ def open_trade(
     entry_atr: float | None = None,
     target_plan: dict[str, Any] | None = None,
 ) -> PaperTrade:
-    notional = policy.margin_usdt * policy.leverage
-    quantity = notional / bar.close
+    sizing = plan_position_size(
+        entry_price=bar.close,
+        invalidation_price=invalidation_price,
+        policy=policy,
+    )
+    notional = sizing["notional_usdt"]
+    quantity = sizing["quantity"]
     entry_cost = notional * policy.execution_cost_rate
     return PaperTrade(
         id=trade_id,
@@ -166,7 +248,7 @@ def open_trade(
         entry_bar_at=bar.timestamp,
         entry_at=bar.timestamp,
         entry_price=bar.close,
-        margin_usdt=policy.margin_usdt,
+        margin_usdt=sizing["margin_usdt"],
         leverage=policy.leverage,
         quantity=quantity,
         remaining_quantity=quantity,
@@ -174,7 +256,7 @@ def open_trade(
         take_profit_price=take_profit_price,
         take_profit_2_price=take_profit_2_price,
         entry_atr=entry_atr,
-        target_plan=target_plan or {},
+        target_plan={**(target_plan or {}), "sizing": sizing},
         stop_price=invalidation_price,
         entry_evidence=evidence,
         checklist=checklist,
@@ -182,7 +264,7 @@ def open_trade(
         signature_snapshot=signature_snapshot,
         costs_usdt=entry_cost,
         net_pnl_usdt=-entry_cost,
-        net_return_pct=(-entry_cost / policy.margin_usdt) * 100.0,
+        net_return_pct=(-entry_cost / sizing["margin_usdt"]) * 100.0,
         judgment_id=f"paper:{trade_id}:entry",
         created_at=bar.timestamp,
         updated_at=bar.timestamp,
