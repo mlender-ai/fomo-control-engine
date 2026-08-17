@@ -1026,7 +1026,8 @@ function UnifiedHeatmapControls({
                 <em>{index + 1}</em>
                 <span>밀집 {index + 1}</span>
                 <strong>{formatPrice(zone.price_mid)}</strong>
-                <small>{formatUsd(zone.total_usd_estimated)} · {zone.events}건</small>
+                {/* 가격 바로 아래라 단위를 밝히지 않으면 또 다른 가격으로 읽힌다(C7). */}
+                <small>규모 {formatUsd(zone.total_usd_estimated)} · {zone.events}건</small>
               </button>
             )) : (
               <span className="unifiedHeatmapZonesEmpty">아직 표시할 실현 이벤트 없음</span>
@@ -1067,13 +1068,48 @@ function WyckoffLayerStatus({ analysis }: { analysis: PositionChartAnalysis }) {
       </div>
     );
   }
+  // WO-FCE-POSITION-VIEW-01 Phase 2·3 — 근거 강도와 모순을 라벨에 붙인다.
+  //
+  // D3: 확인 이벤트가 0건인데 국면이 `confirmed` 스타일로 확정 표시됐다. 화면은 두 사실을
+  //     나란히 보여주면서 그 둘이 모순이라는 표시를 하지 않았다.
+  // D4: `분산 Phase E`(마크다운=하락 구간) + `상승 추세` 가 동시 표기됐다. 정석상 공존 불가다.
+  //
+  // **판정 로직은 건드리지 않는다**(C1). 표시만 바꾼다 — 국면 판정 수리는
+  // `DIRECTIONAL-INTEGRITY`(선행 추세가 국면 판정에 안 들어감) 소관이다.
+  const phase = String(analysis.wyckoff_phase?.phase ?? "");
+  const unconfirmed = events.length === 0;
+  const conflict = phaseTrendConflict(phase, trendLabel);
   return (
-    <div className="taLayerStatus confirmed" data-testid="wyckoff-layer-status">
-      <strong>{phaseHintLabel(analysis.wyckoff_phase?.phase)}</strong>
+    <div className={`taLayerStatus ${unconfirmed || conflict ? "unconfirmed" : "confirmed"}`} data-testid="wyckoff-layer-status">
+      <strong>
+        {phaseHintLabel(analysis.wyckoff_phase?.phase)}
+        {unconfirmed ? <em className="phaseUnconfirmed"> · 미확증</em> : null}
+      </strong>
       <span>레인지 {formatPrice(range.support.price)}–{formatPrice(range.resistance.price)}</span>
-      <small>실제 확인 이벤트 {events.length}건 · {trendLabel}</small>
+      <small>
+        확인 이벤트 {events.length}건 · {trendLabel}
+        {unconfirmed ? " — 이벤트 0건이므로 판정 근거가 없습니다" : ""}
+      </small>
+      {conflict ? <small className="phaseConflict">⚠️ 국면과 추세가 상충합니다 ({conflict}) — 어느 쪽이 맞는지는 판정하지 않습니다</small> : null}
     </div>
   );
+}
+
+/** 국면과 추세가 정석상 공존 불가인가 (표시 전용 · WO-FCE-POSITION-VIEW-01 D4).
+ *
+ * 어느 쪽이 맞다고 판단하지 않는다(C4) — 상충 **사실만** 표시한다.
+ * 분산(distribution) 계열은 마크다운(하락) 진행 구간이므로 상승 추세와 함께 성립하지 않고,
+ * 매집(accumulation) 계열은 그 반대다.
+ */
+function phaseTrendConflict(phase: string, trendLabel: string): string | null {
+  const normalized = phase.toLowerCase();
+  const isDistribution = normalized.includes("distribution") || normalized.includes("markdown");
+  const isAccumulation = normalized.includes("accumulation") || normalized.includes("markup");
+  const up = trendLabel.includes("상승");
+  const down = trendLabel.includes("하락");
+  if (isDistribution && up) return "분산 국면 + 상승 추세";
+  if (isAccumulation && down) return "매집 국면 + 하락 추세";
+  return null;
 }
 
 function isRecordValue(value: unknown): value is Record<string, unknown> {
@@ -1357,7 +1393,16 @@ function renderUnifiedHeatmap(
     context.lineWidth = index === 0 ? 1.8 : 1.2;
     context.strokeRect(0.5, top + 0.5, chartWidth - 1, Math.max(2, bandHeight - 1));
     context.shadowBlur = 0;
-    const label = `밀집 ${index + 1} · ${formatUsd(zone.total_usd_estimated)}`;
+    // WO-FCE-POSITION-VIEW-01 D1: 이 라벨은 **가격 밴드** 위에 그려진다.
+    //
+    // 이전에는 `total_usd_estimated`(추정 거래대금)를 `$` 붙여 여기 썼다. 밴드의 y좌표는
+    // `priceToCoordinate(price_high/low)` 로 정확한데 라벨만 다른 축의 값이었다 —
+    // 즉 선 위치는 맞고 **라벨이 틀렸다**(표시 결함).
+    //
+    // 실측 2026-08-16: 차트 가격축 100~320 인데 `밀집 1 · $570.64` 가 떴다. 570.64 는
+    // 볼륨 프로파일 스케일 상한과 같은 값이었다 — 사용자는 이것을 지지·저항 **가격**으로 읽는다.
+    // 가격 라벨 자리에는 가격을 쓴다. 규모는 단위를 명시해 병기한다(C7).
+    const label = `밀집 ${index + 1} · ${formatPrice(zone.price_low)}~${formatPrice(zone.price_high)} · 규모 ${formatUsd(zone.total_usd_estimated)}`;
     context.font = "700 10px SF Mono, Monaco, Consolas, monospace";
     const labelWidth = Math.ceil(context.measureText(label).width) + 14;
     let labelY = clamp(top + bandHeight / 2 - 9, 8, Math.max(8, height - 30));
@@ -1955,6 +2000,9 @@ type PriceFlag = {
   price: number;
   kind: "entry" | "mark" | "invalidation" | "takeProfit" | "watch" | "poc" | "valueArea";
   priority: number;
+  /** 겹쳐서 병합된 플래그. 이름+가격범위를 담으므로 기본 15자 예산으로는
+   *  가격이 잘려 나간다 — D7 수정의 목적 자체가 사라지므로 폭을 더 준다. */
+  merged?: boolean;
 };
 
 type NumericPlanItem = PositionActionPlanItem & { price: number };
@@ -2000,8 +2048,12 @@ function priceFlagNodes(context: OverlayContext): string[] {
       return `<g data-testid="price-flag-overflow"><circle cx="${context.right + 10}" cy="${flag.y}" r="4" fill="${context.palette.color("muted", 0.84)}"><title>${escapeSvgText(flag.label)}</title></circle></g>`;
     }
     const highlighted = context.highlightPrice !== null && Math.abs(flag.price - context.highlightPrice) <= Math.abs(flag.price) * 1e-9 + 1e-12;
-    const displayLabel = truncateSvgLabel(flag.label, highlighted ? 18 : 15);
-    const width = Math.max(62, Math.min(124, displayLabel.length * 7 + 16 + (highlighted ? 10 : 0)));
+    // 병합 라벨은 `이름들 가격범위` 라 한 줄에 안 들어간다. 폭을 넓히면 우측 거터를 넘어
+    // 가격이 화면 밖으로 잘려 나가므로(실측) 넓히지 않고 **두 줄로 쪼갠다** — 두 사실을 다 남긴다.
+    const lines = flag.merged ? splitMergedFlagLabel(flag.label) : [truncateSvgLabel(flag.label, highlighted ? 18 : 15)];
+    const longest = lines.reduce((max, line) => Math.max(max, line.length), 0);
+    const width = Math.max(62, Math.min(124, longest * 7 + 16 + (highlighted ? 10 : 0)));
+    const boxHeight = lines.length > 1 ? 30 : 20;
     const x = context.right + 4 - (highlighted ? 6 : 0);
     const fill = context.palette.flag(flag.kind, highlighted ? 1 : 0.92);
     const stroke = context.palette.color("text", highlighted ? 0.8 : 0.24);
@@ -2009,11 +2061,15 @@ function priceFlagNodes(context: OverlayContext): string[] {
     const livePulse = flag.kind === "mark" && context.layers.ta.includes("liquidation_realized")
       ? `<circle class="liveMarkPulse" cx="${x - 5}" cy="${flag.y}" r="4" fill="${context.palette.color("blue", 0.96)}" />`
       : "";
+    const fontSize = highlighted ? 10.5 : 9.5;
+    const firstBaseline = lines.length > 1 ? flag.y - 3 : flag.y + 3.5;
     return [
       `<g data-price-flag-kind="${flag.kind}">`,
       livePulse,
-      `<rect x="${x}" y="${flag.y - 10}" width="${width}" height="20" rx="4" fill="${fill}" stroke="${stroke}" stroke-width="${highlighted ? 1.6 : 1}" />`,
-      `<text x="${x + 7}" y="${flag.y + 3.5}" fill="${text}" font-size="${highlighted ? 10.5 : 9.5}" font-weight="${highlighted ? 750 : 650}" font-family="SF Mono, Monaco, Consolas, monospace">${escapeSvgText(displayLabel)}</text>`,
+      `<rect x="${x}" y="${flag.y - boxHeight / 2}" width="${width}" height="${boxHeight}" rx="4" fill="${fill}" stroke="${stroke}" stroke-width="${highlighted ? 1.6 : 1}" />`,
+      ...lines.map((line, lineIndex) =>
+        `<text x="${x + 7}" y="${firstBaseline + lineIndex * 12}" fill="${text}" font-size="${fontSize}" font-weight="${highlighted ? 750 : 650}" font-family="SF Mono, Monaco, Consolas, monospace">${escapeSvgText(line)}</text>`
+      ),
       "</g>"
     ].join("");
   });
@@ -2589,6 +2645,19 @@ function positionOverlayNodes(context: OverlayContext, position: PositionChartOv
   return nodes;
 }
 
+/** 병합 라벨을 `이름들` / `가격범위` 두 줄로 나눈다 (WO-FCE-POSITION-VIEW-01 D7).
+ *
+ * 우측 거터 폭이 124px(≈15자)로 고정이라 한 줄에 다 넣으면 **가격이 화면 밖으로 잘린다**
+ * — 실측으로 확인했다. 이름이 길면 이름 쪽을 자른다: **가격은 자르지 않는다.**
+ */
+function splitMergedFlagLabel(label: string): string[] {
+  const boundary = label.lastIndexOf(" ");
+  if (boundary <= 0) return [truncateSvgLabel(label, 15)];
+  const names = label.slice(0, boundary);
+  const price = label.slice(boundary + 1);
+  return [truncateSvgLabel(names, 15), price];
+}
+
 function actionPriceFlags(context: OverlayContext): PriceFlag[] {
   const flags: PriceFlag[] = [];
   const entryPrice = context.positionOverlay?.entryPrice ?? context.analysis.entry_price;
@@ -2634,8 +2703,17 @@ function stackFlags(flags: PriceFlag[], height: number, series?: OverlayContext[
       merged.push({ ...flag });
       continue;
     }
+    // WO-FCE-POSITION-VIEW-01 D7: 병합해도 **가격을 버리지 않는다.**
+    //
+    // 이전에는 이름만 이어 붙여(`익절2·익절1`) 두 가격이 화면에서 사라졌다.
+    // 겹쳤다는 사실보다 **그 선이 어느 가격인지**가 사용자에게 필요한 정보다.
     const names = [collision.label.split(" ")[0], flag.label.split(" ")[0]].filter((name, index, items) => items.indexOf(name) === index);
-    collision.label = names.join("·");
+    const prices = [collision.price, flag.price].filter((value) => Number.isFinite(value));
+    const low = Math.min(...prices);
+    const high = Math.max(...prices);
+    const priceText = low === high ? formatPrice(low) : `${formatPrice(low)}~${formatPrice(high)}`;
+    collision.label = `${names.join("·")} ${priceText}`;
+    collision.merged = true;
     collision.priority = Math.min(collision.priority, flag.priority);
     collision.y = (collision.y + flag.y) / 2;
   }
@@ -2644,16 +2722,23 @@ function stackFlags(flags: PriceFlag[], height: number, series?: OverlayContext[
     const hidden = merged.slice(6);
     visible.push({ label: `더보기 ${hidden.length}개`, price: hidden[0].price, kind: "watch", priority: 99, y: hidden[0].y });
   }
-  const gap = 26;
+  // 병합 플래그는 두 줄(30px)이라 26px 간격으로는 이웃과 겹친다.
+  const gapBetween = (a: PriceFlag, b: PriceFlag) => (a.merged || b.merged ? 34 : 26);
   for (let index = 1; index < visible.length; index += 1) {
+    const gap = gapBetween(visible[index - 1], visible[index]);
     if (visible[index].y - visible[index - 1].y < gap) {
       visible[index].y = visible[index - 1].y + gap;
     }
   }
   for (let index = visible.length - 1; index >= 0; index -= 1) {
-    visible[index].y = clamp(visible[index].y, 14, height - 16);
-    if (index < visible.length - 1 && visible[index + 1].y - visible[index].y < gap) {
-      visible[index].y = Math.max(14, visible[index + 1].y - gap);
+    // 병합 플래그만 30px 라 여백이 더 필요하다. 단일 플래그의 위치는 건드리지 않는다.
+    const top = visible[index].merged ? 18 : 14;
+    visible[index].y = clamp(visible[index].y, top, height - (visible[index].merged ? 20 : 16));
+    if (index < visible.length - 1) {
+      const gap = gapBetween(visible[index], visible[index + 1]);
+      if (visible[index + 1].y - visible[index].y < gap) {
+        visible[index].y = Math.max(top, visible[index + 1].y - gap);
+      }
     }
   }
   return visible.sort((left, right) => left.priority - right.priority);

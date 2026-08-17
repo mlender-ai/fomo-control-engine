@@ -751,7 +751,10 @@ function PositionStrip({
               <HealthGaugeRing integrity={item.state.score_json.health_integrity} score={item.state.health_score} severity={item.state.severity_rank} />
             </div>
             <div className="stripCardMetrics">
-              <em className={`pnlFlash ${item.state.pnl_percent >= 0 ? "successText pnlFlashUp" : "dangerText pnlFlashDown"}`}>
+              <em
+                className={`pnlFlash ${item.state.pnl_percent >= 0 ? "successText pnlFlashUp" : "dangerText pnlFlashDown"}`}
+                title={`${signedPercent(item.state.pnl_percent)} · ${pnlBasisLabel(item)}`}
+              >
                 {signedPercent(item.state.pnl_percent)}
                 {roeContextLabel(item) ? <small>{roeContextLabel(item)}</small> : null}
               </em>
@@ -1186,7 +1189,12 @@ function MinimalPositionWorkspace({
           <ArrowLeft size={15} />
           포지션 목록
         </button>
-        <span>{payload.position.symbol} · 내 진입 {formatPrice(payload.position.entry_price)}</span>
+        {/* D2: 진입가만 있으면 손익률이 검산되지 않는다. 방향·레버리지·표시가를 같은 줄에 둔다. */}
+        <span>
+          {payload.position.symbol} {directionLabel(payload.position.direction)} {payload.position.leverage}x
+          {" · 내 진입 "}{formatPrice(payload.position.entry_price)}
+          {typeof payload.position.mark_price === "number" ? ` · 표시가 ${formatPrice(payload.position.mark_price)}` : ""}
+        </span>
       </div>
       <CompactChartWorkspace
         analysis={chartAnalysis}
@@ -1379,6 +1387,10 @@ function oneLinerConfidenceClass(confidence: OneLinerLine["confidence_class"]): 
   return "confidence-weak";
 }
 
+/** ⚠️ **현재 렌더되지 않는다.** 이 파일 어디에서도 참조되지 않는 사문(死文) 컴포넌트다
+ *  (실측: 프로덕션 번들에 `positionOneQuestion` 문자열 0건). 실제 손익 표시는
+ *  `PositionVerdictBar` 와 포지션 스트립이 담당한다 — 표시 수정은 그쪽에 해야 한다.
+ *  제거는 이 WO 범위 밖이라 남겨 두고 표시만 해 둔다. */
 function MinimalPositionVerdictCard({
   payload,
   copy,
@@ -1617,8 +1629,32 @@ function minimalPnlPrimary(payload: LivePositionPayload): string {
 
 function minimalPnlSecondary(payload: LivePositionPayload): string {
   const roe = signedPercent(payload.state.pnl_percent);
+  // D2: ROE 는 레버리지가 곱해진 값이다. 근거 없이 숫자만 두면 계산 오류로 읽힌다.
+  const parts = [roe, pnlBasisLabel(payload)];
   const context = roeContextLabel(payload);
-  return context ? `${roe} · ${context}` : roe;
+  if (context) parts.push(context);
+  return parts.join(" · ");
+}
+
+/** 손익률의 **근거**를 한 줄로 (WO-FCE-POSITION-VIEW-01 D2).
+ *
+ * `pnl_percent` 는 ROE 다 — 증거금 대비 수익률이고 레버리지가 곱해져 있다.
+ * 실측 2026-08-16 NBISUSDT: short · 진입 270.25 · 표시가 275.88 · 20배
+ *   (270.25 − 275.88) / 270.25 × 100 × 20 = −41.67%  ← 화면값과 정확히 일치
+ *
+ * **계산은 옳았다.** 문제는 방향·레버리지가 화면에 없어서 사용자가 검산할 수 없었던 것이다.
+ * 진입가와 현재가만 보면 +2% 인데 −41% 가 떠 있으니 오류로 읽힌다. 근거를 같이 적는다(C7).
+ */
+function pnlBasisLabel(payload: LivePositionPayload): string {
+  const position = payload.position;
+  const direction = position.direction === "long" ? "롱" : "숏";
+  const parts = [`${direction} ${position.leverage}배`];
+  if (position.margin_mode) parts.push(marginModeLabel(position.margin_mode));
+  const source = payload.position.pnl_source;
+  // 출처를 밝힌다 — exchange 는 수수료·펀딩이 포함되므로 가격만으로 검산되지 않는다.
+  if (source === "exchange") parts.push("거래소 미실현 기준(수수료·펀딩 포함)");
+  else if (source === "computed") parts.push("가격 기준 ROE");
+  return `${parts.join(" · ")} · 증거금 대비`;
 }
 
 function clampSentence(value: string, maxLength: number): string {
@@ -1668,6 +1704,8 @@ function PositionVerdictBar({
             >
               {signedPercent(state.pnl_percent)}
               {state.pnl_source === "exchange" ? <Landmark size={12} /> : <Calculator size={12} />}
+              {/* D2: 근거(방향·레버리지·출처)를 항상 병기한다. 없으면 사용자가 검산할 수 없다. */}
+              <small className="verdictPnlBasis">{pnlBasisLabel(payload)}</small>
               {roeContextLabel(payload) ? <small>{roeContextLabel(payload)}</small> : null}
             </em>
             <StatusPill status={state.status} label={`${state.status_label} · 건강도 ${state.health_score}/100`} />

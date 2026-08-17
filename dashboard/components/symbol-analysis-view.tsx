@@ -274,10 +274,22 @@ function EvidenceRoomPanel({
       </div>
       <div className="evidenceRoomSection">
         <strong>최근 판단 이력</strong>
+        {/* D6: 같은 창에 down/up 이 공존하면 그 사실을 명시한다(C4). 어느 쪽이 맞다고 판단하지 않는다.
+            그리고 시각을 **분 단위**로 — 날짜만 있으면 상충인지 순서인지 구분되지 않는다. */}
+        {judgmentDirectionConflict(judgmentHistory) ? (
+          <p className="evidenceRoomConflict">
+            ⚠️ 같은 기간에 상반된 판단이 함께 있습니다 ({judgmentDirectionConflict(judgmentHistory)}) —
+            현재 유효한 판정은 채점 완료 전까지 확정되지 않습니다
+          </p>
+        ) : null}
         {judgmentHistory.length ? judgmentHistory.map(({ judgment, score }) => (
           <div className="evidenceRoomHistory" key={judgment.id}>
             <span>{judgmentHistoryLabel(judgment, score)}</span>
-            <small>{score ? judgmentOutcomeLabel(score.outcome) : "채점 대기"} · {new Date(judgment.as_of).toLocaleDateString("ko-KR")}</small>
+            <small>
+              {score ? judgmentOutcomeLabel(score.outcome) : "채점 대기 · 전방 관측 창 미도래"}
+              {" · "}
+              {new Date(judgment.as_of).toLocaleString("ko-KR", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}
+            </small>
           </div>
         )) : eventHistory.length ? eventHistory.map((event) => (
           <div className="evidenceRoomHistory" key={event.id}>
@@ -309,6 +321,25 @@ function judgmentMatchesLayer(judgment: JudgmentLedgerEntry, layer: ChartLayerId
   return signatureMatchesLayer({ engine: judgment.source_type, event_type: `${judgment.type} ${claim}` }, layer);
 }
 
+/** 판단 이력에 상반된 방향이 공존하는가 (표시 전용 · WO-FCE-POSITION-VIEW-01 D6).
+ *
+ * 실측 2026-08-16: 같은 날 `sweep confirms down` 1건 · `sweep confirms up` 2건이
+ * 전부 `채점 대기` 로 나란히 있었다. 상충한다는 표시도, 어느 것이 유효한지도 없었다.
+ *
+ * 어느 쪽이 맞다고 판단하지 않는다(C4) — 공존 사실과 건수만 낸다.
+ */
+function judgmentDirectionConflict(history: Array<{ judgment: JudgmentLedgerEntry; score?: JudgmentScore }>): string | null {
+  let up = 0;
+  let down = 0;
+  for (const { judgment } of history) {
+    // claim 은 자유형 레코드다 — 방향 단어가 어느 키에 있든 잡히도록 직렬화해서 본다.
+    const text = `${judgment.type} ${JSON.stringify(judgment.claim ?? {})}`.toLowerCase();
+    if (text.includes("up") || text.includes("long") || text.includes("상승")) up += 1;
+    if (text.includes("down") || text.includes("short") || text.includes("하락")) down += 1;
+  }
+  return up > 0 && down > 0 ? `상승 ${up}건 · 하락 ${down}건` : null;
+}
+
 function judgmentHistoryLabel(judgment: JudgmentLedgerEntry, score?: JudgmentScore): string {
   const claim = judgment.claim ?? {};
   const label = String(claim.label ?? claim.event_type ?? claim.condition ?? judgment.type).replaceAll("_", " ");
@@ -324,10 +355,15 @@ function focusedEvidenceClaim(analysis: PositionChartAnalysis | null, layer: Cha
   if (!analysis) return "차트 데이터가 준비되면 현재 주장을 표시합니다.";
   if (layer === "levels") return `지지 ${analysis.price_levels.support.length}개 · 저항 ${analysis.price_levels.resistance.length}개를 구조 점수로 비교합니다.`;
   if (layer === "liquidity") return `미스윕 풀 ${analysis.liquidity?.pools.filter((pool) => !pool.swept).length ?? 0}개 · 확정 스윕 ${analysis.liquidity?.sweeps.filter((sweep) => sweep.confirmed).length ?? 0}개입니다.`;
-  if (layer === "volume_profile") return `최다 거래 가격은 ${formatPrice(analysis.volume_profile.poc_price)}입니다.`;
-  if (layer === "wyckoff") return `현재 국면은 ${phaseHintLabel(String(analysis.wyckoff_phase?.phase ?? analysis.wyckoff?.["phase"] ?? "undetermined"))}입니다.`;
+  if (layer === "volume_profile") return `최다 거래 가격: ${formatPrice(analysis.volume_profile.poc_price)}`;
+  // WO-FCE-POSITION-VIEW-01 D5 (C3): 표본이 없는 판정을 단정형으로 쓰지 않는다.
+  //
+  // 실측 2026-08-16: "현재 국면은 분산 Phase E입니다"(단정형)가 같은 화면의
+  // "이 레이어의 검증 표본을 축적 중입니다"(N=0)와 나란히 있었다.
+  // 확신 문형은 표본이 있을 때만 쓴다.
+  if (layer === "wyckoff") return `현재 판정: ${phaseHintLabel(String(analysis.wyckoff_phase?.phase ?? analysis.wyckoff?.["phase"] ?? "undetermined"))}`;
   if (layer === "harmonic") return analysis.harmonic_patterns.length ? `하모닉 패턴 ${analysis.harmonic_patterns.length}개를 검증 중입니다.` : "확정 하모닉 패턴이 없습니다.";
-  if (layer === "flow") return `거래량 상태는 ${volumeStateLabel(analysis.volume_xray.volume_state)}입니다.`;
+  if (layer === "flow") return `거래량 상태: ${volumeStateLabel(analysis.volume_xray.volume_state)}`;
   if (layer === "indicators") return "기술 지표의 방향 정합을 검증합니다.";
   if (layer === "ema") {
     const ribbon = buildEmaRibbon(analysis.candles);
