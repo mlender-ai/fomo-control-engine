@@ -1281,11 +1281,25 @@ def run_paper_engine() -> dict[str, Any]:
             )
         )
 
+    def load_depth(symbol: str) -> dict[str, Any] | None:
+        """호가 깊이 조회 (Phase 4-1). 관측 전용이며 판정 경로에 영향이 없다.
+
+        데모 모드나 Bitget 이 아닌 제공자에서는 `None` 을 돌려 관측을 남기지 않는다 —
+        모의 호가로 슬리피지를 재면 그 표본이 가정보다 못하다.
+        """
+        if runtime.settings.demo_mode or runtime.settings.market_data_provider.lower() != "bitget":
+            return None
+        getter = getattr(runtime.market_provider, "get_order_book", None)
+        if getter is None:
+            return None
+        return getter(symbol)
+
     return _run_paper_engine(
         runtime.repository,
         runtime.settings,
         analysis_loader=load,
         simulation_loader=simulate,
+        depth_loader=load_depth,
     )
 
 

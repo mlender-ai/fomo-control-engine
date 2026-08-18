@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, Sequence
 from uuid import UUID
 
 from app.db.models import Direction, MarketCandle, PaperTrade
@@ -69,10 +69,35 @@ class PaperPolicy:
     #    스톱이 1 ATR 보다 넓으면 RR 이 **산술적으로 정확히 1.5** 가 된다(실측 20/24 건).
     #    비용을 빼면 전부 1.5 아래로 떨어진다. 사용자 결정 전까지 gross 로 둔다.
     rr_basis: str = "gross"
+    # WO-FCE-RISK-SIZING-01 Phase 4-3. 기본값은 **기존 동작**(상한 없음)이며 옵트인이다.
+    #
+    # 지금까지 포트폴리오 제약은 `max_open_positions=5` 하나였다. 5건의 **리스크 합계**
+    # 상한도, 방향 편중 상한도, 상관 상한도 없다 — 전 포지션이 같은 방향이면 그것은
+    # 분산이 아니라 한 개의 베팅이다.
+    #
+    # ⚠️ 반사실은 **채택을 지지하지 않는다.** 잠금 적용 N=25 에서 netR 을 개선하는 유일한
+    #    설정(총리스크 10)은 거래 **1건**(BASEDUSDT −0.300R)을 막아서 얻은 값이고, MDD 는
+    #    17.52 로 전혀 개선되지 않는다. MDD 를 낮추는 설정(총리스크 5 → 13.61)은 netR 을
+    #    +0.619 → −0.718 로 무너뜨린다. N=25 에서 1건으로 정책을 정하는 것은 잡음 적합이며
+    #    Phase 3 이 긴 잠금을 배제한 것과 같은 이유로 **기본값은 off 로 둔다.**
+    #    배선만 하고 표본이 쌓인 뒤 판정한다.
+    #
+    # `risk_based` 사이징에서 1R 금액이 예산 상수이므로 총리스크 상한은 사실상 슬롯 수
+    # 상한과 같다(예산 2.5 × N). 명목 상·하한에 걸려 실제 리스크가 예산과 달라질 때만
+    # 두 축이 갈라진다 — 그래서 건수가 아니라 **금액**으로 잰다.
+    portfolio_cap_mode: str = "off"
+    max_total_risk_usdt: float | None = None
+    max_same_direction_positions: int | None = None
+    max_correlation_cluster_positions: int | None = None
+    # 상관 군집 분류. **측정이 아니라 선언이다** — 근거와 한계는 POSITION_SIZING.md 에 남긴다.
+    correlation_clusters: dict[str, str] = field(default_factory=dict)
 
     @property
     def execution_cost_rate(self) -> float:
         return max(0.0, self.taker_fee_pct + self.slippage_pct) / 100.0
+
+    def correlation_cluster(self, symbol: str) -> str:
+        return self.correlation_clusters.get(symbol.upper(), "unclustered")
 
 
 @dataclass(frozen=True)
@@ -197,6 +222,47 @@ def reentry_locked(
             return None
         elapsed_bars = (entry_bar_at - last_exit_bar_at).total_seconds() / bar_seconds
         return f"reentry_lock:{policy.reentry_lock_bars}bars" if elapsed_bars <= policy.reentry_lock_bars else None
+
+    return None
+
+
+def portfolio_cap_block_reason(
+    *,
+    direction: Direction,
+    symbol: str,
+    planned_risk_usdt: float,
+    open_positions: Sequence[dict[str, Any]],
+    policy: PaperPolicy,
+) -> str | None:
+    """포트폴리오 상한에 걸리는가. 걸리면 **사유 문자열**을 돌려준다 (C11).
+
+    `off`(기본): 막지 않는다 — 기존 동작. `max_open_positions` 만이 유일한 제약이다.
+
+    `open_positions` 는 `{"symbol": str, "direction": str, "planned_risk_usdt": float}` 의
+    목록이다. 보유 포지션의 계획 리스크를 모르면(과거 원장) 예산으로 대체한다 — 그 경우
+    총리스크 상한은 슬롯 상한과 같아진다.
+
+    **세 축을 독립으로 판정하고 첫 위반에서 멈춘다.** 어느 축이 막았는지 사유에 남겨야
+    사후에 축별 효과를 가를 수 있다 — 세 축을 한 사유로 뭉치면 교란된다.
+    """
+    if policy.portfolio_cap_mode == "off":
+        return None
+
+    if policy.max_total_risk_usdt is not None:
+        held = sum(float(item.get("planned_risk_usdt") or policy.risk_budget_usdt) for item in open_positions)
+        if held + planned_risk_usdt > policy.max_total_risk_usdt + 1e-9:
+            return f"portfolio_cap:total_risk>{policy.max_total_risk_usdt:g}"
+
+    if policy.max_same_direction_positions is not None:
+        same = sum(1 for item in open_positions if str(item.get("direction") or "") == direction.value)
+        if same + 1 > policy.max_same_direction_positions:
+            return f"portfolio_cap:same_direction>{policy.max_same_direction_positions}"
+
+    if policy.max_correlation_cluster_positions is not None:
+        cluster = policy.correlation_cluster(symbol)
+        same_cluster = sum(1 for item in open_positions if policy.correlation_cluster(str(item.get("symbol") or "")) == cluster)
+        if same_cluster + 1 > policy.max_correlation_cluster_positions:
+            return f"portfolio_cap:cluster[{cluster}]>{policy.max_correlation_cluster_positions}"
 
     return None
 

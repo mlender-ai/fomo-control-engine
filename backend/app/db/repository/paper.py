@@ -149,6 +149,31 @@ class MemoryPaperRepositoryMixin:
             rows = [row for row in rows if str(row.get("failed_gate") or "") == failed_gate]
         return sorted(rows, key=lambda row: str(row.get("bar_at") or ""), reverse=True)[:limit]
 
+    def upsert_execution_depth_observation(self, record: dict) -> bool:
+        record_id = str(record.get("id") or "")
+        if not record_id:
+            raise ValueError("execution depth observation id is required")
+        if record_id in self.execution_depth_observations:
+            return False
+        self.execution_depth_observations[record_id] = dict(record)
+        return True
+
+    def list_execution_depth_observations(
+        self,
+        since: datetime | None = None,
+        symbol: str | None = None,
+        decision: str | None = None,
+        limit: int = 10000,
+    ) -> list[dict]:
+        rows = list(self.execution_depth_observations.values())
+        if since is not None:
+            rows = [row for row in rows if _timestamp_or_min(row.get("observed_at")) >= since]
+        if symbol is not None:
+            rows = [row for row in rows if str(row.get("symbol") or "").upper() == symbol.upper()]
+        if decision is not None:
+            rows = [row for row in rows if str(row.get("decision") or "") == decision]
+        return sorted(rows, key=lambda row: str(row.get("observed_at") or ""), reverse=True)[:limit]
+
 
 class SQLitePaperRepositoryMixin:
     def add_trade(self, trade: Trade) -> Trade:
@@ -439,6 +464,73 @@ class SQLitePaperRepositoryMixin:
         if clauses:
             query += " WHERE " + " AND ".join(clauses)
         query += " ORDER BY bar_at DESC LIMIT ?"
+        params.append(limit)
+        with self._connect() as connection:
+            rows = connection.execute(query, tuple(params)).fetchall()
+        return [json.loads(row["payload"]) for row in rows]
+
+    def upsert_execution_depth_observation(self, record: dict) -> bool:
+        """결정 시점 호가 관측 한 건 (WO-FCE-RISK-SIZING-01 Phase 4-1).
+
+        관측이므로 **같은 id 재기록을 무시**한다 — 사후 덮어쓰기를 허용하면 결정 시점
+        스냅샷이라는 성질이 깨진다.
+        """
+        record_id = str(record.get("id") or "")
+        if not record_id:
+            raise ValueError("execution depth observation id is required")
+        encoded = json.dumps(record, ensure_ascii=False, sort_keys=True, default=_json_cache_default)
+        observed = (record.get("observed_slippage_pct") or {}) if isinstance(record.get("observed_slippage_pct"), dict) else {}
+        representative = observed.get("buy@300")
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """
+                INSERT OR IGNORE INTO execution_depth_observations
+                    (id, symbol, timeframe, decision, observed_at, direction, trade_id,
+                     mid_price, spread_pct, observed_slippage_pct, assumed_slippage_pct,
+                     unavailable_reason, payload, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    record_id,
+                    str(record.get("symbol") or "").upper(),
+                    str(record.get("timeframe") or "4h"),
+                    str(record.get("decision") or "unknown"),
+                    str(record.get("observed_at") or ""),
+                    (str(record["direction"]) if record.get("direction") else None),
+                    (str(record["trade_id"]) if record.get("trade_id") else None),
+                    record.get("mid_price"),
+                    record.get("spread_pct"),
+                    representative if isinstance(representative, (int, float)) else None,
+                    float(record.get("assumed_slippage_pct") or 0.0),
+                    (str(record["unavailable_reason"]) if record.get("unavailable_reason") else None),
+                    encoded,
+                    str(record.get("created_at") or utc_now().isoformat()),
+                ),
+            )
+        return cursor.rowcount > 0
+
+    def list_execution_depth_observations(
+        self,
+        since: datetime | None = None,
+        symbol: str | None = None,
+        decision: str | None = None,
+        limit: int = 10000,
+    ) -> list[dict]:
+        query = "SELECT payload FROM execution_depth_observations"
+        clauses: list[str] = []
+        params: list[str | int] = []
+        if since is not None:
+            clauses.append("observed_at >= ?")
+            params.append(_aware_dt(since).isoformat())
+        if symbol is not None:
+            clauses.append("symbol = ?")
+            params.append(symbol.upper())
+        if decision is not None:
+            clauses.append("decision = ?")
+            params.append(decision)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY observed_at DESC LIMIT ?"
         params.append(limit)
         with self._connect() as connection:
             rows = connection.execute(query, tuple(params)).fetchall()

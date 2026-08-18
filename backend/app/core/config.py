@@ -245,6 +245,12 @@ class Settings(BaseSettings):
         2,
         validation_alias=AliasChoices("FCE_DB_TRADE_FILL_RETENTION_DAYS", "DB_TRADE_FILL_RETENTION_DAYS"),
     )
+    # WO-FCE-RISK-SIZING-01 Phase 4-1. 호가 관측은 건당 payload 가 크다(호가 100단계 × 2면).
+    # 대체 기준이 30건이라 45일이면 충분히 남으며, DB 10GB 비대 선례가 있어 무제한 보관은 금지다.
+    db_depth_observation_retention_days: int = Field(
+        45,
+        validation_alias=AliasChoices("FCE_DB_DEPTH_OBSERVATION_RETENTION_DAYS", "DB_DEPTH_OBSERVATION_RETENTION_DAYS"),
+    )
     db_alert_retention_days: int = Field(
         90,
         validation_alias=AliasChoices("FCE_DB_ALERT_RETENTION_DAYS", "DB_ALERT_RETENTION_DAYS"),

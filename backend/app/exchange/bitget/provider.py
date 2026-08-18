@@ -105,6 +105,10 @@ class BitgetMarketDataProvider(MarketDataProvider):
     def get_liquidation_history(self, symbol: str, max_pages: int = 3) -> list[dict[str, Any]]:
         return _run(self.get_liquidation_history_async(symbol, max_pages=max_pages))
 
+    def get_order_book(self, symbol: str) -> dict[str, Any] | None:
+        """호가 깊이 (WO-FCE-RISK-SIZING-01 Phase 4-1). 슬리피지 관측 전용."""
+        return _run(self.get_merge_depth(symbol))
+
     def list_contracts(self) -> list[dict]:
         return _run(self.get_contracts())
 
@@ -300,6 +304,31 @@ class BitgetMarketDataProvider(MarketDataProvider):
             min_funding_rate=_optional_float(item.get("minFundingRate")),
             max_funding_rate=_optional_float(item.get("maxFundingRate")),
         )
+
+    async def get_merge_depth(self, symbol: str, *, precision: str = "scale0", limit: str = "max") -> dict[str, Any] | None:
+        """호가 깊이 (WO-FCE-RISK-SIZING-01 Phase 4-1).
+
+        슬리피지 **관측 전용**이다 — 진입·청산 판정에 쓰지 않는다. 응답은
+        `{"bids": [[가격, 잔량], ...], "asks": [...], "ts": ...}` 이며 유리한 가격부터 정렬돼 있다.
+        """
+        payload = await self.client.public_get(
+            "/api/v2/mix/market/merge-depth",
+            {
+                "symbol": normalize_symbol(symbol),
+                "productType": self.product_type,
+                "precision": precision,
+                "limit": limit,
+            },
+        )
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            return None
+        return {
+            "symbol": normalize_symbol(symbol),
+            "bids": data.get("bids") or [],
+            "asks": data.get("asks") or [],
+            "ts": data.get("ts"),
+        }
 
     async def get_open_interest(self, symbol: str) -> OpenInterest | None:
         payload = await self.client.public_get(

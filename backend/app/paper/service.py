@@ -29,8 +29,11 @@ from app.paper.policy import (
     evaluate_entry,
     evaluate_exit,
     open_trade,
+    plan_position_size,
+    portfolio_cap_block_reason,
     reentry_locked,
 )
+from app.paper.slippage import observe_depth
 from app.paper.user_fills import (
     USER_FILL_SYNC_SYMBOL,
     USER_FILL_SYNC_TIMEFRAME,
@@ -42,6 +45,9 @@ from app.validation import window_anchor
 
 AnalysisLoader = Callable[[str, str], dict[str, Any]]
 SimulationLoader = Callable[[str, str, str, float], dict[str, Any]]
+# WO-FCE-RISK-SIZING-01 Phase 4-1. 호가 깊이 조회. `None` 이면 관측을 남기지 않으며
+# **판정 경로에는 어떤 영향도 없다** — 관측 전용 축이다.
+DepthLoader = Callable[[str], dict[str, Any] | None]
 
 VALIDATION_BOOTSTRAP_MAX_POSITIONS = 2
 VALIDATION_BOOTSTRAP_MIN_EVIDENCE = 3
@@ -122,6 +128,7 @@ def run_paper_engine(
     *,
     analysis_loader: AnalysisLoader,
     simulation_loader: SimulationLoader,
+    depth_loader: DepthLoader | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any]:
     if not bool(settings.paper_engine_enabled):
@@ -131,6 +138,8 @@ def run_paper_engine(
     suppressed_duplicates = _suppress_duplicate_bootstrap_trades(repo, now=now)
     opened = partial = closed = evaluated = 0
     skipped_same_bar = 0
+    depth_observations = 0
+    portfolio_cap_blocks = 0
     errors: list[dict[str, str]] = []
     events: list[dict[str, Any]] = []
 
@@ -189,6 +198,21 @@ def run_paper_engine(
                     bar=bar,
                     policy=policy_from_settings(settings, open_trade_row.asset_class),
                 )
+                if exit_decision.action in {"partial", "close"}:
+                    # 청산도 체결이다 — 진입만 재면 왕복 비용의 절반을 못 본다 (4-1 작업 1).
+                    depth_observations += int(
+                        _record_depth_observation(
+                            repo,
+                            depth_loader,
+                            symbol=symbol,
+                            timeframe=timeframe,
+                            decision="exit",
+                            now=now,
+                            policy=policy_from_settings(settings, open_trade_row.asset_class),
+                            direction=open_trade_row.direction.value,
+                            trade_id=str(open_trade_row.id),
+                        )
+                    )
                 if exit_decision.action == "partial":
                     partial += 1
                     events.append(_paper_event("partial", updated, reason=exit_decision.reason))
@@ -255,9 +279,21 @@ def run_paper_engine(
                     direction=direction,
                     policy=policy_from_settings(settings, str(analysis.get("asset_class") or "crypto")),
                 )
+                # Phase 4-3: 포트폴리오 상한. 기본 off 이며 옵트인 파일에서만 켜진다.
+                portfolio_block = _portfolio_cap_block_reason(
+                    repo,
+                    symbol=symbol,
+                    direction=direction,
+                    entry_price=bar.close,
+                    invalidation_price=invalidation,
+                    policy=policy_from_settings(settings, str(analysis.get("asset_class") or "crypto")),
+                )
+                if portfolio_block is not None:
+                    portfolio_cap_blocks += 1
                 will_enter = bool(
                     capacity_available
                     and reentry_block is None
+                    and portfolio_block is None
                     and entry_decision is not None
                     and entry_decision.enter
                     and invalidation is not None
@@ -288,8 +324,28 @@ def run_paper_engine(
                     if not gate_record.get("rejected_at"):
                         gate_record["rejected_at"] = reentry_block
                         gate_record["rejection_reasons"] = [reentry_block]
+                if portfolio_block is not None:
+                    # 상한에 걸려 보류된 진입도 사유와 함께 조회 가능해야 한다 (C11).
+                    gate_record["portfolio_cap_block"] = portfolio_block
+                    if not gate_record.get("rejected_at"):
+                        gate_record["rejected_at"] = portfolio_block
+                        gate_record["rejection_reasons"] = [portfolio_block]
                 repo.upsert_paper_gate_funnel(gate_record)
                 _record_entry_block_logs(repo, gate_record, now=now)
+                if will_enter:
+                    # **진입 결정 시점**이다. 사후에는 이 호가를 재구성할 수 없다 (4-1 작업 1).
+                    depth_observations += int(
+                        _record_depth_observation(
+                            repo,
+                            depth_loader,
+                            symbol=symbol,
+                            timeframe=timeframe,
+                            decision="entry",
+                            now=now,
+                            policy=policy_from_settings(settings, str(analysis.get("asset_class") or "crypto")),
+                            direction=direction.value if direction is not None else None,
+                        )
+                    )
                 if (
                     will_enter
                     and direction is not None
@@ -378,6 +434,8 @@ def run_paper_engine(
         "partial": partial,
         "closed": closed,
         "skipped_same_bar": skipped_same_bar,
+        "depth_observations": depth_observations,
+        "portfolio_cap_blocks": portfolio_cap_blocks,
         "open_count": len(repo.list_paper_trades(status="open", limit=100)),
         "repaired_policy_exits": repaired_policy_exits,
         "suppressed_duplicates": suppressed_duplicates,
@@ -1013,6 +1071,98 @@ def _reentry_block_reason(repo: Any, *, symbol: str, timeframe: str, bar: Market
         last_exit_direction=last_dir,
         bar_seconds=float(timeframe_seconds(timeframe)),
         policy=policy,
+    )
+
+
+def _portfolio_cap_block_reason(
+    repo: Any,
+    *,
+    symbol: str,
+    direction: Direction | None,
+    entry_price: float,
+    invalidation_price: float | None,
+    policy: PaperPolicy,
+) -> str | None:
+    """포트폴리오 상한 판정 (Phase 4-3). 기본 `off` 이므로 회귀 0 이다."""
+    if direction is None or policy.portfolio_cap_mode == "off":
+        return None
+    sizing = plan_position_size(
+        entry_price=entry_price,
+        invalidation_price=invalidation_price if invalidation_price is not None else entry_price,
+        policy=policy,
+    )
+    open_positions = [
+        {
+            "symbol": row.symbol,
+            "direction": row.direction.value,
+            # 과거 원장에는 사이징 근거가 없다. 없으면 예산으로 대체한다 — 그 경우
+            # 총리스크 상한은 슬롯 상한과 같아진다(정책 docstring 참조).
+            "planned_risk_usdt": _float(_dict(_dict(row.target_plan).get("sizing")).get("planned_risk_usdt")) or policy.risk_budget_usdt,
+        }
+        for row in repo.list_paper_trades(status="open", limit=100)
+    ]
+    return portfolio_cap_block_reason(
+        direction=direction,
+        symbol=symbol,
+        planned_risk_usdt=float(sizing["planned_risk_usdt"] or policy.risk_budget_usdt),
+        open_positions=open_positions,
+        policy=policy,
+    )
+
+
+def _record_depth_observation(
+    repo: Any,
+    depth_loader: DepthLoader | None,
+    *,
+    symbol: str,
+    timeframe: str,
+    decision: str,
+    now: datetime,
+    policy: PaperPolicy,
+    direction: str | None = None,
+    trade_id: str | None = None,
+) -> bool:
+    """결정 시점 호가 깊이를 남긴다 (Phase 4-1).
+
+    **관측 전용이다** — 반환값은 기록 여부뿐이고 어떤 판정에도 쓰이지 않는다. 조회가
+    실패해도 사유를 담은 관측을 남기고 계속 진행한다(침묵 금지 · 관측 실패가 엔진을
+    멈추지 않는다).
+    """
+    if depth_loader is None:
+        return False
+    book: dict[str, Any] | None = None
+    reason: str | None = None
+    try:
+        book = depth_loader(symbol)
+    except Exception as exc:  # 관측 실패가 엔진을 멈추면 안 된다 — 사유로 남기고 계속한다
+        reason = f"depth_fetch_failed:{type(exc).__name__}"
+    observation = observe_depth(
+        symbol=symbol,
+        timeframe=timeframe,
+        decision=decision,
+        observed_at=now,
+        book=book,
+        assumed_slippage_pct=policy.slippage_pct,
+        direction=direction,
+        trade_id=trade_id,
+    )
+    payload = observation.as_payload()
+    if reason is not None:
+        payload["unavailable_reason"] = reason
+    record_id = str(
+        uuid5(
+            NAMESPACE_URL,
+            f"fce:paper:depth:{decision}:{symbol.upper()}:{timeframe}:{now.isoformat()}",
+        )
+    )
+    return bool(
+        repo.upsert_execution_depth_observation(
+            {
+                "id": record_id,
+                **payload,
+                "created_at": now.isoformat(),
+            }
+        )
     )
 
 

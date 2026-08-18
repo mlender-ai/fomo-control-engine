@@ -161,6 +161,14 @@ class Repository(Protocol):
         failed_gate: str | None = None,
         limit: int = 10000,
     ) -> list[dict]: ...
+    def upsert_execution_depth_observation(self, record: dict) -> bool: ...
+    def list_execution_depth_observations(
+        self,
+        since: datetime | None = None,
+        symbol: str | None = None,
+        decision: str | None = None,
+        limit: int = 10000,
+    ) -> list[dict]: ...
     def add_judgment(self, judgment: JudgmentLedgerEntry) -> JudgmentLedgerEntry: ...
     def list_judgments(self, position_id: UUID, limit: int = 200) -> list[JudgmentLedgerEntry]: ...
     def list_judgments_all(self, since: datetime | None = None, limit: int = 10000) -> list[JudgmentLedgerEntry]: ...
@@ -273,6 +281,7 @@ class MemoryRepositoryBase:
         self.paper_gate_funnel: dict[tuple[str, str, str], dict] = {}
         self.validation_windows: dict[str, list[dict]] = {}
         self.entry_block_logs: dict[str, dict] = {}
+        self.execution_depth_observations: dict[str, dict] = {}
         self.judgments: dict[UUID, list[JudgmentLedgerEntry]] = {}
         self.judgment_scores: dict[UUID, JudgmentScore] = {}
         self.calibration_suggestions: dict[UUID, CalibrationSuggestion] = {}

@@ -184,6 +184,7 @@ def _apply_sqlite_retention(connection: sqlite3.Connection, settings: Settings) 
     alert_cutoff = now - timedelta(days=max(1, int(settings.db_alert_retention_days)))
     heartbeat_cutoff = now - timedelta(days=max(1, int(settings.db_worker_heartbeat_retention_days)))
     closed_snapshot_cutoff = now - timedelta(days=max(1, int(settings.db_closed_snapshot_retention_days)))
+    depth_observation_cutoff = now - timedelta(days=max(1, int(settings.db_depth_observation_retention_days)))
 
     details: dict[str, object] = {
         "derivative_cutoff": derivative_cutoff.isoformat(),
@@ -193,6 +194,7 @@ def _apply_sqlite_retention(connection: sqlite3.Connection, settings: Settings) 
         "alert_cutoff": alert_cutoff.isoformat(),
         "worker_heartbeat_cutoff": heartbeat_cutoff.isoformat(),
         "closed_snapshot_cutoff": closed_snapshot_cutoff.isoformat(),
+        "depth_observation_cutoff": depth_observation_cutoff.isoformat(),
     }
     details.update(
         _downsample_closed_position_snapshots(
@@ -238,6 +240,13 @@ def _apply_sqlite_retention(connection: sqlite3.Connection, settings: Settings) 
         "bitget_trade_fill_fetch_state",
         "DELETE FROM bitget_trade_fill_fetch_state WHERE fetched_at < ?",
         (trade_fill_cutoff.isoformat(),),
+    )
+    # WO-FCE-RISK-SIZING-01 Phase 4-1. 호가 관측은 건당 payload 가 크므로 반드시 만료시킨다.
+    details["execution_depth_observations_deleted"] = _delete_if_table(
+        connection,
+        "execution_depth_observations",
+        "DELETE FROM execution_depth_observations WHERE observed_at < ?",
+        (depth_observation_cutoff.isoformat(),),
     )
     details["alerts_deleted"] = _delete_expired_alerts(connection, alert_cutoff)
     details["worker_heartbeat_deleted"] = _delete_if_table(

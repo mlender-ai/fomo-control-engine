@@ -149,3 +149,53 @@ structural_risk ≥ ATR 이면  RR = ATR×1.5 / ATR = 1.5   ← 산술적으로 
 > 이 항목은 `DIRECTIONAL-INTEGRITY`(진입 품질) 소관으로 이관한다.
 
 근거: [`validation/EXECUTION_MODEL.md`](validation/EXECUTION_MODEL.md)
+
+---
+
+## 호가 깊이 관측 (WO-FCE-RISK-SIZING-01 Phase 4-1)
+
+**진입·청산 결정 시점의 호가를 저장한다.** 관측 전용이며 판정에 쓰지 않는다.
+
+```python
+run_paper_engine(..., depth_loader=None)   # None 이면 관측을 남기지 않는다 — 회귀 0
+```
+
+`depth_loader` 는 `app/services/runtime.py` 에서 배선되며 **데모 모드나 Bitget 이 아닌
+제공자에서는 `None`** 이다 — 모의 호가로 슬리피지를 재면 그 표본이 가정보다 못하다.
+
+| 항목 | 값 |
+| --- | --- |
+| 저장 | `execution_depth_observations` (마이그레이션 `0036`) |
+| 산출 | 명목 100 / 300 / 600 USDT 의 매수·매도 예상 슬리피지 (VWAP vs 중간가) |
+| 가정값 | `slippage_pct = 0.03` — **관측과 나란히 기록되며 대체되지 않는다** (C7) |
+| 대체 기준 | `app/paper/slippage.py::ASSUMPTION_REPLACEMENT` — 30건 · 3심볼 · p80 · **자동 적용 금지** |
+| 리텐션 | `db_depth_observation_retention_days` 기본 45일 |
+| 실패 처리 | 조회 실패도 사유를 담아 기록한다 (침묵 금지) |
+
+관측 실패가 엔진을 멈추지 않는다 — 예외를 잡아 사유로 남기고 진행한다.
+
+정본: [`validation/EXECUTION_MODEL.md`](validation/EXECUTION_MODEL.md) §8~12
+
+## 포트폴리오 상한 (WO-FCE-RISK-SIZING-01 Phase 4-3)
+
+```python
+portfolio_cap_mode: str = "off"                       # 기본 off — 옵트인
+max_total_risk_usdt: float | None = None              # 동시 보유 리스크 합계 상한
+max_same_direction_positions: int | None = None       # 방향 편중 상한
+max_correlation_cluster_positions: int | None = None  # 상관 군집 상한
+correlation_clusters: dict[str, str] = {}             # 군집 분류 — **선언이며 측정이 아니다**
+```
+
+세 축을 **독립으로 판정하고 첫 위반에서 멈춘다.** 사유 문자열에 어느 축이 막았는지 남기므로
+(`portfolio_cap:total_risk>7.5` 등) 사후에 축별 효과를 가를 수 있다. 상한에 걸려 보류된
+진입은 `paper_gate_funnel.portfolio_cap_block` 으로 조회 가능하다(C11 — 침묵 금지).
+
+### ⚠️ 채택값은 없다 — 배선만 하고 껐다
+
+반사실이 채택을 지지하지 않는다. netR 을 개선하는 유일한 설정은 **거래 1건**을 막아서 얻은
+값이고(N=25), MDD 는 그 설정에서 **17.52 로 전혀 변하지 않는다**. MDD 를 낮추는 설정은 netR 을
+무너뜨린다. 낙폭이 동시 보유가 아니라 **단일 거래**(SPCX −3.550R)에서 오기 때문이다.
+
+`crypto-v2.json` 에 상한 키를 넣지 않았다 — 파일에 없으면 `off` 다.
+
+근거: [`validation/POSITION_SIZING.md`](validation/POSITION_SIZING.md) §4-3
