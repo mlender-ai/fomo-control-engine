@@ -79,3 +79,37 @@ WO 원문은 "`flipped is True` 와 `transitioning is not True` 가 겹치는 �
 이로써 "전환 직후 진입 vs 안정 후 진입 중 어느 쪽 성적이 나은가", "미검증 시그니처로 들어간
 거래의 결과는 어땠나"를 **사후에 채점**할 수 있다. 조건에서 뺐다고 관측까지 버리면 그 질문에
 영원히 답할 수 없다.
+
+
+---
+
+## 재진입 잠금 (WO-FCE-RISK-SIZING-01 Phase 3 · 2026-08-18)
+
+같은 확정봉 안에서 청산하고 곧바로 같은 가격·같은 방향으로 다시 들어가는 일이
+실측 9건 있었다. 새 판단이 아니라 왕복이다.
+
+```python
+policy.py  reentry_locked(entry_bar_at=..., direction=..., last_exit_bar_at=..., ...)
+```
+
+| 필드 | 기본값 | 채택값 |
+| --- | --- | --- |
+| `reentry_lock_mode` | `"off"` (기존 동작) | **`"same_bar"`** |
+| `reentry_lock_bars` | `0` | `0` |
+| `reentry_lock_same_direction_only` | `True` | `True` |
+
+`params/crypto-v2.json` 옵트인. **파일을 지우면 잠금이 사라진다.**
+
+두 진입 경로(정규 · validation bootstrap) 모두에 걸린다 — 한쪽만 막으면 왕복이 남는다.
+차단된 건은 `paper_gate_funnel.reentry_block` 에 사유가 남는다(C10).
+
+**품질 게이트가 아니라 표본 독립성 게이트다.** `min_rr`·`min_evidence`·체크리스트 임계는
+건드리지 않는다(C1).
+
+근거와 반사실 대조표: [`validation/SAMPLE_INDEPENDENCE.md`](validation/SAMPLE_INDEPENDENCE.md)
+
+### 왜 더 긴 잠금을 쓰지 않는가
+
+5봉 양방향 잠금이 표면상 가장 좋다(PF 2.08). **표본의 58%를 버린 결과**이고,
+동일방향/양방향 두 변형이 잠금 길이에 대해 **반대 방향으로 움직인다** — 기전이 아니라
+잡음 적합이다. `same_bar` 만 gross 우위가 음수라는 독립 근거를 갖는다.

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Literal
 from uuid import UUID
 
@@ -50,6 +51,14 @@ class PaperPolicy:
     risk_budget_usdt: float = 2.5
     max_notional_usdt: float = 600.0
     min_notional_usdt: float = 10.0
+    # WO-FCE-RISK-SIZING-01 Phase 3. 기본값은 **기존 동작**(잠금 없음)이며 옵트인이다.
+    #
+    # 같은 확정봉 안에서 청산하고 곧바로 같은 가격·같은 방향으로 다시 들어가는 일이
+    # 실측 9건 있었다. 새 판단이 아니라 왕복이다 — gross 우위가 **음수**(−0.914R)이면서
+    # 비용만 1.127R 을 낸다. 막으면 우위/비용 비율이 3.93배 → 1.51배가 된다.
+    reentry_lock_mode: str = "off"
+    reentry_lock_bars: int = 0
+    reentry_lock_same_direction_only: bool = True
 
     @property
     def execution_cost_rate(self) -> float:
@@ -144,6 +153,42 @@ def evaluate_entry(
         "signature_ci_low_pct_observed": signature_ci_low_pct,
     }
     return EntryDecision(enter=not rejected, gates=gates, rejection_reasons=rejected, observations=observations)
+
+
+def reentry_locked(
+    *,
+    entry_bar_at: datetime,
+    direction: Direction,
+    last_exit_bar_at: datetime | None,
+    last_exit_direction: Direction | None,
+    bar_seconds: float,
+    policy: PaperPolicy,
+) -> str | None:
+    """직전 청산 직후 재진입을 막아야 하는가. 막으면 **사유 문자열**을 돌려준다 (C10).
+
+    `off`(기본): 막지 않는다 — 기존 동작.
+    `same_bar`: 청산한 그 확정봉 안에서는 다시 들어가지 않는다.
+    `bars`: 청산 후 `reentry_lock_bars` 봉이 지나기 전에는 들어가지 않는다.
+
+    **잠금을 넓힐수록 좋아지는 관계가 아니다.** 실측에서 4시간 간격(1봉) 재진입 3건은
+    gross 우위가 +1.608R 로 양수였다 — 함께 막으면 성적이 나빠진다. 그래서 채택값은
+    `same_bar` 이고, 더 긴 잠금은 표본 33건에서 잡음에 적합된 결과로 본다.
+    """
+    if policy.reentry_lock_mode == "off" or last_exit_bar_at is None:
+        return None
+    if policy.reentry_lock_same_direction_only and last_exit_direction is not None and direction != last_exit_direction:
+        return None
+
+    if policy.reentry_lock_mode == "same_bar":
+        return "reentry_lock:same_bar" if entry_bar_at <= last_exit_bar_at else None
+
+    if policy.reentry_lock_mode == "bars":
+        if bar_seconds <= 0:
+            return None
+        elapsed_bars = (entry_bar_at - last_exit_bar_at).total_seconds() / bar_seconds
+        return f"reentry_lock:{policy.reentry_lock_bars}bars" if elapsed_bars <= policy.reentry_lock_bars else None
+
+    return None
 
 
 def plan_position_size(
