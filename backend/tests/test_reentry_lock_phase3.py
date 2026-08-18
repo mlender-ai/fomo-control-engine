@@ -96,3 +96,23 @@ def test_sizing_and_exit_params_are_untouched() -> None:
     assert SAME_BAR.take_profit_atr_k2 == OFF.take_profit_atr_k2
     assert SAME_BAR.risk_budget_usdt == OFF.risk_budget_usdt
     assert SAME_BAR.max_notional_usdt == OFF.max_notional_usdt
+
+
+# ---------------------------------------------------------------------------
+# Phase 3-4 — 순 기준 RR (병행 기록 · 게이트 전환은 사용자 결정)
+# ---------------------------------------------------------------------------
+
+
+def test_rr_basis_defaults_to_gross() -> None:
+    """순 기준으로 전환하면 진입이 83% 줄어든다. 기본값은 기존 동작이어야 한다."""
+    assert OFF.rr_basis == "gross"
+
+
+def test_adopted_config_keeps_gross_gate() -> None:
+    payload = json.loads(Path("app/paper/params/crypto-v2.json").read_text(encoding="utf-8"))
+    assert payload["rr_basis"] == "gross"
+
+
+def test_min_rr_threshold_is_untouched() -> None:
+    """C1 — 3-4 는 임계가 아니라 측정 대상을 바꾸는 항목이다."""
+    assert PaperPolicy(rr_basis="net").min_rr == OFF.min_rr == 1.5

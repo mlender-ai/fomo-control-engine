@@ -59,6 +59,16 @@ class PaperPolicy:
     reentry_lock_mode: str = "off"
     reentry_lock_bars: int = 0
     reentry_lock_same_direction_only: bool = True
+    # WO-FCE-RISK-SIZING-01 Phase 3-4. 기본값은 **기존 동작**(gross)이며 옵트인이다.
+    #
+    # `rr_ratio` 는 비용을 빼기 전 값이다. 스톱 0.8% 거래는 왕복 비용으로 0.22R 을 내므로
+    # 게이트가 재는 것(1.5)과 엔진이 얻는 것(약 1.05)이 다르다.
+    #
+    # ⚠️ `net` 으로 전환하면 진입이 83% 줄어든다 — 게이트가 항등식이기 때문이다.
+    #    staged_reward = ATR×1.5 이고 execution_risk = min(structural, ATR) 이라
+    #    스톱이 1 ATR 보다 넓으면 RR 이 **산술적으로 정확히 1.5** 가 된다(실측 20/24 건).
+    #    비용을 빼면 전부 1.5 아래로 떨어진다. 사용자 결정 전까지 gross 로 둔다.
+    rr_basis: str = "gross"
 
     @property
     def execution_cost_rate(self) -> float:

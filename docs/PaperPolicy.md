@@ -113,3 +113,39 @@ policy.py  reentry_locked(entry_bar_at=..., direction=..., last_exit_bar_at=...,
 5봉 양방향 잠금이 표면상 가장 좋다(PF 2.08). **표본의 58%를 버린 결과**이고,
 동일방향/양방향 두 변형이 잠금 길이에 대해 **반대 방향으로 움직인다** — 기전이 아니라
 잡음 적합이다. `same_bar` 만 gross 우위가 음수라는 독립 근거를 갖는다.
+
+
+---
+
+## 순 기준 RR — 병행 기록만 (Phase 3-4 · 2026-08-18)
+
+`target_plan` 에 세 값을 함께 남긴다:
+
+```json
+{ "rr_basis": "gross", "gross_rr_ratio": 1.5, "net_rr_ratio": 1.2035,
+  "roundtrip_cost_distance": 0.1836, "rr_ratio": 1.5 }
+```
+
+`rr_basis` 가 `"net"` 이면 게이트가 `net_rr_ratio` 를 쓴다. **기본값·채택값은 `"gross"` 다.**
+
+### ⚠️ 전환하지 않은 이유 — RR 게이트가 항등식이다
+
+```
+staged_reward  = ATR × k1 × 0.5 + ATR × k2 × 0.5 = ATR × 1.5
+execution_risk = min(structural_risk, ATR)
+
+structural_risk ≥ ATR 이면  RR = ATR×1.5 / ATR = 1.5   ← 산술적으로 항상
+```
+
+실측 24건 중 **20건(83%)의 RR 이 정확히 1.5000** 이고 **RR < 1.5 는 0건**이다.
+`rr_ratio >= min_rr(1.5)` 게이트는 **한 번도 무언가를 거른 적이 없다.**
+
+비용을 빼면 그 20건이 전부 1.5 아래로 떨어진다 — 순 기준 전환은 필터를 조이는 것이
+아니라 **통과 24건 → 4건(83% 감축)** 으로 만든다. 표본 확보가 임계 경로인 상황에서
+이것은 사용자 결정 사항이다.
+
+> 진짜 수리 대상은 기준(gross/net)이 아니라 **RR 이 자기 자신을 확인하는 구조**다.
+> `execution_risk` 가 ATR 로 캡되고 보상도 ATR 배수라 비율이 상수가 된다.
+> 이 항목은 `DIRECTIONAL-INTEGRITY`(진입 품질) 소관으로 이관한다.
+
+근거: [`validation/EXECUTION_MODEL.md`](validation/EXECUTION_MODEL.md)
