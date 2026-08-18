@@ -29,6 +29,7 @@ from app.paper.policy import (
     evaluate_entry,
     evaluate_exit,
     open_trade,
+    reentry_locked,
 )
 from app.paper.user_fills import (
     USER_FILL_SYNC_SYMBOL,
@@ -63,7 +64,9 @@ def _crypto_policy_modes(path: Path = CRYPTO_POLICY_PARAMETERS_PATH) -> dict[str
     except (OSError, json.JSONDecodeError):
         return {}
     modes: dict[str, Any] = {
-        key: str(payload[key]) for key in ("version", "stance_gate_mode", "signature_gate_mode", "sizing_mode") if isinstance(payload.get(key), str)
+        key: str(payload[key])
+        for key in ("version", "stance_gate_mode", "signature_gate_mode", "sizing_mode", "reentry_lock_mode")
+        if isinstance(payload.get(key), str)
     }
     # WO-FCE-RISK-SIZING-01 Phase 1. 사이즈 파라미터도 같은 옵트인 파일에서 읽는다 —
     # 파일을 지우면 고정 명목(기존 동작)으로 즉시 되돌아간다.
@@ -71,6 +74,13 @@ def _crypto_policy_modes(path: Path = CRYPTO_POLICY_PARAMETERS_PATH) -> dict[str
         value = payload.get(key)
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             modes[key] = float(value)
+    # Phase 3. 재진입 잠금도 같은 옵트인 파일에서 읽는다.
+    bars = payload.get("reentry_lock_bars")
+    if isinstance(bars, int) and not isinstance(bars, bool):
+        modes["reentry_lock_bars"] = bars
+    same_dir = payload.get("reentry_lock_same_direction_only")
+    if isinstance(same_dir, bool):
+        modes["reentry_lock_same_direction_only"] = same_dir
     return modes
 
 
@@ -236,8 +246,22 @@ def run_paper_engine(
                         policy=policy_from_settings(settings, str(analysis.get("asset_class") or "unknown")),
                     )
                 capacity_available = len(repo.list_paper_trades(status="open", limit=100)) < int(settings.paper_max_open_positions)
+                # Phase 3: 같은 확정봉 왕복 차단. 품질 게이트가 아니라 **표본 독립성** 게이트다(C1).
+                reentry_block = _reentry_block_reason(
+                    repo,
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    bar=bar,
+                    direction=direction,
+                    policy=policy_from_settings(settings, str(analysis.get("asset_class") or "crypto")),
+                )
                 will_enter = bool(
-                    capacity_available and entry_decision is not None and entry_decision.enter and invalidation is not None and take_profit is not None
+                    capacity_available
+                    and reentry_block is None
+                    and entry_decision is not None
+                    and entry_decision.enter
+                    and invalidation is not None
+                    and take_profit is not None
                 )
                 gate_record = _gate_funnel_record(
                     symbol=symbol,
@@ -258,6 +282,12 @@ def run_paper_engine(
                     pill_diagnostics=_dict(gauges.get("pill_diagnostics") or gauges.get("event_pill_audit")),
                     event_pill_ids=[str(item.get("id")) for item in _list(gauges.get("event_pills")) if item.get("id")],
                 )
+                if reentry_block is not None:
+                    # 품질 게이트 통과 여부와 별개로 잠겼다는 사실을 남긴다 (C10).
+                    gate_record["reentry_block"] = reentry_block
+                    if not gate_record.get("rejected_at"):
+                        gate_record["rejected_at"] = reentry_block
+                        gate_record["rejection_reasons"] = [reentry_block]
                 repo.upsert_paper_gate_funnel(gate_record)
                 _record_entry_block_logs(repo, gate_record, now=now)
                 if (
@@ -459,6 +489,19 @@ def _bootstrap_validation_positions(
                 "regime_gate": bool(signature_gates.get("regime_gate")),
             }
             if not all(gates.values()) or invalidation is None or take_profit is None or rr_ratio is None:
+                continue
+            # Phase 3: 부트스트랩 경로에도 같은 잠금을 건다 — 한쪽만 막으면 왕복이 남는다.
+            if (
+                _reentry_block_reason(
+                    repo,
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    bar=bar,
+                    direction=direction,
+                    policy=policy_from_settings(settings, str(analysis.get("asset_class") or "crypto")),
+                )
+                is not None
+            ):
                 continue
             candidates.append(
                 {
@@ -937,6 +980,40 @@ def _parse_datetime(value: Any) -> datetime | None:
         return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
     except (TypeError, ValueError):
         return None
+
+
+def _last_exit_for(repo: Any, *, symbol: str, timeframe: str) -> tuple[datetime | None, Direction | None]:
+    """이 심볼·타임프레임의 **가장 최근 청산** 봉과 방향 (WO-FCE-RISK-SIZING-01 Phase 3).
+
+    재진입 잠금 판정에만 쓴다. 청산 이력이 없으면 (None, None) 이라 잠금이 걸리지 않는다.
+    """
+    latest_at: datetime | None = None
+    latest_dir: Direction | None = None
+    for row in repo.list_paper_trades(status="closed", symbol=symbol, limit=50):
+        if row.timeframe != timeframe:
+            continue
+        exit_bar = row.exit_bar_at or row.exit_at
+        if exit_bar is None:
+            continue
+        if latest_at is None or exit_bar > latest_at:
+            latest_at = exit_bar
+            latest_dir = row.direction
+    return latest_at, latest_dir
+
+
+def _reentry_block_reason(repo: Any, *, symbol: str, timeframe: str, bar: MarketCandle, direction: Direction | None, policy: PaperPolicy) -> str | None:
+    """진입 직전 잠금 판정. 막으면 사유를 돌려준다 (C10)."""
+    if direction is None or policy.reentry_lock_mode == "off":
+        return None
+    last_at, last_dir = _last_exit_for(repo, symbol=symbol, timeframe=timeframe)
+    return reentry_locked(
+        entry_bar_at=bar.timestamp,
+        direction=direction,
+        last_exit_bar_at=last_at,
+        last_exit_direction=last_dir,
+        bar_seconds=float(timeframe_seconds(timeframe)),
+        policy=policy,
+    )
 
 
 GATE_ORDER = (
