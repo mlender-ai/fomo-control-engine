@@ -65,7 +65,7 @@ def _crypto_policy_modes(path: Path = CRYPTO_POLICY_PARAMETERS_PATH) -> dict[str
         return {}
     modes: dict[str, Any] = {
         key: str(payload[key])
-        for key in ("version", "stance_gate_mode", "signature_gate_mode", "sizing_mode", "reentry_lock_mode")
+        for key in ("version", "stance_gate_mode", "signature_gate_mode", "sizing_mode", "reentry_lock_mode", "rr_basis")
         if isinstance(payload.get(key), str)
     }
     # WO-FCE-RISK-SIZING-01 Phase 1. 사이즈 파라미터도 같은 옵트인 파일에서 읽는다 —
@@ -1986,7 +1986,13 @@ def _paper_target_plan(
     execution_risk = min(structural_risk, atr_value) if structural_risk and structural_risk > 0 and invalidation_directional else None
     execution_invalidation = bar.close - sign * execution_risk if execution_risk is not None else None
     staged_reward = tp1_distance * 0.5 + tp2_distance * 0.5
-    rr_ratio = staged_reward / execution_risk if execution_risk and execution_risk > 0 else None
+    gross_rr_ratio = staged_reward / execution_risk if execution_risk and execution_risk > 0 else None
+    # Phase 3-4: 왕복 비용을 가격 거리로 환산해 보상에서 빼고 리스크에 더한다.
+    # 비용은 진입·청산 양쪽에서 나가므로 명목의 2배율이다.
+    roundtrip_cost_distance = bar.close * policy.execution_cost_rate * 2.0
+    net_rr_ratio = (staged_reward - roundtrip_cost_distance) / (execution_risk + roundtrip_cost_distance) if execution_risk and execution_risk > 0 else None
+    # 게이트가 쓰는 값만 기준에 따라 갈린다. **둘 다 원장에 남긴다**(C10).
+    rr_ratio = net_rr_ratio if policy.rr_basis == "net" else gross_rr_ratio
     execution_distance_pct = abs(execution_risk / bar.close * 100.0) if execution_risk is not None and bar.close else None
     return {
         "method": "atr_multistage",
@@ -2010,6 +2016,10 @@ def _paper_target_plan(
         "staged_reward_distance": round(staged_reward, 8),
         "reward_weighting": {"take_profit_1": 0.5, "take_profit_2": 0.5},
         "rr_ratio": round(rr_ratio, 4) if rr_ratio is not None else None,
+        "rr_basis": policy.rr_basis,
+        "gross_rr_ratio": round(gross_rr_ratio, 4) if gross_rr_ratio is not None else None,
+        "net_rr_ratio": round(net_rr_ratio, 4) if net_rr_ratio is not None else None,
+        "roundtrip_cost_distance": round(roundtrip_cost_distance, 8),
         "minimum_rr": policy.min_rr,
         "rr_eligible": bool(rr_ratio is not None and rr_ratio >= policy.min_rr),
     }
