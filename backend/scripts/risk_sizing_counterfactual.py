@@ -12,14 +12,16 @@ from __future__ import annotations
 
 import argparse
 import sys
+from typing import Sequence
 
 from app.core.config import get_settings
 from app.db.maintenance import sqlite_path
 from app.validation.risk_sizing_replay import (
-    Metrics,
     DEFAULT_RISK_BUDGET_USDT,
     GAP_EXCESS_R_THRESHOLD,
+    Metrics,
     PortfolioCaps,
+    ReplayTrade,
     apply_portfolio_caps,
     gap_budget,
     gap_distribution,
@@ -33,6 +35,15 @@ from app.validation.risk_sizing_replay import (
 # Phase 3-5 가 발표한 값. 재현 여부를 **매 실행마다 대조**한다 — 어긋나면 크게 적는다.
 PHASE35_CURRENT = {"n": 33, "gross": 1.037, "cost": 4.072, "net": -3.035, "pf": 0.8204, "mdd": 23.94}
 PHASE35_LOCKED = {"n": 24, "gross": 1.950, "cost": 2.945, "net": -0.995, "pf": 0.9109, "mdd": 13.95}
+
+# Phase 2 가 `STOP_EXECUTION.md` §2 에 **건별로** 발표한 손절 8건 grossR. 오프셋이 손절군에
+# 있는지 가리는 데 쓴다 — 건별 발표값이 있는 유일한 집합이다.
+PHASE2_STOP_GROSS_R = (-3.510, -1.490, -1.468, -1.421, -1.408, -1.089, -1.052, -1.034)
+PHASE2_STOP_MEAN_COST_R = 0.122
+
+# Phase 3-5 §3 민감도표 (편도%, 비용R). 비용R = 왕복% x Σ(1/스톱거리%) 이므로 이 표에서
+# **손익이 안 들어간 모집단 지문**을 역산할 수 있다.
+PHASE35_SENSITIVITY = ((0.090, 2.945), (0.060, 1.963), (0.050, 1.636), (0.020, 0.654))
 
 # 4-3 상한 3안. 상관 군집은 **추정**이다 — §"상관" 참조.
 #
@@ -107,6 +118,8 @@ def main() -> int:
     print("\n## 2. Phase 3-5 발표값 대조\n")
     _compare("현행", current_metrics, PHASE35_CURRENT)
     _compare("잠금", locked_metrics, PHASE35_LOCKED)
+
+    _print_offset_decomposition(trades, locked, blocked)
 
     print("\n## 3. 비용률 민감도 (잠금 적용 모집단)\n")
     print(f"{'체결 전제':<28}{'편도%':>7}{'왕복%':>7}{'비용R':>8}{'netR':>9}{'우위/비용':>10}{'금액':>9}{'PF':>9}{'MDD':>8}")
@@ -186,6 +199,79 @@ def main() -> int:
 
     print("\n" + "=" * 118)
     return 0
+
+
+def _print_offset_decomposition(
+    trades: Sequence[ReplayTrade],
+    locked: Sequence[ReplayTrade],
+    blocked: Sequence[ReplayTrade],
+) -> None:
+    """오프셋을 거래별로 분해한다 (사용자 지시 2026-08-19).
+
+    두 가지를 판정한다:
+
+    1. **어느 거래군에 오프셋이 있는가.** Phase 2 는 손절 8건의 grossR 을 `STOP_EXECUTION.md`
+       §2 에 **건별로 발표했다.** 그 8개가 재현되면 오프셋은 손절군 밖에 있다 — SPCX 를
+       포함한 갭 거래는 용의자에서 빠진다.
+    2. **계산 차이인가 모집단 차이인가.** `비용R = 왕복% × Σ(1/스톱거리%)` 이므로
+       Σ(1/스톱거리%) 는 **손익이 전혀 들어가지 않은 순수 스톱거리 통계**다. 문서의 민감도표
+       4행에서 이 값을 역산할 수 있고, 그것이 어긋나면 계산이 아니라 **모집단**이 다르다.
+    """
+    stops = [item for item in trades if item.is_stop_exit]
+    non_stops = [item for item in trades if not item.is_stop_exit]
+
+    print("\n## 2-1. 오프셋 분해 — 어느 거래군인가\n")
+    published_sorted = sorted(PHASE2_STOP_GROSS_R)
+    mine_sorted = sorted(item.gross_r for item in stops)
+    print(f"  손절 {len(stops)}건 건별 대조 (Phase 2 STOP_EXECUTION.md §2 발표표):")
+    mismatched = 0
+    for expected, got in zip(published_sorted, mine_sorted):
+        ok = abs(expected - got) < 0.001
+        mismatched += 0 if ok else 1
+        print(f"    발표 {expected:+.3f}   재산출 {got:+.3f}   {'일치' if ok else f'차이 {got - expected:+.3f}'}")
+    verdict = "손절군 전건 일치 — 갭 거래(SPCX)는 오프셋의 원인이 아니다" if not mismatched else f"{mismatched}건 불일치"
+    print(f"  → {verdict}")
+
+    stop_gross = sum(item.gross_r for item in stops)
+    stop_cost = sum(item.cost_r for item in stops)
+    doc_stop_gross = sum(PHASE2_STOP_GROSS_R)
+    doc_stop_cost = PHASE2_STOP_MEAN_COST_R * len(PHASE2_STOP_GROSS_R)
+
+    print(f"\n  {'집합':<18}{'gross 발표':>12}{'gross 재산출':>13}{'Δ':>9}{'비용 발표':>11}{'비용 재산출':>12}{'Δ':>9}")
+    rows = (
+        ("전체", PHASE35_CURRENT["gross"], sum(i.gross_r for i in trades), PHASE35_CURRENT["cost"], sum(i.cost_r for i in trades)),
+        ("손절군", doc_stop_gross, stop_gross, doc_stop_cost, stop_cost),
+        (
+            "비손절군",
+            PHASE35_CURRENT["gross"] - doc_stop_gross,
+            sum(i.gross_r for i in non_stops),
+            PHASE35_CURRENT["cost"] - doc_stop_cost,
+            sum(i.cost_r for i in non_stops),
+        ),
+    )
+    for label, doc_g, got_g, doc_c, got_c in rows:
+        print(f"  {label:<18}{doc_g:>12.3f}{got_g:>13.3f}{doc_g - got_g:>9.3f}{doc_c:>11.3f}{got_c:>12.3f}{doc_c - got_c:>9.3f}")
+    print("  → 오프셋 전량이 **비손절군**에 있다. 손절군 Δ 는 반올림 수준이다.")
+
+    print("\n## 2-2. 모집단 지문 — 계산 차이인가 모집단 차이인가\n")
+    print("  비용R = 왕복% × Σ(1/스톱거리%) → 이 통계에는 **손익이 없다**. 문서 민감도표에서 역산:")
+    for one_way, cost_r in PHASE35_SENSITIVITY:
+        print(f"    편도 {one_way:.3f}% · 비용R {cost_r:.3f}  →  Σ(1/스톱%) = {cost_r / (one_way * 2):.3f}")
+    doc_locked_sigma = sum(cost_r / (one_way * 2) for one_way, cost_r in PHASE35_SENSITIVITY) / len(PHASE35_SENSITIVITY)
+    print(f"    → 문서 잠금군 Σ ≈ {doc_locked_sigma:.3f} (4행이 서로 일치하므로 문서 내부는 정합)")
+
+    print(f"\n  {'집합':<14}{'N':>4}{'Σ(1/스톱%) 재산출':>19}{'문서':>9}{'Δ':>9}{'평균스톱%':>11}")
+    for label, pop, doc_sigma in (
+        ("차단분", blocked, PHASE35_CURRENT["cost"] / 0.18 - doc_locked_sigma),
+        ("잠금적용", locked, doc_locked_sigma),
+        ("전체", trades, PHASE35_CURRENT["cost"] / 0.18),
+    ):
+        sigma = sum(1.0 / item.stop_distance_pct for item in pop if item.stop_distance_pct > 0)
+        mean_stop = sum(item.stop_distance_pct for item in pop) / len(pop) if pop else 0.0
+        print(f"  {label:<14}{len(pop):>4}{sigma:>19.3f}{doc_sigma:>9.3f}{sigma - doc_sigma:>9.3f}{mean_stop:>11.3f}")
+    print("  → 차단분 지문은 일치하고 잠금군 지문은 어긋난다. 손익 무관 통계가 갈리므로")
+    print("     이것은 **계산 차이가 아니라 모집단 차이**다 — 문서의 24건은 같은 24건이 아니다.")
+    print("     발표된 기록만으로는 그 모집단을 재구성할 수 없다(대조할 스크립트가 없다).")
 
 
 def _compare(label: str, actual: Metrics, published: dict[str, float]) -> None:

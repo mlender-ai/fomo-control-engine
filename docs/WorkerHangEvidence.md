@@ -190,3 +190,43 @@ tests/test_worker_scheduler.py::test_worker_three_ticks_create_snapshots_and_hea
 
 착수 시 볼 것: 고정 sleep 여부 · 하트비트 기록과 검증 사이의 경합 · 커버리지 계측 부하에서만
 깨지는지(CI 부하 의존).
+
+---
+
+## 10. 이관 접수 — 잡 큐 포화 · 잡 기아 (RISK-SIZING-01 Phase 4 후속)
+
+실사 2026-08-18T23:25Z. **하트비트는 살아 있는데 잡이 실행되지 않는다.**
+
+| 잡 | status | runs | 간격 | next_run_at | 상태 |
+| --- | --- | --- | --- | --- | --- |
+| `universe_scan` | idle | **0** | 1800s | 22:47:46Z | **38분 과거인데 미실행** |
+| `scout_scan` | idle | **0** | 900s | 22:47:01Z | **38분 과거인데 미실행** |
+| `toss_stock_scout` | **error** | 0 | — | — | `timeout after 120s` · 실패 3회 |
+
+기동 후 40분 기준, 다른 잡들도 간격 대비 실행이 미달한다:
+
+| 잡 | 간격 | 기대 | 실제 | 비율 |
+| --- | --- | --- | --- | --- |
+| `collect_whale_positions` | 30s | ~80 | 11 | 14% |
+| `weekly_performance_report` | 60s | ~40 | 5 | 13% |
+
+### 왜 이 문서 소관인가 — 감시가 볼 수 없는 정지다
+
+`EngineLiveness.md` 의 stale 판정은 `last_effective_run_at` 기준이다. 그런데 **일부 잡은
+정상 실행 중이고 하트비트도 신선하다.** 그래서 전체 워커는 "살아 있음"으로 판정되고,
+`universe_scan` 이 한 번도 안 돌았다는 사실은 **어떤 신호도 내지 않는다.**
+
+2026-07-28 사고의 교훈("포트만 보는 감시는 매달림을 놓친다")과 같은 구조다 —
+이번에는 **워커 단위 감시가 잡 단위 기아를 놓친다.**
+
+### 실제 피해
+
+`universe_scan` 미실행 → `gate_passed` 발견 24시간 0건 → `paper_universe()` 가 watchlist
+3종으로 축소 → **페이퍼 진입 사실상 0건**(2026-08-17T08:00 이후 신규 0). 표본 수집이 임계
+경로인데 표본이 안 쌓인다. 정본: [`validation/SAMPLE_RATE.md`](validation/SAMPLE_RATE.md)
+
+### 착수 시 볼 것
+
+- `toss_stock_scout` 120초 타임아웃이 실행 슬롯을 점유하는지 (executor 워커 수 · 직렬화 여부)
+- `next_run_at` 이 과거인데 `idle` 로 남는 조건 — 스케줄러가 미스파이어를 버리는지
+- **잡별 기아 감지 신호가 없다** — 워커 생존과 별개로 "이 잡이 N주기 연속 미실행"을 낼 수 있어야 한다
