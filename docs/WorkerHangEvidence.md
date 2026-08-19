@@ -230,3 +230,143 @@ tests/test_worker_scheduler.py::test_worker_three_ticks_create_snapshots_and_hea
 - `toss_stock_scout` 120초 타임아웃이 실행 슬롯을 점유하는지 (executor 워커 수 · 직렬화 여부)
 - `next_run_at` 이 과거인데 `idle` 로 남는 조건 — 스케줄러가 미스파이어를 버리는지
 - **잡별 기아 감지 신호가 없다** — 워커 생존과 별개로 "이 잡이 N주기 연속 미실행"을 낼 수 있어야 한다
+
+---
+
+## 11. Phase 2 — 잡 기아 수리 (2026-08-19)
+
+> §10 이 이관받은 문제를 수리했다. **간격·타임아웃 무변경 · 잡 비활성화 0건**(C1·C2·C3).
+
+### 2-1 판정: D3/D5 가 원인, **D2 가 증폭기**
+
+Phase 1 계측기를 먼저 읽었다. 두 데이터가 판정을 갈랐다.
+
+`logs/loop-lag.jsonl` (`LoopLagMonitor` · 표본 860건):
+
+```
+평균 11.66s · 중위 10.09s · 최대 49.73s
+5초 초과 860건 (100%) · 20초 초과 97건
+```
+
+**이벤트 루프가 상시 막혀 있었다.**
+
+`logs/job-trace.jsonl` (24시간 · 16004 이벤트) — `start`/`ok` 쌍으로 잡별 실행 시간:
+
+| 잡 | 평균 | 최대 | 미완(start만) |
+| --- | --- | --- | --- |
+| `sync_positions` | 51.6s | 1299.6s | 61/414 |
+| `refresh_calibration_cache` | 99.6s | 1295.6s | 2/56 |
+| `discover_whale_leaderboard` | 175.4s | 983.4s | 4/48 |
+| `polymarket_paper` | 59.6s | 1005.6s | 15/315 |
+| `universe_scan` | 86.3s | 122.5s | 1/19 |
+| `scout_scan` | 85.4s | 616.2s | 3/17 |
+| **`toss_stock_scout`** | 46.8s | 102.1s | **111/576** |
+
+`start` 자체가 0회인 잡은 4개뿐이고 **전부 일일 잡(정상)** 이었다 —
+즉 **순수 misfire 기아는 없었고**, 문제는 실행 점유였다.
+
+실행기 포화 확인:
+
+```
+cpu_count 10          → 기본 ThreadPoolExecutor 14 워커
+동시 실행 잡 실측 최대  11개
+leaderboard.py        자체 12스레드 풀 추가 생성
+```
+
+**풀 포화 + GIL 경합 → 이벤트 루프 기아 → 예정 시각 지연.**
+
+그리고 **D2 가 그 지연을 소실로 바꿨다.** APScheduler `misfire_grace_time` 기본값은 **1초**다.
+1초를 넘겨 지나간 발화는 지연이 아니라 **건너뛴다**. 루프 지연이 평균 11.66초이므로
+거의 모든 발화가 사라졌고, 그것이 `runs=0` + `next_run_at` 과거 조합의 정체다.
+`app.log` 에 `was missed` 경고 **1689건**이 남아 있었으나 잡 이름이 없어 추적 불가였다.
+
+D5 확인: `asyncio.wait_for` 는 코루틴만 취소하고 **스레드 안 동기 코드는 취소되지 않는다.**
+`toss_stock_scout` 은 간격 **10초**인데 평균 46.8초 — 주기 내 완료가 원리적으로 불가능하며
+미완 111건이 슬롯 누수의 결과다.
+
+### 2-2 수리: misfire 정책 명시 — **실행률 14% → 74%**
+
+잡 성격별로 grace 를 나눴다(`manager._misfire_grace_seconds`):
+
+| 종류 | grace | 근거 |
+| --- | --- | --- |
+| 주기 관측 잡 | 자기 간격 (상한 30분) | 늦어도 다음 주기 전이면 관측 가치가 있다 |
+| 시각 민감 잡 (알림·펄스) | 30초 | 늦은 발송은 무의미하거나 해롭다 |
+| 일일 잡 | 상한 30분 | 하루치 grace 는 "언제 돌아도 됨" = 기아 은폐 |
+
+`job_defaults` 에도 안전망을 둬 등록 누락 시 1초로 되돌아가지 않게 했다.
+
+**적용 전후 실측** (관측 창 12분 · 표본 7개):
+
+| 잡 | 수리 전 | 2-2 후 |
+| --- | --- | --- |
+| `collect_whale_positions` (30s) | **14%** | **96%** |
+| `heartbeat` (60s) | 미달 | **100%** |
+| `paper_engine` (90s) | 48% | **100%** |
+| `sync_positions` (90s) | 미달 | **100%** |
+| `detect_closures` · `sync_and_analyze` | 미달 | **100%** |
+| **전체** | **14~33%** | **74%** |
+| **misfired** | 1689건(로그) | **0건** |
+| **굶은 잡** | `universe_scan`·`scout_scan` | **0개** (건강 34) |
+
+`universe_scan`·`scout_scan` 이 **처음으로 실행됐다**(이전엔 영구 `runs=0`).
+그 결과 universe discovery 가 **최근 1시간 0건 → 667건**으로 살아났다.
+
+> ⚠️ **그러나 평가 유니버스는 여전히 3종이다.** discovery 는 살아났지만 `gate_passed` 가
+> 0건이라(`backtest_sample` 0<30 · `backtest_win_1r_ci_low` · `stage2_template`)
+> `paper_universe()` 에 도달하지 못한다. **큐는 더 이상 병목이 아니고, 남은 제약은
+> 발견 품질 게이트다** — 이 WO 범위 밖이다(C5). 정본:
+> [`validation/SAMPLE_RATE.md`](validation/SAMPLE_RATE.md)
+>
+> (최초 보고에서 "3종 → 5종 회복"이라고 썼으나 **틀렸다** — 퍼널 40행을 봉 구분 없이
+> 센 값이었다. 봉별로는 3종이고 NBISUSDT 는 08-17, BASEDUSDT 는 08-14 가 마지막 평가다.)
+
+남은 미달은 `toss_stock_scout` 15% 하나이며 **misfire 가 아니다** — 간격 10초 < 실행 46.8초의
+과다 스케줄이다. 간격 조정은 C1 금지이므로 격리로 다뤘다(2-3).
+
+### 2-3 실행 격리
+
+실측으로 특정한 무거운 잡을 전용 풀(4워커)로 옮겼다:
+`toss_stock_scout` · `refresh_calibration_cache` · `discover_whale_leaderboard` ·
+`collect_derivatives`.
+
+`sync_positions` 는 **제외했다** — 평균 51.6초는 훅들의 합계이고 그 안에 `paper_engine`
+(표본 생산자)이 있다. 격리하면 표본 생산자를 좁은 풀에 넣는 셈이라 방향이 반대다.
+
+> ⚠️ **격리는 누수를 막지 못하고 범위를 제한한다.** 근본 수리는 동기 코드에 취소 지점을
+> 두는 것이며 별건이다. 그 사실을 `_run_in_thread` docstring 에 명시했다.
+
+### 2-4 잡 단위 기아 판정 — 감시 단위를 실패 단위에 맞춘다
+
+`liveness.job_starvation()` 이 두 형태를 잡는다:
+
+| 판정 | 조건 |
+| --- | --- |
+| `never_ran_and_overdue` | `runs=0` 인데 `next_run_at` 과거 — **이번 사고의 형태** |
+| `interval_overrun` | 유효 실행이 자기 간격의 3배를 초과 |
+
+`last_effective_run_at` 기준이다 — 조기 반환을 성공으로 세면 기아가 정상으로 보인다
+(§`EngineLiveness.md` D3 와 같은 이유). `disabled` 잡은 제외한다(오탐이 쌓이면 신호가 무시된다).
+
+`GET /api/system/worker` → `job_starvation` 으로 조회 가능하며 **워커 생존과 분리 표시**된다.
+신규 푸시 0건. 배선 직후 실측에서 `toss_stock_scout` 을 `never_ran_and_overdue` 로
+즉시 지목했다 — 판정이 실제로 동작한다.
+
+### C8 침묵 금지
+
+`EVENT_JOB_MISSED` 리스너로 잡별 `misfired`·`last_misfire_at`·`misfire_grace_seconds` 를
+기록하고 마이그레이션 `0037` 로 영속화했다.
+
+**`skipped` 와 분리해서 센다** — `skipped` 는 잡이 느린 것, `misfired` 는 스케줄러가 아예
+실행하지 않은 것이다. 한 칸에 합치면 misfire 가 정상 스킵에 묻힌다(그래서 두 달 숨었다).
+
+`misfire_grace_seconds` 를 영속화한 이유는 **정책이 조용히 1초로 되돌아갔는지 조회로 확인**할
+수 있어야 한다는 것이다. 실제로 첫 배선에서 이 값이 0 으로 보이는 결함이 있었고
+(`status()` 가 영속 행을 우선하는데 스키마에 칼럼이 없었다) 그 덕에 잡아냈다.
+
+### 부수 확인 — 선재 플래키 테스트
+
+`test_worker_three_ticks_create_snapshots_and_heartbeat` 가 **단독 6회 전부 통과**했다
+(§9 기준선: 6회 중 2회 실패). misfire 로 소실됐던 실행이 실제로 일어나면서 안정화된 것으로
+보인다 — **수리가 실재한다는 방증**이다. 다만 커버리지 계측 부하에서는 여전히 흔들리므로
+§9 항목으로 남긴다.

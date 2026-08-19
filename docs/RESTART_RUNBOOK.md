@@ -238,3 +238,46 @@ grep -c 'liveness.sh' scripts/local/supervisor.sh    # 1 이상이면 새 코드
 
 **스크립트는 머지만으로 반영되지 않는다.** `supervisor.sh` 변경 후에는 반드시 재기동하고
 `GET /api/system/worker` 의 `hang_dump.registered == true` 를 확인한다.
+
+---
+
+## 사전 점검 추가 — 잡별 실행률 (WO-FCE-WORKER-HANG-02 Phase 2)
+
+> 2026-08-19 사고: 워커는 살아 있고 하트비트도 신선한데 `universe_scan` 이 **0회 실행**이었다.
+> 유니버스가 3종으로 말라 페이퍼 진입이 이틀간 0건이 됐는데도 화면은 "정상"이었다.
+> **재시작 전에 "돌고 있나"가 아니라 "몇 % 돌고 있나"를 본다.**
+
+```bash
+curl -s localhost:8875/api/system/worker | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+js=d.get('job_starvation') or {}
+print('굶은 잡:', js.get('starved'), '| 건강:', js.get('healthy_count'))
+for k,v in (js.get('detail') or {}).items():
+    print(f\"  {k}: {v['reason']} overdue={v.get('overdue_seconds')}s misfired={v.get('misfired')}\")
+print('loop_lag:', d.get('loop_lag'))
+tot=sum(int(j.get('misfired') or 0) for j in d['jobs'].values())
+print('총 misfired:', tot)
+"
+```
+
+### 통과 기준
+
+| 항목 | 기준 | 미달이면 |
+| --- | --- | --- |
+| `job_starvation.starved` | **비어 있음** | 굶은 잡의 `reason` 을 먼저 본다. 재시작으로 안 풀린다 |
+| 총 `misfired` | **0 근처** | `misfire_grace_seconds` 가 1초로 되돌아갔는지 확인 |
+| `loop_lag.max_lag_seconds` | 5초 미만 | 실행 점유 — `job-trace.jsonl` 로 무거운 잡을 특정한다 |
+| `misfire_grace_seconds` | 잡별로 **0이 아님**(훅 잡 제외) | 정책 배선이 빠졌다 |
+
+> **`runs` 숫자만 보지 말 것.** 재시작 직후엔 전부 0이고 정상처럼 보인다. 판정은
+> `job_starvation` 과 `misfired` 로 한다.
+
+### 잡별 실행 시간이 필요하면
+
+```bash
+# start/ok 쌍으로 잡별 실행 시간과 미완 건수를 낸다 (Phase 1 계측기)
+wc -l logs/job-trace.jsonl && tail -5 logs/job-trace.jsonl
+```
+
+`start` 는 있고 `ok` 가 없는 잡이 **매달림 용의자**이고, `start` 자체가 없으면 **misfire** 다.
