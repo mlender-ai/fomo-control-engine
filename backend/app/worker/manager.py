@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import inspect
 import logging
 import os
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -99,6 +101,48 @@ _TIME_SENSITIVE_JOBS = frozenset(
 _MAX_OBSERVATION_GRACE_SECONDS = 1800
 
 
+# WO-FCE-WORKER-HANG-02 Phase 2-3 — 실행 격리.
+#
+# ## 왜 필요한가 (D3·D5)
+#
+# `asyncio.to_thread` 는 **루프의 기본 실행기를 공유**한다. 이 머신은 cpu_count 10 이라
+# 기본 풀이 14 워커이고, 동시 실행 잡이 실측 최대 11개다. 여기에
+# `leaderboard.py` 가 자체 12스레드 풀을 더 띄운다 → 풀 포화 + GIL 경합으로
+# **이벤트 루프가 상시 굶는다**(실측 지연 평균 11.66초 · 최대 49.73초).
+#
+# 그리고 D5: `asyncio.wait_for` 는 코루틴만 취소하고 **스레드 안의 동기 코드는 취소되지
+# 않는다.** 타임아웃이 나도 스레드는 계속 돌아 슬롯이 반환되지 않는다. `toss_stock_scout` 은
+# 간격 10초인데 평균 46.8초라 주기 내 완료가 원리적으로 불가능하고, 실측 미완 111/576 건이
+# 그 결과다. 공유 풀에서 이런 잡이 슬롯을 물면 **표본을 만드는 잡이 굶는다.**
+#
+# ## 처방: 격리한다. 끄거나 늘리지 않는다
+#
+# 무거운 잡을 전용 실행기로 옮겨 오염 범위를 그 풀 안으로 제한한다. 간격도(C1) 타임아웃도(C2)
+# 건드리지 않고 잡을 끄지도(C3) 않는다 — **느린 잡은 격리하고, 빠른 잡의 슬롯을 지킨다.**
+#
+# 선정 근거는 Phase 1 `job-trace.jsonl` 24시간 실측이다(평균/최대 실행 초 · 미완 건수):
+#   toss_stock_scout            46.8 / 102.1   미완 111/576   ← 확인된 슬롯 누수원
+#   refresh_calibration_cache   99.6 / 1295.6
+#   discover_whale_leaderboard 175.4 /  983.4  (+ 자체 12스레드 풀)
+#   collect_derivatives         50.3 / 1015.1
+#
+# `sync_positions` 는 **제외한다.** 실측 평균 51.6초지만 그것은 훅들의 합계이고, 그 안에
+# `paper_engine`(표본을 만드는 잡)이 들어 있다. 격리하면 표본 생산자를 좁은 풀에 넣는
+# 셈이라 방향이 반대다. 자기 몫의 `sync_and_analyze` 는 평균 0.16초로 가볍다.
+_HEAVY_JOBS = frozenset(
+    {
+        "toss_stock_scout",
+        "refresh_calibration_cache",
+        "discover_whale_leaderboard",
+        "collect_derivatives",
+    }
+)
+
+# 전용 풀 크기. 작게 둔다 — 크게 잡으면 GIL 경합이 되살아나 격리의 의미가 없다.
+# 누수가 나도 이 수만큼만 묶이고 기본 풀은 온전하다.
+_HEAVY_EXECUTOR_WORKERS = 4
+
+
 def _misfire_grace_seconds(name: str, interval_seconds: int) -> int:
     """이 잡이 예정 시각을 얼마나 넘겨도 실행할지 (Phase 2-2).
 
@@ -147,6 +191,12 @@ class WorkerManager:
         self._log_dir = log_dir
         self._job_trace_path: Path | None = log_dir / "job-trace.jsonl"
         self.loop_lag = hang_probe.LoopLagMonitor(log_dir)
+        # Phase 2-3: 무거운 잡 전용 실행기. 기본 풀을 비워 둬 표본 생산 잡(universe_scan ·
+        # scout_scan · paper_engine · heartbeat)의 슬롯을 지킨다.
+        self._heavy_executor = ThreadPoolExecutor(
+            max_workers=_HEAVY_EXECUTOR_WORKERS,
+            thread_name_prefix="fce-heavy",
+        )
         # D2: 스플릿 플래그 불일치(엔진 켜짐 · 구동 잡 꺼짐)를 조용히 두지 않는다.
         self.flag_warnings = self._flag_consistency_warnings()
 
@@ -188,6 +238,9 @@ class WorkerManager:
 
     async def stop(self) -> None:
         await self.loop_lag.stop()
+        # Phase 2-3: 전용 실행기 정리. 누수된 스레드가 있으면 대기하지 않는다 —
+        # 종료가 매달리면 그것이 새로운 침묵이다.
+        self._heavy_executor.shutdown(wait=False, cancel_futures=True)
         self.bot.stop()
         if self._telegram_task is not None:
             self._telegram_task.cancel()
@@ -264,6 +317,21 @@ class WorkerManager:
 
     async def _run_hook(self, name: str, runner: JobRunner) -> Any:
         return await self._run_job(name, runner, scheduled=False)
+
+    async def _run_in_thread(self, name: str, func: Any, *args: Any, **kwargs: Any) -> Any:
+        """잡을 알맞은 실행기의 스레드에서 돌린다 (Phase 2-3).
+
+        무거운 잡은 전용 풀로 보내 기본 풀을 비워 둔다 — 표본을 만드는 잡(`universe_scan` ·
+        `scout_scan` · `paper_engine` · `heartbeat`)의 슬롯을 지키는 것이 목적이다.
+
+        ⚠️ **타임아웃은 스레드를 회수하지 못한다**(D5). `asyncio.wait_for` 는 이 코루틴을
+        취소하지만 스레드 안의 동기 코드는 계속 돈다. 그래서 이 함수는 누수를 막지 못하고
+        **누수의 범위를 전용 풀 안으로 제한**한다. 근본 수리는 동기 코드에 취소 지점을
+        두는 것이며 별건이다.
+        """
+        loop = asyncio.get_running_loop()
+        executor = self._heavy_executor if name in _HEAVY_JOBS else None
+        return await loop.run_in_executor(executor, functools.partial(func, *args, **kwargs))
 
     def _trace_job(self, name: str, phase: str) -> None:
         """잡 시작·종료를 append-only 파일에 남긴다 (WO-FCE-WORKER-HANG-02 Phase 1-2).
@@ -478,7 +546,7 @@ class WorkerManager:
         return {"count": sent}
 
     async def _collect_derivatives(self) -> dict[str, Any]:
-        payload = await asyncio.to_thread(service.refresh_derivative_data)
+        payload = await self._run_in_thread("collect_derivatives", service.refresh_derivative_data)
         snapshots = payload.get("snapshots", [])
         if isinstance(snapshots, list):
             await self.alerts.evaluate_derivatives(snapshots)
@@ -511,7 +579,7 @@ class WorkerManager:
             collect_toss_market(self.settings, "KR"),
             collect_toss_market(self.settings, "US"),
         )
-        paper = await asyncio.to_thread(run_stock_paper_engine, self.settings, {"KR": kr, "US": us})
+        paper = await self._run_in_thread("toss_stock_scout", run_stock_paper_engine, self.settings, {"KR": kr, "US": us})
         # D1: 주식 페이퍼도 크립토와 같은 텔레그램 경로를 태운다(과거엔 미배선 = 구조적 침묵).
         await self._send_paper_events(paper)
         return {
@@ -590,7 +658,7 @@ class WorkerManager:
             "discover_whale_leaderboard": WorkerJob(
                 "discover_whale_leaderboard",
                 self.settings.hyperliquid_whale_discovery_interval_seconds,
-                lambda: asyncio.to_thread(service.discover_whales),
+                lambda: self._run_in_thread("discover_whale_leaderboard", service.discover_whales),
                 enabled=self.settings.hyperliquid_whale_discovery_enabled,
             ),
             "collect_whale_positions": WorkerJob(
@@ -700,7 +768,7 @@ class WorkerManager:
             "refresh_calibration_cache": WorkerJob(
                 "refresh_calibration_cache",
                 self.settings.worker_calibration_cache_interval_seconds,
-                lambda: asyncio.to_thread(service.refresh_calibration_report_cache),
+                lambda: self._run_in_thread("refresh_calibration_cache", service.refresh_calibration_report_cache),
             ),
             "sync_user_fills": WorkerJob(
                 "sync_user_fills",

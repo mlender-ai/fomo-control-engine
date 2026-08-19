@@ -319,3 +319,52 @@ async def test_status_reports_grace_after_scheduling(tmp_path) -> None:
         assert status["jobs"]["universe_scan"]["misfire_grace_seconds"] == 1800
     finally:
         manager.scheduler.shutdown(wait=False)
+
+
+# ---------------------------------------------------------------------------
+# 2-3 실행 격리 (D3·D5)
+# ---------------------------------------------------------------------------
+
+
+def test_heavy_jobs_get_a_dedicated_executor(tmp_path) -> None:
+    """무거운 잡이 기본 풀을 비우지 못하게 — 표본 생산 잡의 슬롯을 지킨다."""
+    from app.worker.manager import _HEAVY_EXECUTOR_WORKERS, _HEAVY_JOBS
+
+    manager = WorkerManager(_settings(tmp_path))
+    assert manager._heavy_executor._max_workers == _HEAVY_EXECUTOR_WORKERS
+    # 실측으로 특정된 잡만 격리한다.
+    assert "toss_stock_scout" in _HEAVY_JOBS
+    assert "refresh_calibration_cache" in _HEAVY_JOBS
+
+
+def test_sample_producing_jobs_stay_on_the_default_pool(tmp_path) -> None:
+    """표본을 만드는 잡을 좁은 전용 풀에 넣으면 방향이 반대다."""
+    from app.worker.manager import _HEAVY_JOBS
+
+    for name in ("universe_scan", "scout_scan", "paper_engine", "heartbeat", "sync_positions"):
+        assert name not in _HEAVY_JOBS
+
+
+@pytest.mark.asyncio
+async def test_run_in_thread_routes_by_job_name(tmp_path) -> None:
+    """전용 풀로 갈 잡과 기본 풀로 갈 잡이 실제로 다른 스레드 이름을 받는다."""
+    import threading
+
+    manager = WorkerManager(_settings(tmp_path))
+    try:
+        heavy = await manager._run_in_thread("toss_stock_scout", lambda: threading.current_thread().name)
+        light = await manager._run_in_thread("universe_scan", lambda: threading.current_thread().name)
+        assert heavy.startswith("fce-heavy")
+        assert not light.startswith("fce-heavy")
+    finally:
+        manager._heavy_executor.shutdown(wait=False)
+
+
+@pytest.mark.asyncio
+async def test_run_in_thread_passes_arguments(tmp_path) -> None:
+    manager = WorkerManager(_settings(tmp_path))
+    try:
+        result = await manager._run_in_thread("collect_derivatives", lambda a, b=0: a + b, 2, b=3)
+        assert result == 5
+    finally:
+        manager._heavy_executor.shutdown(wait=False)
