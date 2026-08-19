@@ -247,6 +247,15 @@ class Settings(BaseSettings):
     )
     # WO-FCE-RISK-SIZING-01 Phase 4-1. 호가 관측은 건당 payload 가 크다(호가 100단계 × 2면).
     # 대체 기준이 30건이라 45일이면 충분히 남으며, DB 10GB 비대 선례가 있어 무제한 보관은 금지다.
+    # WO-FCE-DISCOVERY-UNBLOCK-01. 기본값은 **기존 동작**(알림 자격만 유입)이며 옵트인이다.
+    #
+    # 켜면 페이퍼 엔진이 관측 등급 발견까지 평가한다 — 표본 관련 두 게이트(`backtest_sample` ·
+    # `backtest_win_1r_ci_low`)만 미루고 나머지는 그대로 요구한다. 임계값은 바뀌지 않는다.
+    # 끄면 즉시 이전 유니버스로 되돌아간다(C4).
+    paper_observation_universe_enabled: bool = Field(
+        False,
+        validation_alias=AliasChoices("FCE_PAPER_OBSERVATION_UNIVERSE_ENABLED", "PAPER_OBSERVATION_UNIVERSE_ENABLED"),
+    )
     db_depth_observation_retention_days: int = Field(
         45,
         validation_alias=AliasChoices("FCE_DB_DEPTH_OBSERVATION_RETENTION_DAYS", "DB_DEPTH_OBSERVATION_RETENTION_DAYS"),

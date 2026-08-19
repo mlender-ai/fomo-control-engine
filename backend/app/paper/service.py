@@ -90,6 +90,23 @@ def _crypto_policy_modes(path: Path = CRYPTO_POLICY_PARAMETERS_PATH) -> dict[str
     return modes
 
 
+def observation_universe_enabled(settings: Any, path: Path = CRYPTO_POLICY_PARAMETERS_PATH) -> bool:
+    """관측 등급 유니버스 급유를 켤 것인가 (WO-FCE-DISCOVERY-UNBLOCK-01 · C4).
+
+    우선순위는 **옵트인 파일 > 설정**이다. `crypto-v2.json` 의 한 값으로 켜고 끌 수 있어야
+    하고(그 파일은 커밋되므로 이력이 남는다), 환경변수로도 덮을 수 있다.
+    파일에 키가 없으면 설정 기본값(False = 기존 동작)을 쓴다.
+    """
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        payload = {}
+    value = payload.get("observation_universe_enabled")
+    if isinstance(value, bool):
+        return value
+    return bool(getattr(settings, "paper_observation_universe_enabled", False))
+
+
 def policy_from_settings(settings: Any, asset_class: str = "crypto") -> PaperPolicy:
     slippage = {
         "stock": float(settings.backtest_slippage_stock_pct),
@@ -112,14 +129,38 @@ def policy_from_settings(settings: Any, asset_class: str = "crypto") -> PaperPol
     )
 
 
-def paper_universe(repo: Any) -> list[tuple[str, str]]:
+def paper_universe(repo: Any, *, observation_feed: bool = False) -> list[tuple[str, str]]:
+    """페이퍼 엔진이 평가할 (심볼, 타임프레임) 목록.
+
+    `observation_feed=False`(기본): 기존 동작. 발견은 **알림 자격**(`gate_passed`)을 통과한
+    것만 들어온다 — 회귀 0.
+
+    `observation_feed=True`: 관측 등급 발견도 포함한다(WO-FCE-DISCOVERY-UNBLOCK-01).
+    표본 관련 두 게이트만 미룬 것이며 유동성·신뢰도·수명주기·괴리·실적창·2단계는 **그대로
+    요구한다**. 진입 판정은 페이퍼 자신의 게이트 9종이 하므로 이 확대는 진입 기준을 낮추지 않는다.
+    """
     pairs: set[tuple[str, str]] = {(item.symbol.upper(), item.default_timeframe or "4h") for item in repo.list_watchlist()}
     pairs.update((position.symbol.upper(), "4h") for position in repo.list_positions(PositionStatus.open))
     pairs.update((trade.symbol.upper(), trade.timeframe) for trade in repo.list_paper_trades(status="open"))
     pairs.update((intent.symbol.upper(), intent.timeframe or "4h") for intent in repo.list_entry_intents(status="active", limit=1000))
     for discovery in repo.list_recent_gate_passed_universe_discoveries(limit=500):
         pairs.add((discovery.symbol.upper(), discovery.timeframe or "4h"))
+    if observation_feed:
+        pairs |= observation_only_universe(repo, validated=pairs)
     return sorted(pairs)
+
+
+def observation_only_universe(repo: Any, *, validated: set[tuple[str, str]]) -> set[tuple[str, str]]:
+    """관측 등급으로만 들어온 (심볼, 타임프레임) — 알림 자격은 통과하지 못한 것들.
+
+    **이 집합을 따로 돌려주는 이유는 C5·C9 다.** 이 경로로 유입된 심볼에서 나온 거래는
+    "표본 미검증 유입"으로 표시되고 성적이 분리 집계돼야 한다. 합쳐 버리면 완화와
+    구분되지 않는다.
+    """
+    if not hasattr(repo, "list_recent_observation_universe_discoveries"):
+        return set()
+    observed = {(discovery.symbol.upper(), discovery.timeframe or "4h") for discovery in repo.list_recent_observation_universe_discoveries(limit=500)}
+    return observed - validated
 
 
 def run_paper_engine(
@@ -140,10 +181,18 @@ def run_paper_engine(
     skipped_same_bar = 0
     depth_observations = 0
     portfolio_cap_blocks = 0
+    # WO-FCE-DISCOVERY-UNBLOCK-01: 관측 등급으로만 유입된 심볼. 이 집합의 거래는
+    # "표본 미검증 유입"으로 표시되고 성적이 분리 집계된다 (C5·C9).
+    observation_feed = observation_universe_enabled(settings)
+    validated_pairs = set(paper_universe(repo))
+    observation_only = observation_only_universe(repo, validated=validated_pairs) if observation_feed else set()
+    universe_pairs = sorted(validated_pairs | observation_only)
+    observation_only_symbols = {symbol for symbol, _ in observation_only}
+    observation_entries = 0
     errors: list[dict[str, str]] = []
     events: list[dict[str, Any]] = []
 
-    for symbol, timeframe in paper_universe(repo):
+    for symbol, timeframe in universe_pairs:
         try:
             payload = analysis_loader(symbol, timeframe)
             analysis = _dict(payload.get("analysis"))
@@ -379,10 +428,15 @@ def run_paper_engine(
                         entry_atr=_float(target_plan.get("atr")),
                         target_plan=target_plan,
                     )
+                    if symbol.upper() in observation_only_symbols:
+                        observation_entries += 1
                     paper_trade = paper_trade.model_copy(
                         update={
                             "entry_evidence": {
                                 **paper_trade.entry_evidence,
+                                # C5·C9: 이 심볼이 표본 검증 없이 유입됐다는 사실을 원장에 남긴다.
+                                # 없으면 사후에 검증/미검증 성적을 가를 수 없고 완화와 구분되지 않는다.
+                                "universe_source": ("observation_unvalidated" if symbol.upper() in observation_only_symbols else "validated"),
                                 "signature_gate_mode": signature_gates.get("gate_mode"),
                                 "candidate_bootstrap": str(signature_gates.get("gate_mode") or "").startswith("candidate_bootstrap"),
                                 "bootstrap_relaxed": signature_gates.get("gate_mode") == "candidate_bootstrap_relaxed",
@@ -436,6 +490,9 @@ def run_paper_engine(
         "skipped_same_bar": skipped_same_bar,
         "depth_observations": depth_observations,
         "portfolio_cap_blocks": portfolio_cap_blocks,
+        "universe_size": len(universe_pairs),
+        "observation_only_symbols": sorted(observation_only_symbols),
+        "observation_entries": observation_entries,
         "open_count": len(repo.list_paper_trades(status="open", limit=100)),
         "repaired_policy_exits": repaired_policy_exits,
         "suppressed_duplicates": suppressed_duplicates,
@@ -833,6 +890,9 @@ def paper_scoreboard(repo: Any, settings: Any, *, now: datetime | None = None) -
         "validation_window_alignment": validation_window_alignment(repo, now=now),
         "engine": paper_metrics,
         "user": user_metrics,
+        # WO-FCE-DISCOVERY-UNBLOCK-01 3-3 · C5: 유입 경로별 분리 집계. 관측 등급으로 들어온
+        # 심볼의 성적이 검증된 심볼과 섞이면 완화와 구분되지 않는다.
+        "universe_sources": universe_source_breakdown(comparison_paper),
         "user_fill_sync": fill_sync,
         "equity_curve": {
             "engine": _paper_equity_curve(comparison_paper),
@@ -1842,6 +1902,50 @@ def engine_capital_usdt(policy: PaperPolicy | None = None) -> float:
 # 수도 없다. 확보 가능한 것은 진입 명목뿐이며 그것은 자본이 아니다.
 # 추정치로 채우면 그 순간 이 WO 가 고치려는 오류를 다시 만드는 것이다.
 USER_CAPITAL_NOTE = "사용자 운용 자본 미산출 — 계좌 잔고 테이블 없음, 레버리지 미기록으로 증거금 역산 불가"
+
+
+def universe_source_breakdown(trades: Iterable[PaperTrade]) -> dict[str, Any]:
+    """유입 경로별 성적 분리 집계 (WO-FCE-DISCOVERY-UNBLOCK-01 3-3 · C5).
+
+    **이것 없이 유니버스만 넓히면 완화와 구분되지 않는다.** 표본 검증 없이 유입된 심볼의
+    거래가 검증된 심볼과 섞이면, 성적이 좋아져도 나빠져도 원인을 귀속할 수 없다.
+
+    ## 사후 채점은 선정 기준으로 역류하지 않는다
+
+    이 함수는 **보고만** 한다. 여기서 나온 승률을 유니버스 선정에 되먹이면 그 순간
+    "성적 좋은 심볼만 골라 평가한다"가 되고 표본이 편향된다 —
+    `OBSERVATION-INTEGRITY-01` Phase 5 가 선정 기준에 승률을 넣지 않은 것과 같은 이유다.
+
+    ## 복귀 조건 (결과 확인 전 확정 — `docs/validation/DISCOVERY_GATE.md`)
+
+    시그니처별 페이퍼 표본이 `universe_backtest_min_sample`(30)에 도달하면 그 시그니처는
+    관측 등급 유입에서 빠지고 `backtest_win_1r_ci_low` **요구로 복귀**한다. 표본이 차면
+    미룰 이유가 사라지기 때문이다. 강등·보수화 방향이므로 자율 실행이 허용된다(비대칭 자율).
+    """
+    rows = [trade for trade in trades if not _is_pre_tp_pressure_exit(trade)]
+    buckets: dict[str, list[PaperTrade]] = {"validated": [], "observation_unvalidated": []}
+    for trade in rows:
+        source = str(_dict(trade.entry_evidence).get("universe_source") or "validated")
+        buckets.setdefault(source, []).append(trade)
+
+    breakdown: dict[str, Any] = {}
+    for source, bucket in sorted(buckets.items()):
+        if not bucket:
+            breakdown[source] = {"trade_count": 0, "note": "표본 0 — 판정 유보"}
+            continue
+        wins = [trade for trade in bucket if trade.net_pnl_usdt > 0]
+        gross_profit = sum(max(0.0, trade.net_pnl_usdt) for trade in bucket)
+        gross_loss = abs(sum(min(0.0, trade.net_pnl_usdt) for trade in bucket))
+        breakdown[source] = {
+            "trade_count": len(bucket),
+            "net_pnl_usdt": round(sum(float(trade.net_pnl_usdt) for trade in bucket), 4),
+            "win_rate_pct": round(len(wins) / len(bucket) * 100.0, 2),
+            "profit_factor": round(gross_profit / gross_loss, 4) if gross_loss > 0 else None,
+            # 같은 술어를 쓴다 — 모집단만 다르다 (METRIC-TRUTH-01 결정 3).
+            "sample_sufficient": len(bucket) >= 10,
+        }
+    breakdown["note"] = "유입 경로별 분리 집계. 관측 등급 통과는 **평가 자격**이며 품질 검증이 아니다(C10)."
+    return breakdown
 
 
 def _paper_metrics(trades: Iterable[PaperTrade]) -> dict[str, Any]:

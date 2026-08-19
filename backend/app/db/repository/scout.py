@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from uuid import UUID
+from app.scout.discovery_gate import observation_gate_passed
 from app.db.models import ArmedSetup, CatalogSymbol, EntryIntent, EntryScenario, ScoutSnapshot, UniverseDiscovery, WatchlistItem, utc_now
 from .base import _dump_model, _same_directional_bar
 
@@ -109,6 +110,10 @@ class MemoryScoutRepositoryMixin:
     def list_recent_gate_passed_universe_discoveries(self, limit: int = 500) -> list[UniverseDiscovery]:
         recent = sorted(self.universe_discoveries.values(), key=lambda item: item.created_at, reverse=True)[:limit]
         return [item for item in recent if item.gate_passed]
+
+    def list_recent_observation_universe_discoveries(self, limit: int = 500) -> list[UniverseDiscovery]:
+        recent = sorted(self.universe_discoveries.values(), key=lambda item: item.created_at, reverse=True)[:limit]
+        return [item for item in recent if observation_gate_passed(item.gate_reasons)]
 
     def list_watchlist(self) -> list[WatchlistItem]:
         return sorted(self.watchlist.values(), key=lambda item: item.added_at, reverse=True)
@@ -455,6 +460,25 @@ class SQLiteScoutRepositoryMixin:
                 (limit,),
             ).fetchall()
         return [UniverseDiscovery.model_validate_json(row["payload"]) for row in rows]
+
+    def list_recent_observation_universe_discoveries(self, limit: int = 500) -> list[UniverseDiscovery]:
+        """관측 등급 통과 발견 (WO-FCE-DISCOVERY-UNBLOCK-01).
+
+        판정이 `gate_reasons` 안의 JSON 배열에 있으므로 SQL 로 걸러내지 않고 최근 N건을
+        읽어 파이썬에서 판정한다 — 술어를 SQL 과 파이썬 두 곳에 두면 하나는 반드시 어긋난다.
+        """
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT payload
+                FROM universe_discoveries
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        discoveries = [UniverseDiscovery.model_validate_json(row["payload"]) for row in rows]
+        return [item for item in discoveries if observation_gate_passed(item.gate_reasons)]
 
     def list_watchlist(self) -> list[WatchlistItem]:
         with self._connect() as connection:

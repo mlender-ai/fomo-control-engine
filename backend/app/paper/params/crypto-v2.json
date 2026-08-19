@@ -12,7 +12,8 @@
     "version": "진입 게이트 정책 버전이다. RISK-SIZING-01 은 사이즈만 바꾸고 진입 게이트를 건드리지 않으므로(C1) crypto-v2 를 유지한다. 사이즈는 sizing_mode 라는 별도 축이다.",
     "reentry_lock_mode": "같은 확정봉 안에서 청산하고 곧바로 같은 가격·같은 방향으로 재진입한 건이 9건 있었다. 새 판단이 아니라 왕복이다 — gross 우위가 음수(−0.914R)이면서 비용만 1.127R 을 낸다. 막으면 우위/비용 비율 3.93배 → 1.51배, netR −3.035 → −0.995, PF 0.820 → 0.911, MDD 23.94 → 13.95. 더 긴 잠금(1·3·5봉)은 gross 우위가 양수인 거래까지 버려 동일방향 기준으로는 오히려 나빠진다 — 표본 33건에서 잡음 적합으로 본다.",
     "reentry_lock_same_direction_only": "같은 봉 왕복 9건이 전부 동일 방향이라 양방향 잠금과 결과가 완전히 같다. 구분할 근거가 없으므로 최소 개입인 동일방향만으로 둔다.",
-    "rr_basis": "순 기준으로 전환하지 **않았다.** 전환하면 진입이 83% 줄어든다(24 → 4건). 원인은 게이트가 항등식이라는 것이다 — staged_reward = ATR×1.5 이고 execution_risk = min(structural, ATR) 이라 스톱이 1 ATR 보다 넓으면 RR 이 산술적으로 정확히 1.5 가 된다(실측 20/24 건이 정확히 1.5000, RR<1.5 는 0건 — 이 게이트는 한 번도 무언가를 거른 적이 없다). 비용을 빼면 전부 1.5 아래로 떨어진다. net_rr_ratio 는 항상 병행 기록하므로 전환은 이 값 하나만 바꾸면 된다. 표본 확보가 임계 경로인 상황에서 83% 감축은 사용자 결정 사항이다."
+    "rr_basis": "순 기준으로 전환하지 **않았다.** 전환하면 진입이 83% 줄어든다(24 → 4건). 원인은 게이트가 항등식이라는 것이다 — staged_reward = ATR×1.5 이고 execution_risk = min(structural, ATR) 이라 스톱이 1 ATR 보다 넓으면 RR 이 산술적으로 정확히 1.5 가 된다(실측 20/24 건이 정확히 1.5000, RR<1.5 는 0건 — 이 게이트는 한 번도 무언가를 거른 적이 없다). 비용을 빼면 전부 1.5 아래로 떨어진다. net_rr_ratio 는 항상 병행 기록하므로 전환은 이 값 하나만 바꾸면 된다. 표본 확보가 임계 경로인 상황에서 83% 감축은 사용자 결정 사항이다.",
+    "observation_universe_enabled": "발견 게이트가 페이퍼 유니버스 급유까지 겸하고 있었다. gate_passed 는 본래 **알림 발송 자격**인데(status=alerted · daily_alert_limit · symbol_cooldown 이 같은 경로다) paper_universe() 가 같은플래그로 평가 대상을 정한다. 그 결과가 순환이다 — 진입은 signature_gate_mode=record_only 로시그니처 검증을 요구하지 않는데, 그 심볼을 보기까지가 시그니처 검증(backtest_sample>=30 ·CI 하한>=50%)을 요구했다. 진입 게이트에서 뺀 조건이 급유 단계에 그대로 남아 있었다. 켜면 표본 종속 두 게이트만 미루고 유동성·신뢰도·수명주기·괴리·실적창·2단계는 그대로 요구한다. 실측(2026-08-19 · 6시간 발견 534건): crypto 387건 중 관측 등급 통과 120건 · 고유 12심볼(ADA·BNB·DELL·DOGE·INTC·IREN·LINK·MRVL·RKLB·SOL·TSM·XRP). 비순환 게이트가 유동성 241건·신뢰도 51건을 계속 거르고, 주식·지수는 stage2_template 로 0건 통과다. 임계값은 하나도 바뀌지 않았다 — 적용 위치만 바뀐다. 이 경로로 유입된 심볼의 거래는entry_evidence.universe_source=observation_unvalidated 로 표시되고 성적이 분리 집계된다(scoreboard.universe_sources). 통과는 **평가 자격**이며 품질 검증이 아니다. 복귀 조건: 시그니처별 페이퍼 표본이 30에 도달하면 CI 하한 요구로 복귀한다."
   },
   "sizing_mode": "risk_based",
   "risk_budget_usdt": 2.5,
@@ -21,5 +22,6 @@
   "reentry_lock_mode": "same_bar",
   "reentry_lock_bars": 0,
   "reentry_lock_same_direction_only": true,
-  "rr_basis": "gross"
+  "rr_basis": "gross",
+  "observation_universe_enabled": true
 }
