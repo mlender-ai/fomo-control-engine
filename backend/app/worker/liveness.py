@@ -263,6 +263,97 @@ def backoff_stuck_jobs(worker_status: dict[str, Any]) -> list[dict[str, Any]]:
     return sorted(stuck, key=lambda row: -row["multiple"])
 
 
+# WO-FCE-WORKER-HANG-02 Phase 2-4 — 잡 단위 기아 판정.
+#
+# ## D1: 감시 단위가 실패 단위보다 컸다
+#
+# `deadman.sh`·`supervisor.sh`·`evaluate_liveness` 는 **워커 단위**로 본다. 워커가 하트비트를
+# 찍으면 정상이다. 그런데 2026-08-19 실패는 **잡 단위**에서 났다 — 하트비트는 신선한데
+# `universe_scan` 이 0회 실행이었고, 어떤 신호도 나오지 않았다. 유니버스가 3종으로 말라
+# 페이퍼 진입이 이틀간 0건이 됐는데도 화면은 "정상"이었다.
+#
+# 2026-07-28 "포트만 보는 감시" 사고와 같은 구조다. 그때는 포트가 열려 있으면 정상으로 봤다.
+# **감시 단위를 실패 단위에 맞춘다.**
+#
+# 잡마다 자기 간격이 있으므로 절대 시간이 아니라 **자기 간격의 배수**로 잰다.
+JOB_STARVATION_INTERVAL_MULTIPLE = 3.0
+
+# 이 상태의 잡은 굶은 것이 아니다. 오탐이 쌓이면 신호 전체가 무시된다.
+_NON_STARVING_STATUSES = frozenset({"disabled"})
+
+
+def job_starvation(
+    jobs: dict[str, Any],
+    *,
+    now: datetime | None = None,
+    interval_multiple: float = JOB_STARVATION_INTERVAL_MULTIPLE,
+) -> dict[str, Any]:
+    """잡별 기아 판정 (Phase 2-4 · D1).
+
+    두 형태를 잡는다:
+
+    - `never_ran_and_overdue` — `runs=0` 인데 `next_run_at` 이 과거다. **2026-08-19 사고의 형태.**
+      스케줄러가 발화를 계속 건너뛰면서 `next_run_at` 만 갱신하면 이 모양이 된다.
+    - `interval_overrun` — 실제 마지막 유효 실행이 자기 간격의 `interval_multiple` 배를 넘겼다.
+
+    `last_effective_run_at` 을 쓴다 — 조기 반환(비활성·미구성)은 "돌았지만 안 돈 것"이므로
+    `last_success_at` 으로 재면 기아가 성공으로 보인다(`EngineLiveness.md` D3 와 같은 이유).
+
+    **워커 생존과 별도로 돌려준다.** 워커가 살아 있어도 잡이 굶으면 보여야 한다.
+    """
+    now = now or datetime.now(timezone.utc)
+    starved: list[str] = []
+    detail: dict[str, Any] = {}
+    healthy = 0
+
+    for name, job in (jobs or {}).items():
+        if not isinstance(job, dict):
+            continue
+        if str(job.get("status") or "") in _NON_STARVING_STATUSES:
+            continue
+        interval = int(job.get("base_interval_seconds") or 0)
+        if interval <= 0:
+            # 스케줄되지 않는 잡(간격 0)은 판정 대상이 아니다.
+            continue
+
+        runs = int(job.get("runs") or 0)
+        next_run = _parse(job.get("next_run_at"))
+        overdue = (now - next_run).total_seconds() if next_run is not None else None
+        last_effective = _parse(job.get("last_effective_run_at"))
+        age = (now - last_effective).total_seconds() if last_effective is not None else None
+        limit = interval * max(1.0, interval_multiple)
+
+        reason: str | None = None
+        if runs == 0 and overdue is not None and overdue > 0:
+            reason = "never_ran_and_overdue"
+        elif age is not None and age > limit:
+            reason = "interval_overrun"
+
+        if reason is None:
+            healthy += 1
+            continue
+
+        starved.append(name)
+        detail[name] = {
+            "job": name,
+            "reason": reason,
+            "runs": runs,
+            "base_interval_seconds": interval,
+            "starvation_limit_seconds": round(limit),
+            "overdue_seconds": round(overdue) if overdue is not None else None,
+            "effective_age_seconds": round(age) if age is not None else None,
+            "misfired": int(job.get("misfired") or 0),
+        }
+
+    return {
+        "starved": sorted(starved),
+        "starved_count": len(starved),
+        "healthy_count": healthy,
+        "interval_multiple": interval_multiple,
+        "detail": detail,
+    }
+
+
 def evaluate_liveness(
     worker_status: dict[str, Any],
     settings: Settings,

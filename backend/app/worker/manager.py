@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from apscheduler.events import EVENT_JOB_MISSED
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
@@ -59,6 +60,57 @@ class WorkerJob:
     enabled: bool = True
 
 
+# WO-FCE-WORKER-HANG-02 Phase 2-2 — misfire 정책.
+#
+# ## 왜 명시해야 하는가
+#
+# APScheduler 의 `misfire_grace_time` **기본값은 1초**다. 예정 시각이 1초를 넘겨 지나가면 그
+# 발화는 지연되는 것이 아니라 **건너뛴다.** 그리고 이 워커의 이벤트 루프 지연은 실측
+# 평균 11.66초 · 최대 49.73초다(Phase 1 `LoopLagMonitor`, 표본 860건 전부 5초 초과).
+#
+# 즉 **거의 모든 발화가 소실되고 있었다.** 그 결과가 `universe_scan` 24시간 19회 실행
+# (예상 48회 · 40%)이고, 캐시가 얼어붙어 유니버스가 3종으로 말랐다.
+#
+# ## 관측 잡과 시각 민감 잡을 나눈다
+#
+# 주기 관측 잡은 **늦어도 다음 주기 전까지 실행되면 관측 가치가 있다** — grace 를 주기만큼 준다.
+# 알림·펄스 잡은 늦은 발송이 무의미하거나 해롭다(지나간 상황을 지금 알리는 것) — 짧게 둔다.
+#
+# ⚠️ 간격은 건드리지 않는다(C1). 이 상수는 "얼마나 늦어도 실행할지"이며 "얼마나 자주"가 아니다.
+_TIME_SENSITIVE_GRACE_SECONDS = 30
+
+# 늦은 발송이 무의미한 잡. 이들만 짧은 grace 를 쓴다.
+_TIME_SENSITIVE_JOBS = frozenset(
+    {
+        "evaluate_alerts",
+        "evaluate_lifecycle",
+        "evaluate_performance_alerts",
+        "evaluate_structure_context",
+        "periodic_pulse",
+        "daily_summary",
+        "weekly_calibration_report",
+        "weekly_performance_report",
+        "verdict_transition_watch",
+    }
+)
+
+# 관측 잡 grace 상한. 하루 주기 잡에 하루치 grace 를 주면 "언제 돌아도 된다"가 되어
+# 기아를 감지할 수 없다 — 상한을 둬서 이상 상태가 드러나게 한다.
+_MAX_OBSERVATION_GRACE_SECONDS = 1800
+
+
+def _misfire_grace_seconds(name: str, interval_seconds: int) -> int:
+    """이 잡이 예정 시각을 얼마나 넘겨도 실행할지 (Phase 2-2).
+
+    관측 잡: 주기만큼(상한 30분). 다음 주기가 오기 전이면 실행하는 것이 관측에 이롭다.
+    시각 민감 잡: 30초. 1초(기본값)는 루프 지연 앞에서 사실상 "항상 건너뜀"이다.
+    """
+    interval = max(1, int(interval_seconds))
+    if name in _TIME_SENSITIVE_JOBS:
+        return _TIME_SENSITIVE_GRACE_SECONDS
+    return max(_TIME_SENSITIVE_GRACE_SECONDS, min(interval, _MAX_OBSERVATION_GRACE_SECONDS))
+
+
 class WorkerManager:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -70,7 +122,13 @@ class WorkerManager:
         self.sender = TelegramSender(settings)
         self.alerts = AlertEngine(settings, self.sender, self.state)
         self.bot = TelegramBotSupervisor(settings, self.state)
-        self.scheduler = AsyncIOScheduler(timezone=timezone.utc)
+        # Phase 2-2: `misfire_grace_time` 기본값 1초가 루프 지연(평균 11.66초)과 만나면
+        # 거의 모든 발화가 소실된다. 잡별 값은 `_schedule_job` 에서 명시하고, 여기서는
+        # 등록 누락 시의 안전망만 둔다 — 1초로 되돌아가지 않게.
+        self.scheduler = AsyncIOScheduler(
+            timezone=timezone.utc,
+            job_defaults={"coalesce": True, "max_instances": 1, "misfire_grace_time": _TIME_SENSITIVE_GRACE_SECONDS},
+        )
         self.heartbeat_store = SQLiteHeartbeatStore(settings.database_url)
         self.jobs = self._build_jobs()
         self.heartbeats = {
@@ -101,6 +159,10 @@ class WorkerManager:
             return
 
         self._started = True
+        # Phase 2-2 · C8: 건너뛴 발화는 지금까지 **조용히 사라졌다.** APScheduler 는 WARNING 을
+        # 찍지만 잡 이름이 없어(`WorkerManager._run_scheduled_job`) 어느 잡이 굶는지 알 수 없었다.
+        # 리스너로 잡별 카운터에 적어 조회 가능하게 만든다.
+        self.scheduler.add_listener(self._on_job_missed, EVENT_JOB_MISSED)
         self.scheduler.start()
         startup_delay = max(0, self.settings.worker_startup_delay_seconds)
         next_run = datetime.now(timezone.utc) + timedelta(seconds=startup_delay)
@@ -152,6 +214,10 @@ class WorkerManager:
                 "is_muted": self.state.is_muted(),
             },
             "flag_warnings": self.flag_warnings,
+            # Phase 2-4 · D1: 워커 생존과 **별도로** 잡 기아를 노출한다. 워커가 살아 있어도
+            # 잡이 굶으면 보여야 한다 — 감시 단위를 실패 단위에 맞춘다. 조회 전용이며
+            # 신규 푸시를 만들지 않는다(2-4 작업 3).
+            "job_starvation": liveness.job_starvation(jobs),
             # Phase 1: 루프 지연은 조회로만 노출한다(C8 — 새 푸시를 만들지 않는다).
             "loop_lag": self.loop_lag.snapshot(),
             "hang_dump": getattr(self, "hang_dump", {"registered": False, "reason": "not_started"}),
@@ -847,8 +913,30 @@ class WorkerManager:
             "restarts_24h": len(restarts),
         }
 
+    def _on_job_missed(self, event: Any) -> None:
+        """스케줄러가 발화를 건너뛴 사실을 잡별로 기록한다 (Phase 2-2 · C8).
+
+        `skipped`(이전 틱이 아직 도는 중)와 **분리해서** 센다. 원인이 다르고 처방이 다르다:
+        `skipped` 는 잡이 느린 것이고, `misfired` 는 스케줄러가 아예 실행하지 않은 것이다.
+        """
+        name = str(getattr(event, "job_id", "") or "")
+        heartbeat = self.heartbeats.get(name)
+        if heartbeat is None:
+            return
+        heartbeat.misfired += 1
+        heartbeat.last_misfire_at = datetime.now(timezone.utc)
+        self._persist(heartbeat)
+        logger.warning(
+            "worker.%s misfired total=%s grace=%ss scheduled_for=%s",
+            name,
+            heartbeat.misfired,
+            heartbeat.misfire_grace_seconds,
+            getattr(event, "scheduled_run_time", None),
+        )
+
     def _schedule_job(self, name: str, interval_seconds: int, next_run_time: datetime | None = None) -> None:
         interval = max(1, int(interval_seconds))
+        grace = _misfire_grace_seconds(name, interval)
         self.scheduler.add_job(
             self._run_scheduled_job,
             trigger=IntervalTrigger(seconds=interval, timezone=timezone.utc),
@@ -858,8 +946,11 @@ class WorkerManager:
             max_instances=1,
             replace_existing=True,
             next_run_time=next_run_time,
+            # Phase 2-2: 기본 1초로 두면 루프 지연 앞에서 발화가 소실된다.
+            misfire_grace_time=grace,
         )
         heartbeat = self.heartbeats[name]
+        heartbeat.misfire_grace_seconds = grace
         heartbeat.current_interval_seconds = interval
         heartbeat.next_run_at = self._next_run_at(name)
         self._persist(heartbeat)

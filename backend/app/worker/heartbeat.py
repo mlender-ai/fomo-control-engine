@@ -28,6 +28,14 @@ class HeartbeatRecord:
     last_error: str | None = None
     next_run_at: datetime | None = None
     updated_at: datetime | None = None
+    # WO-FCE-WORKER-HANG-02 Phase 2-2. 스케줄러가 **건너뛴** 발화 수.
+    #
+    # `skipped` 는 "이전 틱이 아직 도는 중"이라 건너뛴 것이고, 이것은 "루프가 막혀 예정 시각을
+    # 놓쳤다"라 건너뛴 것이다 — 원인이 다르므로 한 칸에 합치지 않는다. 합치면 misfire 가
+    # 정상 스킵에 묻혀 보이지 않는다(이번 사고가 그렇게 두 달 숨었다).
+    misfired: int = 0
+    last_misfire_at: datetime | None = None
+    misfire_grace_seconds: int = 0
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -45,6 +53,9 @@ class HeartbeatRecord:
             "last_error": self.last_error,
             "next_run_at": self.next_run_at,
             "updated_at": self.updated_at,
+            "misfired": self.misfired,
+            "last_misfire_at": self.last_misfire_at,
+            "misfire_grace_seconds": self.misfire_grace_seconds,
         }
 
 
