@@ -94,9 +94,12 @@ class SQLiteHeartbeatStore:
                         last_error_at,
                         last_error,
                         next_run_at,
-                        updated_at
+                        updated_at,
+                        misfired,
+                        last_misfire_at,
+                        misfire_grace_seconds
                     )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     record.job_name,
@@ -114,6 +117,9 @@ class SQLiteHeartbeatStore:
                     record.last_error,
                     _iso(record.next_run_at),
                     _iso(record.updated_at),
+                    record.misfired,
+                    _iso(record.last_misfire_at),
+                    record.misfire_grace_seconds,
                 ),
             )
 
@@ -150,7 +156,7 @@ def _parse_dt(value: str | None) -> datetime | None:
     return datetime.fromisoformat(value) if value else None
 
 
-def _row_get(row: sqlite3.Row, key: str) -> str | None:
+def _row_get(row: sqlite3.Row, key: str) -> Any:
     # 마이그레이션 이전 스키마로 만든 행을 읽을 때 컬럼 부재를 관대하게 처리한다.
     try:
         return row[key]
@@ -175,4 +181,8 @@ def _row_to_record(row: sqlite3.Row) -> HeartbeatRecord:
         last_error=row["last_error"],
         next_run_at=_parse_dt(row["next_run_at"]),
         updated_at=_parse_dt(row["updated_at"]),
+        # Phase 2-2. 구 스키마 행을 읽을 때 컬럼 부재를 관대하게 처리한다.
+        misfired=int(_row_get(row, "misfired") or 0),
+        last_misfire_at=_parse_dt(_row_get(row, "last_misfire_at")),
+        misfire_grace_seconds=int(_row_get(row, "misfire_grace_seconds") or 0),
     )

@@ -276,3 +276,46 @@ async def test_worker_status_exposes_job_starvation(tmp_path) -> None:
     status = manager.status()
     assert "job_starvation" in status
     assert set(status["job_starvation"]) >= {"starved", "starved_count", "detail"}
+
+
+# ---------------------------------------------------------------------------
+# 영속화 — 조회 경로가 값을 잃지 않는다
+# ---------------------------------------------------------------------------
+
+
+def test_misfire_counters_survive_the_sqlite_round_trip(tmp_path) -> None:
+    """`status()` 는 영속 행을 우선한다 — 스키마에 칼럼이 없으면 값이 조용히 0이 된다.
+
+    이 테스트가 없으면 misfire 카운터가 화면에서 사라진 것을 못 잡는다(실제로 한 번 그랬다).
+    """
+    from app.worker.heartbeat import HeartbeatRecord, SQLiteHeartbeatStore
+
+    store = SQLiteHeartbeatStore(f"sqlite:///{tmp_path / 'hb.db'}")
+    assert store.enabled
+    record = HeartbeatRecord(
+        job_name="universe_scan",
+        base_interval_seconds=1800,
+        current_interval_seconds=1800,
+        misfired=7,
+        last_misfire_at=datetime(2026, 8, 19, tzinfo=timezone.utc),
+        misfire_grace_seconds=1800,
+    )
+    store.upsert(record)
+
+    restored = store.list()["universe_scan"]
+    assert restored["misfired"] == 7
+    assert restored["misfire_grace_seconds"] == 1800
+    assert restored["last_misfire_at"] == datetime(2026, 8, 19, tzinfo=timezone.utc)
+
+
+@pytest.mark.asyncio
+async def test_status_reports_grace_after_scheduling(tmp_path) -> None:
+    """스케줄 등록 → 영속 → 조회까지 값이 살아 있는지 (종단)."""
+    manager = WorkerManager(_settings(tmp_path))
+    manager.scheduler.start(paused=True)
+    try:
+        manager._schedule_job("universe_scan", 1800, datetime.now(timezone.utc) + timedelta(days=1))
+        status = manager.status()
+        assert status["jobs"]["universe_scan"]["misfire_grace_seconds"] == 1800
+    finally:
+        manager.scheduler.shutdown(wait=False)
