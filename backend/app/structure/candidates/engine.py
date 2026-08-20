@@ -36,9 +36,32 @@ def detect_candidate_signatures(candles: list[MarketCandle]) -> dict[str, Any]:
 
 
 def detect_stage2_template(candles: list[MarketCandle]) -> dict[str, Any]:
+    """2단계 상승 조건.
+
+    ## 조건별 판정을 함께 낸다 (WO-FCE-STOCK-UNBLOCK-01 3-1)
+
+    지금까지 `active` 불리언 하나만 나와서 **왜 떨어졌는지 알 수 없었다.** 캔들이 200개
+    미만이면 나머지 세 조건은 **평가조차 되지 않는데**, 밖에서 보면 그냥 "미충족"이라
+    데이터 결함과 조건 부적합을 구분할 수 없었다.
+
+    그래서 `checks` 에 조건별 결과를 낸다. 평가 불가한 조건은 `False` 가 아니라 **`None`**
+    이다 — "틀렸다"와 "재보지 못했다"는 다른 상태다.
+
+    ⚠️ **`active` 판정 로직은 한 줄도 바꾸지 않았다**(C4). 이미 계산하던 중간값을 내보내기만 한다.
+    """
     ordered = sorted(candles, key=lambda candle: candle.timestamp)
-    if len(ordered) < 200:
-        return _stage2_payload(False, f"캔들 {len(ordered)}개 — MA200 표본 부족")
+    candle_count = len(ordered)
+    if candle_count < 200:
+        payload = _stage2_payload(False, f"캔들 {candle_count}개 — MA200 표본 부족")
+        payload["candle_count"] = candle_count
+        payload["checks"] = {
+            "candle_count_ok": False,
+            # 아래 셋은 평가 자체가 불가능하다. False 로 적으면 "조건이 틀렸다"로 읽힌다.
+            "alignment_ok": None,
+            "slope_ok": None,
+            "high_distance_ok": None,
+        }
+        return payload
     closes = [candle.close for candle in ordered]
     ma150 = mean(closes[-150:])
     ma200 = mean(closes[-200:])
@@ -56,6 +79,14 @@ def detect_stage2_template(candles: list[MarketCandle]) -> dict[str, Any]:
         "ma200_slope_20": round(slope, 8),
         "high_distance_pct": round(high_distance_pct, 3) if high_distance_pct is not None else None,
         "as_of": ordered[-1].timestamp.isoformat(),
+        "candle_count": candle_count,
+        # 관측 전용 — `active` 는 위에서 이미 정해졌다.
+        "checks": {
+            "candle_count_ok": True,
+            "alignment_ok": bool(close > ma150 > ma200),
+            "slope_ok": bool(slope > 0),
+            "high_distance_ok": bool(high_distance_pct is not None and high_distance_pct >= -25.0),
+        },
     }
 
 
