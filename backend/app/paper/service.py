@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Sequence
 from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
 from app.analyst.gauges import build_gauges
@@ -129,6 +129,61 @@ def policy_from_settings(settings: Any, asset_class: str = "crypto") -> PaperPol
     )
 
 
+def expected_confirmed_bar_key(timeframe: str, now: datetime) -> str:
+    """지금 시점에서 **가장 최근에 확정된** 봉의 키.
+
+    분석을 호출하지 않고도 알 수 있다 — 벽시계와 타임프레임만 필요하다. 그래서 "이 심볼은
+    이번 봉을 이미 평가했다"를 **분석 비용을 내기 전에** 판정할 수 있다.
+    """
+    seconds = max(1, int(timeframe_seconds(timeframe)))
+    epoch = int(now.timestamp())
+    current_open = epoch - (epoch % seconds)
+    return datetime.fromtimestamp(current_open - seconds, tz=timezone.utc).isoformat()
+
+
+def universe_needing_evaluation(
+    repo: Any,
+    pairs: Sequence[tuple[str, str]],
+    *,
+    now: datetime,
+    max_symbols: int | None = None,
+) -> list[tuple[str, str]]:
+    """이번 실행에서 실제로 평가해야 하는 심볼만 남긴다 (WO-FCE-REPLAY-DEPTH-01 후속 수리).
+
+    ## 왜 필요한가 — 라이브 장애
+
+    루프가 `analysis_loader(symbol, timeframe)` 를 **봉 변경 확인 전에** 무조건 호출한다.
+    심볼당 분석이 약 30초라 유니버스가 3종일 때는 예산(450초) 안에 들어왔지만,
+    `DISCOVERY-UNBLOCK-01` 로 15종이 되면서 **매 90초 실행마다 15 × 30초를 시도해
+    timeout after 450s 로 죽었다**(실측 2026-08-20: `sync_positions` runs=0 · 실패 3회,
+    `paper_engine` status=running 미완료, 훅 잡 유효 실행 16~25시간 없음).
+
+    4시간봉은 한 봉당 한 번만 평가하면 된다. 이미 평가한 심볼의 분석을 다시 받는 것은
+    **순수 낭비**이고, 그 낭비가 예산을 넘겨 **모든 심볼의 평가를 막았다.**
+
+    ## 판정은 저장된 상태만으로 한다
+
+    `paper_engine_state.last_bar_at` 이 현재 확정봉과 같고 게이트 버전도 같으면 건너뛴다.
+    루프 안의 기존 동일봉 스킵 로직은 **그대로 둔다** — 이것은 그 앞단의 비용 회피다.
+
+    `max_symbols` 는 안전판이다. 새 봉에서 전량이 대상이 되어도 한 실행이 예산을 넘지 않게
+    하고, 남은 심볼은 다음 실행(90초 후)이 처리한다 — 4시간 안에 충분히 순회한다.
+    """
+    pending: list[tuple[str, str]] = []
+    for symbol, timeframe in pairs:
+        state = repo.get_paper_engine_state(symbol, timeframe) or {}
+        same_bar = str(state.get("last_bar_at") or "") == expected_confirmed_bar_key(timeframe, now)
+        gate_current = str(state.get("entry_gate_version") or "") == ENTRY_GATE_VERSION
+        # 열린 포지션은 청산 판정이 필요하므로 봉이 같아도 평가한다.
+        has_open = bool([row for row in repo.list_paper_trades(status="open", symbol=symbol, limit=5) if row.timeframe == timeframe])
+        if same_bar and gate_current and not has_open:
+            continue
+        pending.append((symbol, timeframe))
+    if max_symbols is not None and max_symbols > 0:
+        return pending[:max_symbols]
+    return pending
+
+
 def paper_universe(repo: Any, *, observation_feed: bool = False) -> list[tuple[str, str]]:
     """페이퍼 엔진이 평가할 (심볼, 타임프레임) 목록.
 
@@ -181,12 +236,25 @@ def run_paper_engine(
     skipped_same_bar = 0
     depth_observations = 0
     portfolio_cap_blocks = 0
+    # 호가 관측은 **동기 네트워크 호출**이라 엔진 임계 경로에 비용을 얹는다. 실측
+    # 2026-08-22: 열린 포지션 5건 + 진입 평가가 겹치며 `sync_positions` 가
+    # `timeout after 450s` 로 죽었다. 표본은 이미 기준(30건)을 넘겼으므로 실행당 상한을 둔다 —
+    # 수집을 멈추는 것이 아니라 한 실행이 예산을 넘기지 않게 나눈다.
+    depth_budget = max(0, int(getattr(settings, "paper_depth_observations_per_run", 2)))
     # WO-FCE-DISCOVERY-UNBLOCK-01: 관측 등급으로만 유입된 심볼. 이 집합의 거래는
     # "표본 미검증 유입"으로 표시되고 성적이 분리 집계된다 (C5·C9).
     observation_feed = observation_universe_enabled(settings)
     validated_pairs = set(paper_universe(repo))
     observation_only = observation_only_universe(repo, validated=validated_pairs) if observation_feed else set()
     universe_pairs = sorted(validated_pairs | observation_only)
+    # 라이브 장애 수리: 이미 이번 봉을 평가한 심볼의 분석을 다시 받지 않는다.
+    # 그 낭비가 450초 예산을 넘겨 전 심볼의 평가를 막았다(docstring 참조).
+    universe_pairs = universe_needing_evaluation(
+        repo,
+        universe_pairs,
+        now=now,
+        max_symbols=int(getattr(settings, "paper_engine_max_symbols_per_run", 0)) or None,
+    )
     observation_only_symbols = {symbol for symbol, _ in observation_only}
     observation_entries = 0
     errors: list[dict[str, str]] = []
@@ -247,7 +315,7 @@ def run_paper_engine(
                     bar=bar,
                     policy=policy_from_settings(settings, open_trade_row.asset_class),
                 )
-                if exit_decision.action in {"partial", "close"}:
+                if exit_decision.action in {"partial", "close"} and depth_observations < depth_budget:
                     # 청산도 체결이다 — 진입만 재면 왕복 비용의 절반을 못 본다 (4-1 작업 1).
                     depth_observations += int(
                         _record_depth_observation(
@@ -381,7 +449,7 @@ def run_paper_engine(
                         gate_record["rejection_reasons"] = [portfolio_block]
                 repo.upsert_paper_gate_funnel(gate_record)
                 _record_entry_block_logs(repo, gate_record, now=now)
-                if will_enter:
+                if will_enter and depth_observations < depth_budget:
                     # **진입 결정 시점**이다. 사후에는 이 호가를 재구성할 수 없다 (4-1 작업 1).
                     depth_observations += int(
                         _record_depth_observation(

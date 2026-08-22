@@ -135,6 +135,9 @@ _HEAVY_JOBS = frozenset(
         "refresh_calibration_cache",
         "discover_whale_leaderboard",
         "collect_derivatives",
+        # WO-FCE-REPLAY-DEPTH-01 4-2: 심볼당 1.6초 × 최대 25심볼. 기본 풀에 두면
+        # 표본 생산 잡의 슬롯을 먹는다 — 처음부터 격리한다(C8).
+        "replay_history_backfill",
     }
 )
 
@@ -802,6 +805,13 @@ class WorkerManager:
                 self.settings.worker_universe_scan_interval_seconds,
                 self._universe_scan,
                 enabled=self.settings.universe_scanner_enabled,
+            ),
+            # WO-FCE-REPLAY-DEPTH-01 4-2. 기본 꺼짐이며 저장만 한다.
+            "replay_history_backfill": WorkerJob(
+                "replay_history_backfill",
+                self.settings.replay_history_backfill_interval_seconds,
+                lambda: self._run_in_thread("replay_history_backfill", service.replay_history_backfill),
+                enabled=self.settings.replay_history_backfill_enabled,
             ),
             "toss_stock_scout": WorkerJob(
                 "toss_stock_scout",

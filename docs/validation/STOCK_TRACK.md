@@ -192,3 +192,24 @@ marketdata/assets.py:18     STOCK_TICKERS = { ~27개 }                    ← IN
 - 분류 수리 전에 캔들 공급을 고치기 — 비용이 100배가 되고 큐가 다시 굶는다
 - 표본 수 증가를 목적으로 자산군 오분류를 방치하기 — SPCX 갭이 그 대가였다
 - `active` 판정 로직 변경 (C4) — 관측 필드 추가만 허용
+
+---
+
+## 6. 판정 A 후속 — 원인이 한 겹 더 있었다 (REPLAY-DEPTH-01 4-1)
+
+§1 은 `provider.py:689 limit=200` → 미확정봉 제거 = 199 로 봤다. **실측하니 provider 는
+모든 심볼에 정확히 200개를 준다.** 줄어드는 곳이 하나 더 있었다:
+
+```
+get_ohlcv(200) → 200 → 미확정 제거 → 199 → **세션 필터** → 146
+                                              marketdata/sessions.py:100-105
+```
+
+`filter_analysis_candles` 가 **stock·index 에서만** `session=="closed"` 봉을 떨어낸다
+(실측 손실률 약 30%). 그리고 `stage2_template` 이 걸리는 자산군이 정확히 그 둘이다 —
+**캔들이 깎이는 쪽에 ≥200 을 요구하는 이중 구속**이었다.
+
+그리고 §1 이 미상으로 남긴 `AAPLUSDT 140` 의 원인도 확정됐다: **상장 기간이 아니다.**
+깊은 로더는 AAPL 에 2,161봉(360일)을 준다.
+
+정본: [`CANDLE_SUPPLY.md`](CANDLE_SUPPLY.md)

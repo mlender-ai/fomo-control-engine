@@ -252,6 +252,47 @@ class Settings(BaseSettings):
     # 켜면 페이퍼 엔진이 관측 등급 발견까지 평가한다 — 표본 관련 두 게이트(`backtest_sample` ·
     # `backtest_win_1r_ci_low`)만 미루고 나머지는 그대로 요구한다. 임계값은 바뀌지 않는다.
     # 끄면 즉시 이전 유니버스로 되돌아간다(C4).
+    # WO-FCE-REPLAY-DEPTH-01 4-2. 기본값 **꺼짐**(C5). 라이브 유니버스 캔들 히스토리 수집.
+    #
+    # 실측 1.6초/심볼(2,196봉). 켜면 재판정 기반이 생긴다 — 지금은 저장 3심볼이고 라이브
+    # 유니버스와의 교집합이 1개다. 분석 페이로드는 **바꾸지 않는다**(그것은 4-3 별도 옵트인).
+    # 라이브 장애 수리 (2026-08-20). 한 실행에서 분석을 받을 심볼 수 상한.
+    #
+    # `paper_engine` 루프가 봉 변경 확인 **전에** 심볼별 분석(약 30초)을 무조건 호출한다.
+    # 유니버스가 15종이 되면서 매 90초 실행이 450초 예산을 넘겨 `timeout after 450s` 로
+    # 죽었고, 진입이 다시 0이 됐다. 이미 평가한 심볼은 건너뛰고(주 수리), 새 봉에서
+    # 전량이 대상이 될 때를 위한 **안전판**이 이 값이다. 남은 심볼은 다음 실행이 처리한다 —
+    # 4시간봉이므로 90초 간격으로 순회하면 충분하다. 0 이면 상한 없음.
+    # 실행당 호가 관측 상한. 호가 조회는 동기 네트워크 호출이라 엔진 임계 경로에 비용을
+    # 얹는다 — 실측 2026-08-22 에 `sync_positions timeout after 450s` 의 기여 요인이었다.
+    # 표본 기준(30건)은 이미 넘겼으므로 수집을 나눠 받는다. 0 이면 수집하지 않는다.
+    paper_depth_observations_per_run: int = Field(
+        2,
+        validation_alias=AliasChoices("FCE_PAPER_DEPTH_OBSERVATIONS_PER_RUN", "PAPER_DEPTH_OBSERVATIONS_PER_RUN"),
+    )
+    paper_engine_max_symbols_per_run: int = Field(
+        6,
+        validation_alias=AliasChoices("FCE_PAPER_ENGINE_MAX_SYMBOLS_PER_RUN", "PAPER_ENGINE_MAX_SYMBOLS_PER_RUN"),
+    )
+    replay_history_backfill_enabled: bool = Field(
+        False,
+        validation_alias=AliasChoices("FCE_REPLAY_HISTORY_BACKFILL_ENABLED", "REPLAY_HISTORY_BACKFILL_ENABLED"),
+    )
+    # 히스토리는 자주 갱신할 필요가 없다. 6시간마다면 4시간봉 기준 충분히 촘촘하다.
+    replay_history_backfill_interval_seconds: int = Field(
+        21_600,
+        validation_alias=AliasChoices("FCE_REPLAY_HISTORY_BACKFILL_INTERVAL_SECONDS", "REPLAY_HISTORY_BACKFILL_INTERVAL_SECONDS"),
+    )
+    # 한 번에 처리할 심볼 수 상한 (C8). 큐를 다시 막지 않기 위한 안전판.
+    replay_history_backfill_max_symbols: int = Field(
+        25,
+        validation_alias=AliasChoices("FCE_REPLAY_HISTORY_BACKFILL_MAX_SYMBOLS", "REPLAY_HISTORY_BACKFILL_MAX_SYMBOLS"),
+    )
+    # 심볼당 보존 봉 수 (C7). DB 12.8GB 비대 선례 — 리텐션을 함께 배선한다.
+    replay_history_retention_bars: int = Field(
+        2_196,
+        validation_alias=AliasChoices("FCE_REPLAY_HISTORY_RETENTION_BARS", "REPLAY_HISTORY_RETENTION_BARS"),
+    )
     paper_observation_universe_enabled: bool = Field(
         False,
         validation_alias=AliasChoices("FCE_PAPER_OBSERVATION_UNIVERSE_ENABLED", "PAPER_OBSERVATION_UNIVERSE_ENABLED"),

@@ -53,7 +53,9 @@ from app.paper.service import paper_universe as _paper_universe
 from app.paper.service import paper_scoreboard as _paper_scoreboard
 from app.paper.service import sync_user_fills as _sync_user_fills
 from app.paper.service import start_paper_benchmark as _start_paper_benchmark
+from app.paper.service import paper_universe
 from app.paper.service import run_paper_engine as _run_paper_engine
+from app.validation import history_backfill
 from app.onchain.service import (
     add_whale_wallet as _add_whale_wallet,
     collect as _collect_whales,
@@ -1263,6 +1265,34 @@ def sample_verdicts() -> dict[str, dict[str, Any]]:
     except Exception as exc:  # 판정 실패가 리포트·알림 경로를 죽이지 않게 한다
         logger.warning("sample verdict computation failed: %s", exc)
         return {}
+
+
+def replay_history_backfill() -> dict[str, Any]:
+    """라이브 유니버스 캔들 히스토리 수집 (WO-FCE-REPLAY-DEPTH-01 4-2).
+
+    기본값 꺼짐이며 켜도 **저장만** 한다 — 분석 페이로드·게이트는 건드리지 않는다.
+    """
+    settings = runtime.settings
+    if not bool(getattr(settings, "replay_history_backfill_enabled", False)):
+        return {"enabled": False, "effective_run": False}
+    loader = getattr(runtime.market_provider, "get_history_ohlcv", None)
+    if not callable(loader):
+        return {"enabled": True, "effective_run": False, "reason": "provider_lacks_history_loader"}
+    pairs = paper_universe(runtime.repository)
+    result = history_backfill.backfill_universe(
+        runtime.repository,
+        pairs=pairs,
+        history_loader=loader,
+        history_bars=int(getattr(settings, "replay_history_retention_bars", 2_196)),
+        retention_bars=int(getattr(settings, "replay_history_retention_bars", 2_196)),
+        max_symbols=int(getattr(settings, "replay_history_backfill_max_symbols", 25)),
+    )
+    return {"enabled": True, **result}
+
+
+def replay_history_coverage() -> dict[str, Any]:
+    """저장 실태와 라이브 유니버스 교집합 — 재판정 가능 범위."""
+    return history_backfill.coverage_report(runtime.repository, pairs=paper_universe(runtime.repository))
 
 
 def run_paper_engine() -> dict[str, Any]:

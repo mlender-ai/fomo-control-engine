@@ -388,3 +388,62 @@ Phase 2 의 큐 수리가 선행 조건이었다 — `universe_scan` 이 안 돌
 
 정본: [`validation/DISCOVERY_GATE.md`](validation/DISCOVERY_GATE.md) ·
 [`validation/SAMPLE_RATE.md`](validation/SAMPLE_RATE.md)
+
+---
+
+## 12. 재발 — `sync_positions timeout after 450s` (2026-08-20~22)
+
+**§11 의 큐 수리 뒤에 다른 형태로 재발했다. 원인은 내 이전 변경이다.**
+
+```
+sync_positions   status=error · runs=0 · fail=3 · timeout after 450s
+paper_engine     status=running · runs=0 (미완료)
+훅 잡            유효 실행 16.5~25.6시간 없음
+```
+
+`job_starvation`(§11 2-4)이 이것을 잡았다 — 워커는 살아 있고 하트비트도 신선한데
+훅 체인이 죽어 있었다. **감시 단위를 실패 단위에 맞춘 것이 여기서 효과를 냈다.**
+
+### 원인 1 — 봉 확인 전에 분석을 받는다
+
+```python
+paper/service.py   for symbol, timeframe in universe_pairs:
+                       payload = analysis_loader(symbol, timeframe)   ← 무조건 · 심볼당 약 30초
+                       ...
+                       if state.get("last_bar_at") == bar_key: skipped_same_bar += 1; continue
+```
+
+동일봉 스킵 판정이 **분석을 받은 뒤**에 있다. 유니버스가 3종일 때는 예산(450초) 안에
+들어왔지만 `DISCOVERY-UNBLOCK-01` 로 15종이 되면서 매 90초 실행이 예산을 넘겼다.
+
+수리: `universe_needing_evaluation()` 이 `paper_engine_state.last_bar_at` 과 벽시계로
+**분석 비용을 내기 전에** 걸러낸다. 열린 포지션은 청산 판정이 필요하므로 예외로 남긴다.
+안전판으로 `paper_engine_max_symbols_per_run`(기본 6)을 둬 새 봉에서 전량이 대상이 되어도
+한 실행이 예산을 넘지 않게 하고, 남은 심볼은 다음 실행(90초 후)이 처리한다.
+
+### 원인 2 — 호가 관측이 임계 경로의 동기 네트워크 호출이다
+
+`RISK-SIZING-01` Phase 4-1 이 넣은 호가 관측은 진입·청산 결정마다 동기 조회를 한다.
+열린 포지션 5건 + 진입 평가가 겹치면 그만큼 엔진 실행 시간이 늘어난다.
+
+수리: `paper_depth_observations_per_run`(기본 2)로 실행당 상한. **수집을 멈추는 것이 아니라
+나눠 받는다** — 표본은 이미 44건으로 대체 기준(30건)을 넘겼으므로 속도를 늦춰도 잃는 것이 없다.
+
+### 부분 회복 실측
+
+첫 수리(2026-08-21T15:43Z 재기동) 후:
+
+| | 수리 전 | 수리 후 |
+| --- | --- | --- |
+| 페이퍼 거래 | 40건 | **53건** |
+| 호가 관측 | 3건 | **44건** |
+| `paper_engine` | running·runs=0 | ok·runs=1 (완료) |
+| loop_lag 최대 | 26.8s | 4.2s |
+
+**그러나 08-22 에 다시 `timeout after 450s` 가 나타났다.** 원인 2(호가 관측)를 그때는
+아직 고치지 않았기 때문으로 보이며, 그 수리를 이번에 넣었다. **재확인이 필요하다 —
+이 항목은 열려 있다.**
+
+> **교훈: 유니버스를 넓히는 변경은 엔진 실행 예산과 함께 봐야 한다.**
+> `DISCOVERY-UNBLOCK-01` 은 유니버스를 3→15로 늘렸지만 그 엔진이 심볼당 30초를 쓴다는 것을
+> 확인하지 않았다. 표본을 늘리려는 변경이 표본을 0으로 만들었다.
