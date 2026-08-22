@@ -146,6 +146,50 @@ FCE_REPLAY_HISTORY_RETENTION_BARS=2196        ← C7
 
 ---
 
+## 5-1. 리텐션 정정 — 보고와 실제가 반대였다 (C7)
+
+§4 의 리텐션 배선에 결함이 있었다. `apply_retention` 은 **upsert 대상 목록**을 잘라내는데
+`upsert_stance_history_candles` 는 INSERT/UPDATE 만 한다 — **이미 저장된 오래된 행은 지워지지
+않는다.**
+
+실측(수리 전):
+
+```
+1회차  리텐션 100  50봉 저장                          표: 50행
+2회차  리텐션 10   5봉 수집 → pruned=45 보고           표: 55행   ← 늘었다
+```
+
+**보고와 실제가 반대 방향인 리텐션은 없는 것보다 나쁘다** — 있다고 믿게 만들기 때문이다.
+DB 12.8GB 선례가 정확히 "리텐션 DELETE 는 있었으나 회수가 없었다"였고, 이번은 그보다 한 칸
+앞이다(DELETE 자체가 없었다).
+
+### 수리
+
+| 축 | 무엇 |
+| --- | --- |
+| 저장소 삭제 | `repo.prune_stance_history_candles(symbol, timeframe, keep_bars)` — 실제 `DELETE` |
+| 수집 경로 | `history_backfill` 이 upsert 직후 저장소에 삭제를 시킨다 |
+| 정기 경로 | `database_retention` 이 같은 상한을 건다 — **잡이 꺼져 있는 동안에도**(기본값이 꺼짐이다) |
+| 보고 | `pruned` = **실제 삭제 행 수** · `trimmed` = 애초에 쓰지 않은 봉. 둘을 합치지 않는다 |
+
+삭제를 지원하지 않는 저장소에서는 `pruned=0` 을 보고한다 — **지웠다고 적지 않는다.**
+
+회귀: `tests/test_replay_depth.py::test_retention_actually_deletes_rows_that_are_already_stored` ·
+`::test_scheduled_retention_caps_the_table_while_the_job_is_off`.
+
+---
+
+## 5-2. 재판정은 여기서 이어진다
+
+봉이 저장되면 그 위에서 페이퍼 엔진을 재실행할 수 있다 — 진입 게이트 9종 · 사이징 ·
+재진입 잠금 · 출구 사다리 · 손절 체결까지. 그것이 4-4 이며 정본은
+[`REPLAY_HARNESS.md`](REPLAY_HARNESS.md) 제2부다.
+
+`RISK-SIZING-01` Phase 2 가 **크립토 봉 미보존**으로 포기한 손절 체결 반사실(봉 중간 터치 vs
+종가)이 그 하네스에서 종결된다 — [`STOP_EXECUTION.md`](STOP_EXECUTION.md) §6.
+
+---
+
 ## 6. 금지
 
 - `provider` 공유 캔들 한도 인상으로 게이트를 깨우기 — 모든 감지기 출력이 바뀐다

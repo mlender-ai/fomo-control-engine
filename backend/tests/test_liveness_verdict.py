@@ -380,6 +380,21 @@ def test_cooldown_and_hourly_cap_are_intact() -> None:
     assert "FCE_SUPERVISOR_HB_MAX_RESTARTS_PER_HOUR:-3" in source
 
 
+# 창·판정 모듈. 하네스(`*_replay.py` · `history_backfill.py` · `published_values.py`)는
+# 판정을 **호출만** 하므로 여기에 없다.
+VERDICT_MODULES = (
+    "backend/app/validation/verdict_watch.py",
+    "backend/app/validation/window_anchor.py",
+    "backend/app/validation/live_trading_gate.py",
+    "backend/app/validation/sample_rate.py",
+    "backend/app/validation/sample_viability.py",
+    "backend/app/validation/decay.py",
+    "backend/app/validation/engine.py",
+    "backend/app/validation/candidates.py",
+    "backend/app/validation/pending_decisions.py",
+)
+
+
 def test_watcher_stays_outside_the_worker() -> None:
     """C2·C3 — 감시자가 감시 대상 안으로 들어가면 침묵이 스스로를 은폐한다."""
     for source in (DEADMAN.read_text(encoding="utf-8"), LIB.read_text(encoding="utf-8")):
@@ -396,9 +411,17 @@ def test_verdict_layer_is_untouched_by_watcher_work() -> None:
     영구히 지켜야 하는 것은 "감시 계층을 고치면서 판정을 함께 바꾸지 않는다"이므로
     대상을 판정 모듈로 좁힌다. 감시자가 워커 밖에 있다는 계약은
     `test_watcher_stays_outside_the_worker` 가 따로 고정한다.
+
+    2차 축소(WO-FCE-REPLAY-DEPTH-01 4-4): `app/validation/` **패키지 전체**를 고정하면 같은
+    문제가 한 칸 안에서 재발한다 — 그 패키지는 판정 모듈만이 아니라 **재판정 하네스**
+    (`directional_replay` · `risk_sizing_replay` · `history_backfill` · `paper_replay`)의 집이고,
+    하네스는 계속 늘어난다. 판정을 바꾸지 않으면서 하네스를 추가하는 작업이 막히면 안 된다.
+
+    그래서 대상을 **창·판정 모듈 파일**로 명시한다. 새 판정 모듈이 생기면 여기 추가한다 —
+    목록에 적는 행위가 곧 검토 지점이다.
     """
     diff = subprocess.run(
-        ["git", "diff", "origin/main", "--stat", "--", "backend/app/validation/"],
+        ["git", "diff", "origin/main", "--stat", "--", *VERDICT_MODULES],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,

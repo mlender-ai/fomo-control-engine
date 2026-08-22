@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from app.db.models import BacktestStat, MarketCandle
 from .base import _dump_model
@@ -34,6 +35,36 @@ class MemoryBacktestRepositoryMixin:
             if row_symbol == normalized_symbol and row_timeframe == timeframe
         ]
         return sorted(rows, key=lambda item: item.timestamp)[-limit:]
+
+    def prune_stance_history_candles(self, symbol: str, timeframe: str, keep_bars: int) -> int:
+        keep = max(1, int(keep_bars))
+        normalized_symbol = symbol.upper()
+        keys = sorted(
+            (key for key in self.stance_history_candles if key[0] == normalized_symbol and key[1] == timeframe),
+            key=lambda key: key[2],
+        )
+        stale = keys[:-keep] if len(keys) > keep else []
+        for key in stale:
+            self.stance_history_candles.pop(key, None)
+        return len(stale)
+
+    def stance_history_candle_inventory(self) -> list[dict[str, Any]]:
+        grouped: dict[tuple[str, str], list[MarketCandle]] = {}
+        for (row_symbol, row_timeframe, _opened_at), candle in self.stance_history_candles.items():
+            grouped.setdefault((row_symbol, row_timeframe), []).append(candle)
+        rows: list[dict[str, Any]] = []
+        for (symbol, timeframe), candles in grouped.items():
+            ordered = sorted(candles, key=lambda item: item.timestamp)
+            rows.append(
+                {
+                    "symbol": symbol,
+                    "timeframe": timeframe,
+                    "bars": len(ordered),
+                    "first_at": ordered[0].timestamp,
+                    "last_at": ordered[-1].timestamp,
+                }
+            )
+        return sorted(rows, key=lambda item: (str(item["symbol"]), str(item["timeframe"])))
 
     def upsert_backtest_stat(self, stat: BacktestStat) -> BacktestStat:
         normalized = stat.model_copy(update={"symbol": stat.symbol.upper()})
@@ -135,6 +166,48 @@ class SQLiteBacktestRepositoryMixin:
             ],
             key=lambda item: item.timestamp,
         )
+
+    def prune_stance_history_candles(self, symbol: str, timeframe: str, keep_bars: int) -> int:
+        """심볼·타임프레임당 최신 `keep_bars` 봉만 남기고 **실제로 지운다** (C7).
+
+        `history_backfill.apply_retention` 은 upsert 대상 목록을 잘라낼 뿐이고 upsert 는
+        INSERT/UPDATE 만 한다 — 이미 저장된 오래된 행은 그대로 남는다. 실측에서 리텐션 10 을
+        건 2회차 실행이 `pruned=45` 를 보고하면서 표는 50행에서 **55행으로 늘었다.**
+        보고와 실제가 반대 방향이면 리텐션은 없는 것보다 나쁘다 — 있다고 믿게 만든다.
+        """
+        keep = max(1, int(keep_bars))
+        with self._connect() as connection:
+            cursor = connection.execute(
+                """DELETE FROM stance_history_candles
+                   WHERE symbol=? AND timeframe=? AND opened_at NOT IN (
+                       SELECT opened_at FROM stance_history_candles
+                       WHERE symbol=? AND timeframe=?
+                       ORDER BY opened_at DESC LIMIT ?
+                   )""",
+                (symbol.upper(), timeframe, symbol.upper(), timeframe, keep),
+            )
+            return int(cursor.rowcount or 0)
+
+    def stance_history_candle_inventory(self) -> list[dict[str, Any]]:
+        """저장 실태 — 심볼·타임프레임별 봉 수와 구간. 읽기 전용이다."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """SELECT symbol, timeframe, COUNT(*) AS bars,
+                          MIN(opened_at) AS first_at, MAX(opened_at) AS last_at
+                   FROM stance_history_candles
+                   GROUP BY symbol, timeframe
+                   ORDER BY symbol, timeframe"""
+            ).fetchall()
+        return [
+            {
+                "symbol": str(row["symbol"]),
+                "timeframe": str(row["timeframe"]),
+                "bars": int(row["bars"]),
+                "first_at": datetime.fromisoformat(str(row["first_at"])),
+                "last_at": datetime.fromisoformat(str(row["last_at"])),
+            }
+            for row in rows
+        ]
 
     def upsert_backtest_stat(self, stat: BacktestStat) -> BacktestStat:
         normalized = stat.model_copy(update={"symbol": stat.symbol.upper()})
