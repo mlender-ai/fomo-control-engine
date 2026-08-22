@@ -181,3 +181,188 @@ engine.py:99   result["trend"] = trend                   ← 출력에만 실린
 
 숫자를 추정해 채우지 않는다. 실측 결과는 `docs/validation/DIRECTIONAL_COVERAGE.md` 에
 기록하며, **결정 3(임계 3종)은 그 분포를 본 뒤에 정한다.**
+
+---
+
+# 제2부 — 페이퍼 엔진 재판정 (WO-FCE-REPLAY-DEPTH-01 4-4)
+
+> 정본 코드: `backend/app/validation/paper_replay.py` · `backend/app/validation/published_values.py`
+> 실행 도구: `backend/scripts/paper_replay_report.py` (읽기 전용)
+> 캔들 공급·영속화: [`CANDLE_SUPPLY.md`](CANDLE_SUPPLY.md)
+
+제1부는 **방향 판정**을 재현한다. 제2부는 그 위에서 **거래**를 재현한다 — 진입 게이트 9종 ·
+사이징 · 재진입 잠금 · 출구 사다리 · 손절 체결까지.
+
+## 10. 무엇을 잇는가 (중복 구현 금지)
+
+```
+directional_replay._judge      판정 재현 (워크포워드 · 히스테리시스 체이닝)
+      ↓
+positions/simulator            액션 플랜 · 체크리스트
+paper/service._paper_target_plan   ATR 단계 익절 · 실행 무효화가 · RR
+      ↓
+paper/policy                   evaluate_entry · plan_position_size · reentry_locked
+                               evaluate_exit · apply_exit_decision
+      ↓
+risk_sizing_replay             R 정의 · PF · MDD · 손절 체결 집계
+```
+
+**셋 다 호출만 한다.** 게이트도 지표도 하네스가 다시 정의하지 않는다. 회귀가 강제한다
+(`test_harness_does_not_reimplement_the_gates`).
+
+## 11. 룩어헤드 (C6)
+
+각 봉의 판정과 진입 결정은 `candles[:end]` 프리픽스만 입력받는다. 증명은 등식이다:
+
+> **입력 구간을 잘라도, 그 구간에서 완결된 거래는 전체 입력 시와 완전히 동일해야 한다.**
+
+강제 위치: `tests/test_paper_replay.py::test_prefix_invariance_proves_no_lookahead`.
+절단점 이후에 청산된 거래는 잘린 입력에서 아직 열려 있으므로 비교 대상이 아니다 — 그것을
+비교하면 "미래를 못 봤다"가 아니라 "미래가 아직 안 왔다"를 재게 된다.
+
+구간 끝에 열려 있는 건은 **닫지 않는다.** 미실현 손익을 실현으로 적으면 표본이 실제보다
+좋아지거나 나빠진다.
+
+## 12. 손절 체결 반사실 — 봉 중간 터치 vs 종가
+
+`RISK-SIZING-01` Phase 2 가 **크립토 봉 미보존**으로 포기한 반사실이다. 4-2 가 봉을
+저장하면서 비로소 가능해졌다.
+
+```python
+# 라이브 현행 (policy._stop_breached)   종가만 본다
+stop_fill="close"      close <= stop_price
+# 반사실 (하네스가 대신 판정)             익절과 같은 규칙
+stop_fill="intrabar"   bar.low <= stop_price   → 체결가는 무효화가
+```
+
+**`paper/policy.py` 는 한 줄도 바뀌지 않았다**(C3) — 반사실은 정책이 아니라 관측이다.
+
+같은 봉 안에서 손절과 익절이 모두 닿았을 때 어느 쪽이 먼저였는지는 봉 데이터로 알 수 없다.
+**리스크 관측에서는 나쁜 쪽을 가정하는 것이 정직하다** — 터치가 있으면 즉시 손절로 확정한다.
+
+두 모드는 같은 캔들·같은 정책으로 돌린다. 그래서 결과 차이는 전부 체결 규칙 하나에
+귀속된다(교란 없음).
+
+## 13. 재현할 수 없는 입력은 **이름으로 남긴다**
+
+과거 시점의 저장소 상태는 되돌릴 수 없다. 조용히 "통과"로 채우면 재판정이 라이브보다
+관대해지고 그 사실이 결과 어디에도 안 남는다. `ReplayAssumptions` 가 전부 산출물에 실린다:
+
+| 가정 | 왜 복원 불가 | 기본값 |
+| --- | --- | --- |
+| `signature_gate` | 과거 시점 시그니처 통계가 없다 | 통과 가정 (관측 등급 진입과 같은 취급) |
+| 체크리스트 `funding` | 과거 펀딩률 히스토리가 저장되지 않는다 | 통과로 센다 |
+| 체크리스트 `volume` | `volume_state` 는 실체결(trade_flow)이 있어야 판정된다 | 통과로 센다 |
+| 파생 히스토리 | 과거 펀딩·OI·청산이 없다 | **대체하지 않는다** (`not_included`) |
+
+### 이것이 드러낸 구조적 공백
+
+체크리스트 6항목 중 `funding` · `volume` 두 개는 **OHLCV 로 복원되지 않는다.** 그래서
+재판정에서 평가 가능한 항목은 최대 4개이고, `min_checklist_total=5` 는 **구조적으로 통과
+불가**다.
+
+`unavailable_checklist_policy="block"` 을 고르면 재판정 진입이 **정확히 0건**이 된다 —
+그것이 저장 공백의 크기다(회귀: `test_blocking_policy_makes_the_structural_gap_visible`).
+기본값은 `count_as_pass` 이며, 가정으로 채운 항목이 **거래 건별로** `checklist.assumed_items`
+에 기록된다.
+
+> 이 공백을 없애려면 펀딩 히스토리와 체결 버킷도 영속화해야 한다. **이 WO 범위 밖이다.**
+
+## 14. 발표값 자동 대조 (Phase 3-5 오프셋 사고의 재발 방지책)
+
+`RISK-SIZING-01` Phase 1~4 의 반사실은 전부 **커밋되지 않은 임시 스크립트**로 산출됐고,
+그래서 Phase 3-5 의 합계를 재현할 수 없게 됐다(오프셋 net −1.902R, 두 행에서 동일).
+
+`app/validation/published_values.py` 가 발표값과 **그 재현 상태**를 함께 등록한다:
+
+| 계층 | 대상 | 어디서 강제되나 |
+| --- | --- | --- |
+| 픽스처 기준선 | 커밋된 캔들(`tests/fixtures/replay_candles_4h.json`) 위의 재판정 | **CI** |
+| 원장 기준선 | 라이브 `paper_trades` 위의 반사실 | 호스트 (`--compare-published`) |
+
+### 재현 안 되는 값을 지우지 않는다
+
+`reproduces=False` 항목을 레지스트리에서 빼면 사고가 기록에서 사라진다. 대신 **알려진
+오프셋을 등록하고, 그 오프셋이 변하면 실패**시킨다.
+
+- 오프셋 그대로 → 알려진 미해결 항목. 새 드리프트 없음
+- 오프셋 변화 → **조용한 드리프트다.** 지금 잡는다
+
+CI 에는 DB 가 없다. 그래서 원장 기준선은 `requires_database=True` 로 표시되고 CI 는 **등록
+위생만** 강제한다(모든 항목이 정본 문서를 가리키는가 · 재현 안 되는 항목에 오프셋이 있는가).
+건너뛴 항목은 `skipped` 목록에 남는다 — **조용히 건너뛰지 않는다.**
+
+### 재판정 CI 기준선
+
+`tests/fixtures/replay_candles_4h.json` (180봉 합성 4시간봉) 위에서:
+
+| 지표 | `stop_fill=close` | `stop_fill=intrabar` |
+| --- | ---: | ---: |
+| 판정 지점 | 81 | 81 |
+| 청산 표본 | 11 | 11 |
+| grossR | +10.3398 | +10.5000 |
+| 비용R | 1.6118 | 1.6049 |
+| netR | +8.7280 | +8.8951 |
+| PF | 3.5152 | 4.8490 |
+| MDD (USDT) | 8.6754 | 5.7775 |
+
+> ⚠️ **합성 캔들이다. 엔진 성적이 아니라 경로 재현성의 기준선이다**(C9). 이 표의 숫자를
+> 엔진 성능으로 인용하면 안 된다 — 상승 편향이 들어간 인위적 시계열이다.
+
+재판정 경로가 조용히 바뀌면 이 표에서 즉시 실패한다.
+
+## 15. 파라미터 스윕 — "엔진 고도화"의 실행 수단
+
+```bash
+cd backend
+PYTHONPATH=. python3 scripts/paper_replay_report.py --database ~/fomo_control_engine.db --sweep
+```
+
+기본 축(`scripts/paper_replay_report.py::SWEEP_AXES`)은 **한 번에 하나씩** 움직인다 —
+재진입 잠금 · 리스크 예산 · TP2 배수 · RR 기준. 여러 축을 동시에 움직인 행만 보면 무엇이
+효과였는지 영원히 알 수 없다(AGENTS.md "승률 개선안은 한 번에 하나씩").
+
+> **스윕은 과거 데이터다.** 과최적화 위험이 있고 라이브 확인을 대체하지 않는다. 스윕으로
+> 고른 설정은 반드시 전방 라이브로 확인해야 하며, **그 확인 규칙은 결과를 보기 전에**
+> 정해야 한다. 산출물의 `overfit_warning` 이 매 실행 이 문장을 다시 찍는다.
+
+## 16. 사용법
+
+```bash
+cd backend
+
+# ① 전 구간 재판정 + 손절 체결 반사실
+PYTHONPATH=. python3 scripts/paper_replay_report.py --database ~/fomo_control_engine.db
+
+# ② 파라미터 스윕
+PYTHONPATH=. python3 scripts/paper_replay_report.py --database ~/fomo_control_engine.db --sweep
+
+# ③ 발표값 대조 — 어긋나면 종료 코드 1
+PYTHONPATH=. python3 scripts/paper_replay_report.py --database ~/fomo_control_engine.db --compare-published
+```
+
+`stance_history_candles` 가 비어 있으면 **추정하지 않고 그 사실을 보고하고 종료한다.**
+캔들을 채우는 잡은 `replay_history_backfill`(기본값 꺼짐)이며 정본은 [`CANDLE_SUPPLY.md`](CANDLE_SUPPLY.md).
+
+## 17. 표본 규모 — 표본 수이지 실적이 아니다 (C9)
+
+재판정 판정 지점 수는 `봉 수 − 최소 캔들(100) + 1` 이다. 심볼당 2,196봉이면 **2,097 판정
+지점**이고, 라이브 하루 12건 기준 **약 175일치**다. 10심볼이면 1,750일치.
+
+| | 지금 | 재판정 이후 |
+| --- | --- | --- |
+| 파라미터 1개 검증 | 4주 대기 | 즉시 |
+| 표본 | 12건/일 | 수백 건/실행 |
+| 반증 | 라이브 결과 대기 | 스윕으로 즉시 |
+| 기준선 재현 | **불가**(Phase 3-5) | CI 가 강제 |
+
+**이 배수는 "얼마나 빨리 검증할 수 있는가"이지 "얼마나 잘 벌었는가"가 아니다.** 청산 표본
+수는 판정 지점 수보다 훨씬 작다 — 게이트 9종을 통과한 건만 거래가 된다.
+
+## 18. 실측은 아직 없다
+
+제2부도 **하네스와 CI 기준선**까지다. 라이브 원장·저장 히스토리 위의 숫자(심볼별 재판정
+표본 · 손절 체결 반사실 · 스윕 결과)는 **운영 호스트에서 §16 을 실행해야 나온다.**
+이 저장소 컨테이너에는 `stance_history_candles` 가 없고 거래소 네트워크도 닿지 않는다.
+
+숫자를 추정해 채우지 않는다.

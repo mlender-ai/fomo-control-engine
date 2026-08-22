@@ -4,7 +4,7 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 from uuid import UUID
 
 from app.db.models import (
@@ -117,6 +117,9 @@ class Repository(Protocol):
         timeframe: str,
         limit: int = 5000,
     ) -> list[MarketCandle]: ...
+    # WO-FCE-REPLAY-DEPTH-01 4-2 후속: 리텐션을 **저장소에서** 실제로 강제한다.
+    def prune_stance_history_candles(self, symbol: str, timeframe: str, keep_bars: int) -> int: ...
+    def stance_history_candle_inventory(self) -> list[dict[str, Any]]: ...
     def upsert_universe_discovery(self, discovery: UniverseDiscovery) -> UniverseDiscovery: ...
     def list_universe_discoveries(
         self,

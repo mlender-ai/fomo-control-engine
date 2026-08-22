@@ -248,6 +248,14 @@ def _apply_sqlite_retention(connection: sqlite3.Connection, settings: Settings) 
         "DELETE FROM execution_depth_observations WHERE observed_at < ?",
         (depth_observation_cutoff.isoformat(),),
     )
+    # WO-FCE-REPLAY-DEPTH-01 4-2 후속 · C7: 리텐션이 수집 잡 경로에만 있으면 **잡이 꺼져 있는
+    # 동안(기본값이 꺼짐이다) 상한도 함께 멈춘다.** 날짜가 아니라 봉 수로 자르는 이유는 재판정에
+    # 필요한 것이 "최근 N일"이 아니라 "연속된 N봉"이기 때문이다.
+    details["stance_history_candles_deleted"] = _cap_stance_history_candles(
+        connection,
+        max(200, int(settings.replay_history_retention_bars)),
+    )
+    details["stance_history_retention_bars"] = max(200, int(settings.replay_history_retention_bars))
     details["alerts_deleted"] = _delete_expired_alerts(connection, alert_cutoff)
     details["worker_heartbeat_deleted"] = _delete_if_table(
         connection,
@@ -523,6 +531,32 @@ def _delete_expired_alerts(connection: sqlite3.Connection, cutoff: datetime) -> 
     old_alert_rows = connection.execute("SELECT id FROM alerts WHERE fired_at < ?", (cutoff.isoformat(),)).fetchall()
     delete_ids = [str(row["id"]) for row in old_alert_rows if str(row["id"]) not in preserved_alert_ids]
     return _delete_by_ids(connection, "alerts", "id", delete_ids)
+
+
+def _cap_stance_history_candles(connection: sqlite3.Connection, keep_bars: int) -> int:
+    """심볼·타임프레임당 최신 `keep_bars` 봉만 남긴다 (C7).
+
+    `history_backfill` 도 매 수집 직후 같은 상한을 건다. 여기서 한 번 더 거는 이유는 그 잡이
+    **기본값 꺼짐**이기 때문이다 — 리텐션이 수집 경로에만 있으면 잡을 켜기 전까지 상한이
+    존재하지 않는다. DB 12.8GB 비대 선례가 그 형태였다.
+    """
+    exists = connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?", ("stance_history_candles",)).fetchone()
+    if not exists:
+        return 0
+    pairs = connection.execute("SELECT symbol, timeframe FROM stance_history_candles GROUP BY symbol, timeframe").fetchall()
+    deleted = 0
+    for row in pairs:
+        deleted += _delete(
+            connection,
+            """DELETE FROM stance_history_candles
+               WHERE symbol=? AND timeframe=? AND opened_at NOT IN (
+                   SELECT opened_at FROM stance_history_candles
+                   WHERE symbol=? AND timeframe=?
+                   ORDER BY opened_at DESC LIMIT ?
+               )""",
+            (row["symbol"], row["timeframe"], row["symbol"], row["timeframe"], keep_bars),
+        )
+    return deleted
 
 
 def _delete_if_table(connection: sqlite3.Connection, table: str, query: str, params: tuple[str, ...]) -> int:

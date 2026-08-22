@@ -131,8 +131,56 @@ def test_backfill_applies_retention(tmp_path) -> None:
     repo = MemoryRepository()
     rows = _candles(50)
     result = backfill_symbol(repo, symbol="btcusdt", timeframe="4h", history_loader=_loader(rows), retention_bars=10, now=BASE + timedelta(hours=400))
-    assert result.pruned == 40
+    # `trimmed` 는 애초에 쓰지 않은 봉, `pruned` 는 저장소에서 지운 행. 첫 실행에는 지울 것이 없다.
+    assert result.trimmed == 40
+    assert result.pruned == 0
     assert len(repo.list_stance_history_candles("BTCUSDT", "4h", limit=5_000)) == 10
+
+
+def test_retention_actually_deletes_rows_that_are_already_stored() -> None:
+    """upsert 는 INSERT/UPDATE 만 한다 — 쓰기 목록을 자르는 것만으로는 표가 줄지 않는다.
+
+    실측(수리 전): 리텐션 10 을 건 2회차가 `pruned=45` 를 보고하면서 표는 50행 → **55행**으로
+    늘었다. 보고와 실제가 반대 방향인 리텐션은 없는 것보다 나쁘다 — 있다고 믿게 만든다.
+    """
+    repo = MemoryRepository()
+    backfill_symbol(repo, symbol="BTCUSDT", timeframe="4h", history_loader=_loader(_candles(50)), retention_bars=100, now=BASE + timedelta(hours=400))
+    assert len(repo.list_stance_history_candles("BTCUSDT", "4h", limit=5_000)) == 50
+
+    result = backfill_symbol(
+        repo,
+        symbol="BTCUSDT",
+        timeframe="4h",
+        history_loader=_loader(_candles(5, start=BASE + timedelta(hours=4 * 50))),
+        retention_bars=10,
+        now=BASE + timedelta(hours=400),
+    )
+
+    assert len(repo.list_stance_history_candles("BTCUSDT", "4h", limit=5_000)) == 10, "저장소가 상한 위로 계속 자란다"
+    assert result.pruned == 45
+
+
+def test_retention_reports_zero_when_the_repository_cannot_delete() -> None:
+    """지울 수 없는 저장소에서 **지웠다고 적지 않는다.**"""
+    repo = MemoryRepository()
+    backfill_symbol(repo, symbol="BTCUSDT", timeframe="4h", history_loader=_loader(_candles(50)), retention_bars=100, now=BASE + timedelta(hours=400))
+
+    class _NoPrune:
+        def __getattr__(self, name):
+            if name == "prune_stance_history_candles":
+                raise AttributeError(name)
+            return getattr(repo, name)
+
+    result = backfill_symbol(
+        _NoPrune(),
+        symbol="BTCUSDT",
+        timeframe="4h",
+        history_loader=_loader(_candles(5, start=BASE + timedelta(hours=4 * 50))),
+        retention_bars=10,
+        now=BASE + timedelta(hours=400),
+    )
+
+    assert result.pruned == 0
 
 
 # ---------------------------------------------------------------------------
@@ -320,3 +368,74 @@ def test_depth_observation_budget_is_bounded_by_default() -> None:
     settings = Settings(database_url="memory://")
     assert settings.paper_depth_observations_per_run >= 1
     assert settings.paper_depth_observations_per_run <= 5
+
+
+# ---------------------------------------------------------------------------
+# 리텐션이 저장소에서 실제로 강제되는가 (C7)
+# ---------------------------------------------------------------------------
+
+
+def test_sqlite_prune_deletes_the_oldest_rows(tmp_path) -> None:
+    from app.db.repository import SQLiteRepository
+
+    repo = SQLiteRepository(str(tmp_path / "fce.db"))
+    repo.upsert_stance_history_candles("BTCUSDT", "4h", _candles(500), "test", BASE)
+
+    deleted = repo.prune_stance_history_candles("BTCUSDT", "4h", 300)
+    remaining = repo.list_stance_history_candles("BTCUSDT", "4h", limit=5_000)
+
+    assert deleted == 200
+    assert len(remaining) == 300
+    assert remaining[-1].timestamp == BASE + timedelta(hours=4 * 499), "최신 봉이 잘려나갔다"
+
+
+def test_memory_and_sqlite_prune_agree(tmp_path) -> None:
+    from app.db.repository import SQLiteRepository
+
+    memory = MemoryRepository()
+    sqlite_repo = SQLiteRepository(str(tmp_path / "fce.db"))
+    for repo in (memory, sqlite_repo):
+        repo.upsert_stance_history_candles("BTCUSDT", "4h", _candles(50), "test", BASE)
+        repo.prune_stance_history_candles("BTCUSDT", "4h", 20)
+
+    assert [candle.timestamp for candle in memory.list_stance_history_candles("BTCUSDT", "4h")] == [
+        candle.timestamp for candle in sqlite_repo.list_stance_history_candles("BTCUSDT", "4h")
+    ]
+
+
+def test_scheduled_retention_caps_the_table_while_the_job_is_off(tmp_path) -> None:
+    """수집 잡은 **기본값이 꺼짐**이다. 리텐션이 그 경로에만 있으면 상한이 존재하지 않는다."""
+    from app.db.maintenance import enforce_retention
+    from app.db.repository import SQLiteRepository
+
+    database = tmp_path / "fce.db"
+    repo = SQLiteRepository(str(database))
+    repo.upsert_stance_history_candles("BTCUSDT", "4h", _candles(400), "test", BASE)
+    settings = Settings(
+        database_url=f"sqlite:///{database}",
+        replay_history_retention_bars=250,
+        replay_history_backfill_enabled=False,
+    )
+
+    details = enforce_retention(settings, repo)["details"]
+
+    assert details["stance_history_candles_deleted"] == 150
+    assert details["stance_history_retention_bars"] == 250
+    assert len(repo.list_stance_history_candles("BTCUSDT", "4h", limit=5_000)) == 250
+
+
+def test_inventory_reports_what_is_actually_stored(tmp_path) -> None:
+    from app.db.repository import SQLiteRepository
+
+    repo = SQLiteRepository(str(tmp_path / "fce.db"))
+    repo.upsert_stance_history_candles("BTCUSDT", "4h", _candles(10), "test", BASE)
+
+    assert repo.stance_history_candle_inventory() == [
+        {
+            "symbol": "BTCUSDT",
+            "timeframe": "4h",
+            "bars": 10,
+            "first_at": BASE,
+            "last_at": BASE + timedelta(hours=36),
+        }
+    ]

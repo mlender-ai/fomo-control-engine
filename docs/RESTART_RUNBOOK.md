@@ -281,3 +281,73 @@ wc -l logs/job-trace.jsonl && tail -5 logs/job-trace.jsonl
 ```
 
 `start` 는 있고 `ok` 가 없는 잡이 **매달림 용의자**이고, `start` 자체가 없으면 **misfire** 다.
+
+---
+
+## 사전 점검 추가 — 히스토리 수집 잡과 재판정 (WO-FCE-REPLAY-DEPTH-01)
+
+잡 `replay_history_backfill` 이 **전용(무거운) 실행기**에서 6시간 주기로 돈다.
+**기본값은 꺼짐**이며(C5), 켜는 순간 `WORKER-HANG-02` 가 방금 고친 큐를 다시 막을 수 있다(C8).
+
+```bash
+curl -s localhost:8875/api/system/worker | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+print('히스토리 잡:', (d.get('jobs') or {}).get('replay_history_backfill'))
+print('굶음 판정:', ((d.get('job_starvation') or {}).get('detail') or {}).get('replay_history_backfill', '없음'))
+print('loop_lag:', d.get('loop_lag'))
+"
+```
+
+### 통과 기준
+
+| 항목 | 기준 | 미달이면 |
+| --- | --- | --- |
+| `replay_history_backfill.status` | `ok` 또는 `disabled` | `error` 면 공급자 히스토리 로더를 확인한다 |
+| **다른 잡의 `misfired` 총합** | 잡을 켜기 **전과 같은 수준** | `FCE_REPLAY_HISTORY_BACKFILL_MAX_SYMBOLS` 를 줄인다 (기본 25) |
+| `loop_lag.max_lag_seconds` | 5초 미만 | 전용 풀 밖에서 도는지 확인 (`_HEAVY_JOBS` 등록 여부) |
+| `job_starvation.starved` | `replay_history_backfill` 없음 | 주기(6시간)보다 실행이 오래 걸린다 — 심볼 상한을 줄인다 |
+
+> **잡 실행률은 켜기 전/후를 대조한다.** "느려지지 않았다"는 인상이 아니라 숫자여야 한다.
+> 기준선은 `WORKER-HANG-02` Phase 2 실측 76~77% 다. 수집 비용은 실측 **1.6초/심볼**이므로
+> 25심볼이면 약 40초다.
+
+### 저장 실태와 DB 증가분 (C7)
+
+```bash
+sqlite3 ~/fomo_control_engine.db "
+  SELECT timeframe, COUNT(DISTINCT symbol) AS 심볼, COUNT(*) AS 봉,
+         MIN(opened_at), MAX(opened_at)
+  FROM stance_history_candles GROUP BY timeframe;"
+ls -lh ~/fomo_control_engine.db
+```
+
+리텐션은 심볼·타임프레임당 최신 `FCE_REPLAY_HISTORY_RETENTION_BARS`(기본 2,196)봉이며
+**두 곳에서** 걸린다:
+
+1. 수집 직후 — `history_backfill` 이 저장소에 실제 DELETE 를 시킨다
+2. 정기 `database_retention` — 잡이 **꺼져 있는 동안**에도 상한이 유지된다
+
+> ⚠️ 이전 배선은 upsert 목록만 잘라 **표가 줄지 않았다**(실측: `pruned=45` 를 보고하면서
+> 50행 → 55행). `pruned` 는 이제 **실제 삭제 행 수**이고, 쓰지 않은 봉은 `trimmed` 로
+> 따로 센다. 두 값을 합치면 어느 쪽도 검증할 수 없다.
+
+### 재판정이 도는가 (4-4)
+
+```bash
+cd backend
+PYTHONPATH=. python3 scripts/paper_replay_report.py --database ~/fomo_control_engine.db
+```
+
+`stance_history_candles` 가 비어 있으면 **추정하지 않고 그 사실을 보고하고 종료**한다.
+발표값 대조까지 강제하려면 `--compare-published` 를 붙인다 — 어긋나면 종료 코드 1 이다.
+
+### 되돌리는 법
+
+```bash
+FCE_REPLAY_HISTORY_BACKFILL_ENABLED=false     # 수집 잡 정지 (기본값)
+```
+
+환경 변수 하나이며 코드 변경이 필요 없다. 정본:
+[`docs/validation/CANDLE_SUPPLY.md`](validation/CANDLE_SUPPLY.md) ·
+[`docs/validation/REPLAY_HARNESS.md`](validation/REPLAY_HARNESS.md).

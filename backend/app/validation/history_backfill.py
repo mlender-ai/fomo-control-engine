@@ -60,9 +60,13 @@ class BackfillResult:
     requested_bars: int
     fetched: int
     stored: int
+    # 저장소에서 **실제로 지워진** 행 수. 보고와 실제가 갈라지면 리텐션은 없는 것보다 나쁘다.
     pruned: int
     mode: str  # full | incremental | skipped
     reason: str | None = None
+    # 쓰기 대상에서 잘라낸 봉 수(이미 저장돼 있지 않던 오래된 봉). `pruned` 와 다른 축이다 —
+    # 하나는 "안 썼다", 하나는 "지웠다"이고 둘을 합치면 어느 쪽도 검증할 수 없다.
+    trimmed: int = 0
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -72,6 +76,7 @@ class BackfillResult:
             "fetched": self.fetched,
             "stored": self.stored,
             "pruned": self.pruned,
+            "trimmed": self.trimmed,
             "mode": self.mode,
             "reason": self.reason,
         }
@@ -155,10 +160,30 @@ def backfill_symbol(
 
     merged = {candle.timestamp: candle for candle in stored}
     merged.update({candle.timestamp: candle for candle in fetched})
-    kept, pruned = apply_retention(list(merged.values()), retention_bars=retention_bars)
+    kept, _trimmed = apply_retention(list(merged.values()), retention_bars=retention_bars)
 
     written = repo.upsert_stance_history_candles(normalized, timeframe, kept, "replay_depth_backfill", now)
-    return BackfillResult(normalized, timeframe, requested, len(fetched), int(written or len(kept)), pruned, mode)
+    # upsert 는 INSERT/UPDATE 만 한다 — 목록을 잘라내는 것만으로는 **이미 저장된 오래된 행이
+    # 지워지지 않는다.** 실측: 리텐션 10 을 건 2회차 실행이 `pruned=45` 를 보고하면서 표는
+    # 50행 → 55행으로 늘었다. 보고와 실제가 반대 방향인 리텐션은 없는 것보다 나쁘다.
+    #
+    # 그래서 삭제는 저장소에 시킨다. `pruned` 는 **실제로 지워진 행 수**다.
+    pruned = _prune(repo, normalized, timeframe, retention_bars)
+    return BackfillResult(normalized, timeframe, requested, len(fetched), int(written or len(kept)), pruned, mode, trimmed=_trimmed)
+
+
+def _prune(repo: Any, symbol: str, timeframe: str, retention_bars: int) -> int:
+    """저장소에 실제 삭제를 시킨다. 삭제를 지원하지 않는 저장소면 0 을 보고한다 —
+    **지워졌다고 적지 않는다.**"""
+    if retention_bars <= 0:
+        return 0
+    pruner = getattr(repo, "prune_stance_history_candles", None)
+    if not callable(pruner):
+        return 0
+    try:
+        return int(pruner(symbol, timeframe, retention_bars) or 0)
+    except Exception:  # 리텐션 실패가 수집 결과를 버리게 하지 않는다
+        return 0
 
 
 def backfill_universe(
@@ -198,6 +223,7 @@ def backfill_universe(
         "symbols": len(results),
         "stored": stored,
         "pruned": sum(item.pruned for item in results),
+        "trimmed": sum(item.trimmed for item in results),
         "incremental": sum(1 for item in results if item.mode == "incremental"),
         "full": sum(1 for item in results if item.mode == "full"),
         # C8 침묵 금지 — 실패한 심볼은 사유와 함께 남는다.
