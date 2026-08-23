@@ -371,13 +371,30 @@ def test_holding_days_from_opened_at() -> None:
 
 
 def test_crypto_exit_path_untouched() -> None:
-    """C3: 크립토 청산 경로는 주식 청산 모듈을 임포트하지 않는다."""
+    """C3: 크립토 청산 경로는 주식 청산 모듈을 **임포트하지 않는다**.
+
+    처음에는 `app/paper/*.py` 원문에 `"stock_paper"` 문자열이 없는지 봤다. 그 검사는 의존을
+    못 만드는 **주석·docstring 인용까지** 잡는다 — `EARNINGS-SUPPLY-01` 4-3 이 KR 선례를
+    이식하면서 근거로 `stock_paper/policy.py:66` 을 인용하자 여기에 걸렸다. 출처를 적는 것은
+    중복 구현을 막는 행위(불변 규칙 2)이지 결합이 아니다.
+
+    그래서 **실제 임포트**만 본다. AST 검사는 substring 보다 강하다 — 별칭 임포트
+    (`import app.stock_paper as x`)도 잡는다.
+    """
+    import ast
     from pathlib import Path
 
     root = Path(__file__).parents[1] / "app" / "paper"
-    source = "\n".join(path.read_text() for path in root.glob("*.py"))
-    assert "stock_paper.exit_policy" not in source
-    assert "stock_paper" not in source
+    offenders: list[str] = []
+    for path in sorted(root.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                offenders += [f"{path.name}: import {alias.name}" for alias in node.names if "stock_paper" in alias.name]
+            elif isinstance(node, ast.ImportFrom) and "stock_paper" in (node.module or ""):
+                offenders.append(f"{path.name}: from {node.module}")
+
+    assert offenders == [], "크립토 경로가 주식 모듈에 의존한다:\n" + "\n".join(offenders)
 
 
 # ══════════════════════════════════════════════════════════════

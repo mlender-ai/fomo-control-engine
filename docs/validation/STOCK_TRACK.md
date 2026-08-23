@@ -254,3 +254,27 @@ paper/service.py:2262   _earnings_clear(analysis)
 `SPCXUSDT` 는 분류 변경 대상에 **포함된다**(감사 확인). 그러나 실적 캘린더 공급원이 없어
 12.5% 갭이 실적 갭이었는지는 **판정할 수 없다.** 가설을 기각도 채택도 하지 않는다 —
 인과 단정 금지.
+
+
+---
+
+## 8. 이중 구속 확정 — 어느 하나만 고쳐도 트랙은 안 열린다 (WO-FCE-EARNINGS-SUPPLY-01)
+
+`FULL-AUDIT-01` 의 "주식 청산 체결 0건"은 `stage2_template` **단독** 결과가 아니었다.
+게이트 둘이 동시에 막고 있었다:
+
+| 구속 | 무엇 | 상태 |
+| --- | --- | --- |
+| 캔들 | `stage2_template` 200봉 — 세션 필터로 146까지 떨어짐 | `REPLAY-DEPTH-01` 4-3 대기 |
+| **실적** | `earnings_clear` — 공급원이 없어 stock·index 영구 불통과 | `EARNINGS-SUPPLY-01` 진행 중 |
+
+**올바르게 stock 으로 분류된 27종(AAPL 등)은 실적 게이트에서도 계속 차단돼 왔다.**
+캔들만 고쳐도 이 게이트가 남고, 실적만 고쳐도 캔들이 남는다.
+
+### 4-3 완료분 — 무데이터가 더는 조용한 차단이 아니다
+
+3상태(`clear` / `earnings_window` / `not_evaluable`)를 KR 트랙에서 이식했고, 공급원 배선
+전까지는 `required=False`(판정 제외)다. 이로써 주식 트랙의 **실적 쪽 구속은 일단 풀렸다** —
+단 캔들 쪽은 그대로이므로 트랙이 열린 것은 아니다.
+
+정본: [`EARNINGS_GATE.md`](EARNINGS_GATE.md).

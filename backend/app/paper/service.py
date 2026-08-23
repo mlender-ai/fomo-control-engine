@@ -33,6 +33,7 @@ from app.paper.policy import (
     portfolio_cap_block_reason,
     reentry_locked,
 )
+from app.paper.earnings_state import earnings_gate_passes, earnings_observation, earnings_state
 from app.paper.slippage import observe_depth
 from app.paper.user_fills import (
     USER_FILL_SYNC_SYMBOL,
@@ -350,6 +351,9 @@ def run_paper_engine(
                 target_plan: dict[str, Any] = {}
                 evidence: list[dict[str, Any]] = []
                 entry_decision = None
+                # 방향이 없으면 진입 평가 자체가 없지만 퍼널은 기록된다 — 블록 밖에서 초기화한다.
+                earnings_required = bool(getattr(settings, "paper_earnings_gate_required", False))
+                state_of_earnings = earnings_state(analysis, earnings_clear=_earnings_clear)
                 if direction is not None:
                     simulation = simulation_loader(symbol, timeframe, direction.value, bar.close)
                     signature_gates = _signature_gate_evaluation(repo, settings, analysis, payload, direction, now=now)
@@ -381,7 +385,7 @@ def run_paper_engine(
                         survives_to_invalidation=simulation.get("survives_to_invalidation") is True,
                         validated_signature=bool(signature_gates["signature_gate"]),
                         signature_ci_low_pct=(float(settings.universe_backtest_min_ci_low_pct) if signature_gates["regime_gate"] else None),
-                        earnings_clear=_earnings_clear(analysis),
+                        earnings_clear=earnings_gate_passes(state_of_earnings, required=earnings_required),
                         data_fresh=_data_fresh(bar, timeframe, now),
                         confirmed_bar=True,
                         policy=policy_from_settings(settings, str(analysis.get("asset_class") or "unknown")),
@@ -428,7 +432,9 @@ def run_paper_engine(
                     action_levels=bool(invalidation is not None and take_profit is not None),
                     capacity_available=capacity_available,
                     rr_ratio=_float(target_plan.get("rr_ratio")),
-                    earnings_clear=_earnings_clear(analysis),
+                    earnings_clear=earnings_gate_passes(state_of_earnings, required=earnings_required),
+                    earnings_state=state_of_earnings,
+                    earnings_required=earnings_required,
                     freshness=_data_fresh(bar, timeframe, now),
                     entry_decision=entry_decision,
                     entered=will_enter,
@@ -1424,6 +1430,8 @@ def _gate_funnel_record(
     rr_ratio: float | None,
     earnings_clear: bool,
     freshness: bool,
+    earnings_state: str = "clear",
+    earnings_required: bool = False,
     entry_decision: Any,
     entered: bool,
     pill_diagnostics: dict[str, Any] | None = None,
@@ -1457,6 +1465,9 @@ def _gate_funnel_record(
             "total": int(simulation.get("checklist_total") or 0),
         },
         "rr_ratio": rr_ratio,
+        # 4-3 · C9: "실적 구간이라 막았다"와 "데이터가 없어 못 봤다"를 구분해 남긴다.
+        # 둘을 같은 불리언으로 적으면 공급 결함이 게이트 성과로 위장된다.
+        "earnings_gate": earnings_observation(earnings_state, required=earnings_required),
         "checklist_items": [dict(item) for item in _list(simulation.get("checklist"))],
         "gates": gates,
         "entered": entered,

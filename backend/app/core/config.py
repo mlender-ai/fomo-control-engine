@@ -274,6 +274,22 @@ class Settings(BaseSettings):
         6,
         validation_alias=AliasChoices("FCE_PAPER_ENGINE_MAX_SYMBOLS_PER_RUN", "PAPER_ENGINE_MAX_SYMBOLS_PER_RUN"),
     )
+    # WO-FCE-EARNINGS-SUPPLY-01 4-3 (개정 §2). 기본값 **False** — KR 주식 트랙
+    # (`stock_paper/policy.py::earnings_gate`, `required=False`)과 같은 취급이다.
+    #
+    # `analysis["earnings"]` 를 채우는 공급원이 아직 없다. 지금 차단으로 두면 얻는 것 없이
+    # 관측만 잃는다 — 오분류된 262종은 crypto 라 이 게이트를 받지 않고, 올바르게 stock 인
+    # 소수만 추가로 죽는데 그 심볼들은 이미 다른 게이트에서 표본 0이다.
+    #
+    # 공급원 배선(4-2)이 커버리지를 확보한 뒤 True 로 전환한다. 그때 남은 `not_evaluable`
+    # 은 진짜 신호다(상장 폐지 · 미지원 · 데이터 결함).
+    #
+    # ⚠️ 전환은 **분류 수리(ASSET-CLASS-01 3-2)보다 먼저**다. 역순이면 262종이 무방비로
+    #    거래되거나 전멸한다.
+    paper_earnings_gate_required: bool = Field(
+        False,
+        validation_alias=AliasChoices("FCE_PAPER_EARNINGS_GATE_REQUIRED", "PAPER_EARNINGS_GATE_REQUIRED"),
+    )
     replay_history_backfill_enabled: bool = Field(
         False,
         validation_alias=AliasChoices("FCE_REPLAY_HISTORY_BACKFILL_ENABLED", "REPLAY_HISTORY_BACKFILL_ENABLED"),
