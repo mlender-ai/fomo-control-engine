@@ -146,6 +146,34 @@ FCE_REPLAY_HISTORY_RETENTION_BARS=2196        ← C7
 
 ---
 
+## 5-0. 분류 수리 시 세션 필터 영향 (WO-FCE-ASSET-CLASS-01 3-4)
+
+자산군 분류를 고치면 약 262종이 `crypto → stock` 으로 옮겨가고, 그 순간 **세션 필터를
+새로 받는다**. §0 실측 손실률 30% 를 적용하면:
+
+```
+200 ÷ (1 − 0.30) = 286봉      ← stage2_template 200봉 요건을 채우기 위한 공급량
+```
+
+최근봉 경로(200)로는 **불가능**하다. 깊은 로더(2,196봉)를 쓰면 여유가 크다:
+
+| 심볼 | 깊은 로더 | 세션 필터 후(추정) | 200 요건 |
+| --- | ---: | ---: | --- |
+| AAPLUSDT | 2,161 | 1,507 (실측) | 충족 (7.5배) |
+| INTCUSDT | 2,083 | 1,453 (실측) | 충족 (7.3배) |
+| BASEDUSDT | 865 | ~605 | 충족 |
+| SPCXUSDT | 439 | ~307 | 충족 |
+
+**신규 상장 심볼도 세션 필터 후 200봉을 넘는다.**
+
+> 3-4 의 답: **캔들은 분류 수리의 병목이 아니다.** `REPLAY-DEPTH-01` 4-3 의 실제 선행
+> 조건은 캔들이 아니라 [`ASSET_CLASS.md`](ASSET_CLASS.md) §2 의 실적 공급원 결정이다.
+
+산식과 회귀: `app/marketdata/asset_class_audit.py::reclassification_impact` ·
+`tests/test_asset_class.py::test_required_supply_accounts_for_the_session_filter`.
+
+---
+
 ## 5-1. 리텐션 정정 — 보고와 실제가 반대였다 (C7)
 
 §4 의 리텐션 배선에 결함이 있었다. `apply_retention` 은 **upsert 대상 목록**을 잘라내는데

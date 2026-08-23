@@ -447,3 +447,33 @@ paper/service.py   for symbol, timeframe in universe_pairs:
 > **교훈: 유니버스를 넓히는 변경은 엔진 실행 예산과 함께 봐야 한다.**
 > `DISCOVERY-UNBLOCK-01` 은 유니버스를 3→15로 늘렸지만 그 엔진이 심볼당 30초를 쓴다는 것을
 > 확인하지 않았다. 표본을 늘리려는 변경이 표본을 0으로 만들었다.
+
+### §12 종결 여부 — **미종결** (WO-FCE-ASSET-CLASS-01 3-1)
+
+수리 두 개(`universe_needing_evaluation` 사전 필터 · `paper_depth_observations_per_run=2`)는
+`30a2876` 에 들어갔다. **그러나 24시간 실측이 아직 없다.** 이 항목은 열려 있다.
+
+닫으려면 운영 호스트에서 아래 넷이 필요하다:
+
+| 수용 기준 | 상태 |
+| --- | --- |
+| 24시간 `sync_positions` 타임아웃 0건 | 미확인 |
+| `paper_engine` 유효 실행 정상 | 미확인 |
+| 잡 실행률 76~77% 유지 (C6) | 미확인 |
+| 심볼 수 대비 예산 한계 실측 | **완료** → [`validation/ENGINE_BUDGET.md`](validation/ENGINE_BUDGET.md) |
+
+### 예산이 수식으로 고정됐다
+
+사고의 산술이 재현된다: **15종 × 30초 = 450초 = 예산**. 우연이 아니라 그것이 터진 지점이며,
+회귀 테스트가 그 등식을 고정한다(`tests/test_engine_budget.py::test_the_incident_reproduces_exactly`).
+
+| 항목 | 값 |
+| --- | ---: |
+| 실행 예산 (`sync_positions` 90초 × 배수 5) | 450초 |
+| 하드 상한 (예산 정확히 소진) | 15종 ← **사고 당시 유니버스 크기** |
+| 안전 상한 (여유 40%) | 9종 |
+| 현행 `paper_engine_max_symbols_per_run` | 6종 → 180초 |
+
+**상한이 실행당 예산과 순회 주기를 분리한다.** 상한이 있으면 유니버스가 커져도 실행당
+비용은 고정이고 순회만 느려진다 — 그래서 289종도 순회 73.5분으로 한 봉 안에 들어온다.
+정본과 절차는 [`validation/ENGINE_BUDGET.md`](validation/ENGINE_BUDGET.md).
