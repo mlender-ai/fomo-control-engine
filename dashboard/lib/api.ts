@@ -1820,6 +1820,8 @@ export type OnchainWhaleWallet = {
     }>;
   } | null;
   review: OnchainWhaleReview;
+  // WHALE-FOLLOW-01 5-2: 행동 기반 유형 추정. 확정이 아니다(`estimate` 는 항상 true).
+  participant_estimate: OnchainWhaleParticipantEstimate;
   positions: Array<{
     coin: string;
     symbol: string;
@@ -1833,9 +1835,40 @@ export type OnchainWhaleWallet = {
   }>;
 };
 
+export type OnchainWhaleParticipantEstimate = {
+  address: string;
+  participant_type: "directional" | "market_maker" | "basis_carry" | "unclassified" | string;
+  confidence: number;
+  follow_eligible: boolean;
+  reason: string;
+  estimate: boolean;
+  indicators: {
+    events?: number;
+    maker_pct?: number | null;
+    direction_skew?: number | null;
+    events_per_day?: number | null;
+    distinct_coins?: number;
+    close_ratio?: number;
+  };
+};
+
+export type OnchainWhaleParticipantTypes = {
+  counts: Record<string, number>;
+  wallets: number;
+  follow_eligible: number;
+  eligible_types: string[];
+  excluded_types: string[];
+  estimate: boolean;
+  note: string;
+  event_window_per_wallet: number;
+  events_classified: number;
+  window_note: string;
+};
+
 export type OnchainWhaleDashboard = {
   enabled: boolean;
   wallet_count: number;
+  participant_types: OnchainWhaleParticipantTypes;
   max_wallets: number;
   minimum_event_size_usd: number;
   wallets: OnchainWhaleWallet[];

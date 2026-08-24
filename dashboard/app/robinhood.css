@@ -3959,6 +3959,31 @@ textarea:focus {
   font-weight: 800;
 }
 
+/* WHALE-FOLLOW-01 5-2: 유형 추정 배지. 추종 대상과 제외를 색으로 가른다.
+   사유는 title 속성으로 조회한다(C10). 추정이므로 라벨 자체에 "추정"이 들어간다. */
+.whaleParticipantTag {
+  display: inline-grid;
+  place-items: center;
+  padding: 0 7px;
+  height: 22px;
+  border: 1px solid var(--terminal-line-strong);
+  color: var(--terminal-muted);
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: help;
+}
+
+.whaleParticipantTag.eligible {
+  border-color: rgba(46, 211, 142, 0.38);
+  color: var(--terminal-positive);
+}
+
+.whaleParticipantTag.excluded {
+  border-color: var(--terminal-line);
+  color: var(--terminal-dim);
+}
+
 .onchainAddForm label {
   display: grid;
   gap: 5px;
