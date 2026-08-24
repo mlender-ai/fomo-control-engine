@@ -244,11 +244,16 @@ def test_score_injection_reorders_without_touching_defaults() -> None:
     assert by_size[0]["address"].endswith("b" * 10), "비성과 정렬이 규모·활동량을 앞세우지 않았다"
 
 
-def test_cohort_retention_is_opt_in() -> None:
-    """5-1 항목 5 — 기본값이 꺼짐이고, 끄면 종전 회전 동작으로 돌아간다."""
-    from app.core.config import get_settings
+def test_cohort_retention_is_on_by_default_and_revertible() -> None:
+    """Phase 6-1 — 기본값이 켬이다. 끄는 경로(env=false)는 남아 있다.
 
-    assert get_settings().hyperliquid_whale_cohort_retention_enabled is False
+    Phase 5 는 꺼두고 드라이런만 했다. 그 검증이 끝났고 Phase 6 가 활성화를 지시했다.
+    원복 가능성은 `test_discovery_rotates_when_cohort_mode_is_off` 가 고정한다.
+    """
+    from app.core.config import Settings, get_settings
+
+    assert get_settings().hyperliquid_whale_cohort_retention_enabled is True
+    assert Settings(FCE_HYPERLIQUID_WHALE_COHORT_RETENTION_ENABLED="false").hyperliquid_whale_cohort_retention_enabled is False
 
 
 # ── 5-2 참여자 유형 ────────────────────────────────────────────────────

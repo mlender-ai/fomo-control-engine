@@ -167,9 +167,15 @@ class Settings(BaseSettings):
         20,
         validation_alias=AliasChoices("FCE_HYPERLIQUID_WHALE_MAX_WALLETS", "HYPERLIQUID_WHALE_MAX_WALLETS"),
     )
-    # WHALE-FOLLOW-01 5-1: 켜면 선발이 유지를 밀어내지 못한다. 끄면 종전 회전 동작(옵트인).
+    # WHALE-FOLLOW-01 5-1 → Phase 6-1: 기본값을 켬으로 뒤집었다.
+    #
+    # Phase 5 가 꺼둔 이유는 "라이브에서 아직 검증되지 않았다"였다. 드라이런이 끝났고
+    # Phase 6 가 활성화를 지시했다. 끄면(=false) 종전 회전 동작으로 되돌아간다 — 원복
+    # 경로는 그대로 남는다.
+    #
+    # 켜지 않으면 표본을 쌓은 지갑이 다음 발견 실행에서 빠지고 그 자리에서 멈춘다.
     hyperliquid_whale_cohort_retention_enabled: bool = Field(
-        False,
+        True,
         validation_alias=AliasChoices(
             "FCE_HYPERLIQUID_WHALE_COHORT_RETENTION_ENABLED",
             "HYPERLIQUID_WHALE_COHORT_RETENTION_ENABLED",
