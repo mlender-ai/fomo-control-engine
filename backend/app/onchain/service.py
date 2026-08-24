@@ -152,7 +152,7 @@ def whale_dashboard(repo: Any, settings: Any) -> dict[str, Any]:
                 "participant_type": participant_type.TYPE_UNCLASSIFIED,
                 "confidence": 0.0,
                 "follow_eligible": False,
-                "reason": "관측된 체결이 없다 — 유형을 추정할 근거가 없다",
+                "reason": f"최근 체결 {len(raw_events)}건 창 안에 이 지갑의 체결이 없다 — 창 밖 이력은 유형 추정에 쓰이지 않는다",
                 "indicators": {},
                 "estimate": True,
             },
@@ -168,7 +168,12 @@ def whale_dashboard(repo: Any, settings: Any) -> dict[str, Any]:
         "recent_events": _round_robin_event_feed(event_bursts),
         "recent_events_by_instrument": dict(recent_events_by_instrument),
         "discovery": cached_discovery(repo),
-        "participant_types": participant_type.type_distribution(participant_estimates),
+        "participant_types": {
+            **participant_type.type_distribution(participant_estimates),
+            # 창을 명시한다. 이 분포는 전체 이력이 아니라 최근 이벤트 창의 분류다.
+            "event_window": len(raw_events),
+            "window_note": f"최근 체결 {len(raw_events)}건 기준 — 창 밖 지갑은 미분류로 표시되며 이력이 없다는 뜻이 아니다",
+        },
         "flow": flow,
         "flow_by_instrument": flow_by_instrument,
         "symbol_activity": _symbol_activity(repo, wallets, states, review_context),
