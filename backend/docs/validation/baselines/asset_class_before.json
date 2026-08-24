@@ -1,0 +1,3534 @@
+{
+  "summary": {
+    "total_symbols": 761,
+    "changed": 267,
+    "rwa_symbols": 296,
+    "stock_allowlist_size": 27,
+    "catalog_counts": {
+      "crypto": 464,
+      "index": 6,
+      "stock": 291
+    },
+    "name_based_counts": {
+      "crypto": 731,
+      "index": 6,
+      "stock": 24
+    },
+    "transitions": {
+      "crypto→stock": 267
+    },
+    "symbols": [
+      {
+        "symbol": "AALUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "AAL",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "AAOIUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "AAOI",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "AAPUUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "AAPU",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "ABNBUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "ABNB",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "ACHRUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "ACHR",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "ADBEUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "ADBE",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "ADIUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "ADI",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "ADVANTESTUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "ADVANTEST",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "AEHRUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "AEHR",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "ALABUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "ALAB",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "AMATUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "AMAT",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "AMCUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "AMC",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "AMGNUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "AMGN",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "AMKRUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "AMKR",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "AMZUUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "AMZU",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "ANETUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "ANET",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "ANTHROPICUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "ANTHROPIC",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "APDUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "APD",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "APLDUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "APLD",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "APPUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "APP",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "ARQQUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "ARQQ",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "ASMLUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "ASML",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "ASTSUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "ASTS",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "ASXUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "ASX",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "AVAVUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "AVAV",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "AXONUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "AXON",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "AXTIUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "AXTI",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "BABAUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "BABA",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "BACUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "BAC",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "BAUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "BA",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "BBSTOCKUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "BBSTOCK",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "BEUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "BE",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "BITOUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "BITO",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "BKNGUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "BKNG",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "BMNRUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "BMNR",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "BNCUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "BNC",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "BOTUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "BOT",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "BOTZUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "BOTZ",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "BRKBUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "BRKB",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "BSPUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "BSP",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "BUDUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "BUD",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "BXUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "BX",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "BZUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "BZ",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "CATUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "CAT",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "CBRSUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "CBRS",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "CCLUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "CCL",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "CGNXUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "CGNX",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "CIENUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "CIEN",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "CLUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "CL",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "CMCSAUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "CMCSA",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "COHRUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "COHR",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "CONLUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "CONL",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "COPPERUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "COPPER",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "COPUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "COP",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "COSTUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "COST",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "CPNGUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "CPNG",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "CRDOUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "CRDO",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "CRMUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "CRM",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "CRWDUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "CRWD",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "CRWVUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "CRWV",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "CSCOUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "CSCO",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "CSOPSK2LHKDUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "CSOPSK2LHKD",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "CSOPSS2LHKDUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "CSOPSS2LHKD",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "CXMTUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "CXMT",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "DDOGUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "DDOG",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "DELLUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "DELL",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "DEUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "DE",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "DFENUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "DFEN",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "DIASTOCKUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "DIASTOCK",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "DISKUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "DISK",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "DKNGUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "DKNG",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "DOOSBOTUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "DOOSBOT",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "DOOSENERUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "DOOSENER",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "DRAMUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "DRAM",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "DXYZUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "DXYZ",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "ECHOUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "ECHO",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "ETNUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "ETN",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "EUVUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "EUV",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "EVEXUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "EVEX",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "EWHUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "EWH",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "EWJUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "EWJ",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "EWTUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "EWT",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "EWYUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "EWY",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "EWZUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "EWZ",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "FLEXUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "FLEX",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "FLNCUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "FLNC",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "FLYUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "FLY",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "FOXAUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "FOXA",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "FUTUUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "FUTU",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "FWDIUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "FWDI",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "GDXUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "GDX",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "GEUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "GE",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "GEVUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "GEV",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "GFSUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "GFS",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "GGLLUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "GGLL",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "GIGADEVICEUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "GIGADEVICE",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "GILDUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "GILD",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "GLWUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "GLW",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "GMEUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "GME",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "GSUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "GS",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "HANMIUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "HANMI",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "HPEUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "HPE",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "HYUNDAIUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "HYUNDAI",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "IBBUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "IBB",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "IBMUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "IBM",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "INDAUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "INDA",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "INFQUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "INFQ",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "INTCUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "INTC",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "INTWUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "INTW",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "IONQUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "IONQ",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "IRENUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "IREN",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "ISRGUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "ISRG",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "JDUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "JD",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "JMKEUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "JMKE",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "JOBYUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "JOBY",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "JP225USDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "JP225",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "JPMUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "JPM",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "KIOXIAUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "KIOXIA",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "KLACUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "KLAC",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "KOPNUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "KOPN",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "KORUUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "KORU",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "KOUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "KO",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "KR200USDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "KR200",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "KSTRUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "KSTR",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "KTOSUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "KTOS",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "KUAISHOUUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "KUAISHOU",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "KWEBUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "KWEB",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "LASERTECUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "LASERTEC",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "LENOVOHKDUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "LENOVOHKD",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "LGELECTRONICSUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "LGELECTRONICS",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "LINUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "LIN",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "LITEUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "LITE",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "LLYUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "LLY",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "LMTUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "LMT",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "LRCXUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "LRCX",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "LWLGUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "LWLG",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "LYTEUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "LYTE",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "MARUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "MAR",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "MCDUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "MCD",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "MDBUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "MDB",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "MEITUANUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "MEITUAN",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "MELIUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "MELI",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "METUUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "METU",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "MINIMAXHKDUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "MINIMAXHKD",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "MINIMAXUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "MINIMAX",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "MOONSHOTUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "MOONSHOT",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "MPUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "MP",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "MRKUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "MRK",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "MRNAUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "MRNA",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "MRVLUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "MRVL",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "MSFUUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "MSFU",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "MSTUUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "MSTU",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "MUFGUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "MUFG",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "MUUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "MU",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "MUUUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "MUU",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "MVLLUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "MVLL",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "NATGASUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "NATGAS",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "NAVERUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "NAVER",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "NDX100USDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "NDX100",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "NETEASEUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "NETEASE",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "NETUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "NET",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "NIOUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "NIO",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "NKEUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "NKE",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "NOCUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "NOC",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "NOKSTOCKUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "NOKSTOCK",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "NOWUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "NOW",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "NTAPUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "NTAP",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "OKLOUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "OKLO",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "ONDSUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "ONDS",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "OPENAIUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "OPENAI",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "ORCLUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "ORCL",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "OSSUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "OSS",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "OUSTUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "OUST",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "OXYUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "OXY",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "PANWUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "PANW",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "PAXGUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "PAXG",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "PDDUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "PDD",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "PENGUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "PENG",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "PEPUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "PEP",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "PKXUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "PKX",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "PLUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "PL",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "POETUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "POET",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "PYPLUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "PYPL",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "QBTSUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "QBTS",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "QCOMUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "QCOM",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "QNTSTOCKUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "QNTSTOCK",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "QUBTUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "QUBT",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "RAMUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "RAM",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "RCATUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "RCAT",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "RDDTUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "RDDT",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "RDWUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "RDW",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "RGTIUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "RGTI",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "RKLBUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "RKLB",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "ROKUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "ROK",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "RTXSTOCKUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "RTXSTOCK",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "SAMSUNGEMUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "SAMSUNGEM",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "SAMSUNGUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "SAMSUNG",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "SATLUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "SATL",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "SGOVUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "SGOV",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "SHAZUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "SHAZ",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "SHOPUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "SHOP",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "SIMOUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "SIMO",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "SITMUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "SITM",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "SKDDUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "SKDD",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "SKHYNIXUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "SKHYNIX",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "SKUUUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "SKUU",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "SMHUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "SMH",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "SMICUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "SMIC",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "SMRUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "SMR",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "SNDKUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "SNDK",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "SNOWUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "SNOW",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "SNXXUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "SNXX",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "SOFIUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "SOFI",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "SONYUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "SONY",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "SOXSUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "SOXS",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "SOXXUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "SOXX",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "SP500USDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "SP500",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "SPCHUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "SPCH",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "SPCXUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "SPCX",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "SPIRUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "SPIR",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "SSPCUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "SSPC",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "STRCUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "STRC",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "STXSTOCKUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "STXSTOCK",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "SUMIELECUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "SUMIELEC",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "TBTUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "TBT",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "TEMUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "TEM",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "TENCENTHKDUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "TENCENTHKD",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "TENCENTUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "TENCENT",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "TERUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "TER",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "TMFUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "TMF",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "TMUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "TM",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "TOKYOELUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "TOKYOEL",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "TSEMUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "TSEM",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "TSMUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "TSM",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "TTWOUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "TTWO",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "TWLOUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "TWLO",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "TXNUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "TXN",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "TZAUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "TZA",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "UBERUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "UBER",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "UNHUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "UNH",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "UNITREEUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "UNITREE",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "USARUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "USAR",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "UVXYUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "UVXY",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "VOOUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "VOO",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "VRTUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "VRT",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "VSTUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "VST",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "VUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "V",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "WDCUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "WDC",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "WENUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "WEN",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "WMTUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "WMT",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "XAGUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "XAG",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "XAUTUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "XAUT",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "XAUUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "XAU",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "XBIUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "XBI",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "XIAOMIHKDUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "XIAOMIHKD",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "XLEUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "XLE",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "XLKUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "XLK",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "XLUUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "XLU",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "XLVUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "XLV",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "XNDUUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "XNDU",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "XOMUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "XOM",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "XPDUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "XPD",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "XPTUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "XPT",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "ZHIPUHKDUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "ZHIPUHKD",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "ZHIPUUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "ZHIPU",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "ZHONGJIUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "ZHONGJI",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      },
+      {
+        "symbol": "ZMUSDT",
+        "catalog_class": "stock",
+        "name_based_class": "crypto",
+        "changed": true,
+        "is_rwa": true,
+        "ticker": "ZM",
+        "in_stock_allowlist": false,
+        "gates_gained": [
+          "stage2_template",
+          "earnings_clear"
+        ]
+      }
+    ],
+    "note": "카탈로그가 정본이다. 이름 기반은 27개 허용목록이라 RWA 대부분을 crypto 로 본다."
+  },
+  "earnings": {
+    "by_asset_class": {
+      "crypto": {
+        "clear_without_earnings_data": true,
+        "clear_with_earnings_data": true,
+        "permanently_blocked": false
+      },
+      "stock": {
+        "clear_without_earnings_data": false,
+        "clear_with_earnings_data": true,
+        "permanently_blocked": true
+      },
+      "index": {
+        "clear_without_earnings_data": false,
+        "clear_with_earnings_data": true,
+        "permanently_blocked": true
+      }
+    },
+    "permanently_blocked_classes": [
+      "index",
+      "stock"
+    ],
+    "feed_present": false,
+    "note": "`analysis['earnings']` 를 채우는 코드가 크립토 분석 경로에 없다. 데이터가 있으면 통과하지만 공급원이 없어 stock·index 는 항상 불통과다."
+  },
+  "impact": {
+    "symbols_gaining_gates": 267,
+    "gates_gained": [
+      "stage2_template",
+      "earnings_clear"
+    ],
+    "symbols_blocked_by_missing_earnings_feed": 267,
+    "earnings_feed_present": false,
+    "symbols_gaining_session_filter": 267,
+    "session_filter_loss_pct": 30.0,
+    "required_supply_for_stage2": 286,
+    "verdict": "분류만 고치면 267종의 진입이 **0이 된다** — 실적 데이터 공급원이 없어 `earnings_clear` 가 영구 불통과이기 때문이다. 공급원 또는 무데이터 정책을 먼저 정해야 한다."
+  },
+  "read_only": true
+}
