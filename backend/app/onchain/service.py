@@ -9,6 +9,7 @@ from app.analyst.signature_registry import state_map
 from app.backtest.candidate_scoring import CANDIDATE_SENTINEL_POSITION_ID, WHALE_VALIDATION_DAYS
 from app.backtest.statistics import bootstrap_ci_from_counts
 from app.db.models import WhaleEvent, WhaleWallet, utc_now
+from app.onchain import participant_type
 from app.onchain.hyperliquid.client import HyperliquidInfoClient
 from app.onchain.hyperliquid.collector import collect_whale_positions, whale_signature_key
 from app.onchain.hyperliquid.leaderboard import cached_discovery, discover_leaderboard_wallets
@@ -58,6 +59,23 @@ def collect(repo: Any, settings: Any, *, client: Any | None = None) -> dict[str,
     return {"enabled": True, **collect_whale_positions(repo, settings, info_client)}
 
 
+def whale_sample_sizes(repo: Any) -> dict[str, int]:
+    """지갑별 채점 완료 표본 수. 코호트 유지 판정의 유일한 원장 입력이다(5-1).
+
+    성과는 세지 않는다 — 몇 건이 채점됐는지만 센다. 승률·수익은 이 함수가 돌려주지 않으므로
+    유지 판정이 성과를 볼 수 없다(C4).
+    """
+    context = _wallet_review_context(repo)
+    sizes: dict[str, int] = {}
+    for signature_key, judgments in context["judgments_by_key"].items():
+        if not signature_key.startswith("whale_entry_"):
+            continue
+        address = signature_key[len("whale_entry_") :].lower()
+        scored = sum(1 for judgment in judgments if judgment.judgment_id in context["scores_by_judgment"])
+        sizes[address] = scored
+    return sizes
+
+
 def discover(
     repo: Any,
     settings: Any,
@@ -71,7 +89,9 @@ def discover(
             settings.hyperliquid_info_url,
             timeout_seconds=float(settings.hyperliquid_request_timeout_seconds),
         )
-    return discover_leaderboard_wallets(repo, settings, client, info_client)
+    # 원장 조회는 코호트 모드에서만 한다 — 끈 상태의 실행 예산을 늘리지 않는다(C9).
+    sample_sizes = whale_sample_sizes(repo) if bool(getattr(settings, "hyperliquid_whale_cohort_retention_enabled", False)) else None
+    return discover_leaderboard_wallets(repo, settings, client, info_client, sample_sizes=sample_sizes)
 
 
 def whale_dashboard(repo: Any, settings: Any) -> dict[str, Any]:
@@ -120,8 +140,24 @@ def whale_dashboard(repo: Any, settings: Any) -> dict[str, Any]:
     from app.onchain.win_rate import observed_win_rates, selection_disclosure
 
     win_rates = observed_win_rates(raw_events)
+    # 5-2: 유형 추정을 지갑 행에 병기한다. 추종하지 않는 지갑도 **사유와 함께** 보여야 한다(C10).
+    participant_estimates = participant_type.classify_wallets(raw_events)
     for row in rows:
-        row["observed_win_rate"] = win_rates.get(str(row.get("address") or "").lower())
+        address = str(row.get("address") or "").lower()
+        row["observed_win_rate"] = win_rates.get(address)
+        row["participant_estimate"] = participant_estimates.get(
+            address,
+            {
+                "address": address,
+                "participant_type": participant_type.TYPE_UNCLASSIFIED,
+                "confidence": 0.0,
+                "follow_eligible": False,
+                "reason": "관측된 체결이 없다 — 유형을 추정할 근거가 없다",
+                "indicators": {},
+                "estimate": True,
+            },
+        )
+        row["cohort_retention"] = row.get("payload", {}).get("cohort_retention") if isinstance(row.get("payload"), dict) else None
     return {
         "enabled": bool(settings.hyperliquid_whale_tracking_enabled),
         "wallet_count": len(wallets),
@@ -132,6 +168,7 @@ def whale_dashboard(repo: Any, settings: Any) -> dict[str, Any]:
         "recent_events": _round_robin_event_feed(event_bursts),
         "recent_events_by_instrument": dict(recent_events_by_instrument),
         "discovery": cached_discovery(repo),
+        "participant_types": participant_type.type_distribution(participant_estimates),
         "flow": flow,
         "flow_by_instrument": flow_by_instrument,
         "symbol_activity": _symbol_activity(repo, wallets, states, review_context),

@@ -167,6 +167,29 @@ class Settings(BaseSettings):
         20,
         validation_alias=AliasChoices("FCE_HYPERLIQUID_WHALE_MAX_WALLETS", "HYPERLIQUID_WHALE_MAX_WALLETS"),
     )
+    # WHALE-FOLLOW-01 5-1: 켜면 선발이 유지를 밀어내지 못한다. 끄면 종전 회전 동작(옵트인).
+    hyperliquid_whale_cohort_retention_enabled: bool = Field(
+        False,
+        validation_alias=AliasChoices(
+            "FCE_HYPERLIQUID_WHALE_COHORT_RETENTION_ENABLED",
+            "HYPERLIQUID_WHALE_COHORT_RETENTION_ENABLED",
+        ),
+    )
+    hyperliquid_whale_cohort_sample_target: int = Field(
+        30,
+        ge=1,
+        validation_alias=AliasChoices("FCE_HYPERLIQUID_WHALE_COHORT_SAMPLE_TARGET", "HYPERLIQUID_WHALE_COHORT_SAMPLE_TARGET"),
+    )
+    hyperliquid_whale_cohort_min_tenure_days: int = Field(
+        7,
+        ge=0,
+        validation_alias=AliasChoices("FCE_HYPERLIQUID_WHALE_COHORT_MIN_TENURE_DAYS", "HYPERLIQUID_WHALE_COHORT_MIN_TENURE_DAYS"),
+    )
+    hyperliquid_whale_cohort_dormant_days: int = Field(
+        10,
+        ge=1,
+        validation_alias=AliasChoices("FCE_HYPERLIQUID_WHALE_COHORT_DORMANT_DAYS", "HYPERLIQUID_WHALE_COHORT_DORMANT_DAYS"),
+    )
     hyperliquid_request_timeout_seconds: float = Field(
         10.0,
         validation_alias=AliasChoices("FCE_HYPERLIQUID_REQUEST_TIMEOUT_SECONDS", "HYPERLIQUID_REQUEST_TIMEOUT_SECONDS"),
