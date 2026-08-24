@@ -313,6 +313,22 @@ class Settings(BaseSettings):
         False,
         validation_alias=AliasChoices("FCE_PAPER_OBSERVATION_UNIVERSE_ENABLED", "PAPER_OBSERVATION_UNIVERSE_ENABLED"),
     )
+    # 2026-08-24 장애 후속. `stock_paper_events` 는 리텐션 대상이 **아니었고** 2,528만 행까지
+    # 자랐다(2026-08-14 하루에 `KR/session_closed` 25,287,541행 폭주). 그 표가 커지자
+    # `/api/stock-paper/dashboard` 의 사유 집계가 45초로 늘어 화면이 500 을 띄웠다.
+    #
+    # 날짜가 아니라 **행 수 상한**으로 잡는다 — 폭주는 하루에 몰리므로 날짜 창으로는
+    # 그날이 창 안에 있는 동안 아무것도 못 막는다. 관측 이벤트에 2,500만 행이 필요하지 않다.
+    db_stock_paper_event_retention_rows: int = Field(
+        200_000,
+        validation_alias=AliasChoices("FCE_DB_STOCK_PAPER_EVENT_RETENTION_ROWS", "DB_STOCK_PAPER_EVENT_RETENTION_ROWS"),
+    )
+    # 한 번의 리텐션 실행에서 지울 최대 행 수. 2,528만 행을 한 번에 지우면 WAL 이 폭증하고
+    # 쓰기 락을 길게 잡아 **다시 API 를 내린다**(이번 장애의 형태). 여러 실행에 걸쳐 수렴시킨다.
+    db_stock_paper_event_delete_budget: int = Field(
+        2_000_000,
+        validation_alias=AliasChoices("FCE_DB_STOCK_PAPER_EVENT_DELETE_BUDGET", "DB_STOCK_PAPER_EVENT_DELETE_BUDGET"),
+    )
     db_depth_observation_retention_days: int = Field(
         45,
         validation_alias=AliasChoices("FCE_DB_DEPTH_OBSERVATION_RETENTION_DAYS", "DB_DEPTH_OBSERVATION_RETENTION_DAYS"),

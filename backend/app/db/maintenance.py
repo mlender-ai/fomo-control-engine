@@ -256,6 +256,14 @@ def _apply_sqlite_retention(connection: sqlite3.Connection, settings: Settings) 
         max(200, int(settings.replay_history_retention_bars)),
     )
     details["stance_history_retention_bars"] = max(200, int(settings.replay_history_retention_bars))
+    # 2026-08-24 장애 후속: 행 수 상한으로 자른다. 날짜 창으로는 하루에 몰린 폭주를 못 막는다.
+    details.update(
+        _trim_stock_paper_events(
+            connection,
+            keep_rows=max(1_000, int(getattr(settings, "db_stock_paper_event_retention_rows", 200_000))),
+            delete_budget=max(10_000, int(getattr(settings, "db_stock_paper_event_delete_budget", 2_000_000))),
+        )
+    )
     details["alerts_deleted"] = _delete_expired_alerts(connection, alert_cutoff)
     details["worker_heartbeat_deleted"] = _delete_if_table(
         connection,
@@ -557,6 +565,52 @@ def _cap_stance_history_candles(connection: sqlite3.Connection, keep_bars: int) 
             (row["symbol"], row["timeframe"], row["symbol"], row["timeframe"], keep_bars),
         )
     return deleted
+
+
+def _trim_stock_paper_events(connection: sqlite3.Connection, *, keep_rows: int, delete_budget: int) -> dict[str, object]:
+    """`stock_paper_events` 를 최신 `keep_rows` 행으로 자른다 (2026-08-24 장애 후속).
+
+    ## 왜 행 수인가
+
+    2026-08-14 하루에 `KR/session_closed` 가 **25,287,541행** 쏟아졌다. 날짜 기반 창은 그날이
+    창 안에 있는 동안 아무것도 지우지 않고, 창을 벗어나면 한꺼번에 2,500만 행을 지운다 —
+    둘 다 나쁘다. 행 수 상한은 폭주 형태와 무관하게 표를 유계로 유지한다.
+
+    ## 왜 예산을 두는가
+
+    2,500만 행을 한 트랜잭션에 지우면 WAL 이 폭증하고 쓰기 락을 길게 잡는다. 그것이
+    **이번 장애와 같은 형태**로 API 를 다시 내린다. 실행마다 `delete_budget` 만큼만 지우고
+    여러 실행에 걸쳐 수렴시킨다.
+
+    `id` 는 INTEGER PRIMARY KEY(rowid)이므로 경계 비교가 인덱스 없이도 저렴하다.
+    """
+    if not _table_exists(connection, "stock_paper_events"):
+        return {"stock_paper_events_deleted": 0, "stock_paper_events_remaining": None}
+    row = connection.execute("SELECT MAX(id), COUNT(*) FROM stock_paper_events").fetchone()
+    if row is None or row[0] is None:
+        return {"stock_paper_events_deleted": 0, "stock_paper_events_remaining": 0}
+    max_id = int(row[0])
+    total = int(row[1])
+    if total <= keep_rows:
+        return {"stock_paper_events_deleted": 0, "stock_paper_events_remaining": total}
+    # 남길 경계: 최신 keep_rows 행. 그보다 오래된 것을 예산만큼 지운다.
+    boundary = max_id - keep_rows
+    cursor = connection.execute(
+        "DELETE FROM stock_paper_events WHERE id <= ? AND id IN (SELECT id FROM stock_paper_events WHERE id <= ? LIMIT ?)",
+        (boundary, boundary, delete_budget),
+    )
+    deleted = int(cursor.rowcount or 0)
+    return {
+        "stock_paper_events_deleted": deleted,
+        "stock_paper_events_remaining": total - deleted,
+        "stock_paper_events_keep_rows": keep_rows,
+        # 예산에 걸려 남은 분량은 다음 실행이 이어서 지운다 — 침묵하지 않는다.
+        "stock_paper_events_more_pending": (total - deleted) > keep_rows,
+    }
+
+
+def _table_exists(connection: sqlite3.Connection, table: str) -> bool:
+    return bool(connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone())
 
 
 def _delete_if_table(connection: sqlite3.Connection, table: str, query: str, params: tuple[str, ...]) -> int:

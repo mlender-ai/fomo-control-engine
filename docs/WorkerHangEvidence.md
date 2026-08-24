@@ -477,3 +477,84 @@ paper/service.py   for symbol, timeframe in universe_pairs:
 **상한이 실행당 예산과 순회 주기를 분리한다.** 상한이 있으면 유니버스가 커져도 실행당
 비용은 고정이고 순회만 느려진다 — 그래서 289종도 순회 73.5분으로 한 봉 안에 들어온다.
 정본과 절차는 [`validation/ENGINE_BUDGET.md`](validation/ENGINE_BUDGET.md).
+---
+
+## 13. 화면 500 — 두 개의 독립된 결함 (2026-08-24)
+
+`/engine?tab=stocks` 가 **"API request failed: 500"** 을 띄웠다. 콘솔:
+`:8876/api/stock-paper/dashboard:1 Failed to load resource: 500`.
+
+**500 이 아니었다.** 백엔드는 응답을 못 하고 **행**에 걸렸고(60초 타임아웃), 프론트가 그것을
+500 으로 변환했다. 두 개의 독립된 원인이 겹쳐 있었다.
+
+### 결함 A — 읽기 경로가 연결 단계에서 쓰기 락을 요구했다
+
+```python
+db/sqlite_utils.py:83   def configure_sqlite_connection(connection):
+                            connection.execute("PRAGMA busy_timeout=5000")
+                            connection.execute("PRAGMA auto_vacuum=INCREMENTAL")   ← 매 연결
+```
+
+주석은 "기존 DB 에는 무해 no-op" 이라고 적혀 있었다. **무해하지 않다.** 이 pragma 는 DB
+헤더에 쓰므로 **쓰기 락을 요구**하고, 긴 쓰기 트랜잭션(페이퍼 엔진)이 도는 동안
+`busy_timeout` 5초를 넘겨 `database is locked` 를 던진다. 그 예외가 **쿼리 실행 전에 연결을
+죽여서** 읽기 엔드포인트까지 전부 죽었다:
+
+```
+GET /api/live/positions  →  500 database is locked
+GET /api/system/worker   →  500 database is locked
+```
+
+그리고 이 DB 는 **이미 `auto_vacuum=2`** 였다 — 아무것도 바꾸지 않으면서 락만 요구했다.
+
+수리: 먼저 **읽어서** 이미 INCREMENTAL 이면 쓰기를 건너뛰고, 바꿔야 할 때도 실패를 삼킨다.
+파일 크기 최적화 설정 하나 때문에 연결이 죽지 않는다. 회귀 7건.
+
+### 결함 B — 관측 이벤트 표가 리텐션 대상이 아니었다
+
+```
+stock_paper_events                    25,299,849행
+  event_type='unfilled'               25,277,635  (99.98%)
+  KR / reason='session_closed'        25,287,541
+  2026-08-14 하루에                   25,287,556  ← 폭주
+현재 유입                             15행/일     ← 폭주는 멈춤
+```
+
+`store.dashboard()` 의 사유 집계가 `event_type` 으로 필터하는데 기존 인덱스
+`(market, reason, observed_at)` 에 그 칼럼이 없어 **2,530만 행을 테이블에서 읽었다** —
+실측 **45.3초**. 그리고 `stock_paper_events` 는 리텐션 정책에 **없었다.**
+
+수리 두 겹:
+
+| | 조치 | 결과 |
+| --- | --- | --- |
+| 조회 | 마이그레이션 `0038` 커버링 인덱스 `(market, reason, event_type)` | 45.3s → 7.0s (`COVERING INDEX`) |
+| 표 크기 | 행 수 상한 리텐션 + 삭제 예산 | 25,299,849 → **200,000행** |
+
+**날짜 창이 아니라 행 수 상한**으로 잡았다 — 폭주가 하루에 몰리므로 날짜 창은 그날이 창
+안에 있는 동안 아무것도 못 막고, 벗어나면 한꺼번에 2,500만 행을 지운다. 둘 다 나쁘다.
+
+**삭제 예산**(기본 200만행/실행)을 둔 이유는 한 트랜잭션에 2,500만 행을 지우면 WAL 이
+폭증하고 쓰기 락을 길게 잡아 **이번 장애와 같은 형태로 API 를 다시 내리기** 때문이다.
+실측: 13회 실행 · 회당 4~33초 · WAL 5.28GB 까지 증가 후 체크포인트로 회수.
+
+### 최종 실측
+
+```
+/api/stock-paper/dashboard   타임아웃(60s+) → **200 · 0.036초**   (317배)
+프론트 8876 경유              500 → **200 · 0.022초**
+/api/live/positions          500 → 200
+/api/system/worker           500 → 200
+WAL                          5,278 MB → 0 MB (checkpoint TRUNCATE)
+```
+
+### 남긴 것 — 정직하게
+
+- **본체 파일은 11.1GB 그대로다.** freelist 132만 페이지(≈5.2GB)가 재사용 대기 상태이고,
+  `incremental_vacuum` 은 패스당 1페이지만 처리한다(이 DB 에 포인터맵이 없다).
+  디스크로 되돌리려면 전체 `VACUUM` 이 필요하고 그것은 **배타 락으로 API 를 장시간 내린다** —
+  유지보수 창에서 할 일로 남긴다. 그때까지 freelist 는 재사용되므로 **파일이 더 커지지는 않는다.**
+- **폭주 원인 미수리.** `KR/session_closed` 가 하루 2,528만 행 쌓인 기전은 조사하지 않았다.
+  `store.py:385-400` 에 `stale_seconds=300` 중복 억제가 있는데 이 경로가 그것을 타지 않는
+  것으로 보인다. 현재 유입이 15행/일이라 긴급하지 않지만 **재발 가능하고**, 리텐션은 증상만
+  막는다. 별건으로 남긴다.

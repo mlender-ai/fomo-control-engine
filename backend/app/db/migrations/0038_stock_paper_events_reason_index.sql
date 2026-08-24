@@ -1,0 +1,33 @@
+-- 2026-08-24 장애 수리 — `/api/stock-paper/dashboard` 45초 → 즉시.
+--
+-- ## 증상
+--
+-- 화면(`/engine?tab=stocks`)이 "API request failed: 500" 을 띄웠다. 실제로는 500 이 아니라
+-- **행**이고(백엔드 60초 타임아웃), 프론트가 그것을 500 으로 변환한 것이다.
+--
+-- ## 원인
+--
+-- `store.dashboard()` 의 사유 집계 쿼리:
+--
+--     SELECT market, reason, COUNT(*) FROM stock_paper_events
+--     WHERE reason IS NOT NULL AND event_type NOT IN (...)
+--     GROUP BY market, reason
+--
+-- 기존 인덱스는 `(market, reason, observed_at)` 이라 `event_type` 이 없다. 그래서 SQLite 가
+-- 인덱스를 훑되 **행마다 테이블에서 `event_type` 을 가져와야** 했고, 그 테이블이
+-- **2,528만 행**이다. 실측 45.3초.
+--
+-- ## 왜 2,528만 행인가 — 별건이다
+--
+-- `event_type='unfilled'` 이 25,277,635행(99.98%)이고 **2026-08-14 하루에 25,287,556행**이
+-- 쏟아졌다. 폭주는 이미 멈췄다(현재 15행/일). 이 마이그레이션은 그 이력을 지우지 않고
+-- **조회를 빠르게** 만든다 — 리텐션은 별도로 배선한다.
+--
+-- ## 왜 부분 인덱스인가
+--
+-- 쿼리 술어가 `reason IS NOT NULL` 이고 그 조건을 만족하는 행은 1만여 개뿐이다.
+-- 전체 색인은 2,528만 항목을 만들지만 부분 색인은 1만 항목이면 된다 — 생성이 즉시이고
+-- 크기도 무시할 만하며, 커버링이라 테이블을 건드리지 않는다.
+CREATE INDEX IF NOT EXISTS idx_stock_paper_events_reason_type
+  ON stock_paper_events (market, reason, event_type)
+  WHERE reason IS NOT NULL;
