@@ -16,6 +16,10 @@ from app.onchain.hyperliquid.leaderboard import cached_discovery, discover_leade
 
 ADDRESS_RE = re.compile(r"^0x[a-fA-F0-9]{40}$")
 
+# 유형 추정에 쓰는 지갑당 이벤트 수. 실측에서 400건과 800건의 분류 분포가 같았고
+# 200건에서는 MM 2개가 드러나지 않았다 — 400 이 분포가 안정되는 최소값이다.
+CLASSIFICATION_EVENTS_PER_WALLET = 400
+
 
 def add_whale_wallet(repo: Any, settings: Any, address: str, label: str | None, *, source: str = "manual") -> WhaleWallet:
     normalized = address.strip().lower()
@@ -141,7 +145,15 @@ def whale_dashboard(repo: Any, settings: Any) -> dict[str, Any]:
 
     win_rates = observed_win_rates(raw_events)
     # 5-2: 유형 추정을 지갑 행에 병기한다. 추종하지 않는 지갑도 **사유와 함께** 보여야 한다(C10).
-    participant_estimates = participant_type.classify_wallets(raw_events)
+    #
+    # `raw_events`(최근 2,000건 공통 창)를 쓰면 안 된다. 그 창은 시끄러운 지갑이 독점하므로
+    # 조용한 지갑이 "체결 없음"으로 보이고, 실제로 MM 오염이 가려졌다 — `0x362ad620`(maker
+    # 99.5%)이 미분류로 표시됐다. 지갑별 인덱스 조회로 바꾼다. 더 정확하고 **더 싸다**:
+    # 실측 0.035초 (공통 창 2,000행 스캔은 0.369초 · `idx_whale_events_wallet_at` 사용).
+    classification_events: list[Any] = []
+    for wallet in wallets:
+        classification_events.extend(repo.list_whale_events(wallet_address=wallet.address, limit=CLASSIFICATION_EVENTS_PER_WALLET))
+    participant_estimates = participant_type.classify_wallets(classification_events)
     for row in rows:
         address = str(row.get("address") or "").lower()
         row["observed_win_rate"] = win_rates.get(address)
@@ -152,7 +164,7 @@ def whale_dashboard(repo: Any, settings: Any) -> dict[str, Any]:
                 "participant_type": participant_type.TYPE_UNCLASSIFIED,
                 "confidence": 0.0,
                 "follow_eligible": False,
-                "reason": f"최근 체결 {len(raw_events)}건 창 안에 이 지갑의 체결이 없다 — 창 밖 이력은 유형 추정에 쓰이지 않는다",
+                "reason": "관측된 체결이 없다 — 유형을 추정할 근거가 없다",
                 "indicators": {},
                 "estimate": True,
             },
@@ -170,9 +182,10 @@ def whale_dashboard(repo: Any, settings: Any) -> dict[str, Any]:
         "discovery": cached_discovery(repo),
         "participant_types": {
             **participant_type.type_distribution(participant_estimates),
-            # 창을 명시한다. 이 분포는 전체 이력이 아니라 최근 이벤트 창의 분류다.
-            "event_window": len(raw_events),
-            "window_note": f"최근 체결 {len(raw_events)}건 기준 — 창 밖 지갑은 미분류로 표시되며 이력이 없다는 뜻이 아니다",
+            # 창을 명시한다. 지갑별 최근 N건이며 전체 이력이 아니다.
+            "event_window_per_wallet": CLASSIFICATION_EVENTS_PER_WALLET,
+            "events_classified": len(classification_events),
+            "window_note": f"지갑당 최근 체결 {CLASSIFICATION_EVENTS_PER_WALLET}건 기준 — 800건으로 늘려도 분포가 같았다(실측)",
         },
         "flow": flow,
         "flow_by_instrument": flow_by_instrument,
