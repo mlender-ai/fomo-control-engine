@@ -843,3 +843,58 @@ def test_no_real_order_path_was_added() -> None:
     source = (REPO_ROOT / "backend/app/paper/whale_follow.py").read_text(encoding="utf-8")
     for forbidden in ("place_order", "create_order", "submit_order", "bitget"):
         assert forbidden not in source.lower()
+
+
+# ── 결함 기간 포지션 처리 ───────────────────────────────────────────────
+
+
+class _StubTrade:
+    def __init__(self, symbol: str, *, source: str | None) -> None:
+        self.symbol = symbol
+        self.timeframe = whale_follow.FOLLOW_TIMEFRAME
+        self.entry_evidence = {"entry_price_source": source} if source else {}
+
+
+def test_legacy_entries_are_identified_by_the_missing_price_source() -> None:
+    assert whale_follow.is_legacy_entry(_StubTrade("BTCUSDT", source=None)) is True
+    assert whale_follow.is_legacy_entry(_StubTrade("BTCUSDT", source="provider_mark_price")) is False
+
+
+def test_legacy_open_position_does_not_hold_the_symbol_slot() -> None:
+    """`max_holding_bars=30` × 4시간봉 = 최대 5일. 결함 기간 포지션이 슬롯을 잡으면
+    자격 지갑이 거래하는 심볼이 5일간 막히고 수리 이후 표본이 0 으로 끝난다."""
+
+    class _R:
+        def list_whale_follow_trades(self, status=None, symbol=None, limit=500):
+            return [_StubTrade("BTCUSDT", source=None)]
+
+    assert whale_follow._has_open_position(_R(), symbol="BTCUSDT", timeframe=whale_follow.FOLLOW_TIMEFRAME) is False
+
+
+def test_valid_open_position_still_holds_the_slot() -> None:
+    """수리 이후 포지션은 그대로 슬롯을 잡는다 — 한 심볼 한 포지션 규칙은 유지된다."""
+
+    class _R:
+        def list_whale_follow_trades(self, status=None, symbol=None, limit=500):
+            return [_StubTrade("BTCUSDT", source="provider_mark_price")]
+
+    assert whale_follow._has_open_position(_R(), symbol="BTCUSDT", timeframe=whale_follow.FOLLOW_TIMEFRAME) is True
+
+
+def test_legacy_exemption_lets_a_new_entry_through() -> None:
+    """전 구간 — 결함 기간 포지션이 열려 있어도 신규 진입이 발생한다."""
+
+    class _R(_Repo):
+        def list_whale_follow_trades(self, status=None, symbol=None, limit=500):
+            return [_StubTrade("BTCUSDT", source=None)]
+
+    repo = _R([_Event("0xa", "BTCUSDT", "long", "increase", NOW - timedelta(minutes=5), entry_px=103.4)])
+    result = whale_follow.run_entries(
+        repo,
+        Settings(),
+        eligible=ELIGIBLE,
+        analysis_loader=lambda symbol, timeframe: _analysis(103.5, confirmed_close=100.0),
+        simulation_loader=lambda *args: {"action_plan": {"invalidation": 97.0}, "survives_to_invalidation": True},
+        now=NOW,
+    )
+    assert result["opened"] == 1, f"결함 기간 포지션이 신규 진입을 막았다: {result['rejected']}"

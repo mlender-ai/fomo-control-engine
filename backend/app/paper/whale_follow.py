@@ -238,6 +238,35 @@ def live_price(analysis: dict[str, Any], *, as_of: Any = None) -> tuple[float | 
     return price, paper_service._timestamp(as_of)
 
 
+def is_legacy_entry(trade: Any) -> bool:
+    """진입가 결함 기간(마크가 수리 이전)에 열린 거래인가.
+
+    수리 이후 진입은 `entry_price_source` 를 남긴다. 그 필드가 없으면 확정봉 종가로
+    들어간 거래이며, 진입가가 최대 4시간 묵었으므로 "고래를 따라간 표본"이 아니다.
+    """
+    return not (getattr(trade, "entry_evidence", None) or {}).get("entry_price_source")
+
+
+def _has_open_position(repo: Any, *, symbol: str, timeframe: str) -> bool:
+    """이 심볼에 **유효한** 추종 포지션이 열려 있는가.
+
+    결함 기간 포지션은 슬롯을 잡지 않는다. 이유:
+
+    `max_holding_bars=30` × 4시간봉 = **최대 5일**이다. 결함 기간에 열린 포지션이 슬롯을
+    잡고 있으면, 자격 지갑이 거래하는 심볼(실측 BTC·ETH·HYPE 셋 전부)이 5일간 막힌다.
+    그러면 수리 이후 유효 표본이 0 으로 끝난다 — 수리를 했는데 측정이 안 되는 상태다.
+
+    청산을 조작해 슬롯을 비우지 않는다. 없는 청산가를 만들면 그것이 표본에 섞이고,
+    그 표본은 지우기 전보다 나쁘다. 결함 기간 포지션은 **자기 일정대로 닫히게** 두고
+    신규 진입만 허용한다. 한 심볼에 두 포지션이 겹치는 것은 그 기간뿐이며, 둘은
+    `entry_price_source` 로 구분되므로 집계가 섞이지 않는다.
+    """
+    return any(
+        trade.symbol == symbol and trade.timeframe == timeframe and not is_legacy_entry(trade)
+        for trade in repo.list_whale_follow_trades(status="open", limit=200)
+    )
+
+
 def price_drift(*, whale_price: float, entry_price: float, direction: Direction, stop_distance: float) -> dict[str, Any]:
     """고래 체결가 대비 **불리한** 이탈 (7-2 항목 4).
 
@@ -370,7 +399,7 @@ def evaluate_signal(
     if lock is not None:
         return {**rejected, "reason_code": REASON_REENTRY_LOCK, "reason": f"재진입 잠금: {lock}", "gates": gates, "drift": drift}
 
-    if any(trade.symbol == symbol and trade.timeframe == timeframe for trade in repo.list_whale_follow_trades(status="open", limit=200)):
+    if _has_open_position(repo, symbol=symbol, timeframe=timeframe):
         return {**rejected, "reason_code": REASON_ALREADY_OPEN, "reason": "이 심볼에 추종 트랙 포지션이 이미 열려 있다", "gates": gates, "drift": drift}
 
     return {
