@@ -138,6 +138,10 @@ _HEAVY_JOBS = frozenset(
         # WO-FCE-REPLAY-DEPTH-01 4-2: 심볼당 1.6초 × 최대 25심볼. 기본 풀에 두면
         # 표본 생산 잡의 슬롯을 먹는다 — 처음부터 격리한다(C8).
         "replay_history_backfill",
+        # WO-FCE-WHALE-FOLLOW-01 6-2: 분석 조회 최대 3건 × 심볼당 ~30초. 기본 풀에 두면
+        # 크립토 트랙 실행을 밀어낸다(C9). 조회 상한과 격리를 함께 건다 — 상한만으로는
+        # 슬롯 점유를 막지 못한다.
+        "whale_follow_engine",
     }
 )
 
@@ -561,6 +565,15 @@ class WorkerManager:
         await self.alerts.evaluate_whale_events(payload.get("events", []), dashboard)
         return payload
 
+    async def _run_whale_follow(self) -> dict[str, Any]:
+        """추종 트랙 1회. 알림 후보는 **기존 통합 관문**으로 넘긴다 — 우회 경로를 만들지 않는다."""
+        payload = await self._run_in_thread("whale_follow_engine", service.run_whale_follow_engine)
+        candidates = payload.get("_alert_candidate_objects", [])
+        if candidates:
+            await self.alerts.evaluate_scout_setups(candidates)
+        payload.pop("_alert_candidate_objects", None)
+        return payload
+
     async def _scout_scan(self) -> dict[str, Any]:
         payload = await asyncio.to_thread(service.refresh_scout_scan_cache)
         candidates = payload.get("_alert_candidate_objects", [])
@@ -669,6 +682,14 @@ class WorkerManager:
                 self.settings.hyperliquid_whale_poll_interval_seconds,
                 self._collect_whales,
                 enabled=self.settings.hyperliquid_whale_tracking_enabled,
+            ),
+            # WHALE-FOLLOW-01 6-2: 추종 트랙. 진입과 출구를 같은 잡에서 돌린다 —
+            # 한쪽만 돌면 진입만 쌓이고 표본이 0 이 된다.
+            "whale_follow_engine": WorkerJob(
+                "whale_follow_engine",
+                self.settings.whale_follow_interval_seconds,
+                self._run_whale_follow,
+                enabled=self.settings.whale_follow_track_enabled,
             ),
             "regen_stale_insights": WorkerJob(
                 "regen_stale_insights",

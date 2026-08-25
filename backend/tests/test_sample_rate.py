@@ -164,7 +164,7 @@ def test_ci_low_projection_is_not_more_optimistic(conn) -> None:
 def test_report_lists_tracks_with_shortfall(conn) -> None:
     report = sr.rate_gap_report(conn, now=NOW)
 
-    assert set(report["tracks"]) == {"crypto", "stock_kr", "stock_us", "poly"}
+    assert set(report["tracks"]) == {"crypto", "stock_kr", "stock_us", "poly", "whale_follow"}
     assert "기준을 낮춰서가 아니라" in report["principle"]
 
 

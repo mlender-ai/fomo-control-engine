@@ -63,6 +63,40 @@ def collect(repo: Any, settings: Any, *, client: Any | None = None) -> dict[str,
     return {"enabled": True, **collect_whale_positions(repo, settings, info_client)}
 
 
+def contaminated_sample_addresses(repo: Any, *, settings: Any | None = None) -> dict[str, dict[str, Any]]:
+    """유형 오염으로 계수에서 빼는 지갑과 그 표본 수 (Phase 6-4).
+
+    **행을 지우지 않는다.** 판정 원장 소급 삭제는 별건이고 이 WO 가 금지한다. 계수에서만
+    빼고 사유를 남긴다 — 유형이 재분류되면 그대로 되살아난다.
+
+    빼는 이유: maker 98.8% 지갑의 체결은 방향 베팅이 아니다. 그것을 방향 예측으로 채점한
+    표본은 승률의 분모를 오염시킨다. 표본이 틀린 것이 아니라 **질문이 틀렸다**.
+    """
+    events: list[Any] = []
+    for wallet in repo.list_whale_wallets(limit=1000):
+        events.extend(repo.list_whale_events(wallet_address=wallet.address, limit=CLASSIFICATION_EVENTS_PER_WALLET))
+    estimates = participant_type.classify_wallets(events)
+    sizes = whale_sample_sizes(repo)
+    contaminated: dict[str, dict[str, Any]] = {}
+    for address, payload in estimates.items():
+        kind = str(payload.get("participant_type") or "")
+        if kind not in {participant_type.TYPE_MARKET_MAKER, participant_type.TYPE_BASIS_CARRY}:
+            continue
+        size = int(sizes.get(address, 0))
+        if size <= 0:
+            continue
+        contaminated[address] = {
+            "address": address,
+            "participant_type": kind,
+            "excluded_sample": size,
+            "confidence": payload.get("confidence"),
+            "reason": f"{kind} 추정 — 방향 예측으로 채점할 대상이 아니다. 계수에서 제외하되 원장 행은 보존한다",
+            "indicators": payload.get("indicators") or {},
+            "reversible": "유형 재분류 시 자동으로 계수에 복귀한다 — 삭제하지 않았다",
+        }
+    return contaminated
+
+
 def whale_sample_sizes(repo: Any) -> dict[str, int]:
     """지갑별 채점 완료 표본 수. 코호트 유지 판정의 유일한 원장 입력이다(5-1).
 
@@ -78,6 +112,26 @@ def whale_sample_sizes(repo: Any) -> dict[str, int]:
         scored = sum(1 for judgment in judgments if judgment.judgment_id in context["scores_by_judgment"])
         sizes[address] = scored
     return sizes
+
+
+def whale_sample_wins(repo: Any) -> dict[str, int]:
+    """지갑별 적중 판정 수. 관찰 자격의 승률 점추정에 쓴다(6-1).
+
+    승격 판정(`_wallet_review`)은 이 함수를 쓰지 않는다 — 두 축이 서로를 참조하지 않는
+    것이 C1 의 형태다.
+    """
+    context = _wallet_review_context(repo)
+    wins: dict[str, int] = {}
+    for signature_key, judgments in context["judgments_by_key"].items():
+        if not signature_key.startswith("whale_entry_"):
+            continue
+        address = signature_key[len("whale_entry_") :].lower()
+        wins[address] = sum(
+            1
+            for judgment in judgments
+            if judgment.judgment_id in context["scores_by_judgment"] and context["scores_by_judgment"][judgment.judgment_id].outcome == "correct"
+        )
+    return wins
 
 
 def discover(

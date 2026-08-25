@@ -95,6 +95,13 @@ TRACK_SAMPLE_SPECS: dict[str, SampleSpec] = {
         scored_sql="SELECT filled_at AS t FROM stock_paper_fills WHERE market='US' AND side='sell'",
         scoring_definition="매도 체결 1건 = 표본 1 (진입-청산 쌍 완결)",
     ),
+    "whale_follow": SampleSpec(
+        key="whale_follow",
+        label="고래 추종 페이퍼",
+        entry_sql="SELECT entry_bar_at AS t FROM whale_follow_trades",
+        scored_sql="SELECT exit_at AS t FROM whale_follow_trades WHERE status='closed' AND exit_at IS NOT NULL",
+        scoring_definition="청산 완료 거래 1건 = 표본 1 (크립토 트랙과 원장 분리 · C3)",
+    ),
     "poly": SampleSpec(
         key="poly",
         label="폴리마켓 페이퍼",

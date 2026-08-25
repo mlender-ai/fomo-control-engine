@@ -387,25 +387,30 @@ def test_entry_gates_and_sizing_are_untouched() -> None:
     assert diff.stdout.strip() == "", f"C2·C3 위반 — 페이퍼 정책·방향 판정이 변경됐다:\n{diff.stdout}"
 
 
-def test_follow_track_is_not_wired() -> None:
-    """§0 — 승격자 0명 상태에서 5-3·5-4 를 배선하지 않는다. 빈 파이프를 만들지 않는다.
+def test_follow_track_is_wired_with_a_separate_ledger() -> None:
+    """Phase 6-2 — §0 의 미배선 조건이 **대체됐다.**
 
-    2026-08-25 실측: N>=30 지갑 3개, CI 하한 35.9 · 48.6 · 32.4 로 전원 미달. 통과자 0명.
-    이 테스트는 그 상태에서 트랙·알림이 생기지 않았음을 고정한다. 통과자가 나오면 이
-    테스트를 지우는 것이 5-3 착수의 첫 커밋이다.
+    Phase 5 는 승격자 0명이라 배선하지 않았고, 그 판단은 당시 WO 문안대로였다. Phase 6 가
+    그 문안을 바꿨다 — 승격 기준(28일·N>=30·CI 하한 55%)을 페이퍼 관찰의 전제로 쓰는 것이
+    순환이었기 때문이다. 관찰 자격을 별도로 신설했고 승격 기준은 그대로다.
+
+    이 테스트는 이제 **원장 분리**를 고정한다. 배선 자체가 아니라 배선의 형태가 지켜야 할
+    것이다(C3).
     """
     from app.validation import sample_viability
 
-    assert "whale_follow" not in sample_viability.TRACK_SAMPLE_SPECS, "승격자 0명인데 트랙이 등록됐다"
+    spec = sample_viability.TRACK_SAMPLE_SPECS["whale_follow"]
+    assert "whale_follow_trades" in spec.entry_sql
+    assert "paper_trades" not in spec.entry_sql and "paper_trades" not in spec.scored_sql
 
     grep = subprocess.run(
-        ["git", "grep", "-l", "whale_follow", "--", "backend/app"],
+        ["git", "grep", "-l", "upsert_paper_trade", "--", "backend/app/paper/whale_follow.py"],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
         check=False,
     )
-    assert grep.stdout.strip() == "", f"5-4 배선 흔적이 있다:\n{grep.stdout}"
+    assert grep.stdout.strip() == "", "추종 엔진이 크립토 원장에 기입한다(C3 위반)"
 
 
 def test_promotion_thresholds_are_unchanged() -> None:

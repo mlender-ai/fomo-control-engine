@@ -156,10 +156,17 @@ def test_wallet_limit_is_enforced_without_auto_registration() -> None:
 
 
 def test_leaderboard_discovery_selects_profitable_active_whales_and_preserves_manual_wallets() -> None:
+    """성과 기반 선발(코호트 모드 끔). 원복 경로가 살아 있음을 고정한다.
+
+    WHALE-FOLLOW-01 Phase 6-1 이 코호트 유지를 기본값으로 켜면서 선발 기준이 비성과
+    (규모·활동량)로 바뀌었다. 그러면 월간 손실 지갑도 후보가 되므로 `eligible_count` 가
+    달라진다 — 의도된 변화이며 `test_cohort_mode_admits_a_loss_making_wallet` 이 새 동작을
+    고정한다. 이 테스트는 **끈 상태의 종전 동작**을 계속 지킨다.
+    """
     repo = MemoryRepository()
     manual = "0x9999999999999999999999999999999999999999"
     repo.upsert_whale_wallet(WhaleWallet(address=manual, label="내 지정", source="manual"))
-    settings = Settings(hyperliquid_whale_max_wallets=2)
+    settings = Settings(hyperliquid_whale_max_wallets=2, hyperliquid_whale_cohort_retention_enabled=False)
 
     result = discover_leaderboard_wallets(repo, settings, FakeLeaderboardClient())
 

@@ -196,6 +196,25 @@ class Settings(BaseSettings):
         ge=1,
         validation_alias=AliasChoices("FCE_HYPERLIQUID_WHALE_COHORT_DORMANT_DAYS", "HYPERLIQUID_WHALE_COHORT_DORMANT_DAYS"),
     )
+    # WHALE-FOLLOW-01 6-2: 고래 추종 페이퍼 트랙.
+    #
+    # 켬이 기본이다. Phase 6 의 목적이 "고래 추종이 되는지 안 되는지 알 방법을 만드는 것"
+    # 이고, 꺼두면 그 방법이 없는 상태가 그대로 유지된다. 페이퍼이므로 돈이 들지 않는다(C2).
+    # false 로 두면 진입이 발생하지 않는다 — 원복 경로다.
+    whale_follow_track_enabled: bool = Field(
+        True,
+        validation_alias=AliasChoices("FCE_WHALE_FOLLOW_TRACK_ENABLED", "WHALE_FOLLOW_TRACK_ENABLED"),
+    )
+    whale_follow_interval_seconds: int = Field(
+        900,
+        ge=60,
+        validation_alias=AliasChoices("FCE_WHALE_FOLLOW_INTERVAL_SECONDS", "WHALE_FOLLOW_INTERVAL_SECONDS"),
+    )
+    whale_follow_max_entries_per_run: int = Field(
+        2,
+        ge=0,
+        validation_alias=AliasChoices("FCE_WHALE_FOLLOW_MAX_ENTRIES_PER_RUN", "WHALE_FOLLOW_MAX_ENTRIES_PER_RUN"),
+    )
     hyperliquid_request_timeout_seconds: float = Field(
         10.0,
         validation_alias=AliasChoices("FCE_HYPERLIQUID_REQUEST_TIMEOUT_SECONDS", "HYPERLIQUID_REQUEST_TIMEOUT_SECONDS"),

@@ -1333,6 +1333,145 @@ def run_paper_engine() -> dict[str, Any]:
     )
 
 
+def whale_follow_eligibility() -> dict[str, Any]:
+    """관찰 자격 판정 (Phase 6-1). 승격 판정과 별도 축이다(C1).
+
+    승격 기준(`onchain/service.py` 의 28일·N>=30·CI 하한 55%)을 읽지도 바꾸지도 않는다.
+    """
+    from app.backtest.statistics import bootstrap_ci_from_counts
+    from app.onchain import follow_eligibility, participant_type, service as onchain_service
+
+    repo = runtime.repository
+    now = utc_now()
+    sizes = onchain_service.whale_sample_sizes(repo)
+    wins = onchain_service.whale_sample_wins(repo)
+    contaminated = onchain_service.contaminated_sample_addresses(repo)
+
+    events: list[Any] = []
+    wallets = repo.list_whale_wallets(limit=1000)
+    for wallet in wallets:
+        events.extend(repo.list_whale_events(wallet_address=wallet.address, limit=onchain_service.CLASSIFICATION_EVENTS_PER_WALLET))
+    estimates = participant_type.classify_wallets(events)
+    last_fills = {wallet.address.lower(): wallet.last_fill_at for wallet in wallets}
+
+    statuses: dict[str, follow_eligibility.ObservationStatus] = {}
+    for address, raw_size in sizes.items():
+        excluded = int(contaminated.get(address, {}).get("excluded_sample") or 0)
+        # 오염 지갑은 표본을 계수에서 뺀다 — 행은 지우지 않는다(6-4).
+        size = 0 if excluded else int(raw_size)
+        won = 0 if excluded else int(wins.get(address, 0))
+        ci = bootstrap_ci_from_counts(won, size) if size else None
+        statuses[address] = follow_eligibility.observation_status(
+            address=address,
+            sample_size=size,
+            wins=won,
+            ci_low=round(float(ci[0]), 1) if ci else None,
+            estimate=estimates.get(address),
+            last_fill_at=last_fills.get(address),
+            now=now,
+            excluded_sample=excluded,
+        )
+    return {
+        **follow_eligibility.summary(statuses),
+        "statuses": {address: status.as_payload() for address, status in statuses.items()},
+        "contaminated": contaminated,
+        "contaminated_sample_total": sum(int(item["excluded_sample"]) for item in contaminated.values()),
+        "as_of": now.isoformat(),
+    }
+
+
+def run_whale_follow_engine() -> dict[str, Any]:
+    """고래 추종 트랙 1회 실행 (Phase 6-2). 진입과 출구를 같은 잡에서 돌린다.
+
+    한쪽만 도는 상태가 생기면 진입만 쌓이고 표본이 0 이 된다(6-5 항목 4).
+    """
+    from app.notify import whale_follow_alerts
+    from app.onchain import follow_eligibility
+    from app.paper import whale_follow
+
+    def load(symbol: str, timeframe: str) -> dict[str, Any]:
+        return scout_handlers.scout_analysis(symbol, timeframe=timeframe, force=False, detail=True)
+
+    def simulate(symbol: str, timeframe: str, direction: str, entry_price: float) -> dict[str, Any]:
+        return scout_handlers._simulate(
+            SimulateRequest(
+                symbol=symbol,
+                direction=direction,
+                entry_price=entry_price,
+                leverage=runtime.settings.paper_leverage,
+                margin_usdt=runtime.settings.paper_margin_usdt,
+                timeframe=timeframe,
+            )
+        )
+
+    if not bool(getattr(runtime.settings, "whale_follow_track_enabled", False)):
+        return {"enabled": False, "opened": 0, "reason": "추종 트랙이 꺼져 있다 (FCE_WHALE_FOLLOW_TRACK_ENABLED)"}
+
+    eligibility = whale_follow_eligibility()
+    statuses = eligibility.get("statuses") or {}
+    eligible = {address: follow_eligibility.QUALIFICATION_OBSERVATION for address in eligibility.get("eligible_addresses") or []}
+    context = {
+        address: {
+            "participant_type": payload.get("participant_type"),
+            "participant_confidence": payload.get("participant_confidence"),
+            "unclassified_flag": payload.get("unclassified_flag"),
+            "sample_size": payload.get("sample_size"),
+            "ci_low": payload.get("ci_low"),
+        }
+        for address, payload in statuses.items()
+    }
+
+    entries = whale_follow.run_entries(
+        runtime.repository,
+        runtime.settings,
+        eligible=eligible,
+        analysis_loader=load,
+        simulation_loader=simulate,
+        signal_context=context,
+        max_entries=int(runtime.settings.whale_follow_max_entries_per_run),
+    )
+    exits = whale_follow.run_exits(runtime.repository, runtime.settings, analysis_loader=load)
+
+    # 6-3: 알림 후보. 발송은 **기존 통합 관문**을 지난다 — 여기서 보내지 않는다.
+    # 워커가 `evaluate_scout_setups` 로 넘기고, 그 안에서 `delivery_gate.evaluate_rule` 이
+    # 판정한다. 새 발송 경로를 만들지 않는 것이 우회 0건의 형태다(6-3 항목 1).
+    now = utc_now()
+    changed_ids = {str(item["id"]) for item in entries.get("entries") or []} | {str(item["id"]) for item in exits.get("closed") or []}
+    recent = runtime.repository.list_whale_follow_trades(limit=200)
+    changed = [trade for trade in recent if str(trade.id) in changed_ids]
+    alerts = whale_follow_alerts.build_candidates(changed, now=now, recent_trades=recent)
+
+    return {
+        "enabled": True,
+        **entries,
+        "exits": exits,
+        "eligible_wallets": len(eligible),
+        "observation_eligible": eligibility.get("eligible"),
+        "contaminated_sample_total": eligibility.get("contaminated_sample_total"),
+        "alerts": {
+            "candidates": len(alerts["candidates"]),
+            "blocked": alerts["blocked"],
+            "caps": alerts["caps"],
+            "rule_id": alerts["rule_id"],
+        },
+        "_alert_candidate_objects": alerts["candidates"],
+    }
+
+
+def whale_follow_trades(status: str | None = None, symbol: str | None = None, limit: int = 200) -> dict[str, Any]:
+    """추종 트랙 원장 조회. `paper_trades` 와 다른 테이블이다(C3)."""
+    from app.paper import whale_follow
+
+    rows = runtime.repository.list_whale_follow_trades(status=status, symbol=symbol, limit=limit)
+    return {
+        "count": len(rows),
+        "trades": [item.model_dump(mode="json") for item in rows],
+        "performance": whale_follow.performance_by_qualification(rows),
+        "ledger": "whale_follow_trades",
+        "label": "미검증 관찰 자격 트랙 — 승격 근거로 쓰지 않는다(C11)",
+    }
+
+
 def paper_trades(status: str | None = None, symbol: str | None = None, limit: int = 200) -> dict[str, Any]:
     rows = runtime.repository.list_paper_trades(status=status, symbol=symbol, limit=limit)
     return {"count": len(rows), "trades": [item.model_dump(mode="json") for item in rows]}

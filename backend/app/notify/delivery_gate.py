@@ -111,6 +111,14 @@ PUSH_ALLOWED_RULES: frozenset[str] = frozenset(
         # 계좌 한도
         "mdd_limit_warn",
         "mdd_limit_critical",
+        # WHALE-FOLLOW-01 6-3 — 추종 트랙 진입·청산.
+        #
+        # `whale_entry`(강등 유지)와 **다른 rule** 이다. 그것은 고래 체결 자체의 알림이었고
+        # 이것은 **엔진이 그 체결을 보고 가상 진입을 했다**는 알림이다. 후자는 우리 행동이다.
+        #
+        # 강등 사유였던 스팸 기전(배치 내용 의존 state_key)은 `whale_follow_alerts.alert_identity`
+        # 가 구조적으로 막고, 지갑당·실행당 상한이 처음부터 붙어 있다(C7).
+        "whale_follow_entry",
         # 생존·사망·복구는 여기 없다 — LIVENESS_DEMOTED_RULES 로 강등됐다.
         # 관측은 계속되며 진단 API·로그로 조회한다.
     }

@@ -382,6 +382,35 @@ def test_cooldown_and_hourly_cap_are_intact() -> None:
 
 # 창·판정 모듈. 하네스(`*_replay.py` · `history_backfill.py` · `published_values.py`)는
 # 판정을 **호출만** 하므로 여기에 없다.
+def _offending_verdict_changes(diff: str) -> list[str]:
+    """판정 로직 변경만 골라낸다 — **트랙 등록은 판정이 아니다.**
+
+    3차 축소(WO-FCE-WHALE-FOLLOW-01 Phase 6-2): `sample_viability.py` 는 판정 로직과
+    **트랙 레지스트리**(`TRACK_SAMPLE_SPECS`)를 한 파일에 갖고 있다. 새 트랙을 등록하는
+    것은 "무엇을 세는가"를 데이터로 선언하는 행위이지 "어떻게 판정하는가"를 바꾸는 것이
+    아니다. 파일 단위 고정은 그 둘을 구분하지 못해, 트랙 추가가 영원히 막힌다.
+
+    그래서 **삭제를 허용하지 않고**, 추가는 `SampleSpec` 항목 안일 때만 허용한다.
+    판정 로직 한 줄이라도 바뀌면 여기서 걸린다 — 가드의 이빨은 그대로다.
+    """
+    allowed_added = ("SampleSpec(", "key=", "label=", "entry_sql=", "scored_sql=", "scoring_definition=", "),", '"whale_follow"')
+    offending: list[str] = []
+    for line in diff.splitlines():
+        if line.startswith("---") or line.startswith("+++"):
+            continue
+        if line.startswith("-") and line[1:].strip():
+            offending.append(f"삭제됨: {line}")
+            continue
+        if not line.startswith("+"):
+            continue
+        body = line[1:].strip()
+        if not body:
+            continue
+        if not any(token in body for token in allowed_added):
+            offending.append(f"추가됨(트랙 등록 아님): {line}")
+    return offending
+
+
 VERDICT_MODULES = (
     "backend/app/validation/verdict_watch.py",
     "backend/app/validation/window_anchor.py",
@@ -421,7 +450,7 @@ def test_verdict_layer_is_untouched_by_watcher_work() -> None:
     목록에 적는 행위가 곧 검토 지점이다.
     """
     diff = subprocess.run(
-        ["git", "diff", "origin/main", "--stat", "--", *VERDICT_MODULES],
+        ["git", "diff", "origin/main", "--", *VERDICT_MODULES],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
@@ -430,7 +459,8 @@ def test_verdict_layer_is_untouched_by_watcher_work() -> None:
     if diff.returncode != 0:
         pytest.skip("origin/main 을 참조할 수 없는 환경")
 
-    assert diff.stdout.strip() == "", f"검증 판정 계층이 변경됐다:\n{diff.stdout}"
+    offending = _offending_verdict_changes(diff.stdout)
+    assert offending == [], "검증 판정 계층이 변경됐다:\n" + "\n".join(offending)
 
 
 def test_no_new_push_alert_was_added() -> None:

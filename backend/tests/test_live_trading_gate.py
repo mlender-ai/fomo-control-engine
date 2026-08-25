@@ -265,7 +265,7 @@ def test_report_judges_every_track_independently(conn) -> None:
 
     report = gate.live_trading_gate_report(conn, now=NOW)
 
-    assert set(report["tracks"]) == {"crypto", "stock_kr", "stock_us", "poly"}
+    assert set(report["tracks"]) == {"crypto", "stock_kr", "stock_us", "poly", "whale_follow"}
     assert report["ready_tracks"] == []
     # 크립토가 한 축을 통과해도 다른 트랙의 진행도는 그대로다.
     assert report["tracks"]["poly"]["measured_met"] == 0

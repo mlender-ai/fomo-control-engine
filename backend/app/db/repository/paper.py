@@ -27,6 +27,22 @@ class MemoryPaperRepositoryMixin:
     def get_paper_trade(self, trade_id: UUID) -> PaperTrade | None:
         return self.paper_trades.get(trade_id)
 
+    def upsert_whale_follow_trade(self, trade: PaperTrade) -> PaperTrade:
+        normalized = trade.model_copy(update={"symbol": trade.symbol.upper(), "updated_at": utc_now()})
+        self.whale_follow_trades[normalized.id] = normalized
+        return normalized
+
+    def get_whale_follow_trade(self, trade_id: UUID) -> PaperTrade | None:
+        return self.whale_follow_trades.get(trade_id)
+
+    def list_whale_follow_trades(self, status: str | None = None, symbol: str | None = None, limit: int = 500) -> list[PaperTrade]:
+        trades = list(self.whale_follow_trades.values())
+        if status:
+            trades = [trade for trade in trades if trade.status == status]
+        if symbol:
+            trades = [trade for trade in trades if trade.symbol == symbol.upper()]
+        return sorted(trades, key=lambda trade: trade.updated_at, reverse=True)[:limit]
+
     def list_paper_trades(
         self,
         status: str | None = None,
@@ -250,6 +266,52 @@ class SQLitePaperRepositoryMixin:
         limit: int = 500,
     ) -> list[PaperTrade]:
         query = "SELECT payload FROM paper_trades"
+        clauses: list[str] = []
+        params: list[str | int] = []
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        if symbol:
+            clauses.append("symbol = ?")
+            params.append(symbol.upper())
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY updated_at DESC LIMIT ?"
+        params.append(limit)
+        with self._connect() as connection:
+            rows = connection.execute(query, tuple(params)).fetchall()
+        return [PaperTrade.model_validate_json(row["payload"]) for row in rows]
+
+    def upsert_whale_follow_trade(self, trade: PaperTrade) -> PaperTrade:
+        """고래 추종 트랙 원장. `paper_trades` 와 **다른 테이블**이다(C3)."""
+        normalized = trade.model_copy(update={"symbol": trade.symbol.upper(), "updated_at": utc_now()})
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO whale_follow_trades
+                    (id, symbol, timeframe, status, entry_bar_at, exit_at, updated_at, payload)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(normalized.id),
+                    normalized.symbol,
+                    normalized.timeframe,
+                    normalized.status,
+                    normalized.entry_bar_at.isoformat(),
+                    normalized.exit_at.isoformat() if normalized.exit_at else None,
+                    normalized.updated_at.isoformat(),
+                    _dump_model(normalized),
+                ),
+            )
+        return normalized
+
+    def get_whale_follow_trade(self, trade_id: UUID) -> PaperTrade | None:
+        with self._connect() as connection:
+            row = connection.execute("SELECT payload FROM whale_follow_trades WHERE id = ?", (str(trade_id),)).fetchone()
+        return PaperTrade.model_validate_json(row["payload"]) if row else None
+
+    def list_whale_follow_trades(self, status: str | None = None, symbol: str | None = None, limit: int = 500) -> list[PaperTrade]:
+        query = "SELECT payload FROM whale_follow_trades"
         clauses: list[str] = []
         params: list[str | int] = []
         if status:

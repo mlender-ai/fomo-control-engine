@@ -204,3 +204,22 @@
 트랙별 독립 판정이 이 문서의 규정이다.
 
 정본: [`WHALE_FOLLOW.md`](WHALE_FOLLOW.md)
+
+### `whale_follow` 등록 완료 (Phase 6-2 · 2026-08-25)
+
+위 절의 "미등록"은 Phase 5 상태다. Phase 6 가 §0 조건을 대체하고 등록했다.
+
+```python
+"whale_follow": SampleSpec(
+    entry_sql="SELECT entry_bar_at AS t FROM whale_follow_trades",
+    scored_sql="SELECT exit_at AS t FROM whale_follow_trades WHERE status='closed' AND exit_at IS NOT NULL",
+)
+```
+
+원장은 `whale_follow_trades`(마이그레이션 `0039`)이며 `paper_trades` 와 완전히 분리된다.
+스키마는 같다 — 같은 `PaperTrade` 모델을 써야 `policy.open_trade`·`plan_position_size`·
+`evaluate_exit` 를 수정 없이 재사용할 수 있기 때문이다(C5).
+
+**자격 종류별 분리 집계.** 관찰 자격 진입과 승격 자격 진입은 문턱이 다르므로 섞으면 둘 다
+해석 불가가 된다. `performance_by_qualification()` 이 버킷을 나누고, 각 버킷에
+"추종 트랙 성과는 승격 근거로 쓰지 않는다"가 붙어 다닌다(C11).
