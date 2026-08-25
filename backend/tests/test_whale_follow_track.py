@@ -447,3 +447,19 @@ def test_follow_engine_runs_on_the_isolated_executor() -> None:
     from app.worker.manager import _HEAVY_JOBS
 
     assert "whale_follow_engine" in _HEAVY_JOBS
+
+
+def test_latency_is_measured_from_the_decision_clock_not_the_bar() -> None:
+    """확정봉 timestamp 는 봉이 열린 시각이라 체결보다 앞설 수 있다.
+
+    그것으로 재고 0 으로 누르면 "지연 없음"이라는 거짓이 원장에 남는다 — 실측에서
+    실제로 0.0초가 찍혔다. 지연은 엔진이 판단한 벽시계 기준이어야 한다.
+    """
+    # 봉은 체결보다 1시간 **앞서** 열렸다.
+    bar = MarketCandle(timestamp=NOW - timedelta(hours=1), open=100.0, high=101.0, low=99.0, close=100.0, volume=10.0)
+    signal = {**_candidate()["signal"], "event_at": NOW - timedelta(minutes=25)}
+    trade = whale_follow.open_follow_trade(_candidate(bar=bar, signal=signal), now=NOW)
+    evidence = trade.entry_evidence
+    assert evidence["signal_to_entry_seconds"] == pytest.approx(1500.0), "지연이 봉 기준으로 계산됐다"
+    # 진입 가격이 얼마나 낡았는지도 남는다 — 숨기면 성과 해석이 틀어진다.
+    assert evidence["price_reference_lag_seconds"] == pytest.approx(3600.0)

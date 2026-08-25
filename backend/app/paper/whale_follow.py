@@ -237,7 +237,16 @@ def open_follow_trade(candidate: dict[str, Any], *, now: datetime) -> PaperTrade
     signal = candidate["signal"]
     bar: MarketCandle = candidate["bar"]
     # 체결→진입 지연. 이 지연이 추종 성과를 좌우한다(6-2 항목 6).
-    latency_seconds = max(0.0, (bar.timestamp - signal["event_at"]).total_seconds())
+    #
+    # **봉 타임스탬프로 재면 안 된다.** 확정봉의 timestamp 는 봉이 *열린* 시각이고 고래
+    # 체결보다 앞설 수 있어 음수가 나온다. 그것을 0 으로 누르면 "지연 없음"이라는 거짓이
+    # 기록된다(실측에서 실제로 0.0초가 찍혔다).
+    #
+    # 실제 지연은 **엔진이 판단한 벽시계 시각** 기준이다. 그리고 우리가 쓰는 진입 가격은
+    # 마지막 확정봉의 종가이므로 그 가격이 얼마나 낡았는지를 따로 적는다 — 4시간봉이면
+    # 최대 4시간 전 가격으로 들어갈 수 있고, 그 사실을 숨기면 성과 해석이 틀어진다.
+    latency_seconds = (now - signal["event_at"]).total_seconds()
+    price_reference_lag = (now - bar.timestamp).total_seconds()
     qualification = str(signal["qualification"])
     observation = qualification == QUALIFICATION_OBSERVATION
     return paper_policy.open_trade(
@@ -267,6 +276,8 @@ def open_follow_trade(candidate: dict[str, Any], *, now: datetime) -> PaperTrade
             "whale_event_at": signal["event_at"].isoformat(),
             "entry_bar_at": bar.timestamp.isoformat(),
             "signal_to_entry_seconds": latency_seconds,
+            # 진입 가격(확정봉 종가)이 판단 시점 기준 얼마나 낡았는가. 봉 크기가 상한이다.
+            "price_reference_lag_seconds": price_reference_lag,
             "participant_type": signal.get("participant_type"),
             "participant_confidence": signal.get("participant_confidence"),
             "unclassified_flag": signal.get("unclassified_flag"),
