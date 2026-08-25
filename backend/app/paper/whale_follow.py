@@ -188,22 +188,54 @@ def entry_signals(
     return sorted(keyed.values(), key=lambda item: item["event_at"], reverse=True)
 
 
-def live_price(analysis: dict[str, Any]) -> tuple[float | None, datetime | None]:
-    """**현재가.** 진행 중인 봉의 종가 = 마지막 체결가다.
+# 현재가로 인정하는 필드. 앞에서부터 찾는다. **캔들은 여기 없다** — 아래 이유 참조.
+LIVE_PRICE_FIELDS = ("mark_price", "reference_price", "mark")
 
-    `_confirmed_bar` 는 잠정 봉을 일부러 건너뛴다 — 확정된 판단 근거가 필요하기 때문이다.
-    진입 **가격**은 반대다. 우리가 지금 살 수 있는 값은 마지막 체결가이지 4시간 전
-    종가가 아니다. 그래서 잠정 봉을 포함한 **마지막** 봉을 쓴다.
 
-    함께 돌려주는 시각은 그 봉이 열린 시각이다 — 가격이 얼마나 낡았는지를 재는 데 쓴다.
+def live_price(analysis: dict[str, Any], *, as_of: Any = None) -> tuple[float | None, datetime | None]:
+    """**현재가.** 제공자 마크가로 읽는다.
+
+    ## 캔들 마지막 봉을 쓰면 안 된다 — 실측이 그것을 잡았다
+
+    처음 구현은 `analysis["candles"][-1]["close"]` 를 "진행 중 봉의 종가 = 마지막 체결가"로
+    보고 썼다. **이 저장소에서는 그것이 성립하지 않는다.** `MTF-PATTERN-01` 이 미확정 진행
+    봉을 분석 입력에서 의도적으로 제거했으므로 `candles` 는 **확정봉만** 담는다.
+
+    2026-08-25T14:06Z 실측 (BTCUSDT 4h):
+
+    | 값 | 가격 | 나이 |
+    | --- | --- | --- |
+    | `candles[-1].close` (= `_confirmed_bar`) | 79,090.8 | **6시간** |
+    | `mark_price` | 78,817.4 | 2초 (`payload.as_of`) |
+    | 고래 체결가 (14:02) | 78,736.7 | — |
+
+    캔들 경로는 확정봉 종가와 **같은 값**을 냈다. 즉 7-2 의 "현재가 진입"이 실데이터에서는
+    작동하지 않았고, 고래 체결가 대비 괴리가 354 → 102 로 줄어드는 몫을 잃고 있었다.
+    합성 입력에는 진행 봉을 넣어줬기 때문에 테스트가 통과했다.
+
+    ## 캔들로 폴백하지 않는다
+
+    마크가가 없으면 `None` 을 돌려 진입을 포기한다. 캔들로 되돌아가면 결함이 조용히
+    되살아나고, 호출부의 "봉 마감 종가로 대신하지 않는다"가 거짓이 된다.
+
+    함께 돌려주는 시각은 분석 payload 의 `as_of` 다 — 가격이 얼마나 낡았는지를 재는 값이다.
     """
-    candles = [item for item in analysis.get("candles", []) if isinstance(item, dict)]
-    if not candles:
+    price: float | None = None
+    for field in LIVE_PRICE_FIELDS:
+        price = _float(analysis.get(field))
+        if price and price > 0:
+            break
+        price = None
+    if price is None:
+        levels = analysis.get("price_levels")
+        if isinstance(levels, dict):
+            price = _float(levels.get("mark"))
+        if not price or price <= 0:
+            liquidity = analysis.get("liquidity")
+            price = _float(liquidity.get("reference_price")) if isinstance(liquidity, dict) else None
+    if not price or price <= 0:
         return None, None
-    last = candles[-1]
-    price = _float(last.get("close"))
-    stamp = paper_service._timestamp(last.get("time") or last.get("timestamp"))
-    return (price if price and price > 0 else None), stamp
+    return price, paper_service._timestamp(as_of)
 
 
 def price_drift(*, whale_price: float, entry_price: float, direction: Direction, stop_distance: float) -> dict[str, Any]:
@@ -273,7 +305,7 @@ def evaluate_signal(
     if bar is None:
         return {**rejected, "reason_code": REASON_NO_PRICE, "reason": "확정 봉 없음 — 구조 분석 근거를 만들 수 없다"}
 
-    entry_price, price_at = live_price(analysis)
+    entry_price, price_at = live_price(analysis, as_of=payload.get("as_of"))
     if entry_price is None:
         return {**rejected, "reason_code": REASON_NO_PRICE, "reason": "현재가를 읽을 수 없다 — 봉 마감 종가로 대신하지 않는다"}
 
@@ -388,11 +420,15 @@ def open_follow_trade(candidate: dict[str, Any], *, now: datetime) -> PaperTrade
     # 앞설 수 있어 음수가 나온다. 그것을 0 으로 누르면 "지연 없음"이라는 거짓이 기록된다
     # (Phase 6 실측에서 실제로 0.0초가 찍혔다).
     latency_seconds = (now - signal["event_at"]).total_seconds()
-    # 진행 중 봉이 **열린** 시각 기준의 나이다. **가격의 나이가 아니다** — 가격은 조회
-    # 시점의 마지막 체결가이므로 조회가 신선하면 가격도 신선하다. 4시간봉이면 이 값이
-    # 최대 4시간까지 찍히는데, 그것을 "4시간 묵은 가격"으로 읽으면 Phase 6 과 같은 오해가 된다.
+    # 진입가의 실제 나이다. 기준 시각이 분석 payload 의 `as_of`(조회 시각)이므로
+    # 마크가가 얼마나 묵었는지를 그대로 나타낸다 — 실측 2~3초.
+    #
+    # 이전 구현은 이 값이 **봉이 열린 시각** 기준이라 4시간봉에서 최대 4시간까지 찍혔고,
+    # 이름도 `price_bar_age_seconds` 였다. 그때는 "가격의 나이가 아니다"라는 주석으로
+    # 오해를 막았는데, 지금은 정말 가격의 나이라서 이름을 뜻에 맞춘다. 7-4 가 상한
+    # 적정성을 판정할 때 읽는 값이므로 뜻이 흔들리면 판정이 흔들린다.
     price_at = candidate.get("price_at")
-    price_bar_age = (now - price_at).total_seconds() if isinstance(price_at, datetime) else None
+    price_age = (now - price_at).total_seconds() if isinstance(price_at, datetime) else None
     drift = candidate.get("drift") or {}
     trade = paper_policy.open_trade(
         trade_id=uuid5(NAMESPACE_URL, f"fce:whale-follow:{signal['address']}:{signal['symbol']}:{bar.timestamp.isoformat()}:{signal['event_at'].isoformat()}"),
@@ -427,8 +463,11 @@ def open_follow_trade(candidate: dict[str, Any], *, now: datetime) -> PaperTrade
             "price_drift_pct": drift.get("adverse_pct"),
             "price_drift_favorable": drift.get("favorable"),
             # 진행 중 봉이 열린 지 얼마나 됐는가. **가격의 나이가 아니다**(위 주석).
-            "price_bar_age_seconds": price_bar_age,
-            "entry_price_source": "live_last_trade",
+            "price_age_seconds": price_age,
+            "price_as_of": price_at.isoformat() if isinstance(price_at, datetime) else None,
+            # 출처를 정확히 적는다. 처음엔 "live_last_trade" 였는데 실제 출처는 제공자
+            # 마크가다 — 캔들 마지막 봉을 읽던 구현이 확정봉을 읽고 있었다(실측 확인).
+            "entry_price_source": "provider_mark_price",
             "entry_price_note": "진행 중 봉의 종가 = 조회 시점 마지막 체결가. 확정봉 종가가 아니다",
             "win_pct": signal.get("win_pct"),
             "participant_type": signal.get("participant_type"),

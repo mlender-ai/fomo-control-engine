@@ -266,7 +266,30 @@ def test_entry_price_is_the_live_price_not_the_confirmed_close() -> None:
     trade = whale_follow.open_follow_trade(_candidate(), now=NOW)
     assert trade.entry_price == pytest.approx(103.5), "확정봉 종가로 진입했다 — Phase 6 의 결함이 그대로다"
     assert trade.entry_price != CONFIRMED.close
-    assert (trade.entry_evidence or {})["entry_price_source"] == "live_last_trade"
+    assert (trade.entry_evidence or {})["entry_price_source"] == "provider_mark_price"
+
+
+def test_end_to_end_entry_price_differs_from_the_confirmed_close() -> None:
+    """이 결함이 숨었던 지점. 픽스처가 캔들 종가와 현재가를 **같게** 만들면 통과한다.
+
+    실제 payload 는 둘이 다르다 — 확정봉은 최대 4시간 전이고 마크가는 지금이다.
+    `_candidate()` 는 진입가를 미리 넣으므로 `live_price` 를 타지 않는다. 그래서 전 구간을
+    돌려 진입가가 **마크가**로 잡히는지 본다.
+    """
+    payload = _analysis(103.5, confirmed_close=100.0)
+    repo = _Repo([_Event("0xa", "BTCUSDT", "long", "increase", NOW - timedelta(minutes=5), entry_px=103.4)])
+    result = whale_follow.run_entries(
+        repo,
+        Settings(),
+        eligible=ELIGIBLE,
+        analysis_loader=lambda symbol, timeframe: payload,
+        simulation_loader=lambda *args: {"action_plan": {"invalidation": 97.0}, "survives_to_invalidation": True},
+        now=NOW,
+    )
+    assert result["opened"] == 1, f"진입하지 못했다: {result['rejected']}"
+    entered = repo.saved[-1]
+    assert entered.entry_price == pytest.approx(103.5), "확정봉 종가(100.0)로 진입했다"
+    assert entered.entry_price != 100.0
 
 
 def test_entry_time_is_the_wall_clock_not_the_bar() -> None:
@@ -285,22 +308,36 @@ def test_sizing_uses_the_live_price(monkeypatch) -> None:
     assert (trade.target_plan or {})["sizing"]["mode"] == expected["mode"]
 
 
-def test_live_price_reads_the_provisional_bar() -> None:
-    """`_confirmed_bar` 는 잠정 봉을 건너뛴다. 진입 **가격**은 반대다."""
+def test_live_price_reads_the_provider_mark() -> None:
+    """현재가는 마크가다. 캔들 마지막 봉이 아니다.
+
+    이 저장소의 `candles` 는 **확정봉만** 담는다(`MTF-PATTERN-01` 이 미확정 진행 봉을
+    분석 입력에서 제거했다). 그래서 `candles[-1].close` 는 `_confirmed_bar` 와 같은 값이고,
+    그것을 진입가로 쓰면 4시간(4h봉) 묵은 가격에 들어간다 — 7-2 가 고치려던 결함 그대로다.
+
+    2026-08-25T14:06Z 실측 BTCUSDT: 캔들 경로 79,090.8(6시간) vs 마크가 78,817.4(2초).
+    """
     analysis = {
-        "candles": [
-            {"time": (NOW - timedelta(hours=4)).isoformat(), "open": 1, "high": 2, "low": 1, "close": 100.0},
-            {"time": (NOW - timedelta(minutes=10)).isoformat(), "open": 1, "high": 2, "low": 1, "close": 103.5},
-        ]
+        "mark_price": 103.5,
+        # 캔들에는 확정봉만 있고, 그 종가는 마크가와 다르다. 캔들을 읽으면 이 값이 나온다.
+        "candles": [{"time": (NOW - timedelta(hours=4)).isoformat(), "close": 100.0}],
     }
-    price, stamp = whale_follow.live_price(analysis)
-    assert price == 103.5, "마지막(진행 중) 봉이 아니라 확정봉을 읽었다"
-    assert stamp is not None
+    price, stamp = whale_follow.live_price(analysis, as_of=NOW.isoformat())
+    assert price == 103.5, "마크가가 아니라 확정봉 종가를 읽었다 — 7-2 의 결함이 되살아났다"
+    assert stamp == NOW
 
 
-def test_live_price_is_absent_rather_than_guessed() -> None:
-    assert whale_follow.live_price({"candles": []}) == (None, None)
-    assert whale_follow.live_price({"candles": [{"time": NOW.isoformat(), "close": 0.0}]})[0] is None
+def test_live_price_never_falls_back_to_candles() -> None:
+    """폴백하면 결함이 조용히 되살아난다. 없으면 없다고 낸다."""
+    assert whale_follow.live_price({"candles": [{"time": NOW.isoformat(), "close": 12345.0}]}) == (None, None)
+    assert whale_follow.live_price({}) == (None, None)
+    assert whale_follow.live_price({"mark_price": 0.0, "candles": [{"close": 999.0}]}) == (None, None)
+
+
+def test_live_price_accepts_the_documented_aliases() -> None:
+    """제공자에 따라 필드명이 다르다. 실측 payload 는 `mark_price` 와 `price_levels.mark` 를 함께 준다."""
+    assert whale_follow.live_price({"price_levels": {"mark": 77.0}})[0] == 77.0
+    assert whale_follow.live_price({"liquidity": {"reference_price": 88.0}})[0] == 88.0
 
 
 # ── 지연 상한 · 이탈 상한이 거부로 동작한다 (7-2 항목 3·4) ─────────────
@@ -320,14 +357,29 @@ class _Repo:
     def upsert_whale_follow_trade(self, trade):
         self.saved.append(trade)
 
+    def list_paper_trades(self, status=None, symbol=None, limit=500):
+        """재진입 잠금이 **크립토 원장**을 읽는다 — 원장을 갈라 놓고 잠금만 공유한다.
 
-def _analysis(price: float) -> dict:
-    """진행 중 봉 하나짜리 분석 페이로드. 그 봉의 종가가 곧 현재가다."""
+        Phase 6 부터의 동작이고 C4 가 잠금 수정을 금지해 손대지 않았다. 이 스텁은 그 결합이
+        존재한다는 사실을 픽스처에 남긴다 — 없으면 `AttributeError` 로만 드러난다.
+        """
+        return []
+
+
+def _analysis(price: float, *, confirmed_close: float | None = None) -> dict:
+    """분석 페이로드. **현재가는 `mark_price`** 이고 캔들은 확정봉이다.
+
+    실제 payload 가 그 형태다 — `candles` 에는 확정봉만 들어오고 현재가는 마크가로 온다.
+    `confirmed_close` 를 따로 주면 "확정봉 종가 ≠ 현재가"인 실전 상황을 만든다.
+    """
+    close = price if confirmed_close is None else confirmed_close
     return {
+        "as_of": NOW.isoformat(),
         "analysis": {
             "asset_class": "crypto",
-            "candles": [{"time": NOW.isoformat(), "open": price, "high": price, "low": price, "close": price, "volume": 1.0}],
-        }
+            "mark_price": price,
+            "candles": [{"time": NOW.isoformat(), "open": close, "high": close, "low": close, "close": close, "volume": 1.0}],
+        },
     }
 
 
@@ -482,9 +534,11 @@ def test_entry_records_the_caps_it_passed() -> None:
     assert evidence["signal_to_entry_seconds"] == pytest.approx(720.0)
     assert evidence["price_drift_pct_of_stop"] == pytest.approx(7.69, abs=0.01)
     assert evidence["whale_price"] == 103.0
-    # **가격의 나이가 아니라 봉의 나이다.** 이름이 뜻과 어긋나면 Phase 6 의 "0.0초" 와 같은
-    # 오해가 반복된다 — 4시간봉이면 이 값이 4시간까지 찍히는 것이 정상이다.
-    assert evidence["price_bar_age_seconds"] == pytest.approx(60.0)
+    # 진입가의 **실제 나이**다. 기준이 분석 조회 시각(`as_of`)이므로 마크가가 얼마나
+    # 묵었는지를 그대로 낸다 — 실측 2~3초. 이름이 뜻과 어긋나면 7-4 의 상한 적정성 판정이
+    # 흔들린다.
+    assert evidence["price_age_seconds"] == pytest.approx(60.0)
+    assert evidence["price_as_of"] is not None
     assert "확정봉 종가가 아니다" in evidence["entry_price_note"]
     assert evidence["qualification"] == fe.QUALIFICATION_FOLLOW
     assert evidence["win_pct"] == 64.9
