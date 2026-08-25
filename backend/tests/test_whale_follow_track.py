@@ -898,3 +898,21 @@ def test_legacy_exemption_lets_a_new_entry_through() -> None:
         now=NOW,
     )
     assert result["opened"] == 1, f"결함 기간 포지션이 신규 진입을 막았다: {result['rejected']}"
+
+
+def test_price_age_is_zero_when_the_quote_is_fresher_than_the_decision() -> None:
+    """분석 조회가 `now` 스탬프보다 뒤에 찍히면 음수가 나온다 (실측 −12.2초).
+
+    가격이 판단 시각보다 **더 신선**하다는 뜻이므로 낡음은 0 이다. 원값은 남긴다.
+    """
+    trade = whale_follow.open_follow_trade(_candidate(price_at=NOW + timedelta(seconds=12)), now=NOW)
+    evidence = trade.entry_evidence
+    assert evidence["price_age_seconds"] == 0.0
+    assert evidence["price_age_raw_seconds"] == pytest.approx(-12.0)
+
+
+def test_latency_is_not_clamped_like_price_age() -> None:
+    """지연의 음수는 뜻이 다르다 — 누르면 4시간 지연이 '지연 없음'이 된다."""
+    source = (REPO_ROOT / "backend/app/paper/whale_follow.py").read_text(encoding="utf-8")
+    body = source.split("latency_seconds = ")[1].split("\n")[0]
+    assert "max(" not in body, "지연을 0 으로 눌렀다 — Phase 6 의 거짓 0.0초가 되살아난다"

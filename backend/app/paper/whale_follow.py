@@ -457,7 +457,14 @@ def open_follow_trade(candidate: dict[str, Any], *, now: datetime) -> PaperTrade
     # 오해를 막았는데, 지금은 정말 가격의 나이라서 이름을 뜻에 맞춘다. 7-4 가 상한
     # 적정성을 판정할 때 읽는 값이므로 뜻이 흔들리면 판정이 흔들린다.
     price_at = candidate.get("price_at")
-    price_age = (now - price_at).total_seconds() if isinstance(price_at, datetime) else None
+    raw_price_age = (now - price_at).total_seconds() if isinstance(price_at, datetime) else None
+    # 음수는 분석 조회가 `now` 스탬프보다 뒤에 찍힌 것이다 — 가격이 판단 시각보다 **더
+    # 신선**하다는 뜻이므로 낡음은 0 이다. 실측 −12.2 초가 나왔다.
+    #
+    # 지연(`latency_seconds`)은 여기서 0 으로 누르지 않는다. 그쪽 음수는 확정봉이 고래
+    # 체결보다 앞선다는 뜻이고, 누르면 4시간 지연이 "지연 없음"으로 기록된다. 두 값의
+    # 음수가 뜻하는 것이 다르므로 처리도 다르다.
+    price_age = max(0.0, raw_price_age) if raw_price_age is not None else None
     drift = candidate.get("drift") or {}
     trade = paper_policy.open_trade(
         trade_id=uuid5(NAMESPACE_URL, f"fce:whale-follow:{signal['address']}:{signal['symbol']}:{bar.timestamp.isoformat()}:{signal['event_at'].isoformat()}"),
@@ -493,6 +500,8 @@ def open_follow_trade(candidate: dict[str, Any], *, now: datetime) -> PaperTrade
             "price_drift_favorable": drift.get("favorable"),
             # 진행 중 봉이 열린 지 얼마나 됐는가. **가격의 나이가 아니다**(위 주석).
             "price_age_seconds": price_age,
+            # 원값도 남긴다 — 0 으로 누른 사실이 감사 가능해야 한다.
+            "price_age_raw_seconds": raw_price_age,
             "price_as_of": price_at.isoformat() if isinstance(price_at, datetime) else None,
             # 출처를 정확히 적는다. 처음엔 "live_last_trade" 였는데 실제 출처는 제공자
             # 마크가다 — 캔들 마지막 봉을 읽던 구현이 확정봉을 읽고 있었다(실측 확인).
