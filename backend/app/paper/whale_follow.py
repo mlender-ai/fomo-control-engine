@@ -1,48 +1,56 @@
-"""WO-FCE-WHALE-FOLLOW-01 Phase 6-2 — 고래 추종 페이퍼 트랙.
+"""WO-FCE-WHALE-FOLLOW-02 7-2 — 고래 추종 페이퍼 트랙 (이벤트 구동 진입).
 
-## 무엇을 재는가 — 승격 심사와 다른 질문이다
+## 규칙 한 줄
 
-| | 재는 것 |
-| --- | --- |
-| 승격 심사(`onchain/service.py`) | **고래 자신의 승률** |
-| 이 트랙 | **이 고래를 신호로 삼고 우리 사이징·출구로 거래하면 버는가** |
+> **승률 좋은 고래가 들어간 가격 근처에서 같이 들어간다.**
 
-고래 승률이 55% 가 아니어도 우리 손익비가 붙으면 벌 수 있고, 승률 70% 고래를 따라가도
-지연·비용 때문에 잃을 수 있다. 후자는 이 트랙 없이는 영원히 측정되지 않는다.
+자격은 `onchain/follow_eligibility.py` 가 정한다(N>=30 · 승률>=55% · MM 아님). 이 모듈이
+정하는 것은 **언제·얼마에 들어가는가**다.
 
-그래서 이 트랙의 성과를 **승격 근거로 쓰지 않는다**(C11).
+## Phase 6 은 4시간 늦게 들어갔다 (문제 1)
 
-## 변수를 하나만 바꾼다
+```python
+# 이전
+bar = _confirmed_bar(...)          # 마지막 **확정** 4시간봉
+open_trade(bar=bar)                # 진입가 = 그 봉의 종가
+```
 
-진입 트리거만 다르고 나머지는 기존 기계를 **수정 없이** 재사용한다(C5). `paper/policy.py`
-diff 0줄이며, 이 모듈은 그 함수들을 호출만 한다.
+확정봉 종가는 최대 4시간 묵은 가격이고 고래 체결 시각과 아무 관계가 없다. 실측 지연이
+**4.0시간**이었다. 그건 추종이 아니다 — 고래가 들어간 자리가 아니라 **그 후 4시간 동안
+무슨 일이 있었든 상관없는 자리**에 들어간다.
 
-| 요소 | 출처 |
-| --- | --- |
-| 방향 | **고래 체결**(이 트랙의 유일한 신규 입력) |
-| 봉·무효화선·시뮬레이션 | `paper/service.py` 헬퍼 — 고래 방향으로 조회 |
-| 사이징 | `policy.plan_position_size` (리스크 기준) |
-| 재진입 잠금 | `service._reentry_block_reason` |
-| 출구 | `policy.evaluate_exit` · `apply_exit_decision` |
+그리고 `latency_seconds` 를 **기록만 하고 거부하지 않았다.** 상한이 없는 관측치는
+관측치가 아니라 변명이다.
 
-## 적용 게이트 범위 — 결과 확인 전 고정
+## 무엇을 바꿨나
 
-| 게이트 | 적용 | 근거 |
+| | Phase 6 | 지금 |
 | --- | --- | --- |
-| `freshness` | 유지 | 안전. 낡은 봉으로 진입하면 트랙 무관하게 잘못이다 |
-| `liquidation_safety` | 유지 | 안전 |
-| `action_levels`(무효화·목표 존재) | 유지 | 사이징이 스톱 거리를 요구한다 |
-| `invalidation_hygiene` | 유지 | 스톱이 진입가에 붙으면 즉시 털린다 |
-| `reentry_lock` | 유지 | 같은 봉 왕복 차단 |
-| `confirmed_stance` · `not_transitioning` | **제외** | 고래 신호가 방향 판단을 대체한다는 것이 이 트랙의 가설이다 |
-| `signature_gate` · `regime_gate` | **제외** | 같음 — 시그니처 승격 여부는 고래 신호와 무관하다 |
-| `evidence` · `checklist` · `risk_reward` | **제외** | 방향 근거의 품질 게이트다. 근거는 고래 체결이다 |
-| `event_window`(실적) | 유지 | 안전 |
+| 진입 시각 | 봉 마감 대기 | **고래 체결 감지 즉시** |
+| 진입 가격 | 마지막 확정봉 종가 | **현재가**(진행 중 봉의 종가 = 최종 체결가) |
+| 지연 | 기록만 | **상한 초과면 거부** |
+| 가격 이탈 | 없음 | **무효화 거리의 N% 초과면 거부** |
 
-방향 판단 게이트를 남기면 고래 신호의 기여를 측정할 수 없고, 안전 게이트를 빼면 품질
-통제가 사라진다.
+`FOLLOW_TIMEFRAME` 은 이제 **분석·무효화선 산출용으로만** 쓴다. 진입 시각과 가격은
+거기서 오지 않는다.
 
-## 무효화선이 없으면 진입하지 않는다
+## 왜 이탈 상한이 지연 상한보다 본질적인가
+
+**5분이어도 3% 갔으면 다른 거래다.** 지연은 이탈의 대리 지표일 뿐이고, 우리가 실제로
+신경 쓰는 것은 "고래가 잡은 가격을 우리도 잡았는가"다. 그래서 두 상한을 함께 걸되
+이탈을 **무효화 거리 대비**로 잰다 — 절대 %로 재면 변동성이 다른 심볼에서 같은 값이
+다른 것을 뜻하게 된다.
+
+이탈은 **불리한 방향만** 잰다. 롱인데 값이 내렸으면 고래보다 싸게 잡은 것이고, 그것은
+막을 이유가 없다. (스톱이 가까워지는 부작용은 `invalidation_hygiene` 이 잡는다.)
+
+## 사이징·잠금·출구는 손대지 않는다 (C4)
+
+`paper/policy.py` diff 0줄이다. 현재가는 **`plan_position_size` 의 입력**으로 들어갈 뿐,
+사이징 식은 그대로다. 재진입 잠금의 기준 봉(`entry_bar_at`)도 확정봉 그대로 둔다 —
+그것을 현재 시각으로 바꾸면 잠금 의미가 달라진다.
+
+## 무효화선이 없으면 진입하지 않는다 (C6)
 
 고래 체결에는 스톱이 없다. 구조 레벨에서 산출하되 **산출 불가면 진입하지 않는다** —
 사이징이 스톱 거리를 요구하므로 무효화선 없는 진입은 사이징 불가와 같다.
@@ -55,14 +63,24 @@ from typing import Any
 from uuid import NAMESPACE_URL, uuid5
 
 from app.db.models import Direction, MarketCandle, PaperTrade, utc_now
-from app.onchain.follow_eligibility import QUALIFICATION_OBSERVATION
+from app.onchain.follow_eligibility import QUALIFICATION_FOLLOW
 from app.paper import policy as paper_policy
 from app.paper import service as paper_service
 
-# 진입 트리거가 되는 체결. 감액·청산은 진입 신호가 아니다 — 별도 판단이다(6-2 항목 2).
+# 진입 트리거가 되는 체결. 감액·청산은 진입 신호가 아니다 — 별도 판단이다.
 ENTRY_EVENTS = frozenset({"open", "increase", "flip"})
-# 이 시간보다 오래된 고래 체결은 추종하지 않는다. 지연이 커지면 신호가 아니라 소음이다.
-MAX_SIGNAL_AGE_MINUTES = 240
+
+# ── 지연·이탈 상한 (7-2 항목 3·4 · 권고 시작값) ─────────────────────────
+
+# 고래 체결 → 진입까지 이 시간을 넘기면 **거부한다**. 기록만 하지 않는다.
+DEFAULT_MAX_LATENCY_MINUTES = 30
+# 고래 체결가 대비 불리한 이탈 상한. **무효화 거리 대비 비율**이다 —
+# 스톱이 3% 면 0.75% 이탈까지 허용한다. 절대 %로 재면 심볼마다 뜻이 달라진다.
+DEFAULT_MAX_DRIFT_PCT_OF_STOP = 25.0
+# 신호 목록을 만들 때의 조회 지평. 상한의 배수로 둔다 — 상한을 조정하면 함께 움직인다.
+# 이보다 오래된 체결은 거부 사유를 남길 가치도 없다(이미 죽은 신호다).
+SIGNAL_SCAN_MULTIPLIER = 4
+
 # 한 실행에서 여는 최대 건수. 크립토 트랙 실행을 밀어내지 않는다(C9).
 MAX_ENTRIES_PER_RUN = 2
 # 한 실행에서 **분석을 조회하는** 최대 건수. 진입 상한과 별개다.
@@ -75,6 +93,35 @@ MAX_EVALUATIONS_PER_RUN = 3
 MAX_EXIT_EVALUATIONS_PER_RUN = 6
 FOLLOW_TIMEFRAME = "4h"
 
+# ── 거부 사유 코드 (7-2 항목 5 · 7-4 항목 5) ────────────────────────────
+#
+# 사유를 문자열로만 남기면 분포를 세지 못한다. 코드로 남겨야 "무엇이 걸렀는가"가 나온다.
+REASON_LATENCY = "latency_exceeded"
+REASON_DRIFT = "price_drift_exceeded"
+REASON_WHALE_PRICE_UNKNOWN = "whale_price_unknown"
+REASON_NO_INVALIDATION = "no_invalidation"
+REASON_NO_PRICE = "no_price"
+REASON_SAFETY_GATE = "safety_gate"
+REASON_REENTRY_LOCK = "reentry_lock"
+REASON_ALREADY_OPEN = "already_open"
+REASON_ENTRY_CAP = "entry_cap"
+REASON_EVALUATION_CAP = "evaluation_cap"
+REASON_ERROR = "error"
+
+REASON_CODES = (
+    REASON_LATENCY,
+    REASON_DRIFT,
+    REASON_WHALE_PRICE_UNKNOWN,
+    REASON_NO_INVALIDATION,
+    REASON_NO_PRICE,
+    REASON_SAFETY_GATE,
+    REASON_REENTRY_LOCK,
+    REASON_ALREADY_OPEN,
+    REASON_ENTRY_CAP,
+    REASON_EVALUATION_CAP,
+    REASON_ERROR,
+)
+
 
 def _direction(side: str) -> Direction | None:
     value = str(side or "").lower()
@@ -85,13 +132,28 @@ def _direction(side: str) -> Direction | None:
     return None
 
 
-def entry_signals(events: list[Any], *, eligible: dict[str, str], now: datetime, max_age_minutes: int = MAX_SIGNAL_AGE_MINUTES) -> list[dict[str, Any]]:
+def _float(value: Any) -> float | None:
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    return result if result == result else None  # NaN 제외
+
+
+def entry_signals(
+    events: list[Any],
+    *,
+    eligible: dict[str, str],
+    now: datetime,
+    scan_horizon_minutes: int,
+) -> list[dict[str, Any]]:
     """추종 대상 지갑의 증액 체결만 남긴다. 지갑당 심볼당 최신 1건.
 
-    `eligible` 은 주소 → 자격 종류(`observation`/`promotion`)다. 자격이 없는 지갑은 여기서
-    떨어지고, 그 사유는 `follow_eligibility` 가 따로 낸다(C10).
+    **여기서는 지연 상한을 걸지 않는다.** `scan_horizon_minutes` 는 목록을 유한하게 만드는
+    조회 지평일 뿐이고, 지연 상한은 `run_entries` 가 **거부로** 적용한다 — 그래야 "몇 건이
+    지연으로 잘렸는가"가 세어진다. 조용히 거르면 그 수가 사라진다(C10).
     """
-    cutoff = now - timedelta(minutes=max(1, int(max_age_minutes)))
+    cutoff = now - timedelta(minutes=max(1, int(scan_horizon_minutes)))
     keyed: dict[tuple[str, str], dict[str, Any]] = {}
     for event in events:
         address = str(getattr(event, "wallet_address", "") or "").lower()
@@ -117,9 +179,53 @@ def entry_signals(events: list[Any], *, eligible: dict[str, str], now: datetime,
                 "event": str(getattr(event, "event", "")),
                 "size_usd": float(getattr(event, "size_usd", 0.0) or 0.0),
                 "wallet_label": str(getattr(event, "wallet_label", "") or ""),
+                # 고래가 **실제로 체결한 가격**. 이탈 상한의 기준선이다(7-2 항목 4).
+                # `event_from_fill` 이 체결 `px` 를 그대로 넣는다.
+                "whale_price": _float(getattr(event, "entry_px", None)),
                 "signal_age_seconds": max(0.0, (now - event_at).total_seconds()),
             }
-    return sorted(keyed.values(), key=lambda item: float(item["size_usd"]), reverse=True)
+    # 최신 신호 우선. 지연이 곧 이 트랙의 성패이므로 큰 금액보다 **덜 늙은 것**을 먼저 본다.
+    return sorted(keyed.values(), key=lambda item: item["event_at"], reverse=True)
+
+
+def live_price(analysis: dict[str, Any]) -> tuple[float | None, datetime | None]:
+    """**현재가.** 진행 중인 봉의 종가 = 마지막 체결가다.
+
+    `_confirmed_bar` 는 잠정 봉을 일부러 건너뛴다 — 확정된 판단 근거가 필요하기 때문이다.
+    진입 **가격**은 반대다. 우리가 지금 살 수 있는 값은 마지막 체결가이지 4시간 전
+    종가가 아니다. 그래서 잠정 봉을 포함한 **마지막** 봉을 쓴다.
+
+    함께 돌려주는 시각은 그 봉이 열린 시각이다 — 가격이 얼마나 낡았는지를 재는 데 쓴다.
+    """
+    candles = [item for item in analysis.get("candles", []) if isinstance(item, dict)]
+    if not candles:
+        return None, None
+    last = candles[-1]
+    price = _float(last.get("close"))
+    stamp = paper_service._timestamp(last.get("time") or last.get("timestamp"))
+    return (price if price and price > 0 else None), stamp
+
+
+def price_drift(*, whale_price: float, entry_price: float, direction: Direction, stop_distance: float) -> dict[str, Any]:
+    """고래 체결가 대비 **불리한** 이탈 (7-2 항목 4).
+
+    롱은 값이 올랐을 때, 숏은 내렸을 때가 불리하다 — 고래보다 나쁜 값에 잡는 것이다.
+    유리한 이탈은 0 으로 본다: 고래보다 싸게 잡은 것을 막을 이유가 없다.
+
+    비율은 **무효화 거리 대비**다. 절대 %로 재면 변동성이 다른 심볼에서 같은 숫자가 다른
+    것을 뜻한다 — 스톱 1% 짜리의 0.5% 이탈과 스톱 8% 짜리의 0.5% 이탈은 다른 사건이다.
+    """
+    raw = entry_price - whale_price if direction == Direction.long else whale_price - entry_price
+    adverse = max(0.0, raw)
+    return {
+        "whale_price": whale_price,
+        "entry_price": entry_price,
+        "adverse_abs": round(adverse, 10),
+        "adverse_pct": round(adverse / whale_price * 100, 4) if whale_price else None,
+        "stop_distance": round(stop_distance, 10),
+        "pct_of_stop": round(adverse / stop_distance * 100, 2) if stop_distance > 0 else None,
+        "favorable": raw < 0,
+    }
 
 
 def _safety_gates(
@@ -152,8 +258,9 @@ def evaluate_signal(
     simulation_loader: paper_service.SimulationLoader,
     now: datetime,
     timeframe: str = FOLLOW_TIMEFRAME,
+    max_drift_pct_of_stop: float = DEFAULT_MAX_DRIFT_PCT_OF_STOP,
 ) -> dict[str, Any]:
-    """한 신호를 진입 후보로 판정한다. 거부도 사유를 남긴다(C10)."""
+    """한 신호를 진입 후보로 판정한다. 거부도 사유 **코드**를 남긴다(C10)."""
     symbol = str(signal["symbol"])
     direction: Direction = signal["direction"]
     rejected = {"signal": signal, "opened": False}
@@ -161,15 +268,21 @@ def evaluate_signal(
     payload = analysis_loader(symbol, timeframe)
     analysis = paper_service._dict(payload.get("analysis"))
     gauges = paper_service._dict(payload.get("gauges"))
+    # 확정봉은 **분석·무효화선 산출**에만 쓴다. 진입 가격은 여기서 오지 않는다(7-2 항목 1).
     bar = paper_service._confirmed_bar(analysis, gauges)
     if bar is None:
-        return {**rejected, "reason": "확정 봉 없음 — 진입 기준 가격을 정할 수 없다"}
+        return {**rejected, "reason_code": REASON_NO_PRICE, "reason": "확정 봉 없음 — 구조 분석 근거를 만들 수 없다"}
+
+    entry_price, price_at = live_price(analysis)
+    if entry_price is None:
+        return {**rejected, "reason_code": REASON_NO_PRICE, "reason": "현재가를 읽을 수 없다 — 봉 마감 종가로 대신하지 않는다"}
 
     asset_class = str(analysis.get("asset_class") or "crypto")
     policy = paper_service.policy_from_settings(settings, asset_class)
 
     # 고래 **방향으로** 시뮬레이션을 조회한다. 엔진 스탠스가 반대여도 그것을 묻지 않는다.
-    simulation = simulation_loader(symbol, timeframe, direction.value, bar.close)
+    # 진입가가 현재가이므로 시뮬레이션도 현재가 기준으로 건다.
+    simulation = simulation_loader(symbol, timeframe, direction.value, entry_price)
     action_plan = paper_service._dict(simulation.get("action_plan"))
     invalidation = paper_service._price_from(action_plan.get("invalidation") or action_plan.get("engine_invalidation"))
     target_plan = paper_service._paper_target_plan(
@@ -186,8 +299,26 @@ def evaluate_signal(
     simulation = paper_service._paper_simulation_contract(simulation, target_plan)
 
     if invalidation is None:
-        # 6-2 항목 4 — 무효화선 없으면 진입하지 않는다. 사이징이 스톱 거리를 요구한다.
-        return {**rejected, "reason": "무효화선 산출 불가 — 사이징이 스톱 거리를 요구하므로 진입하지 않는다"}
+        # C6 — 무효화선 없으면 진입하지 않는다. 사이징이 스톱 거리를 요구한다.
+        return {**rejected, "reason_code": REASON_NO_INVALIDATION, "reason": "무효화선 산출 불가 — 사이징이 스톱 거리를 요구하므로 진입하지 않는다"}
+
+    # ── 가격 이탈 상한 (7-2 항목 4) ────────────────────────────────────
+    whale_price = _float(signal.get("whale_price"))
+    if whale_price is None or whale_price <= 0:
+        # 상한을 걸 수 없으면 진입하지 않는다. "상한 없이 진입"이 지금 상태이고 그것이 결함이다.
+        return {**rejected, "reason_code": REASON_WHALE_PRICE_UNKNOWN, "reason": "고래 체결가 미상 — 이탈 상한을 걸 수 없으므로 진입하지 않는다"}
+    stop_distance = abs(entry_price - invalidation)
+    if stop_distance <= 0:
+        return {**rejected, "reason_code": REASON_NO_INVALIDATION, "reason": "무효화선이 진입가와 같다 — 스톱 거리가 0 이다"}
+    drift = price_drift(whale_price=whale_price, entry_price=entry_price, direction=direction, stop_distance=stop_distance)
+    cap = max(0.0, float(max_drift_pct_of_stop))
+    if (drift["pct_of_stop"] or 0.0) > cap:
+        return {
+            **rejected,
+            "reason_code": REASON_DRIFT,
+            "reason": f"가격 이탈 {drift['pct_of_stop']}% (무효화 거리 대비) — 상한 {cap}% 초과. 고래가 잡은 자리가 아니다",
+            "drift": drift,
+        }
 
     gates = _safety_gates(
         bar=bar,
@@ -201,21 +332,24 @@ def evaluate_signal(
     )
     failed = [name for name, passed in gates.items() if not passed]
     if failed:
-        return {**rejected, "reason": f"안전 게이트 미통과: {', '.join(failed)}", "gates": gates}
+        return {**rejected, "reason_code": REASON_SAFETY_GATE, "reason": f"안전 게이트 미통과: {', '.join(failed)}", "gates": gates, "drift": drift}
 
     lock = paper_service._reentry_block_reason(repo, symbol=symbol, timeframe=timeframe, bar=bar, direction=direction, policy=policy)
     if lock is not None:
-        return {**rejected, "reason": f"재진입 잠금: {lock}", "gates": gates}
+        return {**rejected, "reason_code": REASON_REENTRY_LOCK, "reason": f"재진입 잠금: {lock}", "gates": gates, "drift": drift}
 
     if any(trade.symbol == symbol and trade.timeframe == timeframe for trade in repo.list_whale_follow_trades(status="open", limit=200)):
-        return {**rejected, "reason": "이 심볼에 추종 트랙 포지션이 이미 열려 있다", "gates": gates}
+        return {**rejected, "reason_code": REASON_ALREADY_OPEN, "reason": "이 심볼에 추종 트랙 포지션이 이미 열려 있다", "gates": gates, "drift": drift}
 
     return {
         "signal": signal,
         "opened": True,
-        "reason": "안전 게이트 통과 · 무효화선 확보",
+        "reason": "지연·이탈 상한 통과 · 안전 게이트 통과 · 무효화선 확보",
         "gates": gates,
+        "drift": drift,
         "bar": bar,
+        "entry_price": entry_price,
+        "price_at": price_at,
         "analysis": analysis,
         "asset_class": asset_class,
         "policy": policy,
@@ -229,33 +363,44 @@ def evaluate_signal(
 
 
 def open_follow_trade(candidate: dict[str, Any], *, now: datetime) -> PaperTrade:
-    """`policy.open_trade` 를 그대로 호출한다 — 신규 사이징 구현 0건(C5).
+    """`policy.open_trade` 를 그대로 호출한다 — 신규 사이징 구현 0건(C4).
 
-    자격 종류·고래 식별·체결→진입 지연을 `entry_evidence` 에 박는다. 관찰 자격 진입은
-    **그 사실이 원장에 남아야** 승격 자격 진입과 섞이지 않는다(C3·C8).
+    ## 진입가를 현재가로 넣는 방법
+
+    `policy.open_trade` 는 `bar.close` 를 진입가로 쓰고 `bar.timestamp` 를 진입 봉으로 쓴다.
+    그래서 **종가만 현재가로 바꾼 봉**을 만들어 넘긴다:
+
+    - `entry_price` = 현재가 → 사이징도 현재가 기준으로 계산된다
+    - `entry_bar_at` = 확정봉 시각 그대로 → 재진입 잠금·출구 판정 의미가 바뀌지 않는다(C4)
+    - `entry_at` = **지금** → 실제 진입 시각. 알림 상한과 지연 집계가 이 값을 읽는다
+
+    `paper/policy.py` 는 한 줄도 바뀌지 않는다. 입력만 바꾼다.
     """
     signal = candidate["signal"]
     bar: MarketCandle = candidate["bar"]
-    # 체결→진입 지연. 이 지연이 추종 성과를 좌우한다(6-2 항목 6).
+    entry_price = float(candidate["entry_price"])
+    # 종가만 현재가로 교체한다. 고가·저가는 현재가를 포함하도록 넓혀 봉이 자기모순이 되지 않게 한다.
+    entry_bar = bar.model_copy(update={"close": entry_price, "high": max(bar.high, entry_price), "low": min(bar.low, entry_price)})
+
+    # 체결→진입 지연. **엔진이 판단한 벽시계 기준**이다.
     #
-    # **봉 타임스탬프로 재면 안 된다.** 확정봉의 timestamp 는 봉이 *열린* 시각이고 고래
-    # 체결보다 앞설 수 있어 음수가 나온다. 그것을 0 으로 누르면 "지연 없음"이라는 거짓이
-    # 기록된다(실측에서 실제로 0.0초가 찍혔다).
-    #
-    # 실제 지연은 **엔진이 판단한 벽시계 시각** 기준이다. 그리고 우리가 쓰는 진입 가격은
-    # 마지막 확정봉의 종가이므로 그 가격이 얼마나 낡았는지를 따로 적는다 — 4시간봉이면
-    # 최대 4시간 전 가격으로 들어갈 수 있고, 그 사실을 숨기면 성과 해석이 틀어진다.
+    # 봉 타임스탬프로 재면 안 된다 — 확정봉의 timestamp 는 봉이 *열린* 시각이고 고래 체결보다
+    # 앞설 수 있어 음수가 나온다. 그것을 0 으로 누르면 "지연 없음"이라는 거짓이 기록된다
+    # (Phase 6 실측에서 실제로 0.0초가 찍혔다).
     latency_seconds = (now - signal["event_at"]).total_seconds()
-    price_reference_lag = (now - bar.timestamp).total_seconds()
-    qualification = str(signal["qualification"])
-    observation = qualification == QUALIFICATION_OBSERVATION
-    return paper_policy.open_trade(
+    # 진행 중 봉이 **열린** 시각 기준의 나이다. **가격의 나이가 아니다** — 가격은 조회
+    # 시점의 마지막 체결가이므로 조회가 신선하면 가격도 신선하다. 4시간봉이면 이 값이
+    # 최대 4시간까지 찍히는데, 그것을 "4시간 묵은 가격"으로 읽으면 Phase 6 과 같은 오해가 된다.
+    price_at = candidate.get("price_at")
+    price_bar_age = (now - price_at).total_seconds() if isinstance(price_at, datetime) else None
+    drift = candidate.get("drift") or {}
+    trade = paper_policy.open_trade(
         trade_id=uuid5(NAMESPACE_URL, f"fce:whale-follow:{signal['address']}:{signal['symbol']}:{bar.timestamp.isoformat()}:{signal['event_at'].isoformat()}"),
         symbol=str(signal["symbol"]),
         timeframe=str(candidate.get("timeframe") or FOLLOW_TIMEFRAME),
         asset_class=str(candidate["asset_class"]),
         direction=signal["direction"],
-        bar=bar,
+        bar=entry_bar,
         invalidation_price=float(candidate["invalidation"]),
         take_profit_price=float(candidate["take_profit"]),
         take_profit_2_price=candidate.get("take_profit_2"),
@@ -265,19 +410,27 @@ def open_follow_trade(candidate: dict[str, Any], *, now: datetime) -> PaperTrade
         evidence={
             "entry_mode": "whale_follow",
             "track": "whale_follow",
-            "qualification": qualification,
+            "qualification": QUALIFICATION_FOLLOW,
             # C8 — 미검증임을 원장에 명시한다. 화면·알림이 이 값을 그대로 읽는다.
-            "unverified": observation,
-            "label": "미검증 관찰 자격 진입" if observation else "승격 고래 추종 진입",
+            "unverified": True,
+            "label": "미검증 추종 자격 진입",
             "whale_address": signal["address"],
             "whale_label": signal.get("wallet_label"),
             "whale_event": signal.get("event"),
             "whale_size_usd": signal.get("size_usd"),
             "whale_event_at": signal["event_at"].isoformat(),
+            "whale_price": drift.get("whale_price"),
             "entry_bar_at": bar.timestamp.isoformat(),
+            # 7-2 항목 3·4 — 상한을 통과했다는 사실과 그 값이 함께 남는다.
             "signal_to_entry_seconds": latency_seconds,
-            # 진입 가격(확정봉 종가)이 판단 시점 기준 얼마나 낡았는가. 봉 크기가 상한이다.
-            "price_reference_lag_seconds": price_reference_lag,
+            "price_drift_pct_of_stop": drift.get("pct_of_stop"),
+            "price_drift_pct": drift.get("adverse_pct"),
+            "price_drift_favorable": drift.get("favorable"),
+            # 진행 중 봉이 열린 지 얼마나 됐는가. **가격의 나이가 아니다**(위 주석).
+            "price_bar_age_seconds": price_bar_age,
+            "entry_price_source": "live_last_trade",
+            "entry_price_note": "진행 중 봉의 종가 = 조회 시점 마지막 체결가. 확정봉 종가가 아니다",
+            "win_pct": signal.get("win_pct"),
             "participant_type": signal.get("participant_type"),
             "participant_confidence": signal.get("participant_confidence"),
             "unclassified_flag": signal.get("unclassified_flag"),
@@ -285,7 +438,7 @@ def open_follow_trade(candidate: dict[str, Any], *, now: datetime) -> PaperTrade
             "ci_low": signal.get("ci_low"),
             "gates": candidate.get("gates"),
             "gate_scope": "안전 게이트만 적용 · 방향 판단 게이트 제외(고래 신호가 방향 판단을 대체한다는 가설)",
-            "not_promotion": "관찰 자격은 승격이 아니다. 이 트랙 성과를 승격 근거로 쓰지 않는다(C11).",
+            "not_promotion": "추종 자격은 승격이 아니다. 이 트랙 성과를 승격 근거로 쓰지 않는다.",
             "note": "실주문이 아닌 엔진 가상 거래 기록",
             "opened_at": now.isoformat(),
         },
@@ -299,6 +452,29 @@ def open_follow_trade(candidate: dict[str, Any], *, now: datetime) -> PaperTrade
         stance_snapshot={"source": "whale_follow", "note": "스탠스는 진입 조건이 아니다 — 방향은 고래 체결에서 온다"},
         signature_snapshot={"source": "whale_follow", "signature_gate": "제외(설계)"},
     )
+    # 진입 시각은 봉이 아니라 **지금**이다. `entry_bar_at` 은 확정봉 그대로 남는다(C4).
+    return trade.model_copy(update={"entry_at": now})
+
+
+def rejection_summary(rejected: list[dict[str, Any]]) -> dict[str, Any]:
+    """거부 사유 **종류별** 분포 (7-2 항목 5 · 7-4 항목 5).
+
+    사유 문자열만 남기면 "무엇이 걸렀는가"를 셀 수 없다. 코드별로 센다.
+    """
+    counts = {code: 0 for code in REASON_CODES}
+    unknown = 0
+    for item in rejected:
+        code = str(item.get("reason_code") or "")
+        if code in counts:
+            counts[code] += 1
+        else:
+            unknown += 1
+    return {
+        "total": len(rejected),
+        "by_reason": {code: value for code, value in counts.items() if value},
+        "zero_counts": [code for code, value in counts.items() if not value],
+        "uncoded": unknown,
+    }
 
 
 def run_entries(
@@ -312,60 +488,113 @@ def run_entries(
     now: datetime | None = None,
     max_entries: int = MAX_ENTRIES_PER_RUN,
     max_evaluations: int = MAX_EVALUATIONS_PER_RUN,
+    max_latency_minutes: int = DEFAULT_MAX_LATENCY_MINUTES,
+    max_drift_pct_of_stop: float = DEFAULT_MAX_DRIFT_PCT_OF_STOP,
     event_limit: int = 200,
 ) -> dict[str, Any]:
-    """추종 진입 1회 실행. 거부 사유를 전부 돌려준다(C10)."""
+    """추종 진입 1회 실행. 거부 사유를 **코드와 함께** 전부 돌려준다(C10).
+
+    판정 순서는 **싼 것부터**다 — 지연 상한은 분석 조회 없이 판정되므로 먼저 건다.
+    늙은 신호 때문에 30초짜리 분석 조회를 태우면 그것이 곧 예산 초과다(C9).
+    """
     moment = now or utc_now()
+    latency_cap = max(1, int(max_latency_minutes))
     if not eligible:
-        return {"entries": [], "opened": 0, "rejected": [], "signals": 0, "reason": "관찰·승격 자격 지갑이 없다"}
+        return {
+            "entries": [],
+            "opened": 0,
+            "rejected": [],
+            "rejection_summary": rejection_summary([]),
+            "signals": 0,
+            "reason": "추종 자격 지갑이 없다 — 기준을 낮추지 않는다(7-1 항목 4)",
+            "caps": {"max_latency_minutes": latency_cap, "max_drift_pct_of_stop": float(max_drift_pct_of_stop)},
+        }
 
     events: list[Any] = []
     for address in eligible:
         events.extend(repo.list_whale_events(wallet_address=address, limit=event_limit))
-    signals = entry_signals(events, eligible=eligible, now=moment)
+    signals = entry_signals(events, eligible=eligible, now=moment, scan_horizon_minutes=latency_cap * SIGNAL_SCAN_MULTIPLIER)
     for signal in signals:
         signal.update(signal_context.get(str(signal["address"]), {}) if signal_context else {})
 
     opened: list[PaperTrade] = []
     rejected: list[dict[str, Any]] = []
+    latencies: list[float] = []
     evaluations = 0
     for signal in signals:
+        base = {"address": signal["address"], "symbol": signal["symbol"], "latency_seconds": round(float(signal["signal_age_seconds"]), 1)}
+        # ── 지연 상한 — 분석 조회 **전에** 건다 (7-2 항목 3) ─────────────
+        if float(signal["signal_age_seconds"]) > latency_cap * 60:
+            rejected.append(
+                {
+                    **base,
+                    "reason_code": REASON_LATENCY,
+                    "reason": f"체결→진입 {signal['signal_age_seconds'] / 60:.1f}분 — 상한 {latency_cap}분 초과. 추종이 아니다",
+                }
+            )
+            continue
         if len(opened) >= max(0, int(max_entries)):
-            rejected.append({"address": signal["address"], "symbol": signal["symbol"], "reason": f"진입 상한 {max_entries}건 도달 — 다음 실행으로 넘긴다"})
+            rejected.append({**base, "reason_code": REASON_ENTRY_CAP, "reason": f"진입 상한 {max_entries}건 도달 — 다음 실행으로 넘긴다"})
             continue
         if evaluations >= max(0, int(max_evaluations)):
             # 침묵하지 않는다 — 잘렸다는 사실을 남긴다(C10). 이것이 없으면 "신호가 없었다"로 읽힌다.
             rejected.append(
-                {
-                    "address": signal["address"],
-                    "symbol": signal["symbol"],
-                    "reason": f"분석 조회 상한 {max_evaluations}건 도달 — 평가하지 않고 다음 실행으로 넘긴다(C9)",
-                }
+                {**base, "reason_code": REASON_EVALUATION_CAP, "reason": f"분석 조회 상한 {max_evaluations}건 도달 — 평가하지 않고 다음 실행으로 넘긴다(C9)"}
             )
             continue
         evaluations += 1
         try:
-            candidate = evaluate_signal(repo, settings, signal, analysis_loader=analysis_loader, simulation_loader=simulation_loader, now=moment)
+            candidate = evaluate_signal(
+                repo,
+                settings,
+                signal,
+                analysis_loader=analysis_loader,
+                simulation_loader=simulation_loader,
+                now=moment,
+                max_drift_pct_of_stop=max_drift_pct_of_stop,
+            )
         except Exception as exc:  # 분석 조회 실패가 트랙 전체를 멈추면 안 된다
-            rejected.append({"address": signal["address"], "symbol": signal["symbol"], "reason": f"{type(exc).__name__}: {exc}"})
+            rejected.append({**base, "reason_code": REASON_ERROR, "reason": f"{type(exc).__name__}: {exc}"})
             continue
         if not candidate.get("opened"):
-            rejected.append({"address": signal["address"], "symbol": signal["symbol"], "reason": candidate.get("reason"), "gates": candidate.get("gates")})
+            rejected.append(
+                {
+                    **base,
+                    "reason_code": candidate.get("reason_code"),
+                    "reason": candidate.get("reason"),
+                    "gates": candidate.get("gates"),
+                    "drift": candidate.get("drift"),
+                }
+            )
             continue
         trade = open_follow_trade({**candidate, "timeframe": FOLLOW_TIMEFRAME}, now=moment)
         repo.upsert_whale_follow_trade(trade)
         opened.append(trade)
+        latencies.append(float(signal["signal_age_seconds"]))
 
     return {
-        "entries": [{"id": str(trade.id), "symbol": trade.symbol, "direction": trade.direction.value} for trade in opened],
+        "entries": [
+            {
+                "id": str(trade.id),
+                "symbol": trade.symbol,
+                "direction": trade.direction.value,
+                "entry_price": trade.entry_price,
+                "latency_seconds": (trade.entry_evidence or {}).get("signal_to_entry_seconds"),
+                "drift_pct_of_stop": (trade.entry_evidence or {}).get("price_drift_pct_of_stop"),
+            }
+            for trade in opened
+        ],
         "opened": len(opened),
         "rejected": rejected,
+        "rejection_summary": rejection_summary(rejected),
         "signals": len(signals),
         "evaluated": evaluations,
         "evaluation_cap": int(max_evaluations),
+        "caps": {"max_latency_minutes": latency_cap, "max_drift_pct_of_stop": float(max_drift_pct_of_stop)},
+        "entry_latency_seconds": sorted(round(value, 1) for value in latencies),
         "eligible_wallets": len(eligible),
         "track": "whale_follow",
-        "ledger": "whale_follow_trades (paper_trades 와 분리 · C3)",
+        "ledger": "whale_follow_trades (paper_trades 와 분리 · C2)",
     }
 
 
@@ -377,10 +606,10 @@ def run_exits(
     now: datetime | None = None,
     timeframe: str = FOLLOW_TIMEFRAME,
 ) -> dict[str, Any]:
-    """열린 추종 포지션의 출구를 판정한다. `policy.evaluate_exit` 를 그대로 쓴다(C5).
+    """열린 추종 포지션의 출구를 판정한다. `policy.evaluate_exit` 를 그대로 쓴다(C4).
 
-    진입만 되고 청산이 없으면 표본은 0이다(6-5 항목 4). 그래서 출구는 진입과 같은 잡에서
-    돈다 — 한쪽만 도는 상태가 생기지 않게.
+    진입만 되고 청산이 없으면 표본은 0이다. 그래서 출구는 진입과 같은 잡에서 돈다 —
+    한쪽만 도는 상태가 생기지 않게.
 
     **반대 스탠스 청산은 이 트랙에서 작동하지 않는다.** 스탠스를 진입 조건에서 뺐으므로
     청산 조건에도 넣지 않는다 — 그러면 방향 판단이 뒷문으로 들어온다. 빈 스탠스를 넘겨
@@ -444,8 +673,49 @@ def run_exits(
     }
 
 
+def _distribution(values: list[float], *, unit: str, empty_note: str) -> dict[str, Any]:
+    """분포. **표본 0에서 숫자를 만들어 내지 않는다**(C10)."""
+    if not values:
+        return {"count": 0, "note": empty_note}
+    ordered = sorted(values)
+    return {
+        "count": len(ordered),
+        "unit": unit,
+        "min": round(ordered[0], 2),
+        "median": round(ordered[len(ordered) // 2], 2),
+        "p90": round(ordered[min(len(ordered) - 1, int(len(ordered) * 0.9))], 2),
+        "max": round(ordered[-1], 2),
+    }
+
+
+def latency_distribution(trades: list[PaperTrade]) -> dict[str, Any]:
+    """체결→진입 지연 분포 (7-4 항목 2). 상한이 실제로 무엇을 걸렀는지 읽는 쪽 절반이다."""
+    values = [
+        float((trade.entry_evidence or {}).get("signal_to_entry_seconds"))
+        for trade in trades
+        if isinstance((trade.entry_evidence or {}).get("signal_to_entry_seconds"), (int, float))
+    ]
+    return _distribution([value / 60 for value in values], unit="minutes", empty_note="진입 0건 — 지연을 측정할 대상이 없다")
+
+
+def drift_distribution(trades: list[PaperTrade]) -> dict[str, Any]:
+    """가격 이탈 분포 (7-4 항목 3). 상한 값이 적정한지 판정하는 근거다.
+
+    분포가 상한에 몰려 있으면 상한이 너무 조인 것이고, 상한 근처가 비어 있으면 느슨한 것이다.
+    """
+    values = [
+        float((trade.entry_evidence or {}).get("price_drift_pct_of_stop"))
+        for trade in trades
+        if isinstance((trade.entry_evidence or {}).get("price_drift_pct_of_stop"), (int, float))
+    ]
+    return _distribution(values, unit="pct_of_stop", empty_note="진입 0건 — 이탈을 측정할 대상이 없다")
+
+
 def performance_by_qualification(trades: list[PaperTrade]) -> dict[str, Any]:
-    """자격 종류별 분리 집계 (6-4 항목 3). 관찰 자격 건과 승격 자격 건을 섞지 않는다.
+    """자격별 집계. 자격이 하나로 줄었어도 **과거 행의 자격은 그대로 읽는다**.
+
+    Phase 6 의 `observation`/`promotion` 행을 새 `follow` 행과 섞으면 문턱이 다른 표본이
+    한 통계에 들어간다. 자격이 단순해진 것은 지금부터이지 소급이 아니다.
 
     R 은 계획 리스크 기준이다 — `planned_risk_usdt` 가 있으면 그것으로 나눈다. 없으면
     R 을 만들지 않는다(추정치를 적지 않는다).
@@ -456,41 +726,49 @@ def performance_by_qualification(trades: list[PaperTrade]) -> dict[str, Any]:
         key = str(evidence.get("qualification") or "unknown")
         bucket = buckets.setdefault(
             key,
-            {"qualification": key, "entries": 0, "closed": 0, "wins": 0, "net_usdt": 0.0, "net_r": 0.0, "r_samples": 0, "latency_seconds": []},
+            {
+                "qualification": key,
+                "entries": 0,
+                "closed": 0,
+                "wins": 0,
+                "net_usdt": 0.0,
+                "net_r": 0.0,
+                "r_samples": 0,
+                "gross_win_usdt": 0.0,
+                "gross_loss_usdt": 0.0,
+                "_trades": [],
+            },
         )
         bucket["entries"] += 1
-        latency = evidence.get("signal_to_entry_seconds")
-        if isinstance(latency, (int, float)):
-            bucket["latency_seconds"].append(float(latency))
+        bucket["_trades"].append(trade)
         if trade.status != "closed":
             continue
+        net = float(trade.net_pnl_usdt or 0.0)
         bucket["closed"] += 1
-        bucket["net_usdt"] += float(trade.net_pnl_usdt or 0.0)
-        if float(trade.net_pnl_usdt or 0.0) > 0:
+        bucket["net_usdt"] += net
+        if net > 0:
             bucket["wins"] += 1
+            bucket["gross_win_usdt"] += net
+        else:
+            bucket["gross_loss_usdt"] += abs(net)
         planned_risk = float(((trade.target_plan or {}).get("sizing") or {}).get("planned_risk_usdt") or 0.0)
         if planned_risk > 0:
-            bucket["net_r"] += float(trade.net_pnl_usdt or 0.0) / planned_risk
+            bucket["net_r"] += net / planned_risk
             bucket["r_samples"] += 1
 
     for bucket in buckets.values():
-        latencies = sorted(bucket.pop("latency_seconds"))
-        bucket["latency"] = (
-            {
-                "count": len(latencies),
-                "min_seconds": round(latencies[0], 1),
-                "median_seconds": round(latencies[len(latencies) // 2], 1),
-                "max_seconds": round(latencies[-1], 1),
-            }
-            if latencies
-            else {"count": 0, "note": "진입 0건 — 지연을 측정할 대상이 없다"}
-        )
+        rows = bucket.pop("_trades")
+        bucket["latency"] = latency_distribution(rows)
+        bucket["drift"] = drift_distribution(rows)
         bucket["net_usdt"] = round(bucket["net_usdt"], 4)
         bucket["net_r"] = round(bucket["net_r"], 4) if bucket["r_samples"] else None
         bucket["win_pct"] = round(bucket["wins"] / bucket["closed"] * 100, 1) if bucket["closed"] else None
-        # C11 — 이 수치는 승격 근거가 아니다. 집계에 문구를 붙여 다닌다.
+        losses = bucket.pop("gross_loss_usdt")
+        winnings = bucket.pop("gross_win_usdt")
+        # PF 는 손실이 있어야 정의된다. 손실 0에서 무한대를 적지 않는다.
+        bucket["profit_factor"] = round(winnings / losses, 3) if losses > 0 else None
         bucket["not_promotion_evidence"] = "추종 트랙 성과는 승격(28일·N>=30·CI 하한 55%) 근거로 쓰지 않는다"
     return {
         "buckets": buckets,
-        "note": "관찰 자격 건과 승격 자격 건은 분리 집계한다 — 문턱이 다르므로 섞으면 둘 다 해석 불가가 된다",
+        "note": "자격 종류가 다른 건은 분리 집계한다 — 문턱이 다르므로 섞으면 둘 다 해석 불가가 된다",
     }

@@ -1,4 +1,4 @@
-"""WO-FCE-WHALE-FOLLOW-01 Phase 6-3 — 고래 추종 트랙 알림.
+"""고래 추종 트랙 알림 — WO-FCE-WHALE-FOLLOW-01 6-3 (상한) · **-02 7-3 (문구 단순화)**.
 
 ## 스팸 사고를 재발시키지 않는다 (C7)
 
@@ -25,10 +25,29 @@ identity 에 체결 ID·건수가 들어갔다
 `whale_entry`(강등 유지)는 **고래 체결 자체**의 알림이었다. 이 rule 은 **엔진이 그 체결을
 보고 가상 진입을 했다**는 알림이다. 후자는 우리 행동이므로 알 가치가 있다.
 
-## 미검증임을 본문에 박는다 (C8)
+## 문구는 자격만큼 단순해졌다 (WO-FCE-WHALE-FOLLOW-02 7-3)
 
-관찰 자격은 승격이 아니다. N·CI 하한·자격 종류를 병기하고 "미검증 관찰 자격 진입"을
-명시한다. 그리고 실주문이 아님을 매번 적는다 — 이 트랙은 페이퍼다(C2).
+Phase 6 은 모든 건이 `미검증 · 승격 아님 · CI 하한 35.9%` 로 똑같이 찍혀서 **라벨이 정보를
+주지 못했다.** 자격이 `N>=30 · 승률>=55% · MM 아님` 하나로 줄었으므로 본문도 그 규칙을
+그대로 읽게 만든다:
+
+```
+고래 0x10f1…202f · 승률 64.9% (N=37) · directional
+ETHUSDT long · 진입 2478.1 · 무효화 2425.59
+체결→진입 3.2분 · 이탈 0.4%
+실주문이 아닌 엔진 가상 거래 기록입니다.
+```
+
+**승률과 지연·이탈이 본문에 있다.** 그 셋이 이 트랙이 무엇을 했는지의 전부다.
+
+## 청산 알림에 결과를 붙인다 (7-3 항목 2)
+
+진입과 청산이 **짝으로** 보여야 한다. `identity` 가 지갑·심볼·방향·단계로 같으므로
+`opened`/`closed` 가 같은 축에 놓이고, 청산 본문에 진입가·순손익·사유가 함께 나온다.
+
+## 미검증임은 계속 박는다 (C8)
+
+추종 자격은 승격이 아니다. 그리고 실주문이 아님을 매번 적는다 — 이 트랙은 페이퍼다(C1).
 """
 
 from __future__ import annotations
@@ -72,29 +91,41 @@ def _latency_label(seconds: Any) -> str:
     return f"체결→진입 {value / 3600:.1f}시간"
 
 
+def _drift_label(pct: Any) -> str:
+    """고래 체결가 대비 불리한 이탈. **미측정과 0% 를 구분한다.**"""
+    if not isinstance(pct, (int, float)):
+        return "미측정"
+    return f"{float(pct):.2f}%"
+
+
+def _pct(value: Any) -> str:
+    return f"{float(value):.1f}%" if isinstance(value, (int, float)) else "미상"
+
+
 def format_message(trade: PaperTrade, *, phase: str) -> str:
-    """본문 필수 항목 (6-3 항목 4). 하나라도 빠지면 미검증 신호가 검증된 것처럼 읽힌다."""
+    """본문 필수 항목 (7-3 항목 1). 자격 규칙을 그대로 읽을 수 있어야 한다.
+
+    승률·N·유형이 **자격 근거**이고, 지연·이탈이 **추종이 성립했는지**의 근거다. 하나라도
+    빠지면 "왜 이 거래를 했는가"를 알림만 보고 되짚을 수 없다.
+    """
     evidence = _evidence(trade)
-    qualification = str(evidence.get("qualification") or "unknown")
-    observation = qualification == "observation"
     kind = str(evidence.get("participant_type") or "unclassified")
-    confidence = evidence.get("participant_confidence")
+    win_pct = evidence.get("win_pct")
     sample = evidence.get("sample_size")
-    ci_low = evidence.get("ci_low")
     address = str(evidence.get("whale_address") or "")
     short = f"{address[:6]}…{address[-4:]}" if len(address) > 12 else address
 
     lines = [
-        f"고래 {short} · {kind} 추정" + (f" (신뢰 {confidence})" if confidence is not None else ""),
-        # C8 — 승격과 구분되어야 한다. 이 줄이 없으면 검증된 신호로 읽힌다.
-        ("⚠️ 미검증 관찰 자격 진입 (승격 아님)" if observation else "승격 고래 추종 진입"),
-        f"표본 N={sample if sample is not None else '미상'} · CI 하한 {ci_low if ci_low is not None else '미상'}%",
+        f"고래 {short} · 승률 {_pct(win_pct)} (N={sample if sample is not None else '미상'}) · {kind}",
         f"{trade.symbol} {trade.direction.value} · 진입 {trade.entry_price:g} · 무효화 {trade.invalidation_price:g}",
-        _latency_label(evidence.get("signal_to_entry_seconds")),
+        f"{_latency_label(evidence.get('signal_to_entry_seconds'))} · 이탈 {_drift_label(evidence.get('price_drift_pct'))}",
     ]
     if phase == "closed":
-        lines.append(f"청산 · 순손익 {trade.net_pnl_usdt:+.2f} USDT")
-    # C2 — 매번 적는다. 이 트랙은 페이퍼이며 실주문 경로는 봉인돼 있다.
+        # 7-3 항목 2 — 진입과 청산이 짝으로 보여야 한다. 결과 없는 청산 알림은 반쪽이다.
+        lines.append(f"청산 · 순손익 {trade.net_pnl_usdt:+.2f} USDT · {trade.exit_reason or '사유 미상'}")
+    # C8 — 추종 자격은 승격이 아니다. 이 줄이 없으면 검증된 신호로 읽힌다.
+    lines.append("미검증 추종 자격 (승격 아님)")
+    # C1 — 매번 적는다. 이 트랙은 페이퍼이며 실주문 경로는 봉인돼 있다.
     lines.append("실주문이 아닌 엔진 가상 거래 기록입니다.")
     return "\n".join(lines)
 
@@ -171,13 +202,20 @@ def build_candidates(
                     "track": "whale_follow",
                     "phase": phase,
                     "qualification": qualification,
-                    "unverified": qualification == "observation",
+                    # 추종 자격은 승격이 아니다 — 어떤 자격으로 들어왔든 미검증이다.
+                    "unverified": True,
                     "whale_address": address,
+                    "win_pct": evidence.get("win_pct"),
                     "sample_size": evidence.get("sample_size"),
                     "ci_low": evidence.get("ci_low"),
                     "participant_type": evidence.get("participant_type"),
                     "unclassified_flag": evidence.get("unclassified_flag"),
                     "signal_to_entry_seconds": evidence.get("signal_to_entry_seconds"),
+                    "price_drift_pct": evidence.get("price_drift_pct"),
+                    "price_drift_pct_of_stop": evidence.get("price_drift_pct_of_stop"),
+                    # 7-3 항목 2 — opened/closed 를 짝으로 추적하는 키. identity 와 같은 축이다.
+                    "pair_key": alert_identity(address=address, symbol=trade.symbol, direction=trade.direction.value, phase="*"),
+                    "net_pnl_usdt": trade.net_pnl_usdt if phase == "closed" else None,
                     "trade_id": str(trade.id),
                     "paper_only": True,
                 },

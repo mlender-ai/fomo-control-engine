@@ -1334,9 +1334,10 @@ def run_paper_engine() -> dict[str, Any]:
 
 
 def whale_follow_eligibility() -> dict[str, Any]:
-    """관찰 자격 판정 (Phase 6-1). 승격 판정과 별도 축이다(C1).
+    """추종 자격 판정 (WO-FCE-WHALE-FOLLOW-02 7-1). 규칙 하나, 조건 셋.
 
-    승격 기준(`onchain/service.py` 의 28일·N>=30·CI 하한 55%)을 읽지도 바꾸지도 않는다.
+    N>=30 · 승률 점추정>=55% · MM 추정 아님. 승격 기준(`onchain/service.py` 의 28일·N>=30·
+    CI 하한 55%)을 읽지도 바꾸지도 않는다(C3).
     """
     from app.backtest.statistics import bootstrap_ci_from_counts
     from app.onchain import follow_eligibility, participant_type, service as onchain_service
@@ -1352,23 +1353,21 @@ def whale_follow_eligibility() -> dict[str, Any]:
     for wallet in wallets:
         events.extend(repo.list_whale_events(wallet_address=wallet.address, limit=onchain_service.CLASSIFICATION_EVENTS_PER_WALLET))
     estimates = participant_type.classify_wallets(events)
-    last_fills = {wallet.address.lower(): wallet.last_fill_at for wallet in wallets}
 
-    statuses: dict[str, follow_eligibility.ObservationStatus] = {}
+    statuses: dict[str, follow_eligibility.FollowStatus] = {}
     for address, raw_size in sizes.items():
         excluded = int(contaminated.get(address, {}).get("excluded_sample") or 0)
-        # 오염 지갑은 표본을 계수에서 뺀다 — 행은 지우지 않는다(6-4).
+        # 오염 지갑은 표본을 계수에서 뺀다 — 행은 지우지 않는다.
         size = 0 if excluded else int(raw_size)
         won = 0 if excluded else int(wins.get(address, 0))
+        # CI 하한은 **표시 전용**이다(§2). 자격 판정에 들어가지 않는다.
         ci = bootstrap_ci_from_counts(won, size) if size else None
-        statuses[address] = follow_eligibility.observation_status(
+        statuses[address] = follow_eligibility.follow_status(
             address=address,
             sample_size=size,
             wins=won,
             ci_low=round(float(ci[0]), 1) if ci else None,
             estimate=estimates.get(address),
-            last_fill_at=last_fills.get(address),
-            now=now,
             excluded_sample=excluded,
         )
     return {
@@ -1380,16 +1379,70 @@ def whale_follow_eligibility() -> dict[str, Any]:
     }
 
 
-def run_whale_follow_engine() -> dict[str, Any]:
-    """고래 추종 트랙 1회 실행 (Phase 6-2). 진입과 출구를 같은 잡에서 돌린다.
+# 자격 판정은 지갑 전수 조회다. 체결은 30초마다 오지만 자격은 시간 단위로 변하므로
+# 이벤트 구동 경로가 매번 전수 조회를 돌리지 않게 캐시한다(C9).
+_follow_eligibility_cache: dict[str, Any] = {"at": 0.0, "payload": None}
+_follow_eligibility_lock = threading.Lock()
 
-    한쪽만 도는 상태가 생기면 진입만 쌓이고 표본이 0 이 된다(6-5 항목 4).
+
+def cached_whale_follow_eligibility(*, max_age_seconds: int | None = None) -> dict[str, Any]:
+    """캐시된 자격 판정. 만료 전이면 재계산하지 않는다.
+
+    수명 0 이면 캐시를 쓰지 않는다 — 원복 경로다.
+    """
+    ttl = int(runtime.settings.whale_follow_eligibility_cache_seconds if max_age_seconds is None else max_age_seconds)
+    with _follow_eligibility_lock:
+        cached = _follow_eligibility_cache.get("payload")
+        if ttl > 0 and cached is not None and time.monotonic() - float(_follow_eligibility_cache["at"]) < ttl:
+            return cached
+        payload = whale_follow_eligibility()
+        _follow_eligibility_cache["at"] = time.monotonic()
+        _follow_eligibility_cache["payload"] = payload
+        return payload
+
+
+def whale_follow_has_fresh_signal(events: list[dict[str, Any]] | None) -> bool:
+    """방금 수집된 체결 중 **추종 자격 지갑의 진입 체결**이 있는가 (7-2 항목 1).
+
+    고래 수집 잡(30초)이 이것을 물어보고, 참이면 추종 엔진을 **즉시** 돌린다. 15분 주기
+    잡만 두면 그 주기가 곧 지연의 바닥이 되고, 그러면 "체결 근처 진입"이 성립하지 않는다.
+
+    자격 조회는 캐시를 쓴다 — 30초마다 지갑 전수 조회를 돌리면 그 자체가 예산 사고다(C9).
+    """
+    from app.paper import whale_follow
+
+    if not events:
+        return False
+    if not bool(getattr(runtime.settings, "whale_follow_track_enabled", False)):
+        return False
+    entry_events = [item for item in events if str(item.get("event") or "").lower() in whale_follow.ENTRY_EVENTS]
+    if not entry_events:
+        return False
+    eligible = {str(address).lower() for address in cached_whale_follow_eligibility().get("eligible_addresses") or []}
+    if not eligible:
+        return False
+    return any(str(item.get("wallet_address") or "").lower() in eligible for item in entry_events)
+
+
+def run_whale_follow_engine(trigger: str = "scheduled") -> dict[str, Any]:
+    """고래 추종 트랙 1회 실행. 진입과 출구를 같은 잡에서 돌린다.
+
+    한쪽만 도는 상태가 생기면 진입만 쌓이고 표본이 0 이 된다.
+
+    `trigger` 는 이 실행이 **체결 감지로 즉시** 돈 것인지 주기 잡으로 돈 것인지다. 지연
+    분포를 해석할 때 그 구분이 필요하다 — 두 경로의 지연은 구조적으로 다르다.
     """
     from app.notify import whale_follow_alerts
     from app.onchain import follow_eligibility
     from app.paper import whale_follow
 
     def load(symbol: str, timeframe: str) -> dict[str, Any]:
+        # `force=True` — 진입가가 **현재가**이므로 캐시된(최대 5분 묵은) 분석을 쓰면
+        # "현재가"가 현재가가 아니게 된다. 조회 상한(3건/실행)이 비용을 묶는다(C9).
+        return scout_handlers.scout_analysis(symbol, timeframe=timeframe, force=True, detail=True)
+
+    def load_cached(symbol: str, timeframe: str) -> dict[str, Any]:
+        # 출구는 확정봉으로 판정한다 — 갱신을 강제할 이유가 없다.
         return scout_handlers.scout_analysis(symbol, timeframe=timeframe, force=False, detail=True)
 
     def simulate(symbol: str, timeframe: str, direction: str, entry_price: float) -> dict[str, Any]:
@@ -1407,11 +1460,12 @@ def run_whale_follow_engine() -> dict[str, Any]:
     if not bool(getattr(runtime.settings, "whale_follow_track_enabled", False)):
         return {"enabled": False, "opened": 0, "reason": "추종 트랙이 꺼져 있다 (FCE_WHALE_FOLLOW_TRACK_ENABLED)"}
 
-    eligibility = whale_follow_eligibility()
+    eligibility = cached_whale_follow_eligibility()
     statuses = eligibility.get("statuses") or {}
-    eligible = {address: follow_eligibility.QUALIFICATION_OBSERVATION for address in eligibility.get("eligible_addresses") or []}
+    eligible = {address: follow_eligibility.QUALIFICATION_FOLLOW for address in eligibility.get("eligible_addresses") or []}
     context = {
         address: {
+            "win_pct": payload.get("win_pct"),
             "participant_type": payload.get("participant_type"),
             "participant_confidence": payload.get("participant_confidence"),
             "unclassified_flag": payload.get("unclassified_flag"),
@@ -1429,12 +1483,14 @@ def run_whale_follow_engine() -> dict[str, Any]:
         simulation_loader=simulate,
         signal_context=context,
         max_entries=int(runtime.settings.whale_follow_max_entries_per_run),
+        max_latency_minutes=int(runtime.settings.whale_follow_max_latency_minutes),
+        max_drift_pct_of_stop=float(runtime.settings.whale_follow_max_drift_pct_of_stop),
     )
-    exits = whale_follow.run_exits(runtime.repository, runtime.settings, analysis_loader=load)
+    exits = whale_follow.run_exits(runtime.repository, runtime.settings, analysis_loader=load_cached)
 
-    # 6-3: 알림 후보. 발송은 **기존 통합 관문**을 지난다 — 여기서 보내지 않는다.
+    # 알림 후보. 발송은 **기존 통합 관문**을 지난다 — 여기서 보내지 않는다.
     # 워커가 `evaluate_scout_setups` 로 넘기고, 그 안에서 `delivery_gate.evaluate_rule` 이
-    # 판정한다. 새 발송 경로를 만들지 않는 것이 우회 0건의 형태다(6-3 항목 1).
+    # 판정한다. 새 발송 경로를 만들지 않는 것이 우회 0건의 형태다(C7).
     now = utc_now()
     changed_ids = {str(item["id"]) for item in entries.get("entries") or []} | {str(item["id"]) for item in exits.get("closed") or []}
     recent = runtime.repository.list_whale_follow_trades(limit=200)
@@ -1443,10 +1499,13 @@ def run_whale_follow_engine() -> dict[str, Any]:
 
     return {
         "enabled": True,
+        "trigger": trigger,
         **entries,
         "exits": exits,
         "eligible_wallets": len(eligible),
-        "observation_eligible": eligibility.get("eligible"),
+        "follow_eligible": eligibility.get("eligible"),
+        "passers": eligibility.get("passers"),
+        "zero_passers_note": eligibility.get("zero_passers_note"),
         "contaminated_sample_total": eligibility.get("contaminated_sample_total"),
         "alerts": {
             "candidates": len(alerts["candidates"]),
@@ -1467,8 +1526,15 @@ def whale_follow_trades(status: str | None = None, symbol: str | None = None, li
         "count": len(rows),
         "trades": [item.model_dump(mode="json") for item in rows],
         "performance": whale_follow.performance_by_qualification(rows),
+        # 7-4 항목 2·3 — 상한이 무엇을 걸렀는지, 상한 값이 적정한지 읽는 근거.
+        "latency": whale_follow.latency_distribution(rows),
+        "drift": whale_follow.drift_distribution(rows),
+        "caps": {
+            "max_latency_minutes": int(runtime.settings.whale_follow_max_latency_minutes),
+            "max_drift_pct_of_stop": float(runtime.settings.whale_follow_max_drift_pct_of_stop),
+        },
         "ledger": "whale_follow_trades",
-        "label": "미검증 관찰 자격 트랙 — 승격 근거로 쓰지 않는다(C11)",
+        "label": "미검증 추종 자격 트랙 — 승격 근거로 쓰지 않는다",
     }
 
 

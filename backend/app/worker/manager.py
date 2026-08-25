@@ -192,6 +192,11 @@ class WorkerManager:
         }
         self._locks = {name: asyncio.Lock() for name in self.jobs}
         self._telegram_task: asyncio.Task | None = None
+        # WO-FCE-WHALE-FOLLOW-02 7-2: 체결 구동 추종 실행. 수집 잡(30초)이 깨우지만
+        # **기다리지 않는다** — 기다리면 추종 엔진의 분석 조회(최대 3건 × ~30초)가 수집 잡의
+        # 예산(150초)을 먹고 그것이 곧 잡 타임아웃이다. 대신 별도 태스크로 띄우고
+        # 중복 실행만 막는다.
+        self._whale_follow_task: asyncio.Task | None = None
         self._started = False
         # WO-FCE-WORKER-HANG-02: 매달림 증거 경로. 하트비트 파일과 같은 logs 디렉터리를 쓴다.
         log_dir = Path(str(settings.worker_liveness_path)).expanduser().parent
@@ -563,16 +568,67 @@ class WorkerManager:
         payload = await asyncio.to_thread(service.collect_whales)
         dashboard = await asyncio.to_thread(service.whale_dashboard)
         await self.alerts.evaluate_whale_events(payload.get("events", []), dashboard)
+        # WO-FCE-WHALE-FOLLOW-02 7-2 — **체결 감지 즉시 추종 판정.**
+        #
+        # 이 잡은 30초마다 돈다. 추종 잡은 15분 주기이므로 주기 잡만 두면 그 15분이 곧
+        # 지연의 바닥이 되고, "고래가 들어간 가격 근처"라는 규칙이 성립하지 않는다.
+        # 자격 지갑의 진입 체결이 실제로 들어왔을 때만 깨운다 — 조건 없이 깨우면 30초마다
+        # 분석 조회가 도는 것이고 그것이 예산 사고다(C9).
+        try:
+            fresh = await asyncio.to_thread(service.whale_follow_has_fresh_signal, payload.get("events", []))
+        except Exception as exc:  # 추종 트리거 실패가 수집 잡을 죽이면 안 된다
+            payload["whale_follow_trigger_error"] = f"{type(exc).__name__}: {exc}"
+            return payload
+        payload["whale_follow_triggered"] = self._dispatch_whale_follow() if fresh else False
         return payload
 
-    async def _run_whale_follow(self) -> dict[str, Any]:
-        """추종 트랙 1회. 알림 후보는 **기존 통합 관문**으로 넘긴다 — 우회 경로를 만들지 않는다."""
-        payload = await self._run_in_thread("whale_follow_engine", service.run_whale_follow_engine)
+    def _dispatch_whale_follow(self) -> bool:
+        """추종 실행을 **기다리지 않고** 띄운다. 이미 돌고 있으면 띄우지 않는다.
+
+        수집 잡을 블로킹하면 추종 엔진의 조회 시간이 수집 잡 예산을 먹는다 — 30초 주기 잡의
+        예산은 150초이고 분석 조회 3건이 그것을 넘길 수 있다. 그 형태가 정확히
+        `DISCOVERY-UNBLOCK-01` 의 라이브 장애 기전이었다.
+
+        중복 실행을 막는 것도 같은 이유다. 30초마다 체결이 오면 추종 실행이 겹쳐 쌓이고,
+        겹친 만큼 분석 조회가 곱해진다.
+        """
+        if self._whale_follow_task is not None and not self._whale_follow_task.done():
+            return False
+        self._whale_follow_task = asyncio.create_task(self._run_whale_follow_on_fill())
+        # 예외를 삼키지 않는다 — 조용히 죽으면 "체결은 오는데 진입이 없다"가 원인 미상이 된다.
+        self._whale_follow_task.add_done_callback(self._log_whale_follow_result)
+        return True
+
+    def _log_whale_follow_result(self, task: asyncio.Task) -> None:
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            logger.warning("whale_follow event-driven run failed: %s: %s", type(error).__name__, error)
+
+    async def _run_whale_follow(self, trigger: str = "scheduled") -> dict[str, Any]:
+        """추종 트랙 1회. 알림 후보는 **기존 통합 관문**으로 넘긴다 — 우회 경로를 만들지 않는다.
+
+        주기 실행 경로다. 잡 잠금은 `_run_job` 이 이미 잡고 있으므로 여기서 다시 잡지 않는다.
+        """
+        payload = await self._run_in_thread("whale_follow_engine", service.run_whale_follow_engine, trigger)
         candidates = payload.get("_alert_candidate_objects", [])
         if candidates:
             await self.alerts.evaluate_scout_setups(candidates)
         payload.pop("_alert_candidate_objects", None)
         return payload
+
+    async def _run_whale_follow_on_fill(self) -> dict[str, Any]:
+        """체결 구동 실행. 주기 실행과 **같은 잡 잠금**을 잡는다.
+
+        겹치면 분석 조회가 곱해져 예산이 두 배가 된다(C9). 주기 틱이 돌고 있으면 이번
+        체결은 그 실행이 함께 처리하므로 건너뛴다 — 신호는 원장에 남아 있고 사라지지 않는다.
+        """
+        lock = self._locks["whale_follow_engine"]
+        if lock.locked():
+            return {"skipped": True, "trigger": "whale_fill", "reason": "추종 실행이 이미 돌고 있다 — 겹치면 분석 조회가 곱해진다"}
+        async with lock:
+            return await self._run_whale_follow(trigger="whale_fill")
 
     async def _scout_scan(self) -> dict[str, Any]:
         payload = await asyncio.to_thread(service.refresh_scout_scan_cache)

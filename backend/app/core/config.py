@@ -215,6 +215,29 @@ class Settings(BaseSettings):
         ge=0,
         validation_alias=AliasChoices("FCE_WHALE_FOLLOW_MAX_ENTRIES_PER_RUN", "WHALE_FOLLOW_MAX_ENTRIES_PER_RUN"),
     )
+    # WO-FCE-WHALE-FOLLOW-02 7-2 — 지연·이탈 상한. **기록만 하지 않고 거부한다.**
+    #
+    # Phase 6 은 상한이 없어서 체결 4시간 뒤에 진입했다. 상한 없는 관측치는 관측치가
+    # 아니라 변명이다. 두 값 모두 권고 시작값이며 7-4 실측 후 조정한다.
+    whale_follow_max_latency_minutes: int = Field(
+        30,
+        ge=1,
+        validation_alias=AliasChoices("FCE_WHALE_FOLLOW_MAX_LATENCY_MINUTES", "WHALE_FOLLOW_MAX_LATENCY_MINUTES"),
+    )
+    # 고래 체결가 대비 불리한 이탈 상한. **무효화 거리 대비 비율**이다 —
+    # 절대 %로 재면 변동성이 다른 심볼에서 같은 숫자가 다른 사건을 뜻한다.
+    whale_follow_max_drift_pct_of_stop: float = Field(
+        25.0,
+        ge=0.0,
+        validation_alias=AliasChoices("FCE_WHALE_FOLLOW_MAX_DRIFT_PCT_OF_STOP", "WHALE_FOLLOW_MAX_DRIFT_PCT_OF_STOP"),
+    )
+    # 체결 감지 → 진입 판정을 잇는 캐시 수명. 자격 판정은 지갑 전수 조회라 30초마다 돌리면
+    # 그 자체가 부하다. 자격은 시간 단위로 변하고 체결은 초 단위로 오므로 분리한다.
+    whale_follow_eligibility_cache_seconds: int = Field(
+        600,
+        ge=0,
+        validation_alias=AliasChoices("FCE_WHALE_FOLLOW_ELIGIBILITY_CACHE_SECONDS", "WHALE_FOLLOW_ELIGIBILITY_CACHE_SECONDS"),
+    )
     hyperliquid_request_timeout_seconds: float = Field(
         10.0,
         validation_alias=AliasChoices("FCE_HYPERLIQUID_REQUEST_TIMEOUT_SECONDS", "HYPERLIQUID_REQUEST_TIMEOUT_SECONDS"),

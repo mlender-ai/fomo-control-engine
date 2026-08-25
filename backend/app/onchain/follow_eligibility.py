@@ -1,92 +1,86 @@
-"""WO-FCE-WHALE-FOLLOW-01 Phase 6-1 — 관찰 자격(승격과 분리).
+"""WO-FCE-WHALE-FOLLOW-02 7-1 — 추종 자격. **규칙 하나, 조건 셋.**
 
-## 왜 승격 기준을 페이퍼의 전제로 쓸 수 없나
+## 규칙
 
-Phase 5 는 "승격 통과자 0명 → 추종 트랙 미배선"으로 끝났다. 그 설계가 순환이었다.
+> 추적된 고래 중 **승률 좋은 애들**을 골라서 따라간다.
 
 ```
-승격하려면 승률이 증명돼야 한다
-증명하려면 표본이 있어야 한다
-그런데 "이 고래를 따라가면 버는가"의 표본은 추종 트랙에서만 나온다
-추종 트랙은 승격을 요구한다        ← 순환
+N >= 30           표본. 승률이 의미를 가지는 최소선
+승률 >= 55%       **점추정**이다. CI 하한이 아니다
+MM 추정 아님       마켓메이커 체결은 재고 관리다 — 정의상 잡음
 ```
 
-이 저장소는 같은 순환을 두 번 끊었다 — `paper/policy.py` 의 시그니처 `record_only`,
-그리고 `DISCOVERY-UNBLOCK-01` 의 `backtest_sample` 순환 해제. 세 번째가 여기다.
+끝이다. 셋 다 만족하면 따라가고, 하나라도 못 채우면 안 따라간다.
 
-**페이퍼 트레이딩은 돈이 들지 않는 관찰 장치다.** 증명을 요구할 대상이 아니라 증명을
-만드는 수단이다.
+## Phase 6 의 2축 자격을 걷어냈다 (7-1 항목 2)
 
-## 승격 기준은 한 글자도 바뀌지 않는다
+Phase 6 은 `observation`/`promotion` 두 축에 CI 하한·유형·신뢰도·휴면일까지 얹었다.
+페이퍼 트레이딩에 그 장치가 필요 없었다 — 그리고 복잡한 만큼 **틀린 것을 통과시켰다**:
 
-| 단계 | 기준 | 이 모듈 |
+```
+0x1ee7…edf5 · unclassified (신뢰 0.0) · N=39 · CI 하한 35.9%   ← 통과했다
+```
+
+신뢰 0.0 은 "근거가 아예 없다"는 뜻이고 CI 하한 35.9% 는 점추정이 51% 남짓이라는 뜻이다.
+**동전 던지기를 따라가고 있었다.** 새 규칙은 이 지갑을 승률 조건에서 떨어뜨린다.
+
+## 왜 CI 하한이 아니라 점추정인가
+
+CI 하한 55% 는 사실상 승률 62.5% 를 요구한다. 그것은 **통과 선언의 문턱**이지 관찰
+착수의 문턱이 아니다. 페이퍼는 증명이 아니라 관찰이므로 점추정을 쓴다.
+
+CI 하한과 신뢰도는 **표시에는 남는다**(C10). 자격 판정에서 뺄 뿐이다 — 지우면 나중에
+"왜 이 지갑을 따라갔나"를 되짚을 수 없다.
+
+## `unclassified` 를 허용하는 이유
+
+`0x10f1d8…202f` 가 `unclassified`(양방향 고빈도)이고 승률 1위(64.9%)다. **모르는 것을
+배제하면 영원히 모른다.** 허용하되 플래그하고, N·승률 조건이 실제 거름망 역할을 한다.
+
+## 승격 기준은 한 글자도 바뀌지 않는다 (C3)
+
+| 축 | 기준 | 이 모듈 |
 | --- | --- | --- |
-| 관찰(페이퍼 진입) | N≥20 · 승률 점추정>50% · MM·캐리 아님 · 활동 중 | **신설** |
-| 승격(검증 통과 선언) | 28일 · N≥30 · CI 하한 55% | **무변경** |
-| 실주문 | 봉인 | **무변경** |
+| 추종(페이퍼 진입) | N>=30 · 승률 점추정>=55% · MM 아님 | **여기** |
+| 승격(검증 통과 선언) | 28일 · N>=30 · CI 하한 55% | **무변경 · 참조하지 않음** |
 
-`onchain/service.py` 의 승격 판정은 이 모듈을 import 하지 않는다. 두 축은 서로를
-참조하지 않으며, `test_promotion_thresholds_are_unchanged` 가 그것을 고정한다(C1).
-
-## 그리고 두 축은 다른 것을 잰다
-
-승격 심사가 재는 것은 **고래 자신의 승률**이다. 추종 트랙이 재는 것은
-**"이 고래를 신호로 삼고 우리 사이징·출구로 거래하면 버는가"** 다.
-
-고래 승률이 55% 가 아니어도 우리 손익비가 붙으면 벌 수 있고, 승률 70% 고래를 따라가도
-지연·비용 때문에 잃을 수 있다. 후자는 추종 트랙 없이는 영원히 측정되지 않는다.
-
-그래서 관찰 트랙 성과는 **승격 근거로 쓰지 않는다**(C11). 다른 질문의 답이다.
-
-## `unclassified` 를 왜 허용하는가
-
-`0x10f1d8…202f` 가 `unclassified`(양방향 고빈도)이고 표본 2위(N=37)이며 승률 1위(64.9%)다.
-**모르는 것을 배제하면 영원히 모른다.** 허용하되 `unclassified_flag` 로 표시하고, 유형
-분류 근거가 쌓이면 재판정한다.
-
-**단 MM 추정은 배제한다**(C4). 보수성이 아니라 정의상 잡음이다 — maker 98.8% 지갑의
-체결은 방향 베팅이 아니라 재고 관리이므로, 그것을 신호로 삼는 것은 신호가 아닌 것을
-신호로 삼는 것이다.
+`onchain/service.py` 의 승격 판정은 이 모듈을 import 하지 않고, 이 모듈도 그것을 읽지 않는다. **추종 자격과 승격은 별개다** — 승격 여부는 표시용으로만 싣는다.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Any
 
 from app.onchain import participant_type
 
-# ── 관찰 자격 기준 (결과 확인 전 고정 · 6-1 항목 1) ──────────────────────
+# ── 추종 자격 (§2 · 결과 확인 전 고정) ──────────────────────────────────
 
-# 승격은 30 이다. 관찰은 그보다 낮다 — 관찰은 선언이 아니라 측정의 시작이다.
-OBSERVATION_MIN_SAMPLE = 20
-# CI 하한이 아니라 **점추정**이다. CI 하한 55% 는 사실상 승률 62.5% 를 요구하는데,
-# 그것은 통과 선언의 문턱이지 관찰 착수의 문턱이 아니다.
-OBSERVATION_MIN_WIN_PCT = 50.0
-# 추종 신호가 나오려면 지갑이 지금도 거래하고 있어야 한다. 리더보드 주간 창과 같은 수다.
-OBSERVATION_MAX_IDLE_DAYS = 7
-# 추종 대상에서 배제하는 유형. `unclassified` 는 여기 없다 — 허용하되 플래그한다.
-OBSERVATION_EXCLUDED_TYPES = frozenset({participant_type.TYPE_MARKET_MAKER, participant_type.TYPE_BASIS_CARRY})
+# 승률이 의미를 가지는 최소 표본. Phase 6 의 20 에서 올렸다 — 20 은 우연을 통과시킨다.
+FOLLOW_MIN_SAMPLE = 30
+# **점추정**이다. CI 하한이 아니다. 55% 미만은 수수료를 이길 근거가 없다.
+FOLLOW_MIN_WIN_PCT = 55.0
+# 배제 유형. MM 체결은 방향 베팅이 아니라 재고 관리이므로 신호가 아닌 것을 신호로 삼게 된다.
+FOLLOW_EXCLUDED_TYPES = frozenset({participant_type.TYPE_MARKET_MAKER})
 
-QUALIFICATION_OBSERVATION = "observation"
-QUALIFICATION_PROMOTION = "promotion"
+# 추종 자격은 **하나**다. Phase 6 의 observation/promotion 2축을 대체한다(7-1 항목 2).
+QUALIFICATION_FOLLOW = "follow"
 
 
 @dataclass(frozen=True)
-class ObservationStatus:
-    """관찰 자격 판정. 승격 판정과 **별도 축**이다(6-1 항목 2)."""
+class FollowStatus:
+    """추종 자격 판정. 탈락도 사유를 남긴다(C10)."""
 
     address: str
     eligible: bool
     reason: str
     sample_size: int
     win_pct: float | None
+    # 아래 셋은 **표시 전용**이다. 자격 판정에 쓰이지 않는다(§2).
     ci_low: float | None
     participant_type: str
     participant_confidence: float | None
     unclassified_flag: bool
-    idle_days: int | None
     excluded_sample: int = 0
 
     def as_payload(self) -> dict[str, Any]:
@@ -100,45 +94,46 @@ class ObservationStatus:
             "participant_type": self.participant_type,
             "participant_confidence": self.participant_confidence,
             "unclassified_flag": self.unclassified_flag,
-            "idle_days": self.idle_days,
             "excluded_sample": self.excluded_sample,
-            "criteria": {
-                "min_sample": OBSERVATION_MIN_SAMPLE,
-                "min_win_pct": OBSERVATION_MIN_WIN_PCT,
-                "max_idle_days": OBSERVATION_MAX_IDLE_DAYS,
-                "excluded_types": sorted(OBSERVATION_EXCLUDED_TYPES),
-            },
-            # C8·C11 — 이 자격은 검증 통과가 아니다. 문구가 데이터에 붙어 다녀야 한다.
-            "label": "미검증 관찰 자격",
-            "not_promotion": "관찰 자격은 승격(28일·N≥30·CI 하한 55%)이 아니다. 이 트랙 성과를 승격 근거로 쓰지 않는다.",
+            "criteria": criteria(),
+            # 표시용 값이 자격 근거로 오독되지 않게 못 박는다.
+            "display_only": ["ci_low", "participant_confidence"],
+            "label": "미검증 추종 자격",
+            "not_promotion": "추종 자격은 승격(28일·N>=30·CI 하한 55%)이 아니다. 이 트랙 성과를 승격 근거로 쓰지 않는다.",
         }
 
 
-def observation_status(
+def criteria() -> dict[str, Any]:
+    return {
+        "min_sample": FOLLOW_MIN_SAMPLE,
+        "min_win_pct": FOLLOW_MIN_WIN_PCT,
+        "excluded_types": sorted(FOLLOW_EXCLUDED_TYPES),
+        "rule": "N>=30 · 승률 점추정>=55% · MM 추정 아님",
+    }
+
+
+def follow_status(
     *,
     address: str,
     sample_size: int,
     wins: int,
-    ci_low: float | None,
-    estimate: dict[str, Any] | None,
-    last_fill_at: datetime | None,
-    now: datetime,
+    ci_low: float | None = None,
+    estimate: dict[str, Any] | None = None,
     excluded_sample: int = 0,
-) -> ObservationStatus:
-    """관찰 자격을 판정한다. 탈락도 사유를 남긴다(C10).
+) -> FollowStatus:
+    """§2 의 세 조건을 그대로 판정한다.
 
-    `excluded_sample` 은 6-4 가 계수에서 뺀 오염 표본 수다. `sample_size` 는 이미 제외된
-    뒤의 값이 들어와야 한다 — 이 함수가 다시 빼지 않는다.
+    `excluded_sample` 은 오염으로 계수에서 뺀 표본 수다. `sample_size` 는 이미 제외된 뒤의
+    값이 들어와야 한다 — 이 함수가 다시 빼지 않는다.
     """
     kind = str((estimate or {}).get("participant_type") or participant_type.TYPE_UNCLASSIFIED)
     raw_confidence = (estimate or {}).get("confidence")
     confidence = float(raw_confidence) if isinstance(raw_confidence, (int, float)) else None
     unclassified = kind == participant_type.TYPE_UNCLASSIFIED
     win_pct = round(wins / sample_size * 100, 1) if sample_size else None
-    idle_days = None if last_fill_at is None else max(0, int((now - last_fill_at).total_seconds() // 86400))
 
-    def _status(eligible: bool, reason: str) -> ObservationStatus:
-        return ObservationStatus(
+    def _status(eligible: bool, reason: str) -> FollowStatus:
+        return FollowStatus(
             address=address,
             eligible=eligible,
             reason=reason,
@@ -148,54 +143,57 @@ def observation_status(
             participant_type=kind,
             participant_confidence=confidence,
             unclassified_flag=unclassified,
-            idle_days=idle_days,
             excluded_sample=excluded_sample,
         )
 
-    if kind in OBSERVATION_EXCLUDED_TYPES:
-        return _status(False, f"{kind} 추정 — 방향 베팅이 아니므로 추종 대상이 아니다(C4)")
-    if sample_size < OBSERVATION_MIN_SAMPLE:
-        detail = f"표본 {sample_size}/{OBSERVATION_MIN_SAMPLE}"
+    if kind in FOLLOW_EXCLUDED_TYPES:
+        return _status(False, f"{kind} 추정 — 방향 베팅이 아니므로 추종 대상이 아니다")
+    if sample_size < FOLLOW_MIN_SAMPLE:
+        detail = f"표본 {sample_size}/{FOLLOW_MIN_SAMPLE}"
         if excluded_sample:
             detail += f" (오염 {excluded_sample}건 제외 후)"
         return _status(False, f"{detail} 미달")
-    if win_pct is None or win_pct <= OBSERVATION_MIN_WIN_PCT:
-        return _status(False, f"승률 점추정 {win_pct}% — {OBSERVATION_MIN_WIN_PCT}% 초과 요구")
-    if idle_days is None:
-        return _status(False, "체결 기록이 없다 — 활동 여부를 확인할 수 없다")
-    if idle_days > OBSERVATION_MAX_IDLE_DAYS:
-        return _status(False, f"{idle_days}일간 체결 없음 — 활동 중이 아니다")
+    if win_pct is None or win_pct < FOLLOW_MIN_WIN_PCT:
+        return _status(False, f"승률 점추정 {win_pct}% — {FOLLOW_MIN_WIN_PCT}% 이상 요구")
     flag = " · 유형 미분류(플래그)" if unclassified else ""
-    return _status(True, f"표본 {sample_size} · 승률 {win_pct}% · {kind}{flag} — 관찰 자격 통과(승격 아님)")
+    return _status(True, f"표본 {sample_size} · 승률 {win_pct}% · {kind}{flag} — 추종 자격 통과(승격 아님)")
 
 
-def eligible_addresses(statuses: dict[str, ObservationStatus]) -> set[str]:
+def eligible_addresses(statuses: dict[str, FollowStatus]) -> set[str]:
     return {address for address, status in statuses.items() if status.eligible}
 
 
-def qualification_for(address: str, *, promotion_trusted: set[str], observation_eligible: set[str]) -> str | None:
-    """진입 근거가 될 자격 종류. 승격이 있으면 승격을 우선한다(C3·C8 플래그용)."""
-    key = address.lower()
-    if key in {item.lower() for item in promotion_trusted}:
-        return QUALIFICATION_PROMOTION
-    if key in {item.lower() for item in observation_eligible}:
-        return QUALIFICATION_OBSERVATION
-    return None
+def summary(statuses: dict[str, FollowStatus]) -> dict[str, Any]:
+    """통과자와 **탈락자 사유**를 함께 낸다.
 
-
-def summary(statuses: dict[str, ObservationStatus]) -> dict[str, Any]:
+    통과자가 0명이면 그 사실을 명시한다 — 기준을 낮추지 않는다(7-1 항목 4).
+    """
     eligible = [status for status in statuses.values() if status.eligible]
+    passers = [
+        {
+            "address": status.address,
+            "sample_size": status.sample_size,
+            "win_pct": status.win_pct,
+            "participant_type": status.participant_type,
+            "participant_confidence": status.participant_confidence,
+            "ci_low": status.ci_low,
+        }
+        for status in sorted(eligible, key=lambda item: item.win_pct or 0.0, reverse=True)
+    ]
     return {
         "wallets": len(statuses),
         "eligible": len(eligible),
         "eligible_addresses": sorted(status.address for status in eligible),
+        "passers": passers,
         "unclassified_eligible": sum(1 for status in eligible if status.unclassified_flag),
-        "criteria": {
-            "min_sample": OBSERVATION_MIN_SAMPLE,
-            "min_win_pct": OBSERVATION_MIN_WIN_PCT,
-            "max_idle_days": OBSERVATION_MAX_IDLE_DAYS,
-            "excluded_types": sorted(OBSERVATION_EXCLUDED_TYPES),
-        },
-        "promotion_criteria_untouched": "28일 · N>=30 · CI 하한 55% (C1 · 이 모듈이 참조하지 않는다)",
-        "label": "미검증 관찰 자격",
+        "rejected": sorted(
+            ({"address": status.address, "reason": status.reason} for status in statuses.values() if not status.eligible),
+            key=lambda item: item["address"],
+        ),
+        "criteria": criteria(),
+        "zero_passers_note": (
+            "통과자 0명이다. 기준을 낮추지 않는다 — 표본이 쌓이거나 승률이 오를 때까지 진입하지 않는 것이 설계다(7-1 항목 4)." if not eligible else None
+        ),
+        "promotion_criteria_untouched": "28일 · N>=30 · CI 하한 55% (C3 · 이 모듈이 참조하지 않는다)",
+        "label": "미검증 추종 자격",
     }
