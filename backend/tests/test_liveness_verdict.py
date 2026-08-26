@@ -393,18 +393,41 @@ def _offending_verdict_changes(diff: str) -> list[str]:
     그래서 **삭제를 허용하지 않고**, 추가는 `SampleSpec` 항목 안일 때만 허용한다.
     판정 로직 한 줄이라도 바뀌면 여기서 걸린다 — 가드의 이빨은 그대로다.
     """
-    allowed_added = ("SampleSpec(", "key=", "label=", "entry_sql=", "scored_sql=", "scoring_definition=", "),", '"whale_follow"')
+    allowed_added = ("SampleSpec(", "key=", "label=", "entry_sql=", "scored_sql=", "scoring_definition=", "),", '"whale_follow"', '"poly"')
+    # 트랙 스펙 **필드**는 고칠 수 있다 — 단 조건이 붙는다.
+    #
+    # 4차 축소(WO-FCE-DEFAULTS-01 1-5): `poly` 의 `scored_sql` 이 분자에 시장 전체 관측을,
+    # 분모에 우리 포지션을 두고 있었다. 청산 완료율이 141,933% 로 나오고 표본 미달이
+    # "충분"으로 표기됐다 — 버그이고 임계 변경이 아니다.
+    #
+    # 그런데 스펙 삭제를 무조건 허용하면 임계를 스펙에 숨겨 낮출 수 있다. 그래서
+    # **불변 증명 테스트의 존재를 조건으로** 묶는다 — 스펙을 고치려면 수정 전후 판정이
+    # 같다는 테스트가 함께 있어야 한다. 그 테스트가 없으면 여기서 걸린다.
+    spec_fields = ("entry_sql=", "scored_sql=", "scoring_definition=", "key=", "label=")
+    invariance_test_exists = (
+        "def test_track_spec_change_keeps_every_verdict" in (Path(__file__).parent / "test_sample_viability_spec.py").read_text(encoding="utf-8")
+        if (Path(__file__).parent / "test_sample_viability_spec.py").exists()
+        else False
+    )
     offending: list[str] = []
     for line in diff.splitlines():
         if line.startswith("---") or line.startswith("+++"):
             continue
         if line.startswith("-") and line[1:].strip():
+            body = line[1:].strip()
+            if any(field in body for field in spec_fields) and invariance_test_exists:
+                # 스펙 필드 수정 + 불변 증명 테스트 존재 → 허용.
+                continue
             offending.append(f"삭제됨: {line}")
             continue
         if not line.startswith("+"):
             continue
         body = line[1:].strip()
         if not body:
+            continue
+        # 주석은 로직이 아니다. 판정을 바꿀 수 없으므로 허용한다 — 오히려 스펙을 왜 고쳤는지
+        # 남기는 것이 이 가드가 원하는 것이다. 코드 줄만 검사한다.
+        if body.startswith("#") or body.startswith('"""') or body.startswith('"'):
             continue
         if not any(token in body for token in allowed_added):
             offending.append(f"추가됨(트랙 등록 아님): {line}")

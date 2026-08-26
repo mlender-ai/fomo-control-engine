@@ -106,8 +106,17 @@ TRACK_SAMPLE_SPECS: dict[str, SampleSpec] = {
         key="poly",
         label="폴리마켓 페이퍼",
         entry_sql="SELECT opened_at AS t FROM poly_positions",
-        scored_sql="SELECT resolved_at AS t FROM poly_resolutions",
-        scoring_definition="만기 정산 1건 = 표본 1 (Brier 채점 가능)",
+        # WO-FCE-DEFAULTS-01 1-5 분모 정합. **버그 수리이며 임계 변경이 아니다.**
+        #
+        # 이전: `SELECT resolved_at FROM poly_resolutions` — 시장 전체 Brier 관측 12,774건.
+        # 분자가 시장 전체이고 분모(`poly_positions`)가 우리 포지션 9건이라 청산 완료율이
+        # **1419.333(141,933%)** 로 나왔고 `sample_sufficient` 가 12,774 > 30 이므로 true 였다.
+        # 우리 검증 표본은 0인데 "표본 충분"으로 표기된 것이다.
+        #
+        # 이후: **우리 포지션이 정산된 것**만 센다. 조인으로 분자를 분모와 같은 모집단에
+        # 묶는다. 임계값(30)은 그대로다.
+        scored_sql=("SELECT r.resolved_at AS t FROM poly_resolutions r JOIN poly_positions p ON p.market_id = r.market_id GROUP BY r.market_id"),
+        scoring_definition="우리 포지션의 만기 정산 1건 = 표본 1 (Brier 채점 가능)",
     ),
 }
 

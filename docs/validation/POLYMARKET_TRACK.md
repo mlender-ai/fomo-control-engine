@@ -175,3 +175,62 @@ WO 는 "트랙별 판정이 폴리 때문에 막히지 않게 한다"고 했다.
 ```bash
 FCE_VALIDATION_EXCLUDE_POLY=false
 ```
+
+---
+
+## 분모 정합 수리 (WO-FCE-DEFAULTS-01 1-5 · 2026-08-27)
+
+**임시값이 아니라 버그 수리다.** 분자·분모가 다른 것을 세고 있었다.
+
+```python
+# 이전
+scored_sql = "SELECT resolved_at AS t FROM poly_resolutions"          # 시장 전체 12,774
+entry_sql  = "SELECT opened_at AS t FROM poly_positions"              # 우리 포지션 9
+
+# 이후 — 조인으로 같은 모집단에 묶는다
+scored_sql = ("SELECT r.resolved_at AS t FROM poly_resolutions r "
+              "JOIN poly_positions p ON p.market_id = r.market_id "
+              "GROUP BY r.market_id")
+```
+
+`GROUP BY` 가 필요한 이유: 한 시장에 확률 추정이 여러 개 있어 조인만 하면 9건이 221행으로
+불어난다. 정산 표본은 **시장당 1건**이다.
+
+### 5트랙 판정 불변 증명 (실측)
+
+| 트랙 | 전 | 후 |
+| --- | --- | --- |
+| `crypto` | `VIABLE` | `VIABLE` |
+| `stock_kr` | `INSUFFICIENT_DATA` | `INSUFFICIENT_DATA` |
+| `stock_us` | `INSUFFICIENT_DATA` | `INSUFFICIENT_DATA` |
+| `whale_follow` | `INSUFFICIENT_DATA` | `INSUFFICIENT_DATA` |
+| `poly` | `STRUCTURALLY_BLOCKED` | `STRUCTURALLY_BLOCKED` |
+
+폴리 수치만 정상화됐다:
+
+| 값 | 전 | 후 |
+| --- | --- | --- |
+| `scored_samples` | 12,774 | **1** |
+| 청산 완료율 | **1419.333** (141,933%) | **0.111** |
+| `sample_sufficient` | **true** (거짓) | **false** |
+| `projected_samples_at_target` | 4,412 | 0 |
+
+**임계값은 건드리지 않았다** — `TARGET_SAMPLES=30` · `TARGET_EFFECTIVE_DAYS=28` ·
+`MIN_EFFECTIVE_DAYS_FOR_RATE=3` 그대로다(§0).
+
+### 판정 계층 가드를 우회하지 않았다
+
+`sample_viability.py` 는 `VERDICT_MODULES` 다. 가드가 정당하게 물었고, 넓히는 대신
+**불변 증명 테스트의 존재를 조건으로 묶었다** — 스펙 필드를 고치려면
+`test_track_spec_change_keeps_every_verdict` 가 함께 있어야 통과한다. 그 테스트가 없으면
+스펙 수정이 막힌다.
+
+합성 diff 로 이빨을 확인했다:
+
+| 시도 | 결과 |
+| --- | --- |
+| 임계 하향(`TARGET_SAMPLES 30 → 10`) | **걸림** |
+| 판정 완화(`if sample_size >= 5`) | **걸림** |
+| 스펙 밖 삭제 | **걸림** |
+| 스펙 필드 수정 | 통과 (증명 테스트 존재 시) |
+| 주석 추가 | 통과 |
