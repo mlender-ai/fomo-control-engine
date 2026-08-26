@@ -3959,6 +3959,168 @@ textarea:focus {
   font-weight: 800;
 }
 
+/* WO-FCE-WHALE-COHORT-COLLAPSE-01 4-3 — 고래 탭의 추종 트랙 섹션.
+   사용자 요구: "고래 추종매매했으면 고래 탭에서 그게 보여야 한다." */
+.whaleFollowTrack {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--terminal-line);
+  background: var(--terminal-panel);
+}
+
+.whaleFollowTrack > header {
+  display: grid;
+  gap: 4px;
+}
+
+.whaleFollowTrack > header small {
+  color: var(--terminal-dim);
+  font-size: var(--fce-type-xs);
+}
+
+.whaleFollowSummary,
+.whaleFlowQuadrants {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+}
+
+.whaleFollowSummary > div,
+.whaleFlowQuadrants > div {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid var(--terminal-line);
+}
+
+.whaleFollowSummary span,
+.whaleFlowQuadrants span {
+  color: var(--terminal-muted);
+  font-size: var(--fce-type-xs);
+}
+
+.whaleFollowSummary strong,
+.whaleFlowQuadrants strong {
+  font-family: var(--fce-font-number);
+  font-size: var(--fce-type-lg);
+}
+
+.whaleFollowSummary small {
+  color: var(--terminal-dim);
+  font-size: var(--fce-type-xs);
+}
+
+.whaleFollowRows {
+  display: grid;
+  gap: 8px;
+}
+
+.whaleFollowRows > div {
+  display: grid;
+  gap: 5px;
+  padding: 10px 12px;
+  border: 1px solid var(--terminal-line);
+}
+
+.whaleFollowRows header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.whaleFollowRows header code {
+  font-family: var(--fce-font-number);
+  color: var(--terminal-accent);
+}
+
+.whaleFollowRows header b {
+  margin-left: auto;
+  color: var(--terminal-muted);
+  font-size: var(--fce-type-xs);
+  font-weight: 600;
+}
+
+.whaleFollowStats {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  font-family: var(--fce-font-number);
+  font-size: var(--fce-type-sm);
+}
+
+.whaleFollowStats .long,
+.whaleFollowRecent .long {
+  color: var(--terminal-positive);
+}
+
+.whaleFollowStats .short,
+.whaleFollowRecent .short {
+  color: var(--terminal-negative);
+}
+
+.whaleFollowRows small,
+.whaleFollowRecent small {
+  color: var(--terminal-dim);
+  font-size: var(--fce-type-xs);
+}
+
+.whaleFollowRecent {
+  display: grid;
+  gap: 6px;
+}
+
+.whaleFollowRecent > div {
+  display: grid;
+  grid-template-columns: 8px 1fr auto auto 1fr;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  border-top: 1px solid var(--terminal-line);
+  font-size: var(--fce-type-sm);
+}
+
+.whaleFollowRecent i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.whaleFollowRecent i.long {
+  background: var(--terminal-positive);
+}
+
+.whaleFollowRecent i.short {
+  background: var(--terminal-negative);
+}
+
+/* 4-4 — 재고/유량 4방향 분해 */
+.whaleFlowBreakdown {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+  border: 1px solid var(--terminal-line);
+  background: var(--terminal-panel);
+}
+
+.whaleFlowBreakdown > header {
+  display: grid;
+  gap: 3px;
+}
+
+.whaleFlowBreakdown > header small {
+  color: var(--terminal-dim);
+  font-size: var(--fce-type-xs);
+}
+
+.whaleFlowReconciliation {
+  margin: 0;
+  color: var(--terminal-muted);
+  font-size: var(--fce-type-sm);
+  line-height: 1.6;
+}
+
 /* WHALE-FOLLOW-01 5-2: 유형 추정 배지. 추종 대상과 제외를 색으로 가른다.
    사유는 title 속성으로 조회한다(C10). 추정이므로 라벨 자체에 "추정"이 들어간다. */
 .whaleParticipantTag {

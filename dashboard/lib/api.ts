@@ -1736,6 +1736,7 @@ export type OnchainWhaleEvent = {
 
 export type OnchainWhaleFlow = {
   instrument: string | null;
+  flow_24h_breakdown?: OnchainWhaleFlowBreakdown;
   window_hours: number;
   bucket_hours: number;
   current_long_usd: number;
@@ -1865,9 +1866,87 @@ export type OnchainWhaleParticipantTypes = {
   window_note: string;
 };
 
+export type OnchainWhaleCohort = {
+  tracked: number;
+  supply_of: string;
+  note: string;
+  coverage: Record<string, { long_wallets: number; short_wallets: number; long_usd: number; short_usd: number }>;
+};
+
+export type OnchainWhaleFollowRow = {
+  address: string;
+  label: string | null;
+  participant_type: string | null;
+  sample_size: number | null;
+  win_pct: number | null;
+  ci_low: number | null;
+  entries: number;
+  closed: number;
+  open: number;
+  wins: number;
+  net_usdt: number;
+  follow_win_pct: number | null;
+  profit_factor: number | null;
+  profit_factor_note: string | null;
+  sample_note: string;
+  legacy_entries: number;
+  legacy_note?: string;
+  symbols: string[];
+};
+
+export type OnchainWhaleFollowTrade = {
+  id: string;
+  symbol: string;
+  direction: string;
+  status: string;
+  entry_price: number;
+  invalidation_price: number;
+  net_pnl_usdt: number | null;
+  entry_at: string | null;
+  exit_at: string | null;
+  whale_address: string | null;
+  qualification: string | null;
+  signal_to_entry_seconds: number | null;
+  price_drift_pct_of_stop: number | null;
+  entry_price_source: string | null;
+  unverified: boolean;
+};
+
+export type OnchainWhaleFollowTrack = {
+  available: boolean;
+  reason?: string;
+  ledger?: string;
+  entries: number;
+  closed: number;
+  open: number;
+  net_usdt: number;
+  capital: { available: boolean; note: string; realized_net_usdt?: number; closed_trades?: number; risk_budget_usdt?: number | null; net_r?: number | null };
+  whales: OnchainWhaleFollowRow[];
+  recent: OnchainWhaleFollowTrade[];
+  legacy_entries: number;
+  legacy_note: string | null;
+  not_promotion: string;
+};
+
+export type OnchainWhaleFlowBreakdown = {
+  long_in_usd: number;
+  long_out_usd: number;
+  short_in_usd: number;
+  short_out_usd: number;
+  net_usd: number;
+  unwinding_usd: number;
+  initiating_usd: number;
+  unwinding_share_pct: number | null;
+  stock_net_usd: number;
+  reconciliation: string;
+  note: string;
+};
+
 export type OnchainWhaleDashboard = {
   enabled: boolean;
   wallet_count: number;
+  cohort: OnchainWhaleCohort;
+  follow_track: OnchainWhaleFollowTrack;
   participant_types: OnchainWhaleParticipantTypes;
   max_wallets: number;
   minimum_event_size_usd: number;
@@ -1881,6 +1960,15 @@ export type OnchainWhaleDashboard = {
     rows_scanned?: number;
     eligible_count?: number;
     selected_count: number;
+    // 선발 기준 문구. 비성과(규모·활동량)로 바뀐 뒤 하드코딩 라벨이 거짓이 됐다.
+    selection_basis?: string;
+    cohort_retention?: {
+      enabled?: boolean;
+      retained_count?: number;
+      released_count?: number;
+      reinstated_count?: number;
+      discovery_slots?: number;
+    };
     manual_count?: number;
     criteria?: Record<string, number>;
     position_scan?: {

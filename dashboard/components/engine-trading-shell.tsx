@@ -7,7 +7,7 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react
 import { TerminalWarning } from "@/components/terminal";
 import { StockPaperEntryChart } from "@/components/StockPaperEntryChart";
 import { PolymarketPaperView } from "@/components/PolymarketPaperView";
-import { api, type OnchainWhaleDashboard, type PaperDashboard, type PaperGateFunnel, type PaperTrade, type PolyPaperDashboard, type StanceBacktestDashboard, type StockPaperDashboard, type StockPaperTrack } from "@/lib/api";
+import { api, type OnchainWhaleDashboard, type OnchainWhaleFlowBreakdown, type PaperDashboard, type PaperGateFunnel, type PaperTrade, type PolyPaperDashboard, type StanceBacktestDashboard, type StockPaperDashboard, type StockPaperTrack } from "@/lib/api";
 
 const tabs = [
   { id: "battle", label: "대결" },
@@ -379,6 +379,7 @@ function OnchainView({ data, onReload }: { data: OnchainWhaleDashboard | null; o
       </section>
       {message ? <TerminalWarning tone={message.startsWith("리더보드") ? "warning" : "error"}>{message}</TerminalWarning> : null}
       <WhaleDiscoveryAudit data={data} />
+      <WhaleFollowTrack data={data} />
       <WhaleFlowOverview data={data} />
       <p className="onchainPolicy">{data.policy}</p>
       <WhaleValidationBoard wallets={wallets} filter={filter} onFilter={setFilter} />
@@ -408,25 +409,110 @@ function OnchainView({ data, onReload }: { data: OnchainWhaleDashboard | null; o
   );
 }
 
+function WhaleFlowBreakdown({ breakdown }: { breakdown: OnchainWhaleFlowBreakdown }) {
+  // 4-4: 네팅한 한 숫자로는 재고와 유량의 부호가 갈릴 때 무슨 일인지 읽을 수 없다.
+  // `숏 감액`과 `롱 증액`은 같은 부호로 합산되지만 서로 다른 사건이다.
+  return (
+    <section className="whaleFlowBreakdown" data-testid="whale-flow-breakdown">
+      <header><strong>24시간 체결 4방향 분해</strong><small>{breakdown.note}</small></header>
+      <div className="whaleFlowQuadrants">
+        <div><span>롱 증액</span><strong className="positive">{compactMoney(breakdown.long_in_usd)}</strong></div>
+        <div><span>롱 감액</span><strong className="negative">{compactMoney(breakdown.long_out_usd)}</strong></div>
+        <div><span>숏 증액</span><strong className="negative">{compactMoney(breakdown.short_in_usd)}</strong></div>
+        <div><span>숏 감액</span><strong className="positive">{compactMoney(breakdown.short_out_usd)}</strong></div>
+      </div>
+      <p className="whaleFlowReconciliation">
+        {breakdown.reconciliation}
+        {breakdown.unwinding_share_pct !== null ? ` (감액·청산 ${breakdown.unwinding_share_pct}% · 신규·증액 ${(100 - breakdown.unwinding_share_pct).toFixed(1)}%)` : ""}
+      </p>
+    </section>
+  );
+}
+
+function WhaleFollowTrack({ data }: { data: OnchainWhaleDashboard }) {
+  const track = data.follow_track;
+  if (!track?.available) {
+    return <section className="whaleFollowTrack" data-testid="whale-follow-track"><header><div><span className="engineSectionLabel">고래 추종 페이퍼</span><strong>조회 불가</strong></div><small>{track?.reason ?? "추종 원장을 읽을 수 없습니다."}</small></header></section>;
+  }
+  const capital = track.capital;
+  return (
+    <section className="whaleFollowTrack" data-testid="whale-follow-track">
+      <header>
+        <div><span className="engineSectionLabel">고래 추종 페이퍼 · {track.ledger}</span><strong>이 고래를 따라가서 얼마 벌었나</strong></div>
+        <small>{track.not_promotion}</small>
+      </header>
+      <div className="whaleFollowSummary">
+        <div><span>진입</span><strong>{track.entries}</strong><small>열림 {track.open} · 청산 {track.closed}</small></div>
+        <div><span>실현 손익</span><strong className={track.net_usdt >= 0 ? "long" : "short"}>{track.net_usdt >= 0 ? "+" : ""}{track.net_usdt.toFixed(4)} USDT</strong><small>{capital.available ? `netR ${capital.net_r ?? "—"}` : capital.note}</small></div>
+        <div><span>추종 대상 고래</span><strong>{track.whales.length}</strong><small>{track.whales.length === 0 ? "자격 통과 0명" : "자격 통과"}</small></div>
+      </div>
+      {track.legacy_note ? <TerminalWarning tone="warning">{track.legacy_note}</TerminalWarning> : null}
+      {track.whales.length ? (
+        <div className="whaleFollowRows">
+          {track.whales.map((whale) => (
+            <div key={whale.address}>
+              <header><code>{whale.address.slice(0, 6)}…{whale.address.slice(-4)}</code><span>{whale.participant_type ?? "미분류"}</span><b>N={whale.sample_size ?? "—"} · 고래 승률 {whale.win_pct ?? "—"}%</b></header>
+              <div className="whaleFollowStats">
+                <span>진입 {whale.entries}</span>
+                <span>청산 {whale.closed}</span>
+                <span className={whale.net_usdt >= 0 ? "long" : "short"}>{whale.net_usdt >= 0 ? "+" : ""}{whale.net_usdt.toFixed(4)} USDT</span>
+                <span>추종 승률 {whale.follow_win_pct ?? "—"}%</span>
+                <span>PF {whale.profit_factor ?? "—"}</span>
+              </div>
+              <small>{whale.symbols.join(" · ")} · {whale.sample_note}{whale.legacy_note ? ` · ${whale.legacy_note}` : ""}</small>
+            </div>
+          ))}
+        </div>
+      ) : <p className="onchainEmptyInline">추종 자격을 통과한 고래가 없습니다. 자격 미달은 0으로 표시하며 기준을 낮추지 않습니다.</p>}
+      {track.recent.length ? (
+        <div className="whaleFollowRecent">
+          <strong>최근 진입·청산</strong>
+          {track.recent.map((trade) => (
+            <div key={trade.id}>
+              <i className={trade.direction} />
+              <span>{trade.symbol} {trade.direction}</span>
+              <span>{trade.status === "closed" ? "청산" : "보유"}</span>
+              <b className={(trade.net_pnl_usdt ?? 0) >= 0 ? "long" : "short"}>{(trade.net_pnl_usdt ?? 0) >= 0 ? "+" : ""}{(trade.net_pnl_usdt ?? 0).toFixed(4)}</b>
+              <small>
+                {trade.signal_to_entry_seconds !== null ? `지연 ${(trade.signal_to_entry_seconds / 60).toFixed(1)}분` : "지연 미상"}
+                {trade.price_drift_pct_of_stop !== null ? ` · 이탈 ${trade.price_drift_pct_of_stop}%` : ""}
+                {trade.entry_price_source ? "" : " · 결함기간"}
+              </small>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
 function WhaleDiscoveryAudit({ data }: { data: OnchainWhaleDashboard }) {
   const discovery = data.discovery;
+  const cohort = data.cohort;
   const scan = discovery.position_scan;
   const policy = discovery.selection_policy;
-  const coverage = discovery.selected_coverage ?? {};
+  // **추적군**의 커버리지를 쓴다. `selected_coverage` 는 이번 실행 신규 선발분이라
+  // 코호트 유지가 자리를 잡으면 전부 0 이고, 그것을 "커버리지 0"으로 읽으면 거짓이다.
+  const coverage = cohort?.coverage ?? discovery.selected_coverage ?? {};
+  const retention = discovery.cohort_retention;
   const stages = [
     { label: "리더보드 원본", value: Number(discovery.rows_scanned ?? 0), detail: "공개 계정" },
-    { label: "성과 조건 통과", value: Number(discovery.eligible_count ?? 0), detail: "ROI·PnL·회전율" },
+    // 선발 기준이 비성과(규모·활동량)로 바뀌었다 — 라벨을 payload 에서 읽는다. 하드코딩된
+    // "ROI·PnL·회전율" 을 두면 통과 수가 3배로 늘어난 이유가 화면에서 사라진다.
+    { label: "자격 조건 통과", value: Number(discovery.eligible_count ?? 0), detail: discovery.selection_basis ?? "ROI·PnL·회전율" },
     { label: "포지션 실사", value: Number(scan?.scanned_count ?? 0), detail: `BTC·ETH 보유 ${scan?.active_focus_count ?? 0}` },
-    { label: "검증 추적군", value: Number(discovery.selected_count ?? 0), detail: `방향 슬롯 ${policy?.directional_slots ?? 0}` }
+    // **이번 실행의 신규 선발**이다. 추적군이 아니다 — 코호트 유지가 자리를 잡으면 0 이 된다.
+    { label: "신규 선발", value: Number(discovery.selected_count ?? 0), detail: `남은 슬롯 ${retention?.discovery_slots ?? policy?.directional_slots ?? 0}` },
+    { label: "추적군 (공급원)", value: Number(cohort?.tracked ?? 0), detail: retention ? `유지 ${retention.retained_count ?? 0} · 복귀 ${retention.reinstated_count ?? 0}` : "코호트 유지" }
   ];
   return (
     <section className="whaleDiscoveryAudit" data-testid="whale-discovery-audit">
-      <header><div><span>자동 발굴 감사</span><strong>성과 상위 + 방향 균형 선발</strong></div><small>상위 수익자만 고르지 않고 현재 BTC·ETH 롱/숏 포지션을 실사해 검증군을 구성합니다.</small></header>
+      <header><div><span>자동 발굴 감사</span><strong>{discovery.selection_basis ?? "성과 상위 + 방향 균형 선발"}</strong></div><small>{cohort?.note ?? "상위 수익자만 고르지 않고 현재 BTC·ETH 롱/숏 포지션을 실사해 검증군을 구성합니다."}</small></header>
       <div className="whaleDiscoveryStages">{stages.map((stage, index) => <div key={stage.label}><i>{index + 1}</i><span>{stage.label}</span><strong>{stage.value.toLocaleString("ko-KR")}</strong><small>{stage.detail}</small></div>)}</div>
       <div className="whaleCoverageGrid">
         {(policy?.focus_symbols ?? ["BTC", "ETH"]).map((symbol) => {
           const item = coverage[symbol] ?? { long_wallets: 0, short_wallets: 0, long_usd: 0, short_usd: 0 };
-          return <div key={symbol}><strong>{symbol} 방향 커버리지</strong><span className="long">롱 {item.long_wallets}지갑 · {compactMoney(item.long_usd)}</span><span className="short">숏 {item.short_wallets}지갑 · {compactMoney(item.short_usd)}</span></div>;
+          return <div key={symbol}><strong>{symbol} 방향 커버리지 (추적군)</strong><span className="long">롱 {item.long_wallets}지갑 · {compactMoney(item.long_usd)}</span><span className="short">숏 {item.short_wallets}지갑 · {compactMoney(item.short_usd)}</span></div>;
         })}
       </div>
       {scan?.errors ? <small className="negative">포지션 실사 실패 {scan.errors}건 · 다음 스캔에서 재시도</small> : null}
@@ -528,6 +614,7 @@ function WhaleFlowOverview({ data }: { data: OnchainWhaleDashboard }) {
         <div><span>순포지션</span><strong className={flow.current_net_usd >= 0 ? "positive" : "negative"}>{signedCompactMoney(flow.current_net_usd)}</strong></div>
         <div><span>24시간 순체결</span><strong className={flow.flow_24h_usd >= 0 ? "positive" : "negative"}>{signedCompactMoney(flow.flow_24h_usd)}</strong><small>{flow.event_count_24h}건</small></div>
       </section>
+      {flow.flow_24h_breakdown ? <WhaleFlowBreakdown breakdown={flow.flow_24h_breakdown} /> : null}
       <section className="whaleFlowChartSection">
         <header><div><Activity size={16} /><strong>고래 순체결 흐름 · {filterLabel}</strong><span>2시간 단위 · 최근 {flow.window_hours}시간</span></div><div className="whaleLegend"><span><i className="long" />롱 유입·숏 청산</span><span><i className="short" />숏 유입·롱 청산</span></div></header>
         <WhaleFlowChart points={flow.timeline} />

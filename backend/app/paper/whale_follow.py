@@ -849,3 +849,88 @@ def performance_by_qualification(trades: list[PaperTrade]) -> dict[str, Any]:
         "buckets": buckets,
         "note": "자격 종류가 다른 건은 분리 집계한다 — 문턱이 다르므로 섞으면 둘 다 해석 불가가 된다",
     }
+
+
+def performance_by_whale(trades: list[PaperTrade]) -> list[dict[str, Any]]:
+    """고래별 추종 성적 (WO-FCE-WHALE-COHORT-COLLAPSE-01 4-3).
+
+    사용자 요구: **"고래 추종매매했으면 고래 탭에서 그게 보여야 한다."**
+
+    자격별 집계(`performance_by_qualification`)는 문턱별로 나누지만, 화면이 답해야 하는
+    질문은 "이 고래를 따라가서 얼마 벌었나"다. 그래서 지갑을 축으로 다시 센다.
+
+    PF 는 청산 건의 순손익으로만 만든다. 열린 포지션의 평가손익을 PF 에 넣으면 아직
+    끝나지 않은 거래가 성적이 된다.
+    """
+    buckets: dict[str, dict[str, Any]] = {}
+    for trade in trades:
+        evidence = trade.entry_evidence or {}
+        address = str(evidence.get("whale_address") or "").lower()
+        if not address:
+            continue
+        bucket = buckets.setdefault(
+            address,
+            {
+                "address": address,
+                "label": evidence.get("whale_label"),
+                "participant_type": evidence.get("participant_type"),
+                "sample_size": evidence.get("sample_size"),
+                "win_pct": evidence.get("win_pct"),
+                "ci_low": evidence.get("ci_low"),
+                "entries": 0,
+                "closed": 0,
+                "open": 0,
+                "wins": 0,
+                "net_usdt": 0.0,
+                "gross_profit": 0.0,
+                "gross_loss": 0.0,
+                "legacy_entries": 0,
+                "symbols": set(),
+            },
+        )
+        bucket["entries"] += 1
+        bucket["symbols"].add(trade.symbol)
+        if is_legacy_entry(trade):
+            # 진입가 결함 기간 표본. 성적으로 읽으면 안 되므로 수를 따로 낸다.
+            bucket["legacy_entries"] += 1
+        if trade.status != "closed":
+            bucket["open"] += 1
+            continue
+        net = float(trade.net_pnl_usdt or 0.0)
+        bucket["closed"] += 1
+        bucket["net_usdt"] += net
+        if net > 0:
+            bucket["wins"] += 1
+            bucket["gross_profit"] += net
+        else:
+            bucket["gross_loss"] += abs(net)
+
+    rows: list[dict[str, Any]] = []
+    for bucket in buckets.values():
+        closed = int(bucket["closed"])
+        loss = float(bucket.pop("gross_loss"))
+        profit = float(bucket.pop("gross_profit"))
+        bucket["symbols"] = sorted(bucket["symbols"])
+        bucket["net_usdt"] = round(float(bucket["net_usdt"]), 4)
+        bucket["follow_win_pct"] = round(int(bucket["wins"]) / closed * 100, 1) if closed else None
+        # 손실이 0이면 PF 가 무한대가 된다. 표본이 작을 때 그것을 숫자로 내면 거짓 확신이다.
+        bucket["profit_factor"] = round(profit / loss, 2) if loss > 0 else None
+        bucket["profit_factor_note"] = None if loss > 0 else "손실 거래 0건 — PF 를 만들지 않는다"
+        bucket["sample_note"] = f"청산 {closed}건 — N<30 이므로 성적으로 단정하지 않는다" if closed < 30 else f"청산 {closed}건"
+        if int(bucket["legacy_entries"]):
+            bucket["legacy_note"] = f"{bucket['legacy_entries']}건은 진입가 결함 기간(확정봉 종가) 표본이다 — 추종 성적이 아니다"
+        rows.append(bucket)
+    return sorted(rows, key=lambda row: (-int(row["entries"]), str(row["address"])))
+
+
+def rejection_summary_by_reason(rejected: list[dict[str, Any]]) -> dict[str, Any]:
+    """거부 사유 분포 (4-3 항목 4). 진입 0건일 때 **왜** 0인지가 여기서 갈린다."""
+    counts: dict[str, int] = {}
+    for item in rejected or []:
+        code = str(item.get("reason_code") or "unknown")
+        counts[code] = counts.get(code, 0) + 1
+    return {
+        "by_reason": dict(sorted(counts.items(), key=lambda item: (-item[1], item[0]))),
+        "total": sum(counts.values()),
+        "known_reasons": list(REASON_CODES),
+    }

@@ -227,6 +227,12 @@ def whale_dashboard(repo: Any, settings: Any) -> dict[str, Any]:
     return {
         "enabled": bool(settings.hyperliquid_whale_tracking_enabled),
         "wallet_count": len(wallets),
+        # 4-2: 깔때기 4단계(`selected_count`)는 **이번 실행의 신규 선발**이고 추적군이 아니다.
+        # 두 숫자가 라벨 없이 나란히 있으면 "20을 추적하는데 추적군이 0"으로 읽힌다.
+        "cohort": _cohort_block(repo, wallets, states),
+        # 4-3: 추종 트랙을 고래 탭에 낸다. 사용자 요구 — "고래 추종매매했으면 고래 탭에서
+        # 그게 보여야 한다." 지금까지는 텔레그램으로만 보였다.
+        "follow_track": _follow_track_block(repo),
         "selection_disclosure": selection_disclosure(win_rates),
         "max_wallets": int(settings.hyperliquid_whale_max_wallets),
         "minimum_event_size_usd": float(settings.hyperliquid_whale_min_size_usd),
@@ -255,6 +261,130 @@ def whale_dashboard(repo: Any, settings: Any) -> dict[str, Any]:
         },
         "policy": "미검증 고래는 관측·실측만 표시하며 방향 판정과 자동 진입에 사용하지 않습니다.",
     }
+
+
+def _cohort_block(repo: Any, wallets: list[Any], states: list[dict[str, Any]]) -> dict[str, Any]:
+    """실제 추적군과 그 커버리지 (WO-FCE-WHALE-COHORT-COLLAPSE-01 4-2).
+
+    ## 두 숫자가 세는 것이 다르다
+
+    | 화면 | 값 | 무엇을 세는가 |
+    | --- | --- | --- |
+    | 상단 `추적 20/20` | `wallet_count` | **실제 추적 중인 지갑** — 추종 트랙의 공급원 |
+    | 깔때기 4단계 | `discovery.selected_count` | **이번 발견 실행의 신규 선발** |
+
+    코호트 유지(`WHALE-FOLLOW-01` 6-1)가 켜지면 유지+복귀가 한도를 채우므로 신규 선발
+    슬롯이 0 이 되고, 4단계도 0 이 된다. **정상 동작이다** — 표본을 완주시키려고 자리를
+    붙잡고 있는 것이고, 그것이 그 기능의 목적이다.
+
+    실측 2026-08-25: 유지 17 + 복귀 3 = 20 = 한도 → `discovery_slots` 0 → 신규 선발 0.
+
+    ## 커버리지도 마찬가지다
+
+    `discovery.selected_coverage` 는 **신규 선발분**의 커버리지라 0 이다. 실제 추적군의
+    커버리지는 여기서 낸다 — 실측 BTC 롱8/숏4 · ETH 롱6/숏4 로 비어 있지 않다.
+    """
+    active = {str(wallet.address).lower() for wallet in wallets}
+    focus = _focus_symbols_for_coverage()
+    coverage: dict[str, dict[str, Any]] = {symbol: {"long_wallets": 0, "short_wallets": 0, "long_usd": 0.0, "short_usd": 0.0} for symbol in focus}
+    for state in states:
+        if str(state.get("wallet_address") or "").lower() not in active:
+            continue
+        coin = str(state.get("coin") or "").upper()
+        side = str(state.get("side") or "")
+        if coin not in coverage or side not in {"long", "short"}:
+            continue
+        coverage[coin][f"{side}_wallets"] = int(coverage[coin][f"{side}_wallets"]) + 1
+        coverage[coin][f"{side}_usd"] = round(float(coverage[coin][f"{side}_usd"]) + abs(float(state.get("size_usd") or 0.0)), 2)
+    return {
+        "tracked": len(wallets),
+        "coverage": coverage,
+        "supply_of": "whale_follow",
+        "note": (
+            "깔때기 4단계는 **이번 실행의 신규 선발**이며 추적군이 아니다. 코호트 유지가 자리를 붙잡으면 "
+            "신규 선발이 0 이 되는 것이 정상이다 — 표본을 완주시키는 것이 그 기능의 목적이다."
+        ),
+    }
+
+
+def _follow_track_block(repo: Any) -> dict[str, Any]:
+    """추종 트랙 성적 (4-3). 고래별 손익·자본·지연·이탈을 한 자리에 낸다.
+
+    원장은 `whale_follow_trades` 이며 크립토 트랙과 분리돼 있다(`WHALE-FOLLOW-01` C3).
+    조회 실패가 고래 탭 전체를 죽이면 안 되므로 실패 시 사유를 담아 돌려준다.
+    """
+    from app.paper import whale_follow
+
+    try:
+        trades = repo.list_whale_follow_trades(limit=200)
+    except Exception as exc:
+        return {"available": False, "reason": f"{type(exc).__name__}: {exc}", "whales": [], "trades": []}
+
+    closed = [trade for trade in trades if trade.status == "closed"]
+    net_usdt = round(sum(float(trade.net_pnl_usdt or 0.0) for trade in closed), 4)
+    legacy = [trade for trade in trades if whale_follow.is_legacy_entry(trade)]
+    recent = sorted(trades, key=lambda trade: trade.updated_at, reverse=True)[:12]
+    return {
+        "available": True,
+        "ledger": "whale_follow_trades",
+        "entries": len(trades),
+        "closed": len(closed),
+        "open": len(trades) - len(closed),
+        "net_usdt": net_usdt,
+        # 4-3: 시작 자본 → 현재 자본. 페이퍼 트랙이므로 손익만큼만 움직인다.
+        "capital": _follow_capital(closed, net_usdt),
+        "whales": whale_follow.performance_by_whale(trades),
+        "by_qualification": whale_follow.performance_by_qualification(trades),
+        "recent": [_follow_trade_row(trade) for trade in recent],
+        "legacy_entries": len(legacy),
+        "legacy_note": (
+            f"{len(legacy)}건은 진입가 결함 기간(확정봉 종가 · 최대 4시간 지연) 표본이다. 추종 성적으로 읽지 않는다 — `entry_price_source` 유무로 갈린다."
+            if legacy
+            else None
+        ),
+        "not_promotion": "추종 트랙 성과는 승격 근거가 아니다(C11). 다른 것을 잰다.",
+    }
+
+
+def _follow_capital(closed: list[Any], net_usdt: float) -> dict[str, Any]:
+    """시작 자본 → 현재 자본. 표본이 없으면 만들지 않는다."""
+    if not closed:
+        return {"available": False, "note": "청산 0건 — 자본 변화를 낼 표본이 없다"}
+    planned = [float(((trade.target_plan or {}).get("sizing") or {}).get("planned_risk_usdt") or 0.0) for trade in closed]
+    risk_budget = next((value for value in planned if value > 0), None)
+    return {
+        "available": True,
+        "realized_net_usdt": net_usdt,
+        "closed_trades": len(closed),
+        "risk_budget_usdt": risk_budget,
+        "net_r": round(sum(float(trade.net_pnl_usdt or 0.0) / value for trade, value in zip(closed, planned, strict=False) if value > 0), 4) or None,
+        "note": "페이퍼 트랙이며 실주문이 아니다. 자본은 청산 손익 누계다.",
+    }
+
+
+def _follow_trade_row(trade: Any) -> dict[str, Any]:
+    evidence = trade.entry_evidence or {}
+    return {
+        "id": str(trade.id),
+        "symbol": trade.symbol,
+        "direction": trade.direction.value,
+        "status": trade.status,
+        "entry_price": trade.entry_price,
+        "invalidation_price": trade.invalidation_price,
+        "net_pnl_usdt": trade.net_pnl_usdt,
+        "entry_at": trade.entry_at.isoformat() if trade.entry_at else None,
+        "exit_at": trade.exit_at.isoformat() if trade.exit_at else None,
+        "whale_address": evidence.get("whale_address"),
+        "qualification": evidence.get("qualification"),
+        "signal_to_entry_seconds": evidence.get("signal_to_entry_seconds"),
+        "price_drift_pct_of_stop": evidence.get("price_drift_pct_of_stop"),
+        "entry_price_source": evidence.get("entry_price_source"),
+        "unverified": evidence.get("unverified", True),
+    }
+
+
+def _focus_symbols_for_coverage() -> list[str]:
+    return ["BTC", "ETH"]
 
 
 def _symbol_activity(
@@ -414,8 +544,69 @@ def _flow_dashboard(
         "current_net_usd": round(current_long - current_short, 2),
         "flow_24h_usd": round(flow_24h, 2),
         "event_count_24h": sum(1 for event in events if event.event_at >= event_cutoff),
+        # 4-4: 네팅한 한 숫자는 재고와 부호가 반대일 때 읽을 수 없다.
+        # `숏 감액`과 `롱 증액`은 둘 다 순매수로 합산되지만 서로 다른 사건이다.
+        "flow_24h_breakdown": _flow_breakdown(
+            [event for event in events if event.event_at >= event_cutoff],
+            current_long=current_long,
+            current_short=current_short,
+        ),
         "timeline": [{**point, **{key: round(float(value), 2) for key, value in point.items() if key.endswith("_usd")}} for point in buckets.values()],
         "symbols": symbols,
+    }
+
+
+def _flow_breakdown(events: list[WhaleEvent], *, current_long: float, current_short: float) -> dict[str, Any]:
+    """24시간 유량 4방향 분해와 재고-유량 화해 (WO-FCE-WHALE-COHORT-COLLAPSE-01 4-4).
+
+    ## 왜 네팅하면 안 되나
+
+    `순체결 −179.2M` 은 네 방향을 하나로 접은 값이다. 그런데 **`숏 증액`과 `롱 감액`은
+    같은 부호로 합산되지만 서로 다른 사건**이다 — 하나는 새 방향 베팅이고 하나는 기존
+    포지션 정리다. 재고(`순포지션 +286.3M`)와 유량의 부호가 반대일 때 그 구분 없이는
+    무슨 일이 일어나는지 읽을 수 없다.
+
+    ## 인과를 단정하지 않는다
+
+    "롱을 덜어내는 중"인지 "숏 신규"인지는 **관측으로 구분되는 사실**이므로 그 둘의 비중을
+    낸다. 그러나 왜 그러는지는 말하지 않는다 — 여기서 나오는 것은 서술이지 해석이 아니다.
+    """
+    totals = {"long_in": 0.0, "long_out": 0.0, "short_in": 0.0, "short_out": 0.0}
+    for event in events:
+        entering = event.event in {"open", "increase", "flip"}
+        totals[f"{event.side}_{'in' if entering else 'out'}"] += float(event.size_usd or 0.0)
+
+    net = (totals["long_in"] - totals["long_out"]) - (totals["short_in"] - totals["short_out"])
+    stock_net = current_long - current_short
+    # 유량 중 '기존 정리'와 '새 베팅'의 비중. 재고와 유량 부호가 갈릴 때 이것이 구분점이다.
+    unwinding = totals["long_out"] + totals["short_out"]
+    initiating = totals["long_in"] + totals["short_in"]
+    gross = unwinding + initiating
+
+    if gross <= 0:
+        reconciliation = "24시간 체결이 없다 — 재고만 있고 유량이 없다."
+    elif (stock_net > 0) == (net > 0):
+        reconciliation = "재고와 유량의 방향이 같다 — 같은 방향으로 더하는 중으로 관측된다."
+    else:
+        share = round(unwinding / gross * 100, 1)
+        heavier = "감액·청산" if unwinding >= initiating else "신규·증액"
+        reconciliation = (
+            f"재고는 {'순롱' if stock_net > 0 else '순숏'}인데 24시간 유량은 "
+            f"{'순매수' if net > 0 else '순매도'}다. 체결 금액의 {share}% 가 감액·청산이며 "
+            f"{heavier} 쪽이 더 크다. 어느 해석이 맞는지는 이 표가 정하지 않는다."
+        )
+    return {
+        "long_in_usd": round(totals["long_in"], 2),
+        "long_out_usd": round(totals["long_out"], 2),
+        "short_in_usd": round(totals["short_in"], 2),
+        "short_out_usd": round(totals["short_out"], 2),
+        "net_usd": round(net, 2),
+        "unwinding_usd": round(unwinding, 2),
+        "initiating_usd": round(initiating, 2),
+        "unwinding_share_pct": round(unwinding / gross * 100, 1) if gross > 0 else None,
+        "stock_net_usd": round(stock_net, 2),
+        "reconciliation": reconciliation,
+        "note": "관측 서술이며 인과를 단정하지 않는다. 숏 감액과 롱 증액을 합산하지 않는다.",
     }
 
 
