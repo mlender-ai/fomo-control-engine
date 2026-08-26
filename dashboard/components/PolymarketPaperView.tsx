@@ -4,7 +4,7 @@ import { Braces, RefreshCw, ShieldCheck } from "lucide-react";
 import { useMemo, useState } from "react";
 import { TerminalWarning } from "@/components/terminal";
 import { TrackCapitalRow } from "@/components/TrackCapitalRow";
-import type { PolyPaperDashboard, PolyPaperMarket } from "@/lib/api";
+import type { PolyPaperDashboard, PolyPaperMarket, PolyTrackStatus } from "@/lib/api";
 
 export function PolymarketPaperView({
   data,
@@ -35,13 +35,31 @@ export function PolymarketPaperView({
         </button>
       </section>
 
-      {track.last_collection_error ? <TerminalWarning tone="warning">공개 시장 수집 실패 · {track.last_collection_error} · 기존 원장은 보존됩니다.</TerminalWarning> : null}
+      {/* 2-1: 원시 예외 문자열을 사용자에게 던지지 않는다. 판정된 상태를 낸다. */}
+      {data.status ? <PolyTrackStatusBadge status={data.status} /> : track.last_collection_error ? <TerminalWarning tone="warning">공개 시장 수집 실패 · {track.last_collection_error} · 기존 원장은 보존됩니다.</TerminalWarning> : null}
       <header className="polyPaperHeader">
         <div><span className="engineSectionLabel">독립 확률 검증 · {data.parameter_version}</span><h2>Polymarket · Crypto / Macro</h2><p>캔들 판정 엔진과 분리하고, 만기 정답으로 Brier score를 채점합니다.</p></div>
         <div className="polyTrackSummary">
           <p><span>USDC 잔액</span><strong>{money(cash)}</strong></p>
-          <p><span>검증 시계</span><strong>{track.clock_valid ? `${track.elapsed_days ?? 0}/28일${track.lost_days ? ` (유실 ${track.lost_days}일 제외)` : ""}` : "첫 수집 대기"}</strong></p>
-          <p><span>정산 표본</span><strong>N={data.calibration.n}</strong></p>
+          <p>
+            <span>검증 시계</span>
+            <strong>{track.clock_valid ? `${track.elapsed_days ?? 0}/28일${track.lost_days ? ` (유실 ${track.lost_days}일 제외)` : ""}` : "첫 수집 대기"}</strong>
+            {/* 2-2 항목 3: 유실이 차단인지 커버리지인지에 따라 조치가 다르다. */}
+            {data.clock_breakdown ? <small>{data.clock_breakdown.label}</small> : null}
+          </p>
+          {/* 2-2: N 이 우리 표본이 아니라는 사실을 라벨에 쓴다. */}
+          <p>
+            <span>확률 채점 관측 (시장 전체)</span>
+            <strong>N={data.calibration.n}</strong>
+            {data.sample_labels ? <small>우리 거래 표본이 아니다</small> : null}
+          </p>
+          {data.sample_labels ? (
+            <p>
+              <span>우리 검증 표본</span>
+              <strong className={data.sample_labels.our_validation_samples > 0 ? "" : "negative"}>{data.sample_labels.our_validation_samples}</strong>
+              <small>보유 {data.sample_labels.our_positions}건 중 검증 창 안 정산</small>
+            </p>
+          ) : null}
           {data.unrealized ? <p><span>미실현 (미확정)</span><strong className={data.unrealized.pnl >= 0 ? "positive" : "negative"}>{money(data.unrealized.pnl)}{data.unrealized.return_pct === null ? "" : ` · ${data.unrealized.return_pct}%`}</strong></p> : null}
         </div>
       </header>
@@ -86,6 +104,32 @@ export function PolymarketPaperView({
         )) : <p className="engineEmptyLine">비용 차감 edge·근거 품질·호가 유동성을 모두 통과한 포지션이 아직 없습니다.</p>}
       </section>
     </div>
+  );
+}
+
+/**
+ * 2-1 — 판정된 트랙 상태 배지.
+ *
+ * `451` 은 네트워크 오류가 아니라 정책 차단이라 재시도로 풀리지 않는다. 원시 예외
+ * 문자열은 상세 보기로 내리고, 판정된 상태와 "재시작해도 해소되지 않는다"를 앞에 낸다.
+ */
+function PolyTrackStatusBadge({ status }: { status: PolyTrackStatus }) {
+  const blocked = status.structurally_blocked || !status.collection.retryable;
+  return (
+    <section className={`polyTrackStatus ${blocked ? "blocked" : "ok"}`} data-testid="poly-track-status">
+      <header>
+        <strong>{status.headline}</strong>
+        {status.verdict ? <code>{status.verdict}</code> : null}
+      </header>
+      {status.verdict_reason ? <p>{status.verdict_reason}</p> : null}
+      <p className="polyTrackStatusCollection">{status.collection.label}{status.collection.retryable ? " · 다음 주기 재시도" : " · 재시도로 풀리지 않음"}</p>
+      {status.restart_note ? <p className="polyTrackStatusRestart">{status.restart_note}</p> : null}
+      {status.collection.advice ? <p>{status.collection.advice}</p> : null}
+      {status.collection.detail ? (
+        <details><summary>원시 오류 보기</summary><code>{status.collection.detail}</code></details>
+      ) : null}
+      <small>기존 원장은 보존됩니다.</small>
+    </section>
   );
 }
 

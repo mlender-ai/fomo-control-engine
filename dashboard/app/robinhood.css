@@ -3959,6 +3959,84 @@ textarea:focus {
   font-weight: 800;
 }
 
+/* WO-FCE-POLY-STATUS-01 2-1 — 판정된 트랙 상태 배지.
+   차단됐으면 차단됐다고 보인다(C4). 정상처럼 렌더하지 않는다. */
+.polyTrackStatus {
+  display: grid;
+  gap: 6px;
+  padding: 14px 16px;
+  border: 1px solid var(--terminal-line);
+  background: var(--terminal-panel);
+}
+
+.polyTrackStatus.blocked {
+  border-color: var(--terminal-negative);
+}
+
+.polyTrackStatus > header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.polyTrackStatus > header strong {
+  font-size: var(--fce-type-md);
+}
+
+.polyTrackStatus.blocked > header strong {
+  color: var(--terminal-negative);
+}
+
+.polyTrackStatus code {
+  font-family: var(--fce-font-number);
+  font-size: var(--fce-type-xs);
+  color: var(--terminal-muted);
+  border: 1px solid var(--terminal-line);
+  padding: 1px 6px;
+}
+
+.polyTrackStatus p {
+  margin: 0;
+  color: var(--terminal-muted);
+  font-size: var(--fce-type-sm);
+  line-height: 1.6;
+}
+
+.polyTrackStatusRestart {
+  color: var(--terminal-negative) !important;
+}
+
+.polyTrackStatus details {
+  font-size: var(--fce-type-xs);
+}
+
+.polyTrackStatus details summary {
+  color: var(--terminal-dim);
+  cursor: pointer;
+}
+
+.polyTrackStatus details code {
+  display: block;
+  margin-top: 5px;
+  padding: 8px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  border: 1px solid var(--terminal-line);
+}
+
+.polyTrackStatus > small {
+  color: var(--terminal-dim);
+  font-size: var(--fce-type-xs);
+}
+
+.polyTrackSummary p small {
+  display: block;
+  color: var(--terminal-dim);
+  font-size: var(--fce-type-xs);
+  margin-top: 2px;
+}
+
 /* WO-FCE-TRACK-CAPITAL-01 1-3 — 4탭 공통 자본 줄.
    금액이 대표값이고 수익률은 병기다. 미실현은 별 칸에 둔다(C4). */
 .trackCapitalRow {

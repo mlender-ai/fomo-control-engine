@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sqlite3
+
 import asyncio
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -12,6 +14,7 @@ from .client import PolymarketPublicClient, resolved_outcome
 from .estimator import attach_execution_cost, estimate_market_probability, kelly_fraction, quality_at_least
 from app.notify.paper_events import track_event
 
+from . import track_status as track_status_module
 from .models import FillInvariantViolation, OrderBook, PaperOrder, PolyMarket
 from .parameters import load_poly_parameters
 from .store import PolyPaperStore
@@ -326,6 +329,12 @@ def poly_paper_dashboard(settings: Settings) -> dict[str, Any]:
     store = PolyPaperStore(settings.database_url)
     store.ensure_track(initial_cash=settings.polymarket_initial_usdc, parameter_version=parameters.version)
     payload = store.dashboard()
+    # WO-FCE-POLY-STATUS-01 — 상태를 판정된 형태로 낸다. 판정을 만들지 않고 표시만 한다(C3).
+    track = payload.get("track") or {}
+    expiry = payload.get("expiry") or {}
+    collection = track_status_module.classify_collection(track.get("last_collection_status"), track.get("last_collection_error"))
+    viability = _poly_viability(settings)
+    coverage = _poly_coverage_rows(settings)
     return {
         **payload,
         "enabled": settings.polymarket_paper_enabled,
@@ -335,7 +344,54 @@ def poly_paper_dashboard(settings: Settings) -> dict[str, Any]:
         "sample_note": "N<30에서는 캘리브레이션 품질 판정을 유보합니다.",
         "categories": ["crypto", "macro"],
         "live_orders_enabled": False,
+        "status": track_status_module.track_status(collection=collection, viability=viability, expiry=expiry),
+        "sample_labels": track_status_module.sample_labels(
+            resolution_count=int(payload.get("resolution_count") or 0),
+            our_positions=len(payload.get("positions") or []),
+            settling_within_validation=int(expiry.get("settling_within_validation") or 0),
+        ),
+        "clock_breakdown": track_status_module.clock_breakdown(coverage, window_start=_window_day(track.get("started_at"))),
     }
+
+
+def _window_day(started_at: Any) -> str | None:
+    text = str(started_at or "")
+    return text[:10] if len(text) >= 10 else None
+
+
+def _poly_viability(settings: Settings) -> dict[str, Any] | None:
+    """이미 있는 판정을 읽는다. 새로 만들지 않는다(C3). 실패는 `None` 이다."""
+    from app.validation import sample_viability
+
+    path = str(settings.database_url).removeprefix("sqlite:///") if str(settings.database_url).startswith("sqlite:///") else ""
+    if not path:
+        return None
+    try:
+        connection = sqlite3.connect(path)
+        connection.row_factory = sqlite3.Row
+        try:
+            return sample_viability.track_sample_viability(connection, "poly")
+        finally:
+            connection.close()
+    except Exception:
+        return None
+
+
+def _poly_coverage_rows(settings: Settings) -> list[dict[str, Any]]:
+    """관측 커버리지 원본. 시계 0 의 사유를 분해하는 데 쓴다."""
+    path = str(settings.database_url).removeprefix("sqlite:///") if str(settings.database_url).startswith("sqlite:///") else ""
+    if not path:
+        return []
+    try:
+        connection = sqlite3.connect(path)
+        connection.row_factory = sqlite3.Row
+        try:
+            rows = connection.execute("SELECT day, valid, reason FROM observation_coverage WHERE track='poly' ORDER BY day").fetchall()
+        finally:
+            connection.close()
+    except Exception:
+        return []
+    return [dict(row) for row in rows]
 
 
 def scoring_cutoff(parameters: Any, *, now: datetime, deadline: datetime | None) -> datetime | None:

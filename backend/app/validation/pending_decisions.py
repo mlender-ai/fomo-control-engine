@@ -51,6 +51,7 @@ def pending_decisions(
     gate_approved: bool,
     sleep_guard: dict[str, Any] | None = None,
     lost_day_ceilings: dict[str, dict[str, Any]] | None = None,
+    poly_blocked: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """지금 사람을 기다리는 결정들.
 
@@ -94,6 +95,29 @@ def pending_decisions(
                 "resolved_when": "안을 선택해 적용하고 scripts/local/check-sleep-guard.sh 가 보호 중을 반환한다",
                 "measured_ceilings": ceilings or None,
                 "remedy": "전원 연결 유지 + caffeinate -dimsu 상시 실행. 코드로 해결 불가 — 이 항목은 수리가 아니라 결정이다.",
+            }
+        )
+
+    # WO-FCE-POLY-STATUS-01 2-3 — 폴리 처리 방침. `FULL-AUDIT-01` 이후 미정이다.
+    #
+    # 이 항목은 진행을 늦추는 것이 아니라 **막는다**. 폴리는 구조적으로 검증 불가이고
+    # (만기 2027-01-01 · 검증 창 내 정산 0건) 수집도 451 로 차단됐다. 그 상태로 트랙을
+    # 남겨두면 4트랙 완료 판정이 영원히 미완으로 남는다.
+    if poly_blocked:
+        items.append(
+            {
+                "id": "poly_track_disposition",
+                "severity": BLOCKING,
+                "title": "폴리마켓 처리 방침 선택 (A/B/C)",
+                "detail": (
+                    "A) 검증 대상에서 명시적 제외 · B) 만기 짧은 시장으로 유니버스 교체 · C) 차단 상태로 유지. "
+                    "**451 이 안 풀리면 B 도 불가능하다** — 유니버스를 갈려면 시장 목록을 받아야 하고 그 API 가 차단돼 있다. "
+                    "즉 지금 실행 가능한 선택은 A 와 C 뿐이다."
+                ),
+                "document": "docs/validation/POLYMARKET_TRACK.md",
+                "resolved_when": "안을 선택해 COMPLETION_DEFINITION.md 의 트랙 목록을 갱신한다(A) 또는 차단 해소 후 재평가한다(B·C)",
+                "blocked_by": "451 지역 차단 — 우회하지 않는다(C1). 접근 경로 확보는 코드 밖의 결정이다.",
+                "measured": poly_blocked,
             }
         )
 

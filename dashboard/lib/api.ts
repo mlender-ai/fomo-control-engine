@@ -2677,8 +2677,48 @@ export type PolyPaperMarket = {
   estimate: PolyEstimate | null;
 };
 
+// WO-FCE-POLY-STATUS-01 — 판정된 트랙 상태. 원시 예외를 화면에 던지지 않는다.
+export type PolyTrackStatus = {
+  headline: string;
+  structurally_blocked: boolean;
+  verdict: string | null;
+  verdict_reason: string | null;
+  restart_resolves: boolean | null;
+  restart_note: string | null;
+  collection: {
+    status: string;
+    label: string;
+    retryable: boolean;
+    detail: string | null;
+    advice: string | null;
+  };
+};
+
+export type PolySampleLabels = {
+  calibration_samples: number;
+  calibration_label: string;
+  our_positions: number;
+  our_validation_samples: number;
+  our_validation_label: string;
+  mismatch_note: string;
+};
+
+export type PolyClockBreakdown = {
+  window_start: string | null;
+  days_counted: number;
+  valid_days: number;
+  stalled_days: number;
+  thin_coverage_days: number;
+  other_days: number;
+  label: string;
+  note: string;
+};
+
 export type PolyPaperDashboard = {
   capital?: TrackCapitalBlock;
+  status?: PolyTrackStatus;
+  sample_labels?: PolySampleLabels;
+  clock_breakdown?: PolyClockBreakdown;
   enabled: boolean;
   parameter_version: string;
   read_only_label: string;

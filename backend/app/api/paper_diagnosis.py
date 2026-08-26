@@ -140,8 +140,32 @@ def _pending_decisions(settings: Any) -> dict[str, Any]:
         sleep_guard=sleep_guard.sleep_guard_status(),
         # 3-5: 유실일이 정한 유효일 상한. 창을 못 채우면 절전 결정이 차단 등급이 된다.
         lost_day_ceilings=_stock_lost_day_ceilings(settings),
+        # POLY-STATUS-01 2-3: 폴리가 구조적으로 막혀 있으면 처리 방침 결정을 올린다.
+        poly_blocked=_poly_blocked_state(settings),
     )
     return pending_decisions.pending_summary(items)
+
+
+def _poly_blocked_state(settings: Any) -> dict[str, Any] | None:
+    """폴리 차단 상태. 막혀 있지 않으면 `None` 이라 결정 항목이 뜨지 않는다.
+
+    판정을 만들지 않는다 — `poly_paper_dashboard` 가 이미 낸 상태를 읽는다(C3).
+    """
+    try:
+        from app.poly_paper.service import poly_paper_dashboard
+
+        status = poly_paper_dashboard(settings).get("status") or {}
+    except Exception:
+        return None
+    blocked = bool(status.get("structurally_blocked")) or (status.get("collection") or {}).get("status") == "geo_blocked"
+    if not blocked:
+        return None
+    return {
+        "structurally_blocked": bool(status.get("structurally_blocked")),
+        "collection_status": (status.get("collection") or {}).get("status"),
+        "headline": status.get("headline"),
+        "verdict_reason": status.get("verdict_reason"),
+    }
 
 
 def _stock_lost_day_ceilings(settings: Any) -> dict[str, Any]:
