@@ -351,3 +351,61 @@ FCE_REPLAY_HISTORY_BACKFILL_ENABLED=false     # 수집 잡 정지 (기본값)
 환경 변수 하나이며 코드 변경이 필요 없다. 정본:
 [`docs/validation/CANDLE_SUPPLY.md`](validation/CANDLE_SUPPLY.md) ·
 [`docs/validation/REPLAY_HARNESS.md`](validation/REPLAY_HARNESS.md).
+
+---
+
+## 주식 트랙 정지 해제 (WO-FCE-STOCK-STATUS-01 · 2026-08-25)
+
+### 정지했는지 확인
+
+```bash
+sqlite3 backend/fomo_control_engine.db "SELECT market, status, stop_reason FROM stock_paper_tracks;"
+```
+
+화면(`/engine?tab=stocks`)의 트랙 카드에도 `halt` 블록으로 나온다 — 정지 여부·사유·시각·
+이력·재개 절차가 함께 있다.
+
+### 재개 절차 — 자동 재개는 금지다
+
+원인 확인 없이 재개하면 **같은 체결이 다시 들어가고 즉시 재정지한다.**
+
+1. **정지 사유와 유발 주문을 확인한다.**
+
+   ```bash
+   sqlite3 backend/fomo_control_engine.db \
+     "SELECT market, event_type, symbol, order_id, reason, observed_at, payload
+      FROM stock_paper_events
+      WHERE event_type IN ('track_stopped','invariant_failure')
+      ORDER BY id DESC LIMIT 20;"
+   ```
+
+   2026-08-25 이전 정지는 **이 조회가 비어 있다** — 리텐션이 사건 이벤트를 함께 지웠고
+   그 결함은 같은 날 수리됐다. 이후 정지부터 남는다.
+
+2. **원인을 고친다.** `fill_price_outside_observed_range` 의 알려진 기전은 봉 불일치다 —
+   체결가는 세션 시가에서 만들고 invariant 는 현재 분봉으로 검사한다
+   (`stock_paper/execution.py:53` vs `:59`). **이것이 고쳐지기 전에는 재개해도 재발한다.**
+
+3. **수동 재개.**
+
+   ```bash
+   sqlite3 backend/fomo_control_engine.db \
+     "UPDATE stock_paper_tracks SET status='running', stop_reason=NULL WHERE market='US';"
+   ```
+
+4. **재개 사유를 기록한다.** 무엇을 고쳐서 재개했는지 남기지 않으면 다음 정지 때 같은
+   조사를 처음부터 반복한다.
+
+### 절전 — 코드로 해결 불가
+
+주식 트랙 유실일의 원인이다. 실측 2026-08-25: KR 유실 17일 · US 유실 19일.
+28일 창에서 19일을 잃으면 **유효일 상한이 9일**이라 검증이 성립하지 않는다.
+
+```bash
+# 전원 연결 유지 + 절전 억제 상시 실행
+caffeinate -dimsu &
+# 확인
+bash scripts/local/check-sleep-guard.sh
+```
+
+이 항목은 수리가 아니라 **결정**이며 `pending_decisions` 에 차단 등급으로 올라간다.

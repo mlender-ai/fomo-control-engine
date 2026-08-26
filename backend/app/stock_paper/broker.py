@@ -84,12 +84,22 @@ class PaperBroker(Broker):
                 observed_at=observation.observed_at,
             )
         elif result.reason:
-            self.store.record_event(
+            # 중복 억제를 거친다 (WO-FCE-STOCK-STATUS-01 D2).
+            #
+            # 직접 `record_event` 를 부르던 것이 2,087만 행 폭주의 기전이었다. 큐에 남은
+            # 주문은 매 틱 다시 `place()` 를 지나고, 세션이 열리지 않는 한 같은 사유로
+            # 계속 미체결이다. 실측 2026-08-25: 큐 주문 **15,755건**(KR 13,836 · US 1,919)이
+            # 전부 `session_closed` 였고, 화면의 "진입 거부 1,762만건"은 서로 다른 거부가
+            # 아니라 **그 1.5만 건이 반복 계수된 값**이었다.
+            #
+            # `observed_at` 을 그대로 넘기므로, 시세가 멈춰 있으면 직전 기록과 차이가 0 이라
+            # 억제되고, 시세가 갱신되면 다시 기록된다. 사건은 남고 반복만 사라진다.
+            self.store.record_event_if_stale(
                 order.market,
                 "unfilled",
                 symbol=order.symbol,
-                order_id=order.id,
                 reason=result.reason,
+                payload={"order_id": order.id},
                 observed_at=observation.observed_at,
             )
         return result

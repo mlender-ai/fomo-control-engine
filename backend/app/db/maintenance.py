@@ -567,6 +567,19 @@ def _cap_stance_history_candles(connection: sqlite3.Connection, keep_bars: int) 
     return deleted
 
 
+# 행 수 상한의 **대상**. 여기 없는 event_type 은 리텐션이 건드리지 않는다.
+#
+# WO-FCE-STOCK-STATUS-01 D1: 처음 구현은 `event_type` 을 보지 않고 id 오름차순으로 지웠다.
+# `unfilled` 이 2,087만 행인데 `track_stopped`·`invariant_failure` 는 **각 1행**이므로,
+# 스팸을 지우면서 사건 증거가 함께 사라졌다. 실제로 US 트랙이
+# `fill_price_outside_observed_range` 로 정지해 있는데 **언제·어느 주문에서 터졌는지
+# 조회할 수 없는 상태**가 됐다 — 화면의 "빨간 줄 하나가 전부"가 이것이다.
+#
+# 스팸 억제와 증거 보존은 같은 규칙으로 처리할 수 없다. 목록에 적는 행위가 검토 지점이다.
+TRIMMABLE_STOCK_EVENT_TYPES: tuple[str, ...] = ("unfilled",)
+_TRIMMABLE_PLACEHOLDERS = ",".join("?" for _ in TRIMMABLE_STOCK_EVENT_TYPES)
+
+
 def _trim_stock_paper_events(connection: sqlite3.Connection, *, keep_rows: int, delete_budget: int) -> dict[str, object]:
     """`stock_paper_events` 를 최신 `keep_rows` 행으로 자른다 (2026-08-24 장애 후속).
 
@@ -586,7 +599,10 @@ def _trim_stock_paper_events(connection: sqlite3.Connection, *, keep_rows: int, 
     """
     if not _table_exists(connection, "stock_paper_events"):
         return {"stock_paper_events_deleted": 0, "stock_paper_events_remaining": None}
-    row = connection.execute("SELECT MAX(id), COUNT(*) FROM stock_paper_events").fetchone()
+    row = connection.execute(
+        f"SELECT MAX(id), COUNT(*) FROM stock_paper_events WHERE event_type IN ({_TRIMMABLE_PLACEHOLDERS})",
+        TRIMMABLE_STOCK_EVENT_TYPES,
+    ).fetchone()
     if row is None or row[0] is None:
         return {"stock_paper_events_deleted": 0, "stock_paper_events_remaining": 0}
     max_id = int(row[0])
@@ -596,14 +612,21 @@ def _trim_stock_paper_events(connection: sqlite3.Connection, *, keep_rows: int, 
     # 남길 경계: 최신 keep_rows 행. 그보다 오래된 것을 예산만큼 지운다.
     boundary = max_id - keep_rows
     cursor = connection.execute(
-        "DELETE FROM stock_paper_events WHERE id <= ? AND id IN (SELECT id FROM stock_paper_events WHERE id <= ? LIMIT ?)",
-        (boundary, boundary, delete_budget),
+        f"""DELETE FROM stock_paper_events
+        WHERE id IN (
+            SELECT id FROM stock_paper_events
+            WHERE id <= ? AND event_type IN ({_TRIMMABLE_PLACEHOLDERS})
+            LIMIT ?
+        )""",
+        (boundary, *TRIMMABLE_STOCK_EVENT_TYPES, delete_budget),
     )
     deleted = int(cursor.rowcount or 0)
     return {
         "stock_paper_events_deleted": deleted,
         "stock_paper_events_remaining": total - deleted,
         "stock_paper_events_keep_rows": keep_rows,
+        "stock_paper_events_trimmable_types": list(TRIMMABLE_STOCK_EVENT_TYPES),
+        "stock_paper_events_preserved": "정지·체결·청산 신호는 삭제 대상이 아니다 — 사건 증거다",
         # 예산에 걸려 남은 분량은 다음 실행이 이어서 지운다 — 침묵하지 않는다.
         "stock_paper_events_more_pending": (total - deleted) > keep_rows,
     }

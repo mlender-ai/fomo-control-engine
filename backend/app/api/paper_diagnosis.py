@@ -138,8 +138,36 @@ def _pending_decisions(settings: Any) -> dict[str, Any]:
     items = pending_decisions.pending_decisions(
         gate_approved=live_trading_gate.GATE_APPROVED,
         sleep_guard=sleep_guard.sleep_guard_status(),
+        # 3-5: 유실일이 정한 유효일 상한. 창을 못 채우면 절전 결정이 차단 등급이 된다.
+        lost_day_ceilings=_stock_lost_day_ceilings(settings),
     )
     return pending_decisions.pending_summary(items)
+
+
+def _stock_lost_day_ceilings(settings: Any) -> dict[str, Any]:
+    """주식 트랙별 유효일 상한 (WO-FCE-STOCK-STATUS-01 3-5).
+
+    유실일은 이미 대시보드가 세고 있다 — 다시 세지 않고 그 값을 읽는다. 조회 실패가
+    진단 표면을 죽이면 안 되므로 실패 시 빈 dict 다(등급이 오르지 않을 뿐 숨기지 않는다).
+    """
+    from app.stock_paper.store import StockPaperStore
+    from app.validation import pending_decisions
+
+    try:
+        store = StockPaperStore(str(getattr(settings, "database_url", "")))
+        if not store.enabled:
+            return {}
+        tracks = store.dashboard().get("tracks") or []
+    except Exception:
+        return {}
+    return {
+        str(track.get("market")): pending_decisions.effective_day_ceiling(
+            calendar_days=int(track.get("calendar_days") or 0),
+            lost_days=int(track.get("lost_days") or 0),
+        )
+        for track in tracks
+        if track.get("market")
+    }
 
 
 def _whale_observations(settings: Any) -> dict[str, Any]:

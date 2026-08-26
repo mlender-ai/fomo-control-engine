@@ -23,13 +23,46 @@ BLOCKING = "blocking"  # 이것이 없으면 검증·전환이 진행되지 않�
 IMPACTING = "impacting"  # 진행은 되지만 표본·품질이 계속 깎인다
 
 
-def pending_decisions(*, gate_approved: bool, sleep_guard: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+# 검증 창. `observation.VALIDATION_TARGET_DAYS` 와 같은 수이며, 여기서는 유효일 상한을
+# 계산하는 데만 쓴다.
+VALIDATION_WINDOW_DAYS = 28
+
+
+def effective_day_ceiling(*, calendar_days: int, lost_days: int, window_days: int = VALIDATION_WINDOW_DAYS) -> dict[str, Any]:
+    """유실일이 정한 **유효일 상한** (WO-FCE-STOCK-STATUS-01 3-5).
+
+    28일 창에서 19일을 잃으면 남은 날을 전부 채워도 9일이다. 그 상한이 목표 미만이면
+    **검증이 성립하지 않는다** — 더 기다리는 것으로 풀리지 않는다는 뜻이고, 그래서
+    이 결정은 진행을 늦추는 항목이 아니라 **막는** 항목이다.
+    """
+    ceiling = max(0, int(window_days) - max(0, int(lost_days)))
+    return {
+        "window_days": int(window_days),
+        "calendar_days": int(calendar_days),
+        "lost_days": int(lost_days),
+        "effective_day_ceiling": ceiling,
+        "reachable": ceiling >= int(window_days),
+        "label": f"창 {window_days}일 · 유실 {lost_days}일 → 유효일 최대 {ceiling}일",
+    }
+
+
+def pending_decisions(
+    *,
+    gate_approved: bool,
+    sleep_guard: dict[str, Any] | None = None,
+    lost_day_ceilings: dict[str, dict[str, Any]] | None = None,
+) -> list[dict[str, Any]]:
     """지금 사람을 기다리는 결정들.
 
     `gate_approved` 는 코드로 확인 가능하므로 자동으로 닫힌다. 나머지는 문서 상태를
     코드가 알 수 없어 상시 노출하며, 사람이 문서를 고칠 때 이 목록에서 뺀다.
+
+    `lost_day_ceilings` 는 트랙별 유효일 상한이다. 하나라도 창을 못 채우면 호스트 지속성
+    항목이 **차단 등급으로 올라간다** — 관측이 깎이는 정도가 아니라 검증이 불가능해진 것이다.
     """
     guard = sleep_guard or {}
+    ceilings = lost_day_ceilings or {}
+    unreachable = {market: row for market, row in ceilings.items() if not row.get("reachable", True)}
     items: list[dict[str, Any]] = []
 
     if not gate_approved:
@@ -46,14 +79,21 @@ def pending_decisions(*, gate_approved: bool, sleep_guard: dict[str, Any] | None
 
     # 절전은 코드가 상태를 읽을 수 있다 — 보호 중이면 굳이 결정 대기로 올리지 않는다.
     if guard.get("available") is not True or guard.get("guarded") is not True:
+        detail = "맥 절전이 US 정규장 후반을 계속 삭제한다. 절전 제거 시 US 검증이 13~27 거래일 단축된다."
+        if unreachable:
+            # 실측이 등급을 올린다. "깎인다"가 아니라 "성립하지 않는다"가 됐다.
+            detail += " 실측: " + " · ".join(f"{market} {row['label']}" for market, row in sorted(unreachable.items()))
+            detail += ". 유효일 상한이 창을 못 채우므로 **더 기다려도 검증이 성립하지 않는다.**"
         items.append(
             {
                 "id": "host_persistence_choice",
-                "severity": IMPACTING,
+                "severity": BLOCKING if unreachable else IMPACTING,
                 "title": "호스트 지속성 안 선택 (A/B/C/D)",
-                "detail": "맥 절전이 US 정규장 후반을 계속 삭제한다. 절전 제거 시 US 검증이 13~27 거래일 단축된다.",
+                "detail": detail,
                 "document": "docs/validation/HOST_PERSISTENCE.md §3",
                 "resolved_when": "안을 선택해 적용하고 scripts/local/check-sleep-guard.sh 가 보호 중을 반환한다",
+                "measured_ceilings": ceilings or None,
+                "remedy": "전원 연결 유지 + caffeinate -dimsu 상시 실행. 코드로 해결 불가 — 이 항목은 수리가 아니라 결정이다.",
             }
         )
 

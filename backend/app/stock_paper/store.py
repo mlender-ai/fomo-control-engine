@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 import json
@@ -36,6 +36,82 @@ def _json_default(value: Any) -> Any:
 
 def _json_dumps(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, default=_json_default)
+
+
+# ── WO-FCE-STOCK-STATUS-01 3-2·3-3 ────────────────────────────────────
+
+# 거부 카운터의 창. **전체 누적**이며 창이 없다는 사실 자체를 라벨로 낸다.
+#
+# 실측 2026-08-25: KR 1,762만 · US 137만. 이것은 서로 다른 거부가 아니라 큐에 남은
+# 주문 15,755건(전부 `session_closed`)이 매 틱 다시 계수된 값이다. 창을 적지 않으면
+# "1,762만 번 판단했다"로 읽히는데 그런 판단은 없었다 — `METRIC-TRUTH-01` 이 크립토에서
+# 고친 것과 같은 결함이다.
+REJECTION_COUNTER_WINDOW = "전체 누적 (창 없음)"
+REJECTION_COUNTER_NOTE = "서로 다른 거부 건수가 아니라 이벤트 행 수다. 큐에 남은 주문이 매 실행 다시 계수되므로 같은 주문이 여러 번 들어간다."
+
+# 정지를 푸는 절차. 화면이 이 문자열을 그대로 보여준다 — 지금은 푸는 법이 어디에도 없다.
+RESUME_PROCEDURE = (
+    "① 정지 사유와 유발 주문을 확인한다(아래 이력). "
+    "② 원인이 시세 공급 결함이면 공급을 먼저 고친다. "
+    "③ 원인 확인 후 수동 재개: UPDATE stock_paper_tracks SET status='running', stop_reason=NULL WHERE market='<MARKET>'. "
+    "자동 재개는 금지다 — 원인 없이 재개하면 같은 체결이 다시 들어간다."
+)
+
+
+# 검증 대상 계정. 탐색(`coverage`)은 체결 파이프라인 표본을 빠르게 만들기 위한 별도
+# 소액 계정이며 전략 성적에 합산하지 않는다(C4).
+STRATEGY_ENTRY_MODE = "strict_signal"
+EXPLORATION_ENTRY_MODE = "coverage"
+
+
+def _sample_breakdown(market: str, fill_counts: dict[tuple[str, str], int]) -> dict[str, Any]:
+    """전략 표본과 탐색 표본을 갈라서 낸다 (3-4).
+
+    트랙 헤드라인(`engine_return_pct`)은 **트랙 전체 계정**의 값이고, 지금 그 값은 사실상
+    탐색 계정이 움직인 결과다 — 실측 KR +0.0743% 가 `coverage` 계정 수익률과 같은 수였다.
+    전략 표본이 0 이라는 사실이 그 옆에 없으면 성적으로 읽힌다(C5).
+    """
+    strategy = int(fill_counts.get((market, STRATEGY_ENTRY_MODE), 0))
+    exploration = int(fill_counts.get((market, EXPLORATION_ENTRY_MODE), 0))
+    return {
+        "strategy_fills": strategy,
+        "exploration_fills": exploration,
+        "strategy_sample_zero": strategy == 0,
+        "validation_eligible_mode": STRATEGY_ENTRY_MODE,
+        "headline_note": (
+            "트랙 수익률은 탐색·전략을 합친 계정 값이다. 전략 표본이 0 이면 그 수익률은 탐색 계정이 움직인 결과다."
+            if strategy == 0
+            else "트랙 수익률은 탐색·전략을 합친 계정 값이다. 전략 성적은 mode_performance 의 strict_signal 을 본다."
+        ),
+        "exclusion_note": "탐색 표본은 전략 성적에 합산하지 않는다(C4).",
+    }
+
+
+def _halt_block(track: dict[str, Any], halts: list[dict[str, Any]]) -> dict[str, Any]:
+    """트랙 정지 상태. 정지했으면 **언제·왜·어떻게 푸는지**가 함께 나와야 한다(3-2).
+
+    `updated_at` 은 정지 시각이 아니다 — 트랙 행이 갱신될 때마다 바뀐다. 정지 시각은
+    `track_stopped` 이벤트에만 있고, 그 이벤트가 없으면 **없다고 적는다**(C5).
+    """
+    stopped = str(track.get("status") or "") == "stopped"
+    latest = halts[0] if halts else None
+    return {
+        "stopped": stopped,
+        "reason": track.get("stop_reason"),
+        # 이력이 있으면 그 시각, 없으면 None. `updated_at` 으로 대신하지 않는다.
+        "stopped_at": latest.get("observed_at") if latest else None,
+        "stopped_at_known": bool(latest),
+        # 정지했는데 이력이 없을 때만 적는다. 돌고 있는 트랙에 띄우면 소음이다.
+        "evidence_note": (
+            "정지 시각·유발 주문을 조회할 수 없다 — 리텐션이 사건 이벤트를 함께 지웠다(2026-08-25 수리). 이후 정지부터 남는다."
+            if stopped and not latest
+            else None
+        ),
+        "history": halts,
+        "resume_procedure": RESUME_PROCEDURE if stopped else None,
+        "auto_resume": False,
+        "auto_resume_note": "자동 재개는 금지다(C2). 원인 확인 후 수동으로만 푼다.",
+    }
 
 
 class StockPaperStore:
@@ -593,10 +669,22 @@ class StockPaperStore:
                 WHERE reason IS NOT NULL AND event_type NOT IN ('validation_clock_started', 'validation_clock_invalidated')
                 GROUP BY market, reason"""
             ).fetchall()
+            # 3-2: 정지 이력. 리텐션이 지우지 않는 종류이므로 이제 남는다.
+            halt_events = connection.execute(
+                """SELECT market, event_type, symbol, reason, observed_at, payload FROM stock_paper_events
+                WHERE event_type IN ('track_stopped', 'invariant_failure')
+                ORDER BY id DESC LIMIT 20"""
+            ).fetchall()
             fills = [
                 json.loads(row["payload"]) for row in connection.execute("SELECT payload FROM stock_paper_fills ORDER BY filled_at DESC LIMIT 100").fetchall()
             ]
             fill_count = int(connection.execute("SELECT COUNT(*) FROM stock_paper_fills").fetchone()[0])
+            # 3-4: 전략(엄격) 표본을 시장별로 센다. 헤드라인 수익률이 어느 계정 값인지
+            # 보이지 않으면 탐색 표본 5건의 +0.07% 가 전략 성적으로 읽힌다.
+            mode_fill_counts = {
+                (str(row["market"]), str(row["entry_mode"])): int(row["count"])
+                for row in connection.execute("SELECT market, entry_mode, COUNT(*) AS count FROM stock_paper_fills GROUP BY market, entry_mode").fetchall()
+            }
             positions = [
                 dict(row)
                 for row in connection.execute(
@@ -619,6 +707,23 @@ class StockPaperStore:
         reason_by_market: dict[str, Counter[str]] = {"KR": Counter(), "US": Counter()}
         for row in events:
             reason_by_market[str(row["market"])][str(row["reason"])] = int(row["count"])
+        halts_by_market: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for row in halt_events:
+            payload: dict[str, Any] = {}
+            try:
+                parsed = json.loads(str(row["payload"] or "{}"))
+                payload = parsed if isinstance(parsed, dict) else {}
+            except (TypeError, ValueError):
+                payload = {}
+            halts_by_market[str(row["market"])].append(
+                {
+                    "event_type": str(row["event_type"]),
+                    "symbol": row["symbol"],
+                    "reason": row["reason"],
+                    "observed_at": row["observed_at"],
+                    "detail": payload.get("error") or payload.get("reason"),
+                }
+            )
         now = datetime.now(timezone.utc)
         result_tracks = []
         for track in tracks:
@@ -647,6 +752,13 @@ class StockPaperStore:
                     "nav_complete": marks_complete,
                     "engine_return_pct": round(engine_return, 4) if engine_return is not None else None,
                     "rejection_reasons": dict(reason_by_market[str(track["market"])]),
+                    # 3-3: 창을 명시한다. 이 수는 **전체 누적**이고 서로 다른 후보 수가 아니다.
+                    "rejection_window": REJECTION_COUNTER_WINDOW,
+                    "rejection_counter_note": REJECTION_COUNTER_NOTE,
+                    # 3-2: 정지 상태를 시각·사유·재개 절차와 함께 낸다.
+                    "halt": _halt_block(track, halts_by_market.get(str(track["market"]), [])),
+                    # 3-4: 표본이 어느 계정 것인지 명시한다.
+                    "sample_breakdown": _sample_breakdown(str(track["market"]), mode_fill_counts),
                 }
             )
         mode_performance = []

@@ -420,8 +420,18 @@ VERDICT_MODULES = (
     "backend/app/validation/decay.py",
     "backend/app/validation/engine.py",
     "backend/app/validation/candidates.py",
-    "backend/app/validation/pending_decisions.py",
 )
+
+# `pending_decisions.py` 는 여기서 뺐다 (WO-FCE-STOCK-STATUS-01 3-5).
+#
+# 이 목록의 나머지는 **검증 판정을 계산**한다 — 통과·미달·유효일·감쇠를 정한다.
+# `pending_decisions` 는 아무것도 판정하지 않는다. 사람이 결정할 항목을 나열할 뿐이고,
+# 그 항목의 등급은 실측이 바뀌면 함께 바뀌어야 한다(유실 19일 → 검증 불가 → 차단 등급).
+# 파일을 얼리면 그 갱신이 영원히 막히는데, 그것은 이 가드가 지키려던 것이 아니다.
+#
+# 대신 이 모듈에서 실제로 위험한 것 — **등급이 조용히 낮아지는 것** — 을
+# `test_stock_track_status.py` 가 속성으로 고정한다. 완화는 사람만 할 수 있다는 규칙은
+# 파일 동결이 아니라 그 속성으로 지킨다.
 
 
 def test_watcher_stays_outside_the_worker() -> None:
