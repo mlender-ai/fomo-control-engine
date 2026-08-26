@@ -223,3 +223,57 @@
 **자격 종류별 분리 집계.** 관찰 자격 진입과 승격 자격 진입은 문턱이 다르므로 섞으면 둘 다
 해석 불가가 된다. `performance_by_qualification()` 이 버킷을 나누고, 각 버킷에
 "추종 트랙 성과는 승격 근거로 쓰지 않는다"가 붙어 다닌다(C11).
+
+---
+
+## 폴리마켓 검증 대상 제외 — 임시값 (WO-FCE-DEFAULTS-01 1-2 · 2026-08-27)
+
+폴리를 **검증 판정 범위에서 뺀다.** 임시값이며 설정 한 값으로 되돌아간다.
+
+### 왜 A(제외)인가
+
+| 안 | 지금 실행 가능한가 |
+| --- | --- |
+| A) 검증 대상 제외 | **가능** |
+| B) 만기 짧은 시장으로 유니버스 교체 | **불가능** — 시장 목록 API 가 451 로 차단됐다 |
+| C) 차단 상태로 유지 | 가능하나 **판정을 영구 미결로 둔다** |
+
+451 이 안 풀리면 B 가 성립하지 않고, C 는 완료 판정을 무기한 미룬다. 남는 것이 A 다.
+
+### 실측 정정 — 폴리는 코드 판정을 막고 있지 않았다
+
+WO 는 "트랙별 판정이 폴리 때문에 막히지 않게 한다"고 했다. 확인하니 **막고 있지 않았다:**
+
+| 소비처 | 폴리가 막는가 |
+| --- | --- |
+| `live_trading_gate.live_trading_readiness_report` | 아니다 — 트랙별 행이고 AND 가 없다 |
+| `sample_rate.sample_rate_report` | 아니다 — `tracks_with_shortfall` 목록에 이름만 오른다 |
+| **이 문서의 완료 서술** | **막는다** |
+| `pending_decisions.poly_track_disposition` | **막는다** (BLOCKING) |
+
+실제 차단은 문서와 결정 항목에 있었다. 그래서 판정 계층(`VERDICT_MODULES`)을 고치지 않고
+`validation/track_scope.py` 가 **범위를 선언**하며 보고 표면이 그것을 읽는다.
+
+### 완료 판정 대상 트랙
+
+```
+crypto · stock_kr · stock_us · whale_follow      ← 판정 대상
+poly                                             ← 제외 (임시값 · 451 차단)
+```
+
+`whale_follow` 는 `WHALE-FOLLOW-01` 에서 등록됐고 `DEFAULTS-01` 1-1 이 자본을 선언해
+자본 대비 수익률이 산출된다.
+
+### 데이터는 버리지 않는다
+
+수집·원장을 유지한다. 제외는 판정 범위에서 빼는 것이고 삭제가 아니다 —
+`poly_resolutions` 12,774행 · `poly_positions` 9행 등 그대로다. **451 이 풀리면 되돌린다.**
+
+### 원복
+
+```bash
+FCE_VALIDATION_EXCLUDE_POLY=false
+```
+
+`pending_decisions` 의 `poly_track_disposition` 은 **삭제되지 않고** 등급이
+`provisional_applied` 로 내려간다 — 사용자가 나중에 확정할 대상이기 때문이다.

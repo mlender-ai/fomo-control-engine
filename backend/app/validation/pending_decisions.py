@@ -21,6 +21,9 @@ from typing import Any
 
 BLOCKING = "blocking"  # 이것이 없으면 검증·전환이 진행되지 않는다
 IMPACTING = "impacting"  # 진행은 되지만 표본·품질이 계속 깎인다
+# WO-FCE-DEFAULTS-01 4-1: 임시값을 넣어 막힘을 푼 항목. **삭제하지 않는다** —
+# 사용자가 나중에 확정할 대상이고, 지금 값이 임시라는 사실이 남아 있어야 한다.
+PROVISIONAL = "provisional_applied"
 
 
 # 검증 창. `observation.VALIDATION_TARGET_DAYS` 와 같은 수이며, 여기서는 유효일 상한을
@@ -104,10 +107,13 @@ def pending_decisions(
     # (만기 2027-01-01 · 검증 창 내 정산 0건) 수집도 451 로 차단됐다. 그 상태로 트랙을
     # 남겨두면 4트랙 완료 판정이 영원히 미완으로 남는다.
     if poly_blocked:
+        # 임시값이 적용되면 등급이 내려가지만 항목은 남는다(4-1 항목 3).
+        applied = poly_blocked.get("provisional_applied") if isinstance(poly_blocked, dict) else None
         items.append(
             {
                 "id": "poly_track_disposition",
-                "severity": BLOCKING,
+                "severity": PROVISIONAL if applied else BLOCKING,
+                "provisional_applied": applied,
                 "title": "폴리마켓 처리 방침 선택 (A/B/C)",
                 "detail": (
                     "A) 검증 대상에서 명시적 제외 · B) 만기 짧은 시장으로 유니버스 교체 · C) 차단 상태로 유지. "
@@ -118,6 +124,7 @@ def pending_decisions(
                 "resolved_when": "안을 선택해 COMPLETION_DEFINITION.md 의 트랙 목록을 갱신한다(A) 또는 차단 해소 후 재평가한다(B·C)",
                 "blocked_by": "451 지역 차단 — 우회하지 않는다(C1). 접근 경로 확보는 코드 밖의 결정이다.",
                 "measured": poly_blocked,
+                "revert": "FCE_VALIDATION_EXCLUDE_POLY=false" if applied else None,
             }
         )
 
@@ -199,4 +206,4 @@ def format_pending_lines(items: list[dict[str, Any]]) -> list[str]:
     return lines
 
 
-__all__ = ["BLOCKING", "IMPACTING", "format_pending_lines", "pending_decisions", "pending_summary"]
+__all__ = ["BLOCKING", "IMPACTING", "PROVISIONAL", "format_pending_lines", "pending_decisions", "pending_summary"]

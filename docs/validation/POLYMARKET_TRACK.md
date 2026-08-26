@@ -145,3 +145,33 @@ verdict_reason: 보유 8건 전부 검증 종료(2026-09-10) 이후 만기 — �
 기존 데이터를 지우지 않았다. `poly_resolutions` 12,774행·`poly_positions` 9행·
 `poly_markets` 7,139행·`poly_estimates` 43,690행 그대로다. 화면도 "기존 원장은 보존됩니다"를
 계속 표시한다.
+
+---
+
+## 처리 방침 확정 — A(검증 대상 제외) · 임시값 (WO-FCE-DEFAULTS-01 1-2 · 2026-08-27)
+
+세 안 중 A 를 임시값으로 확정했다. 451 이 안 풀리면 B 가 불가능하고 C 는 판정을 영구
+미결로 둔다.
+
+| 항목 | 처리 |
+| --- | --- |
+| 검증 판정 범위 | **제외** |
+| 수집 | **유지** — 451 이 풀리면 표본이 다시 쌓인다 |
+| 원장 | **유지** — 삭제 0건 |
+| 화면 | `검증 대상 제외 · 임시값` 배너 + 사유 + 원복 명령 |
+| `pending_decisions` | **삭제하지 않고** `provisional_applied` 로 전이 |
+
+### 실측 정정 — 폴리는 코드 판정을 막고 있지 않았다
+
+WO 는 "트랙별 판정이 폴리 때문에 막히지 않게 한다"고 했다. 확인하니 `live_trading_gate` ·
+`sample_rate` 둘 다 트랙별 행이고 AND 가 없어 **막고 있지 않았다.** 실제 차단은
+`COMPLETION_DEFINITION` 서술과 결정 항목에 있었고 그 둘을 고쳤다.
+
+그래서 판정 계층(`VERDICT_MODULES`)을 건드리지 않았다 — `validation/track_scope.py` 가
+범위를 선언하고 보고 표면이 읽는다.
+
+### 원복
+
+```bash
+FCE_VALIDATION_EXCLUDE_POLY=false
+```

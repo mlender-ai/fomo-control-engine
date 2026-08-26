@@ -14,6 +14,8 @@ from .client import PolymarketPublicClient, resolved_outcome
 from .estimator import attach_execution_cost, estimate_market_probability, kelly_fraction, quality_at_least
 from app.notify.paper_events import track_event
 
+from app.validation import track_scope
+
 from . import track_status as track_status_module
 from .models import FillInvariantViolation, OrderBook, PaperOrder, PolyMarket
 from .parameters import load_poly_parameters
@@ -345,6 +347,8 @@ def poly_paper_dashboard(settings: Settings) -> dict[str, Any]:
         "categories": ["crypto", "macro"],
         "live_orders_enabled": False,
         "status": track_status_module.track_status(collection=collection, viability=viability, expiry=expiry),
+        # DEFAULTS-01 1-2: 검증 대상 제외(임시값)를 화면이 말한다.
+        "validation_scope": track_scope.track_scope_status(track_scope.TRACK_POLY, settings),
         "sample_labels": track_status_module.sample_labels(
             resolution_count=int(payload.get("resolution_count") or 0),
             our_positions=len(payload.get("positions") or []),

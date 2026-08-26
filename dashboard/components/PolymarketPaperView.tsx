@@ -36,6 +36,14 @@ export function PolymarketPaperView({
       </section>
 
       {/* 2-1: 원시 예외 문자열을 사용자에게 던지지 않는다. 판정된 상태를 낸다. */}
+      {/* 1-2: 검증 대상 제외는 임시값이다. 확정값처럼 보이면 안 된다(C5). */}
+      {data.validation_scope?.excluded ? (
+        <section className="polyValidationScope" data-testid="poly-validation-scope">
+          <header><strong>{data.validation_scope.label}</strong><code>451</code></header>
+          <p>{data.validation_scope.reason}</p>
+          <small>수집·원장은 유지합니다. 원복: <code>{data.validation_scope.revert}</code></small>
+        </section>
+      ) : null}
       {data.status ? <PolyTrackStatusBadge status={data.status} /> : track.last_collection_error ? <TerminalWarning tone="warning">공개 시장 수집 실패 · {track.last_collection_error} · 기존 원장은 보존됩니다.</TerminalWarning> : null}
       <header className="polyPaperHeader">
         <div><span className="engineSectionLabel">독립 확률 검증 · {data.parameter_version}</span><h2>Polymarket · Crypto / Macro</h2><p>캔들 판정 엔진과 분리하고, 만기 정답으로 Brier score를 채점합니다.</p></div>

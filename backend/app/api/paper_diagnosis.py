@@ -160,11 +160,16 @@ def _poly_blocked_state(settings: Any) -> dict[str, Any] | None:
     blocked = bool(status.get("structurally_blocked")) or (status.get("collection") or {}).get("status") == "geo_blocked"
     if not blocked:
         return None
+    from app.validation import track_scope
+
+    scope = track_scope.track_scope_status(track_scope.TRACK_POLY, settings)
     return {
         "structurally_blocked": bool(status.get("structurally_blocked")),
         "collection_status": (status.get("collection") or {}).get("status"),
         "headline": status.get("headline"),
         "verdict_reason": status.get("verdict_reason"),
+        # 1-2 임시값이 적용됐으면 결정 항목이 차단에서 "임시값 적용 중"으로 내려간다.
+        "provisional_applied": "A(검증 대상 제외) · 수집·원장 유지" if scope["excluded"] else None,
     }
 
 

@@ -196,6 +196,16 @@ class Settings(BaseSettings):
         ge=1,
         validation_alias=AliasChoices("FCE_HYPERLIQUID_WHALE_COHORT_DORMANT_DAYS", "HYPERLIQUID_WHALE_COHORT_DORMANT_DAYS"),
     )
+    # WO-FCE-DEFAULTS-01 1-2 — 폴리를 검증 판정 범위에서 뺀다. **임시값이다.**
+    #
+    # 451 지역 차단이 안 풀리면 유니버스 교체(B안)가 불가능하고, 유지(C안)는 판정을 영구
+    # 미결로 둔다. 수집·원장은 유지하며 제외는 판정 범위에서만이다.
+    #
+    # 원복: false 로 두면 다시 판정 범위에 들어온다.
+    validation_exclude_poly: bool = Field(
+        True,
+        validation_alias=AliasChoices("FCE_VALIDATION_EXCLUDE_POLY", "VALIDATION_EXCLUDE_POLY"),
+    )
     # WO-FCE-DEFAULTS-01 1-1 — 추종 트랙 시작 자본과 동시 보유 상한. **임시값이다.**
     #
     # 크립토 트랙과 같은 값으로 맞춘다(500 = 100 × 5). 두 트랙을 같은 자본에서 비교할 수

@@ -205,3 +205,68 @@ def test_judgement_and_other_tracks_are_untouched() -> None:
     if diff.returncode != 0:
         pytest.skip("origin/main 을 참조할 수 없는 환경")
     assert diff.stdout.strip() == "", f"C3·C5 위반:\n{diff.stdout}"
+
+
+# ── WO-FCE-DEFAULTS-01 1-2 · 검증 대상 제외 (임시값) ────────────────────
+
+
+class _ScopeSettings:
+    validation_exclude_poly = True
+
+
+class _ScopeOff:
+    validation_exclude_poly = False
+
+
+def test_poly_is_excluded_from_validation_scope() -> None:
+    from app.validation import track_scope
+
+    status = track_scope.track_scope_status(track_scope.TRACK_POLY, _ScopeSettings())
+    assert status["excluded"] is True
+    assert status["in_validation_scope"] is False
+    assert "451" in status["reason"]
+
+
+def test_exclusion_is_labelled_provisional() -> None:
+    """C5 — 확정값처럼 보이면 안 된다."""
+    from app.validation import track_scope
+
+    status = track_scope.track_scope_status(track_scope.TRACK_POLY, _ScopeSettings())
+    assert "임시값" in status["label"]
+    assert status["revert"] == "FCE_VALIDATION_EXCLUDE_POLY=false"
+
+
+def test_exclusion_reverts_with_one_setting() -> None:
+    """C4 — 전부 원복 가능."""
+    from app.validation import track_scope
+
+    assert track_scope.track_scope_status(track_scope.TRACK_POLY, _ScopeOff())["excluded"] is False
+    assert track_scope.excluded_tracks(_ScopeOff()) == frozenset()
+
+
+def test_other_tracks_are_never_excluded() -> None:
+    """C5(원 WO) — 다른 트랙 무영향."""
+    from app.validation import track_scope
+
+    for track in ("crypto", "stock_kr", "stock_us", "whale_follow"):
+        assert track_scope.track_scope_status(track, _ScopeSettings())["excluded"] is False
+
+
+def test_scope_block_states_that_data_is_kept() -> None:
+    """C2(원 WO) — 원장 보존. 제외는 삭제가 아니다."""
+    from app.validation import track_scope
+
+    block = track_scope.scope_block(_ScopeSettings())
+    assert "데이터를 버리는 것이 아니다" in block["data_kept"]
+    assert "막고 있지 않았다" in block["measured_note"]
+
+
+def test_disposition_decision_is_transitioned_not_deleted() -> None:
+    """4-1 항목 3 — 삭제하지 않는다. 사용자가 확정할 대상이다."""
+    from app.validation.pending_decisions import PROVISIONAL
+
+    items = pending_decisions(gate_approved=False, sleep_guard={}, poly_blocked={"structurally_blocked": True, "provisional_applied": "A(제외)"})
+    item = next(row for row in items if row["id"] == "poly_track_disposition")
+    assert item["severity"] == PROVISIONAL
+    assert item["provisional_applied"] == "A(제외)"
+    assert item["revert"] == "FCE_VALIDATION_EXCLUDE_POLY=false"

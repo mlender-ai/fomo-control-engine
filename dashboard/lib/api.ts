@@ -2694,6 +2694,15 @@ export type PolyTrackStatus = {
   };
 };
 
+export type PolyValidationScope = {
+  track: string;
+  in_validation_scope: boolean;
+  excluded: boolean;
+  reason: string | null;
+  label: string | null;
+  revert: string | null;
+};
+
 export type PolySampleLabels = {
   calibration_samples: number;
   calibration_label: string;
@@ -2718,6 +2727,7 @@ export type PolyPaperDashboard = {
   capital?: TrackCapitalBlock;
   status?: PolyTrackStatus;
   sample_labels?: PolySampleLabels;
+  validation_scope?: PolyValidationScope;
   clock_breakdown?: PolyClockBreakdown;
   enabled: boolean;
   parameter_version: string;
