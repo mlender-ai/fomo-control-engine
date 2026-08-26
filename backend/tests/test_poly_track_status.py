@@ -130,10 +130,9 @@ def test_numerator_denominator_mismatch_is_named() -> None:
 
 
 def _rows() -> list[dict]:
-    return (
-        [{"day": f"2026-08-{day:02d}", "valid": 0, "reason": "커버리지 36.46% < 임계 90.0%"} for day in range(13, 20)]
-        + [{"day": f"2026-08-{day:02d}", "valid": 0, "reason": "관측 0건 (정지)"} for day in range(20, 27)]
-    )
+    return [{"day": f"2026-08-{day:02d}", "valid": 0, "reason": "커버리지 36.46% < 임계 90.0%"} for day in range(13, 20)] + [
+        {"day": f"2026-08-{day:02d}", "valid": 0, "reason": "관측 0건 (정지)"} for day in range(20, 27)
+    ]
 
 
 def test_clock_zero_is_broken_down_by_cause() -> None:
