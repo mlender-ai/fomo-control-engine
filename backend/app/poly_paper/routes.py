@@ -11,7 +11,15 @@ router = APIRouter(prefix="/api/poly-paper", tags=["poly-paper"])
 
 @router.get("/dashboard")
 def dashboard() -> dict:
-    return poly_paper_dashboard(get_settings())
+    """대시보드 + 트랙 자본 (WO-FCE-TRACK-CAPITAL-01 1-3).
+
+    지금까지 `USDC 8,416.88` 만 보였고 그것이 10,000 에서 줄어든 것인지 알 수 없었다.
+    시작값은 원장(`poly_paper_track.initial_cash`)에 **있었다** — 화면에 없었을 뿐이다.
+    """
+    from app.validation.track_capital import capital_for_response
+
+    settings = get_settings()
+    return {**poly_paper_dashboard(settings), "capital": capital_for_response(settings, ("poly",))}
 
 
 @router.post("/run")

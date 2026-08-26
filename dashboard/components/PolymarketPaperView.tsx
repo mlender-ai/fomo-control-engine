@@ -3,6 +3,7 @@
 import { Braces, RefreshCw, ShieldCheck } from "lucide-react";
 import { useMemo, useState } from "react";
 import { TerminalWarning } from "@/components/terminal";
+import { TrackCapitalRow } from "@/components/TrackCapitalRow";
 import type { PolyPaperDashboard, PolyPaperMarket } from "@/lib/api";
 
 export function PolymarketPaperView({
@@ -24,6 +25,8 @@ export function PolymarketPaperView({
   const cash = track.cash ?? track.initial_cash ?? 0;
   return (
     <div className="engineView polyPaperView" data-testid="engine-poly-paper-tab">
+      {/* 지금까지 `USDC 8,416.88` 만 보였고 10,000 에서 줄어든 것인지 알 수 없었다. */}
+      <TrackCapitalRow block={data.capital} track="poly" label="폴리 자본" />
       <section className="polyPaperGate">
         <div><ShieldCheck size={18} /><span>Public data · PaperBroker</span><strong>지갑·실주문 구현 없음</strong></div>
         <p>{data.performance_gate}</p>

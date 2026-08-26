@@ -3959,6 +3959,55 @@ textarea:focus {
   font-weight: 800;
 }
 
+/* WO-FCE-TRACK-CAPITAL-01 1-3 — 4탭 공통 자본 줄.
+   금액이 대표값이고 수익률은 병기다. 미실현은 별 칸에 둔다(C4). */
+.trackCapitalRow {
+  display: grid;
+  gap: 5px;
+  padding: 12px 16px;
+  border: 1px solid var(--terminal-line);
+  background: var(--terminal-panel-2);
+}
+
+.trackCapitalLabel {
+  color: var(--terminal-muted);
+  font-size: var(--fce-type-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.trackCapitalFigures {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  font-family: var(--fce-font-number);
+  font-size: var(--fce-type-sm);
+}
+
+.trackCapitalFigures b {
+  font-size: var(--fce-type-md);
+  font-weight: 700;
+}
+
+.trackCapitalFigures .long {
+  color: var(--terminal-positive);
+}
+
+.trackCapitalFigures .short {
+  color: var(--terminal-negative);
+}
+
+.trackCapitalUnrealized {
+  color: var(--terminal-dim);
+}
+
+.trackCapitalRow > small {
+  color: var(--terminal-dim);
+  font-size: var(--fce-type-xs);
+  line-height: 1.6;
+}
+
 /* WO-FCE-WHALE-COHORT-COLLAPSE-01 4-3 — 고래 탭의 추종 트랙 섹션.
    사용자 요구: "고래 추종매매했으면 고래 탭에서 그게 보여야 한다." */
 .whaleFollowTrack {

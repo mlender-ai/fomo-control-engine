@@ -1866,6 +1866,38 @@ export type OnchainWhaleParticipantTypes = {
   window_note: string;
 };
 
+// WO-FCE-TRACK-CAPITAL-01 — 4트랙 공통 자본 블록.
+// 탭마다 다른 이름으로 읽으면 비교가 안 되므로 필드를 하나로 고정한다.
+export type TrackCapital = {
+  track: string;
+  available: boolean;
+  reason?: string | null;
+  currency: string;
+  starting_capital: number | null;
+  starting_capital_source: string;
+  starting_capital_note: string;
+  current_capital: number | null;
+  current_capital_note: string | null;
+  realized_pnl: number | null;
+  unrealized_pnl: number | null;
+  unrealized_note: string;
+  return_on_capital_pct: number | null;
+  return_note: string | null;
+  deployed_capital: number | null;
+  closed_samples: number;
+  open_positions: number | null;
+  sample_sufficient: boolean;
+  sample_note: string;
+  window_anchor: string | null;
+};
+
+export type TrackCapitalBlock = {
+  available: boolean;
+  reason?: string;
+  definition?: string;
+  tracks: Record<string, TrackCapital>;
+};
+
 export type OnchainWhaleCohort = {
   tracked: number;
   supply_of: string;
@@ -1943,6 +1975,7 @@ export type OnchainWhaleFlowBreakdown = {
 };
 
 export type OnchainWhaleDashboard = {
+  capital?: TrackCapitalBlock;
   enabled: boolean;
   wallet_count: number;
   cohort: OnchainWhaleCohort;
@@ -2341,6 +2374,7 @@ export type PaperGateFunnel = {
 };
 
 export type PaperDashboard = {
+  capital?: TrackCapitalBlock;
   scoreboard: {
     as_of: string;
     started_at: string | null;
@@ -2498,6 +2532,7 @@ export type StockPaperTrack = {
 };
 
 export type StockPaperDashboard = {
+  capital?: TrackCapitalBlock;
   enabled: boolean;
   ready_to_start: boolean;
   start_block_reason: string | null;
@@ -2643,6 +2678,7 @@ export type PolyPaperMarket = {
 };
 
 export type PolyPaperDashboard = {
+  capital?: TrackCapitalBlock;
   enabled: boolean;
   parameter_version: string;
   read_only_label: string;

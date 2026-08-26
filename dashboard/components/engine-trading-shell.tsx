@@ -7,6 +7,7 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react
 import { TerminalWarning } from "@/components/terminal";
 import { StockPaperEntryChart } from "@/components/StockPaperEntryChart";
 import { PolymarketPaperView } from "@/components/PolymarketPaperView";
+import { TrackCapitalRow } from "@/components/TrackCapitalRow";
 import { api, type OnchainWhaleDashboard, type OnchainWhaleFlowBreakdown, type PaperDashboard, type PaperGateFunnel, type PaperTrade, type PolyPaperDashboard, type StanceBacktestDashboard, type StockPaperDashboard, type StockPaperTrack } from "@/lib/api";
 
 const tabs = [
@@ -161,6 +162,8 @@ function StockPaperView({ data }: { data: StockPaperDashboard | null }) {
   const modePerformance = data.mode_performance ?? [];
   return (
     <div className="engineView stockPaperView" data-testid="engine-stock-paper-tab">
+      <TrackCapitalRow block={data.capital} track="stock_kr" label="KR 자본" />
+      <TrackCapitalRow block={data.capital} track="stock_us" label="US 자본" />
       <section className="stockPaperGate">
         <div><ShieldCheck size={18} /><span>PaperBroker only</span><strong>실주문 영구 봉인</strong></div>
         <p>{data.performance_gate}</p>
@@ -266,6 +269,7 @@ function BattleView({ data, whales, starting, onStart }: { data: PaperDashboard;
   const recent = board.recent_28d;
   return (
     <div className="engineView" data-testid="engine-battle-tab">
+      <TrackCapitalRow block={data.capital} track="crypto" label="크립토 자본" />
       <section className={`engineActivationStrip ${data.activation.running ? "running" : "blocked"}`} data-testid="paper-activation-strip">
         <div>
           <strong>{data.activation.running ? "가동 중" : "가동 확인 필요"}</strong>
@@ -378,6 +382,7 @@ function OnchainView({ data, onReload }: { data: OnchainWhaleDashboard | null; o
         <div className="onchainToolbarActions"><button className="button secondary" disabled={busy} onClick={collectNow} type="button"><RefreshCw size={15} />포지션 갱신</button><button className="button" disabled={busy} onClick={discoverNow} type="button"><Radar size={15} />리더보드 재스캔</button></div>
       </section>
       {message ? <TerminalWarning tone={message.startsWith("리더보드") ? "warning" : "error"}>{message}</TerminalWarning> : null}
+      <TrackCapitalRow block={data.capital} track="whale_follow" label="추종 자본" />
       <WhaleDiscoveryAudit data={data} />
       <WhaleFollowTrack data={data} />
       <WhaleFlowOverview data={data} />

@@ -13,7 +13,15 @@ class WhaleWalletRequest(BaseModel):
 
 @router.get("/whales")
 def list_whales() -> dict:
-    return service.whale_dashboard()
+    """고래 대시보드 + 추종 트랙 자본 (WO-FCE-TRACK-CAPITAL-01 1-3).
+
+    추종 트랙의 시작 자본은 **미상**이다 — 동시 보유 상한을 강제하지 않아 유도할 수 없다.
+    미상을 미상으로 내고 수익률은 만들지 않는다(C7).
+    """
+    from app.core.config import get_settings
+    from app.validation.track_capital import capital_for_response
+
+    return {**service.whale_dashboard(), "capital": capital_for_response(get_settings(), ("whale_follow",))}
 
 
 @router.post("/whales")

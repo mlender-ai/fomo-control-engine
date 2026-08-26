@@ -29,7 +29,15 @@ def get_paper_scoreboard() -> dict:
 
 @router.get("/dashboard")
 def get_paper_dashboard() -> dict:
-    return service.paper_dashboard()
+    """대시보드 + 트랙 자본 (WO-FCE-TRACK-CAPITAL-01 1-3).
+
+    크립토는 `equity_curve` 가 대결 경로에만 있었다. 자본 블록은 4트랙 공통 형식이므로
+    여기서도 같은 필드로 낸다 — 탭마다 다른 이름으로 읽으면 비교가 안 된다.
+    """
+    from app.core.config import get_settings
+    from app.validation.track_capital import capital_for_response
+
+    return {**service.paper_dashboard(), "capital": capital_for_response(get_settings(), ("crypto",))}
 
 
 @router.post("/run")
