@@ -196,6 +196,20 @@ class Settings(BaseSettings):
         ge=1,
         validation_alias=AliasChoices("FCE_HYPERLIQUID_WHALE_COHORT_DORMANT_DAYS", "HYPERLIQUID_WHALE_COHORT_DORMANT_DAYS"),
     )
+    # WO-FCE-DEFAULTS-01 1-4 — KR 주식 큐 주문 보류. **임시값이다.**
+    #
+    # 체결가는 세션 시가로 만들고 invariant 는 현재 분봉으로 검사한다(봉 불일치). US 가
+    # 그렇게 이미 정지했고 KR 큐 13,836건이 같은 실패를 대기 중이다. 세션이 열리면 전부
+    # 시가 체결을 시도한다.
+    #
+    # invariant 는 건드리지 않는다 — 정지를 막는 것이 아니라 정지를 유발할 주문을 보내지
+    # 않는 것이다. 근본 수리(봉 불일치)는 별건이다.
+    #
+    # 원복: false 로 두면 큐 주문이 다시 제출된다.
+    stock_paper_hold_queued_orders: bool = Field(
+        True,
+        validation_alias=AliasChoices("FCE_STOCK_PAPER_HOLD_QUEUED_ORDERS", "STOCK_PAPER_HOLD_QUEUED_ORDERS"),
+    )
     # WO-FCE-DEFAULTS-01 1-2 — 폴리를 검증 판정 범위에서 뺀다. **임시값이다.**
     #
     # 451 지역 차단이 안 풀리면 유니버스 교체(B안)가 불가능하고, 유지(C안)는 판정을 영구
@@ -247,7 +261,13 @@ class Settings(BaseSettings):
     # WO-FCE-WHALE-FOLLOW-02 7-2 — 지연·이탈 상한. **기록만 하지 않고 거부한다.**
     #
     # Phase 6 은 상한이 없어서 체결 4시간 뒤에 진입했다. 상한 없는 관측치는 관측치가
-    # 아니라 변명이다. 두 값 모두 권고 시작값이며 7-4 실측 후 조정한다.
+    # 아니라 변명이다.
+    #
+    # WO-FCE-DEFAULTS-01 1-3: 두 값을 **임시값으로 확정한다**(30분 · 25%). 7-4 24시간 관측
+    # 후 조정하되 관측이 끝날 때까지 기다리지 않는다 — 상한이 없는 상태로 도는 것이 상한이
+    # 부정확한 상태로 도는 것보다 나쁘다. 관측 결과가 나오면 그때 값을 고친다.
+    #
+    # 원복·조정: 두 환경변수를 바꾸면 즉시 적용된다. 코드 변경이 필요하지 않다.
     whale_follow_max_latency_minutes: int = Field(
         30,
         ge=1,

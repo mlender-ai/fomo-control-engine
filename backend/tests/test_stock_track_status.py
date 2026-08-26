@@ -249,3 +249,69 @@ def test_exploration_is_never_folded_into_strategy() -> None:
     assert block["strategy_fills"] == 3, "탐색 체결이 전략 표본에 섞였다"
     assert block["validation_eligible_mode"] == STRATEGY_ENTRY_MODE
     assert "합산하지 않는다" in block["exclusion_note"]
+
+
+# ── WO-FCE-DEFAULTS-01 1-3·1-4 · 임시값 ────────────────────────────────
+
+
+class _Prov:
+    whale_follow_starting_capital_usdt = 500.0
+    whale_follow_max_open_positions = 5
+    validation_exclude_poly = True
+    whale_follow_max_latency_minutes = 30
+    whale_follow_max_drift_pct_of_stop = 25.0
+    stock_paper_hold_queued_orders = True
+
+
+def test_every_provisional_default_has_a_revert_path() -> None:
+    """C4 — 원복 불가한 임시값은 확정값이다."""
+    from app.validation.provisional_defaults import applied_defaults
+
+    items = applied_defaults(_Prov())
+    assert len(items) == 4
+    for item in items:
+        assert item["revert"], f"원복 방법이 없다: {item['id']}"
+        assert item["basis"], f"근거가 없다: {item['id']}"
+
+
+def test_no_measurement_altering_default_is_listed() -> None:
+    """§0 — 두 번째 열은 임시값이 아니라 조작이다."""
+    from app.validation.provisional_defaults import summary
+
+    result = summary(_Prov())
+    listed = " ".join(f"{item['id']} {item['label']} {item['value']}" for item in result["items"])
+    for manipulation in ("invariant", "유실일", "임계 하향", "표본 충분"):
+        assert manipulation not in listed
+    assert "체결 invariant 완화" in result["not_applied"]
+    assert "유실일을 유효일 분모에서 제외" in result["not_applied"]
+
+
+def test_defaults_disappear_when_reverted() -> None:
+    """C4 — 설정을 되돌리면 목록에서 빠진다."""
+    from app.validation.provisional_defaults import applied_defaults
+
+    class _Off:
+        whale_follow_starting_capital_usdt = 0.0
+        whale_follow_max_open_positions = 0
+        validation_exclude_poly = False
+        whale_follow_max_latency_minutes = 0
+        whale_follow_max_drift_pct_of_stop = 0.0
+        stock_paper_hold_queued_orders = False
+
+    assert applied_defaults(_Off()) == []
+
+
+def test_queue_hold_does_not_touch_the_invariant() -> None:
+    """C2 — 정지를 막는 것이 아니라 정지를 유발할 주문을 안 보내는 것이다."""
+    source = (REPO_ROOT / "backend/app/stock_paper/execution.py").read_text(encoding="utf-8")
+    assert "raise FillInvariantViolation" in source
+    assert "observation.minute_low <= fill_price <= observation.minute_high" in source
+    service = (REPO_ROOT / "backend/app/stock_paper/service.py").read_text(encoding="utf-8")
+    assert "FillInvariantViolation" not in service, "서비스가 invariant 를 직접 다룬다"
+
+
+def test_queue_hold_only_applies_when_the_session_is_open() -> None:
+    """닫혀 있으면 어차피 session_closed 로 되돌아온다 — 막으면 관측 기록만 사라진다."""
+    source = (REPO_ROOT / "backend/app/stock_paper/service.py").read_text(encoding="utf-8")
+    body = source.split("def _process_pending_orders")[1].split("\ndef ")[0]
+    assert "hold_queued and session_open and order.status == OrderStatus.QUEUED" in body

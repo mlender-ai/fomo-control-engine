@@ -60,7 +60,13 @@ def run_stock_paper_engine(settings: Settings, market_payloads: dict[str, dict[s
     assert isinstance(broker, PaperBroker)
     toss_store = TossStockStore(settings.database_url)
     payloads = market_payloads or {}
-    processed = _process_pending_orders(broker, toss_store, payloads)
+    pending = _process_pending_orders(
+        broker,
+        toss_store,
+        payloads,
+        hold_queued=bool(getattr(settings, "stock_paper_hold_queued_orders", False)),
+    )
+    processed = int(pending["processed"])
     evaluated = rejected = strict_entered = coverage_evaluated = coverage_attempted = coverage_entered = 0
     events: list[dict[str, Any]] = []
     reject_gate_counts: dict[str, int] = {}
@@ -328,6 +334,11 @@ def run_stock_paper_engine(settings: Settings, market_payloads: dict[str, dict[s
         "coverage_attempted": coverage_attempted,
         "coverage_entered": coverage_entered,
         "pending_processed": processed,
+        # 1-4: 보류를 침묵으로 두지 않는다. 건수·사유가 결과에 남는다.
+        "queue_held": pending["held"],
+        "queue_held_total": pending["held_total"],
+        "queue_hold_enabled": bool(getattr(settings, "stock_paper_hold_queued_orders", False)),
+        "queue_hold_reason": "체결가는 세션 시가에서 만들고 invariant 는 현재 분봉으로 검사한다 — 봉 불일치로 US 가 정지했다. 임시 방어이며 근본 수리는 별건이다.",
         # 작업 3-2: 커버리지 진입 0의 원인을 단계별로 드러낸다(진단 표면·리포트에서 조회).
         "coverage_blocks": coverage_blocks,
         "exits": exits,
@@ -685,14 +696,54 @@ def _ready_to_start(settings: Settings) -> bool:
     return bool(settings.stock_paper_engine_enabled and settings.toss_stock_scout_enabled and settings.toss_client_id and settings.toss_client_secret)
 
 
-def _process_pending_orders(broker: PaperBroker, toss_store: TossStockStore, payloads: dict[str, dict[str, Any]]) -> int:
+def _process_pending_orders(
+    broker: PaperBroker,
+    toss_store: TossStockStore,
+    payloads: dict[str, dict[str, Any]],
+    *,
+    hold_queued: bool = False,
+) -> dict[str, Any]:
+    """대기 주문 재제출. `hold_queued` 면 **세션이 열렸을 때 큐 주문을 보내지 않는다.**
+
+    ## 왜 보류하는가 (WO-FCE-DEFAULTS-01 1-4)
+
+    `session_closed` 로 큐에 남은 주문은 다음 세션 **시가**로 체결되도록 설계됐다
+    (`execution.py:53`). 그런데 invariant 는 그 순간의 **현재 분봉** 범위로 검사한다
+    (`execution.py:59`). 서로 다른 봉이므로 시가 대비 가격이 반 스프레드 이상 움직여
+    있으면 위반이 **반드시** 난다.
+
+    US 트랙이 그렇게 이미 정지했고, KR 큐에 **13,836건**이 같은 실패를 대기 중이다.
+    세션이 열리는 순간 전부 시가 체결을 시도한다.
+
+    **invariant 는 건드리지 않는다**(C2). 정지를 막는 것이 아니라 **정지를 유발할 주문을
+    보내지 않는 것**이다. 근본 수리(봉 불일치)는 별건이다(C7).
+
+    보류는 세션이 열렸을 때만 한다 — 닫혀 있으면 어차피 `session_closed` 로 되돌아오므로
+    막을 것이 없고, 막으면 관측 기록만 사라진다.
+    """
     processed = 0
+    held: dict[str, int] = {}
     for order in broker.store.list_orders((OrderStatus.QUEUED, OrderStatus.PARTIAL)):
         payload = payloads.get(order.market.value) or {}
-        observation = _observation(toss_store, order.market, order.symbol, payload.get("market_state") == "open")
+        session_open = payload.get("market_state") == "open"
+        if hold_queued and session_open and order.status == OrderStatus.QUEUED:
+            held[order.market.value] = held.get(order.market.value, 0) + 1
+            continue
+        observation = _observation(toss_store, order.market, order.symbol, session_open)
         broker.place(order, observation)
         processed += 1
-    return processed
+    if held:
+        # C10 계열 — 보류를 침묵으로 두지 않는다. 건수·사유가 조회 가능해야 한다.
+        for market_value, count in held.items():
+            broker.store.record_event_if_stale(
+                Market(market_value),
+                "queue_held",
+                symbol="-",
+                reason="fill_bar_mismatch_guard",
+                payload={"held": count, "wo": "WO-FCE-DEFAULTS-01 1-4"},
+                stale_seconds=300,
+            )
+    return {"processed": processed, "held": held, "held_total": sum(held.values())}
 
 
 def _observation(store: TossStockStore, market: Market, symbol: str, session_open: bool) -> MarketObservation | None:
