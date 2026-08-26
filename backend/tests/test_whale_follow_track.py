@@ -916,3 +916,52 @@ def test_latency_is_not_clamped_like_price_age() -> None:
     source = (REPO_ROOT / "backend/app/paper/whale_follow.py").read_text(encoding="utf-8")
     body = source.split("latency_seconds = ")[1].split("\n")[0]
     assert "max(" not in body, "지연을 0 으로 눌렀다 — Phase 6 의 거짓 0.0초가 되살아난다"
+
+
+# ── WO-FCE-DEFAULTS-01 1-1 · 동시 보유 상한 ─────────────────────────────
+
+
+def test_position_cap_blocks_entry_beyond_the_declared_capital() -> None:
+    """자본을 선언했으므로 상한도 강제한다 — 상한 없는 자본은 거짓이다."""
+
+    class _Held(_Repo):
+        def list_whale_follow_trades(self, status=None, symbol=None, limit=500):
+            return [_StubTrade(f"SYM{index}USDT", source="provider_mark_price") for index in range(5)]
+
+    repo = _Held([_Event("0xa", "BTCUSDT", "long", "increase", NOW - timedelta(minutes=5), entry_px=103.4)])
+    result = whale_follow.run_entries(
+        repo,
+        Settings(),
+        eligible=ELIGIBLE,
+        analysis_loader=lambda symbol, timeframe: _analysis(103.5, confirmed_close=100.0),
+        simulation_loader=lambda *args: {"action_plan": {"invalidation": 97.0}, "survives_to_invalidation": True},
+        now=NOW,
+    )
+    assert result["opened"] == 0
+    assert result["rejection_summary"]["by_reason"] == {whale_follow.REASON_POSITION_CAP: 1}
+
+
+def test_legacy_positions_do_not_count_toward_the_cap() -> None:
+    """슬롯을 잡지 않는 포지션이 상한을 먹으면 두 규칙이 어긋난다."""
+
+    class _Legacy(_Repo):
+        def list_whale_follow_trades(self, status=None, symbol=None, limit=500):
+            return [_StubTrade(f"SYM{index}USDT", source=None) for index in range(9)]
+
+    repo = _Legacy([_Event("0xa", "BTCUSDT", "long", "increase", NOW - timedelta(minutes=5), entry_px=103.4)])
+    result = whale_follow.run_entries(
+        repo,
+        Settings(),
+        eligible=ELIGIBLE,
+        analysis_loader=lambda symbol, timeframe: _analysis(103.5, confirmed_close=100.0),
+        simulation_loader=lambda *args: {"action_plan": {"invalidation": 97.0}, "survives_to_invalidation": True},
+        now=NOW,
+    )
+    assert result["opened"] == 1, f"결함 기간 포지션이 상한을 먹었다: {result['rejected']}"
+
+
+def test_cap_of_zero_disables_the_check() -> None:
+    """C4 — 설정 한 값으로 원복된다."""
+    from app.core.config import Settings as S
+
+    assert S(FCE_WHALE_FOLLOW_MAX_OPEN_POSITIONS="0").whale_follow_max_open_positions == 0

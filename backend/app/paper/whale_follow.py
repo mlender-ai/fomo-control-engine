@@ -104,6 +104,9 @@ REASON_NO_PRICE = "no_price"
 REASON_SAFETY_GATE = "safety_gate"
 REASON_REENTRY_LOCK = "reentry_lock"
 REASON_ALREADY_OPEN = "already_open"
+# WO-FCE-DEFAULTS-01 1-1: 동시 보유 상한. 자본을 선언했으므로 상한도 강제한다 —
+# 상한 없이 자본만 선언하면 실제 노출이 그 자본을 넘고 자본 대비 수익률이 거짓이 된다.
+REASON_POSITION_CAP = "position_cap"
 REASON_ENTRY_CAP = "entry_cap"
 REASON_EVALUATION_CAP = "evaluation_cap"
 REASON_ERROR = "error"
@@ -117,6 +120,7 @@ REASON_CODES = (
     REASON_SAFETY_GATE,
     REASON_REENTRY_LOCK,
     REASON_ALREADY_OPEN,
+    REASON_POSITION_CAP,
     REASON_ENTRY_CAP,
     REASON_EVALUATION_CAP,
     REASON_ERROR,
@@ -401,6 +405,20 @@ def evaluate_signal(
 
     if _has_open_position(repo, symbol=symbol, timeframe=timeframe):
         return {**rejected, "reason_code": REASON_ALREADY_OPEN, "reason": "이 심볼에 추종 트랙 포지션이 이미 열려 있다", "gates": gates, "drift": drift}
+
+    # 동시 보유 상한 (WO-FCE-DEFAULTS-01 1-1). 결함 기간 포지션은 세지 않는다 — 그것들은
+    # 슬롯도 잡지 않으므로 상한에도 넣지 않는다. 두 규칙이 같은 집합을 봐야 한다.
+    cap = int(getattr(settings, "whale_follow_max_open_positions", 0) or 0)
+    if cap > 0:
+        held = sum(1 for trade in repo.list_whale_follow_trades(status="open", limit=200) if not is_legacy_entry(trade))
+        if held >= cap:
+            return {
+                **rejected,
+                "reason_code": REASON_POSITION_CAP,
+                "reason": f"동시 보유 {held}/{cap}건 — 선언한 시작 자본(임시값)을 넘지 않기 위한 상한이다",
+                "gates": gates,
+                "drift": drift,
+            }
 
     return {
         "signal": signal,

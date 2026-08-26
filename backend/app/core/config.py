@@ -196,6 +196,25 @@ class Settings(BaseSettings):
         ge=1,
         validation_alias=AliasChoices("FCE_HYPERLIQUID_WHALE_COHORT_DORMANT_DAYS", "HYPERLIQUID_WHALE_COHORT_DORMANT_DAYS"),
     )
+    # WO-FCE-DEFAULTS-01 1-1 — 추종 트랙 시작 자본과 동시 보유 상한. **임시값이다.**
+    #
+    # 크립토 트랙과 같은 값으로 맞춘다(500 = 100 × 5). 두 트랙을 같은 자본에서 비교할 수
+    # 있어야 하고, `TRACK-CAPITAL-01` 에서 고래만 `미상/미산출` 이던 자리가 채워진다.
+    #
+    # **상한 없이 자본만 넣으면 거짓이 된다** — 심볼당 1건만 막고 전체 상한이 없으면 실제
+    # 노출이 500 을 넘을 수 있다. 그래서 상한을 함께 강제한다.
+    #
+    # 원복: 두 값을 0 으로 두면 자본이 다시 `미상` 이 되고 상한이 풀린다.
+    whale_follow_starting_capital_usdt: float = Field(
+        500.0,
+        ge=0.0,
+        validation_alias=AliasChoices("FCE_WHALE_FOLLOW_STARTING_CAPITAL_USDT", "WHALE_FOLLOW_STARTING_CAPITAL_USDT"),
+    )
+    whale_follow_max_open_positions: int = Field(
+        5,
+        ge=0,
+        validation_alias=AliasChoices("FCE_WHALE_FOLLOW_MAX_OPEN_POSITIONS", "WHALE_FOLLOW_MAX_OPEN_POSITIONS"),
+    )
     # WHALE-FOLLOW-01 6-2: 고래 추종 페이퍼 트랙.
     #
     # 켬이 기본이다. Phase 6 의 목적이 "고래 추종이 되는지 안 되는지 알 방법을 만드는 것"

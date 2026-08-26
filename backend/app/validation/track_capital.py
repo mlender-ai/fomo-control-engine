@@ -49,6 +49,8 @@ from app.validation import window_anchor
 SOURCE_SETTINGS = "settings_derived"
 SOURCE_LEDGER = "ledger"
 SOURCE_UNKNOWN = "unknown"
+# 사용자·WO 가 **선언한** 값. 원장에도 설정 유도에도 없고 결정으로 정해진 것이다.
+SOURCE_DECLARED = "declared_provisional"
 
 # 이 미만이면 성적을 단정하지 않는다. `sample_viability.TARGET_SAMPLES` 와 같은 수다.
 MIN_SAMPLE_FOR_VERDICT = 30
@@ -99,17 +101,31 @@ def crypto_capital(settings: Any) -> Capital:
     return Capital(margin * slots, SOURCE_SETTINGS, f"paper_margin_usdt {margin:g} × paper_max_open_positions {slots}")
 
 
-def whale_follow_capital() -> Capital:
-    """**미상.** 포지션 수 상한을 강제하지 않으므로 자본을 유도할 수 없다(C7).
+def whale_follow_capital(settings: Any = None) -> Capital:
+    """추종 트랙 시작 자본. **선언된 임시값**이다 (WO-FCE-DEFAULTS-01 1-1).
 
-    정책 객체의 `max_open_positions` 를 쓰면 값이 나오지만, 이 트랙은 심볼당 1건만 막고
-    전체 상한은 두지 않는다. 강제되지 않는 상한으로 만든 자본은 실제 노출보다 작을 수 있다.
+    처음에는 `미상` 이었다 — 동시 보유 상한을 강제하지 않아 `margin × max_open` 으로
+    유도하면 실제 노출을 밑돌 수 있었기 때문이다. 그 지적은 옳았고, 그래서 이번에는
+    **자본과 상한을 함께 선언한다.** 상한 없이 자본만 넣으면 그 자본이 거짓이 된다.
+
+    값은 크립토 트랙과 같다(500 USDT = 100 × 5). 두 트랙을 같은 자본에서 비교할 수 있어야
+    한다. 유리하게 잡지 않았다 — 크립토와 동일하고, 실현이 음수면 음수로 나온다(C8).
+
+    원복: `FCE_WHALE_FOLLOW_STARTING_CAPITAL_USDT=0` 이면 다시 `미상` 이 된다.
     """
-    return Capital(
-        None,
-        SOURCE_UNKNOWN,
-        "추종 트랙은 동시 보유 상한을 강제하지 않는다 — margin × max_open 으로 유도하면 실제 노출을 밑돌 수 있다. 자본 선언이 필요하다.",
-    )
+    declared = float(getattr(settings, "whale_follow_starting_capital_usdt", 0.0) or 0.0)
+    slots = int(getattr(settings, "whale_follow_max_open_positions", 0) or 0)
+    if declared <= 0:
+        return Capital(
+            None,
+            SOURCE_UNKNOWN,
+            "시작 자본이 선언되지 않았다 — 동시 보유 상한을 강제하지 않으면 margin × max_open 으로 유도할 수 없다.",
+        )
+    note = f"임시값 · 크립토 트랙과 동일(500 = margin 100 × 5) · 동시 보유 상한 {slots}건 강제"
+    if slots <= 0:
+        # 상한이 풀린 상태의 자본은 실제 노출을 밑돌 수 있다. 그 사실을 숨기지 않는다.
+        note += " — **상한이 0 이라 강제되지 않는다. 실제 노출이 자본을 넘을 수 있다.**"
+    return Capital(declared, SOURCE_DECLARED, note)
 
 
 def ledger_capital(connection: sqlite3.Connection, *, table: str, column: str = "initial_cash", where: str = "", params: tuple[Any, ...] = ()) -> Capital:
@@ -249,7 +265,7 @@ def track_capital(connection: sqlite3.Connection, settings: Any, track: str) -> 
         capital = crypto_capital(settings)
         flows = _paper_track_pnl(connection, "paper_trades", anchor=anchor)
     elif track == "whale_follow":
-        capital = whale_follow_capital()
+        capital = whale_follow_capital(settings)
         flows = _paper_track_pnl(connection, "whale_follow_trades", anchor=anchor)
     elif track == "poly":
         capital = ledger_capital(connection, table="poly_paper_track")

@@ -57,12 +57,16 @@ def test_crypto_capital_is_unknown_when_settings_are_missing() -> None:
     assert capital.known is False
 
 
-def test_whale_follow_capital_is_unknown_and_says_why() -> None:
-    """C7 — 강제하지 않는 상한으로 자본을 만들면 실제 노출을 밑돈다. 미상은 미상이다."""
+def test_whale_follow_capital_is_unknown_until_declared() -> None:
+    """선언이 없으면 미상이다 — 강제하지 않는 상한으로 자본을 만들지 않는다(C7).
+
+    WO-FCE-DEFAULTS-01 1-1 이 500 을 선언했고, 그 선언은 상한 강제와 함께 온다. 선언이
+    없는 상태(설정 미제공·0)에서는 여전히 미상이며 그것이 원복 지점이다.
+    """
     capital = tc.whale_follow_capital()
     assert capital.amount is None
     assert capital.source == tc.SOURCE_UNKNOWN
-    assert "강제하지 않는다" in capital.note
+    assert "선언되지 않았다" in capital.note
 
 
 def test_ledger_capital_reads_the_recorded_value() -> None:
@@ -214,3 +218,49 @@ def test_judgement_and_entry_layers_are_untouched() -> None:
     if diff.returncode != 0:
         pytest.skip("origin/main 을 참조할 수 없는 환경")
     assert diff.stdout.strip() == "", f"C5 위반:\n{diff.stdout}"
+
+
+# ── WO-FCE-DEFAULTS-01 1-1 · 선언된 임시 자본 ───────────────────────────
+
+
+class _Declared:
+    paper_margin_usdt = 100.0
+    paper_max_open_positions = 5
+    whale_follow_starting_capital_usdt = 500.0
+    whale_follow_max_open_positions = 5
+
+
+def test_declared_capital_matches_the_crypto_track() -> None:
+    """두 트랙을 같은 자본에서 비교할 수 있어야 한다. 유리하게 잡지 않았다(C8)."""
+    settings = _Declared()
+    assert tc.whale_follow_capital(settings).amount == tc.crypto_capital(settings).amount == 500.0
+    assert tc.whale_follow_capital(settings).source == tc.SOURCE_DECLARED
+
+
+def test_declared_capital_is_labelled_provisional() -> None:
+    """C5 — 확정값처럼 보이면 안 된다."""
+    note = tc.whale_follow_capital(_Declared()).note
+    assert "임시값" in note
+    assert "동시 보유 상한 5건 강제" in note
+
+
+def test_zero_declaration_reverts_to_unknown() -> None:
+    """C4 — 설정 한 값으로 되돌린다."""
+
+    class _Off(_Declared):
+        whale_follow_starting_capital_usdt = 0.0
+
+    capital = tc.whale_follow_capital(_Off())
+    assert capital.amount is None
+    assert capital.source == tc.SOURCE_UNKNOWN
+
+
+def test_capital_without_an_enforced_cap_says_so() -> None:
+    """상한 없이 자본만 선언하면 그 자본이 거짓이 된다 — 숨기지 않는다."""
+
+    class _NoCap(_Declared):
+        whale_follow_max_open_positions = 0
+
+    note = tc.whale_follow_capital(_NoCap()).note
+    assert "강제되지 않는다" in note
+    assert "실제 노출이 자본을 넘을 수 있다" in note
