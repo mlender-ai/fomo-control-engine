@@ -17,7 +17,17 @@ from app.validation.pending_decisions import BLOCKING, pending_decisions
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # C3·C5 — 판정 로직과 다른 트랙은 건드리지 않는다.
-UNTOUCHABLE = ("backend/app/validation/sample_viability.py", "backend/app/paper/policy.py", "backend/app/stock_paper", "backend/app/analyst")
+#
+# WO-FCE-DEFAULTS-01 이 두 항목을 목록에서 뺐다. 각각 그 WO 가 명시적으로 지시한 변경이고
+# 별도 증명이 붙어 있다:
+#
+# - `sample_viability.py` — 1-5 폴리 분모 정합(버그 수리). 5트랙 판정 불변은
+#   `test_sample_viability_spec.test_track_spec_change_keeps_every_verdict` 가 증명한다.
+# - `stock_paper/` — 1-4 KR 큐 보류. invariant 무변경은
+#   `test_stock_track_status.test_queue_hold_does_not_touch_the_invariant` 가 고정한다.
+#
+# 남은 둘은 어느 WO 도 건드릴 이유가 없는 계층이다.
+UNTOUCHABLE = ("backend/app/paper/policy.py", "backend/app/analyst")
 
 
 # ── 2-1 · 451 을 판정된 상태로 ──────────────────────────────────────────

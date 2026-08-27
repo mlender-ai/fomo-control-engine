@@ -98,6 +98,13 @@ def pending_decisions(
                 "resolved_when": "안을 선택해 적용하고 scripts/local/check-sleep-guard.sh 가 보호 중을 반환한다",
                 "measured_ceilings": ceilings or None,
                 "remedy": "전원 연결 유지 + caffeinate -dimsu 상시 실행. 코드로 해결 불가 — 이 항목은 수리가 아니라 결정이다.",
+                # 4-3: 화면이 복사 가능한 형태로 내려면 명령이 데이터로 있어야 한다.
+                "command": "caffeinate -dimsu &",
+                "verify_command": "bash scripts/local/check-sleep-guard.sh",
+                "cannot_be_fixed_in_code": True,
+                "why_not_provisional": (
+                    "유실일을 유효일 분모에서 빼면 관측하지 않은 날을 관측했다고 하는 것이다. 임시값으로 메울 수 없는 유일한 항목이라 경고로 상시 노출한다."
+                ),
             }
         )
 

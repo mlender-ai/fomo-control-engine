@@ -3959,6 +3959,120 @@ textarea:focus {
   font-weight: 800;
 }
 
+/* WO-FCE-DEFAULTS-01 4-3 — 절전 경고. 코드로 못 푸는 항목이라 눈에 띄어야 한다. */
+.hostPersistenceWarning {
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--terminal-negative);
+  background: var(--terminal-panel);
+}
+
+.hostPersistenceWarning > header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.hostPersistenceWarning > header strong {
+  color: var(--terminal-negative);
+  font-size: var(--fce-type-md);
+}
+
+.hostPersistenceWarning > header span {
+  color: var(--terminal-dim);
+  font-size: var(--fce-type-xs);
+  border: 1px solid var(--terminal-line);
+  padding: 1px 6px;
+}
+
+.hostPersistenceCeilings {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  font-family: var(--fce-font-number);
+  font-size: var(--fce-type-sm);
+  color: var(--terminal-muted);
+}
+
+.hostPersistenceCeilings .short {
+  color: var(--terminal-negative);
+}
+
+.hostPersistenceCommand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.hostPersistenceCommand code {
+  flex: 1 1 240px;
+  padding: 8px 10px;
+  border: 1px solid var(--terminal-line-strong);
+  background: var(--terminal-bg-2);
+  font-family: var(--fce-font-number);
+  font-size: var(--fce-type-sm);
+  color: var(--terminal-text);
+}
+
+.hostPersistenceWarning > small {
+  color: var(--terminal-dim);
+  font-size: var(--fce-type-xs);
+  line-height: 1.6;
+}
+
+.hostPersistenceWarning > small code,
+.provisionalDefaults code {
+  font-family: var(--fce-font-number);
+  color: var(--terminal-muted);
+}
+
+/* C5 — 임시값 목록. 접혀 있어도 건수는 보인다. */
+.provisionalDefaults {
+  padding: 10px 16px;
+  border: 1px dashed var(--terminal-line-strong);
+  background: var(--terminal-panel-2);
+  font-size: var(--fce-type-sm);
+}
+
+.provisionalDefaults summary {
+  color: var(--terminal-warning);
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.provisionalDefaults p {
+  margin: 8px 0;
+  color: var(--terminal-muted);
+  line-height: 1.6;
+}
+
+.provisionalDefaultsRows {
+  display: grid;
+  gap: 8px;
+}
+
+.provisionalDefaultsRows > div {
+  display: grid;
+  gap: 3px;
+  padding: 8px 10px;
+  border: 1px solid var(--terminal-line);
+}
+
+.provisionalDefaultsRows b {
+  font-family: var(--fce-font-number);
+  color: var(--terminal-text);
+}
+
+.provisionalDefaultsRows small,
+.provisionalNotApplied {
+  color: var(--terminal-dim);
+  font-size: var(--fce-type-xs);
+  line-height: 1.6;
+}
+
 /* WO-FCE-DEFAULTS-01 1-2 — 검증 대상 제외(임시값) 배너. */
 .polyValidationScope {
   display: grid;

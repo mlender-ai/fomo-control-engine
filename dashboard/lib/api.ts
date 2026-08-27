@@ -1868,6 +1868,36 @@ export type OnchainWhaleParticipantTypes = {
 
 // WO-FCE-TRACK-CAPITAL-01 — 4트랙 공통 자본 블록.
 // 탭마다 다른 이름으로 읽으면 비교가 안 되므로 필드를 하나로 고정한다.
+// WO-FCE-DEFAULTS-01 4-3 — 절전은 코드로 풀 수 없다. 명령을 복사 가능하게 낸다.
+export type HostPersistenceWarning = {
+  blocking: boolean;
+  headline: string;
+  command: string;
+  verify_command: string;
+  cannot_be_fixed_in_code: boolean;
+  note: string;
+  document: string;
+  ceilings: Record<string, { window_days: number; calendar_days: number; lost_days: number; effective_day_ceiling: number; reachable: boolean; label: string }>;
+};
+
+export type ProvisionalDefault = {
+  id: string;
+  label: string;
+  value: string;
+  basis: string;
+  revert: string;
+  affects?: string;
+};
+
+export type ProvisionalDefaultsBlock = {
+  count: number;
+  items: ProvisionalDefault[];
+  label: string;
+  principle: string;
+  not_applied: string[];
+  not_applied_reason: string;
+};
+
 export type TrackCapital = {
   track: string;
   available: boolean;
@@ -2533,6 +2563,8 @@ export type StockPaperTrack = {
 
 export type StockPaperDashboard = {
   capital?: TrackCapitalBlock;
+  host_persistence?: HostPersistenceWarning;
+  provisional_defaults?: ProvisionalDefaultsBlock;
   enabled: boolean;
   ready_to_start: boolean;
   start_block_reason: string | null;

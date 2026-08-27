@@ -469,7 +469,9 @@ def test_end_to_end_gap_exit_fills_at_session_open(tmp_path, monkeypatch) -> Non
     monkeypatch.setattr(stock_service, "_observation", lambda *args, **kwargs: gap_open)
     processed = stock_service._process_pending_orders(broker, None, {"US": {"market_state": "open"}})
 
-    assert processed >= 1
+    # WO-FCE-DEFAULTS-01 1-4: `_process_pending_orders` 가 보류 건수를 함께 돌려주면서
+    # 반환이 dict 가 됐다. 처리 건수는 `processed` 키에 있다.
+    assert processed["processed"] >= 1
     sells = [fill for fill in store.list_fills() if fill.side == Side.SELL]
     assert sells, "다음 세션에 체결되어야 한다"
     assert sells[0].price == 92.0, "무효화가(100)가 아니라 다음 세션 시가(92)에 체결"

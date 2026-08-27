@@ -8,7 +8,7 @@ import { TerminalWarning } from "@/components/terminal";
 import { StockPaperEntryChart } from "@/components/StockPaperEntryChart";
 import { PolymarketPaperView } from "@/components/PolymarketPaperView";
 import { TrackCapitalRow } from "@/components/TrackCapitalRow";
-import { api, type OnchainWhaleDashboard, type OnchainWhaleFlowBreakdown, type PaperDashboard, type PaperGateFunnel, type PaperTrade, type PolyPaperDashboard, type StanceBacktestDashboard, type StockPaperDashboard, type StockPaperTrack } from "@/lib/api";
+import { api, type HostPersistenceWarning, type ProvisionalDefaultsBlock, type OnchainWhaleDashboard, type OnchainWhaleFlowBreakdown, type PaperDashboard, type PaperGateFunnel, type PaperTrade, type PolyPaperDashboard, type StanceBacktestDashboard, type StockPaperDashboard, type StockPaperTrack } from "@/lib/api";
 
 const tabs = [
   { id: "battle", label: "대결" },
@@ -162,6 +162,8 @@ function StockPaperView({ data }: { data: StockPaperDashboard | null }) {
   const modePerformance = data.mode_performance ?? [];
   return (
     <div className="engineView stockPaperView" data-testid="engine-stock-paper-tab">
+      {data.host_persistence?.blocking ? <HostPersistenceWarningBanner warning={data.host_persistence} /> : null}
+      {data.provisional_defaults?.count ? <ProvisionalDefaultsPanel block={data.provisional_defaults} /> : null}
       <TrackCapitalRow block={data.capital} track="stock_kr" label="KR 자본" />
       <TrackCapitalRow block={data.capital} track="stock_us" label="US 자본" />
       <section className="stockPaperGate">
@@ -411,6 +413,61 @@ function OnchainView({ data, onReload }: { data: OnchainWhaleDashboard | null; o
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * 4-3 — 절전 경고. **코드로 풀 수 없는 유일한 항목**이라 상시 노출한다.
+ *
+ * 유실일을 유효일 분모에서 빼지 않는다(C3) — 관측하지 않은 날을 관측했다고 하는 것이다.
+ * 대신 그 유실이 검증 가능성에 무엇을 하는지 정량으로 낸다.
+ */
+function HostPersistenceWarningBanner({ warning }: { warning: HostPersistenceWarning }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(warning.command);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopied(false);
+    }
+  };
+  return (
+    <section className="hostPersistenceWarning" data-testid="host-persistence-warning">
+      <header><strong>{warning.headline}</strong><span>코드로 해결 불가</span></header>
+      <div className="hostPersistenceCeilings">
+        {Object.entries(warning.ceilings).map(([market, row]) => (
+          <span key={market} className={row.reachable ? "" : "short"}>{market} {row.label}</span>
+        ))}
+      </div>
+      <div className="hostPersistenceCommand">
+        <code>{warning.command}</code>
+        <button className="button secondary" onClick={() => void copy()} type="button">{copied ? "복사됨" : "복사"}</button>
+      </div>
+      <small>{warning.note} 확인: <code>{warning.verify_command}</code></small>
+    </section>
+  );
+}
+
+/** C5 — 임시값이 확정값처럼 보이면 안 된다. 값과 원복 방법을 함께 낸다. */
+function ProvisionalDefaultsPanel({ block }: { block: ProvisionalDefaultsBlock }) {
+  return (
+    <details className="provisionalDefaults" data-testid="provisional-defaults">
+      <summary>{block.label} {block.count}건 적용 중 — 값과 원복 방법 보기</summary>
+      <p>{block.principle}</p>
+      <div className="provisionalDefaultsRows">
+        {block.items.map((item) => (
+          <div key={item.id}>
+            <strong>{item.label}</strong>
+            <b>{item.value}</b>
+            <small>{item.basis}</small>
+            <code>원복: {item.revert}</code>
+          </div>
+        ))}
+      </div>
+      <p className="provisionalNotApplied">넣지 않은 것: {block.not_applied.join(" · ")} — {block.not_applied_reason}</p>
+    </details>
   );
 }
 
