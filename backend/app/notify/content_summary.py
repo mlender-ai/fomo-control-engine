@@ -25,6 +25,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
@@ -71,6 +72,22 @@ def poly_line(connection: sqlite3.Connection, *, now: datetime, window_days: int
     return f"{head}\n  ⚠️ {window_days}일 내 정산 예정 <b>0건</b> ({tail}) — 이 창에서는 표본이 생기지 않습니다"
 
 
+def _selection_basis(connection: sqlite3.Connection) -> str:
+    """발견 캐시에 기록된 실제 선정 기준. 없으면 미상이라고 쓴다 — 추측하지 않는다."""
+    try:
+        row = connection.execute("SELECT payload FROM calibration_report_cache WHERE report_key='hyperliquid_leaderboard_discovery'").fetchone()
+    except sqlite3.Error:
+        return "미상"
+    if row is None:
+        return "미상"
+    try:
+        payload = json.loads(str(row["payload"]))
+        basis = ((payload or {}).get("payload") or payload or {}).get("selection_basis")
+    except (TypeError, ValueError):
+        return "미상"
+    return str(basis) if basis else "미상"
+
+
 def whale_line(connection: sqlite3.Connection, *, min_sample: int = MIN_SAMPLE) -> str:
     """리더보드(고래) — 사후 채점이 쌓이고 있는가.
 
@@ -91,13 +108,17 @@ def whale_line(connection: sqlite3.Connection, *, min_sample: int = MIN_SAMPLE) 
     total = disclosure["closed_samples"]
     overall = disclosure["overall_win_rate_pct"]
 
-    head = f"🐋 <b>리더보드</b> — 추종 지갑 {wallets}개 · 채점 표본 {total:,}건"
+    # "추종 지갑"이 아니라 **추적군**이다. 추종 자격은 별개이며 실측 20 대 1 이다 —
+    # 깔때기 라벨이 같은 혼동을 일으켰고(`WHALE-COHORT-COLLAPSE-01`) 여기도 같았다.
+    head = f"🐋 <b>리더보드</b> — 추적군 {wallets}개 · 사후 채점 {total:,}건"
     if not total:
         return f"{head}\n  아직 청산 표본이 없습니다 — 승률 미산출"
     body = f"  사후 승률 {overall}% (표본 {min_sample}건 이상 지갑 {scored}개)"
     if scored == 0:
         body += " · ⚠️ 표본 부족 — 판정 불가"
-    return f"{head}\n{body}\n  선정 기준: quality_score(PnL·ROI·규모) · 승률은 사후 채점"
+    # 선정 기준을 하드코딩하지 않는다. `WHALE-FOLLOW-01` 6-1 이 비성과(규모·활동량)로
+    # 바꿨는데 이 문구는 `quality_score(PnL·ROI·규모)` 로 남아 있었다 — 거짓이다(C10).
+    return f"{head}\n{body}\n  선정 기준: {_selection_basis(connection)} · 승률은 사후 채점"
 
 
 def entry_line(connection: sqlite3.Connection, *, now: datetime, hours: int = 24) -> str:

@@ -28,6 +28,7 @@ class AlertCandidate:
 
 RULE_LABELS: dict[str, str] = {
     "trigger_near": "트리거 근접",
+    "daily_summary": "일일 계좌 리포트",
     "whale_follow_entry": "고래 추종 (미검증)",
     "invalidation_breach": "무효화 이탈",
     "take_profit_hit": "익절 후보 도달",
@@ -107,6 +108,7 @@ RULE_SEVERITY: dict[str, AlertSeverity] = {
     "full_alignment": "info",
     "whale_entry": "info",
     "whale_follow_entry": "info",
+    "daily_summary": "info",
     "position_structure_event": "info",
 }
 

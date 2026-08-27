@@ -9,6 +9,8 @@ from uuid import UUID
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from app.core.config import Settings
+
+
 from app.db.models import AlertRecord
 from app.notify.bot.formatters import (
     alert_keyboard,
@@ -43,6 +45,20 @@ from app.notify.state import AlertRuleState, NotificationState
 from app.structure.context import build_structure_context, detect_structure_transitions, transition_state_key
 from app.notify.telegram import TelegramSender, inline_keyboard
 from app.services import runtime as service
+
+# WO-FCE-DAILY-REPORT-01 C2 — 일일 요약의 관문 rule id.
+DAILY_SUMMARY_RULE_ID = "daily_summary"
+
+
+def _parse_summary_date(value: str | None) -> datetime | None:
+    """직전 발송 날짜 → 창 하한. 기록이 없으면 `None` 이고 호출부가 24시간으로 잡는다."""
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
 
 logger = logging.getLogger(__name__)
 
@@ -324,10 +340,21 @@ class AlertEngine:
             lines.append("억제된 알림은 없습니다.")
         lines.append("")
         lines.append(format_positions_summary(payload))
-        # WO-FCE-PERFORMANCE-REPORT-01 §2-1: 페이퍼 4트랙 성과. 진입이 0인 트랙도
-        # 반드시 등장한다 — 이벤트가 없어서 침묵하던 구조를 여기서 제거한다.
-        # 실계좌 포지션 요약(format_positions_summary)과 별도 블록으로 둔다(C4).
-        if performance_lines:
+        # WO-FCE-DAILY-REPORT-01 3-3 항목 4: **두 개를 보내지 않는다.**
+        #
+        # `performance_lines`(PERFORMANCE-REPORT-01 §2-1)와 5트랙 리포트가 겹친다 — 둘 다
+        # 트랙별 승률을 낸다. 그런데 **N 이 다르다**: 실측 2026-08-27 기준 기존 블록은
+        # 청산 70건, 리포트는 N=67 이다(창 술어가 다르다). 같은 메시지에 N 이 다른 두
+        # 승률이 들어가면 서로를 설명하지 못하고, 그것이 `METRIC-TRUTH-01` 이 고친 결함이다.
+        #
+        # 그래서 리포트로 **대체한다.** 리포트는 자본(시작→현재)을 함께 내고 5트랙이며
+        # 승률·수익률이 같은 모집단에서 나온다. 주간 리포트는 기존 블록을 계속 쓴다.
+        report_lines = self._daily_report_lines()
+        if report_lines:
+            lines.append("")
+            lines.extend(report_lines)
+        elif performance_lines:
+            # 리포트 산출이 실패하면 기존 블록으로 되돌린다 — 요약이 비는 것이 더 나쁘다.
             lines.append("")
             lines.extend(performance_lines)
         # WO-FCE-WHALE-ALERT-DEMOTE-01 Phase 3: 강등된 고래 관측을 1줄로 갚는다.
@@ -335,20 +362,55 @@ class AlertEngine:
         if whale_line:
             lines.append("")
             lines.append(whale_line)
-        # 사용자가 요구한 내용물: 진입 · 폴리마켓 · 리더보드 검증.
-        # 조회 실패는 해당 줄만 "미산출"이 되고 요약 전체를 막지 않는다.
+        # 리더보드 검증 줄만 남긴다. 진입·폴리 줄은 5트랙 리포트가 이미 낸다 —
+        # 리더보드는 **추적군 전체의 사후 채점**이고 추종 트랙과 다른 것을 세므로 중복이 아니다.
         try:
-            from app.notify.content_summary import content_summary_lines
+            # 이름을 바꿔 임포트한다 — 위에서 `whale_line` 을 지역변수로 이미 쓰고 있어
+            # 그대로 가져오면 그 문자열을 호출하게 된다(런타임 TypeError).
+            from app.notify.content_summary import _connect, whale_line as leaderboard_line
 
-            lines.extend(content_summary_lines(self.settings.database_url, now=self._now()))
+            connection = _connect(self.settings.database_url)
+            if connection is not None:
+                try:
+                    lines.extend(["", leaderboard_line(connection)])
+                finally:
+                    connection.close()
         except Exception as exc:
             logger.warning("content summary failed: %s", exc, exc_info=True)
         # 생존 라인은 붙이지 않는다(위 docstring 참조). `liveness_lines` 는 의도적으로 미사용.
+        # C2 — 통합 관문 경유. 이전에는 관문을 지나지 않고 바로 보냈다.
+        # `delivery_gate` 의 원칙이 "관문은 하나다" 인데 일일 요약이 그 밖에 있었다.
+        decision = delivery_gate.evaluate_rule(DAILY_SUMMARY_RULE_ID)
+        if not decision.allowed:
+            logger.warning("daily summary blocked by gate: %s", decision.reason)
+            return 0
         count = await self.sender.send_to_all("\n".join(lines))
         if count:
             self.state.suppressed_alerts.clear()
             self.state.last_summary_date = date_key
         return count
+
+    def _daily_report_lines(self) -> list[str]:
+        """5트랙 계좌 리포트 (WO-FCE-DAILY-REPORT-01).
+
+        산출 실패는 이 블록만 비우고 요약 전체를 막지 않는다 — 호출부가 기존 성과 블록으로
+        되돌린다.
+        """
+        try:
+            from app.notify import daily_report, daily_report_source
+
+            from app.api.deps import get_repository
+
+            report = daily_report_source.build_report(
+                get_repository(),
+                self.settings,
+                now=self._now(),
+                last_sent_at=_parse_summary_date(self.state.last_summary_date),
+            )
+            return daily_report.render(report).splitlines()
+        except Exception as exc:
+            logger.warning("daily account report failed: %s", exc, exc_info=True)
+            return []
 
     async def maybe_send_weekly_performance_report(self) -> int:
         """WO-FCE-PERFORMANCE-REPORT-01 §2-2: 주간 성과 + 4주 검증 진행도.

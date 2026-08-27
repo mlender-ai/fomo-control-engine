@@ -111,6 +111,12 @@ PUSH_ALLOWED_RULES: frozenset[str] = frozenset(
         # 계좌 한도
         "mdd_limit_warn",
         "mdd_limit_critical",
+        # WO-FCE-DAILY-REPORT-01 C2 — 일일 계좌 리포트.
+        #
+        # 이 모듈의 원칙은 "관문은 하나다" 인데 일일 요약이 그 밖에서 직접 발송하고 있었다.
+        # 등록하고 경유시킨다 — 기본 차단(default-deny)이므로 등록 없이 경유시키면 요약이
+        # 사라진다. 하루 1회 상한은 `morning_summary_due` 가 그대로 보장한다(C1).
+        "daily_summary",
         # WHALE-FOLLOW-01 6-3 — 추종 트랙 진입·청산.
         #
         # `whale_entry`(강등 유지)와 **다른 rule** 이다. 그것은 고래 체결 자체의 알림이었고
