@@ -8,7 +8,7 @@ import { TerminalWarning } from "@/components/terminal";
 import { StockPaperEntryChart } from "@/components/StockPaperEntryChart";
 import { PolymarketPaperView } from "@/components/PolymarketPaperView";
 import { TrackCapitalRow } from "@/components/TrackCapitalRow";
-import { api, type HostPersistenceWarning, type ProvisionalDefaultsBlock, type OnchainWhaleDashboard, type OnchainWhaleFlowBreakdown, type PaperDashboard, type PaperGateFunnel, type PaperTrade, type PolyPaperDashboard, type StanceBacktestDashboard, type StockPaperDashboard, type StockPaperTrack } from "@/lib/api";
+import { api, type HostPersistenceWarning, type ProvisionalDefaultsBlock, type OnchainWhaleDashboard, type OnchainWhaleEntryReplay, type OnchainWhaleExitComparison, type OnchainWhaleFlowBreakdown, type PaperDashboard, type PaperGateFunnel, type PaperTrade, type PolyPaperDashboard, type StanceBacktestDashboard, type StockPaperDashboard, type StockPaperTrack } from "@/lib/api";
 
 const tabs = [
   { id: "battle", label: "대결" },
@@ -509,6 +509,7 @@ function WhaleFollowTrack({ data }: { data: OnchainWhaleDashboard }) {
         <div><span>추종 대상 고래</span><strong>{track.whales.length}</strong><small>{track.whales.length === 0 ? "자격 통과 0명" : "자격 통과"}</small></div>
       </div>
       {track.legacy_note ? <TerminalWarning tone="warning">{track.legacy_note}</TerminalWarning> : null}
+      <WhaleExitComparison comparison={track.exit_comparison} replay={track.entry_replay} />
       {track.whales.length ? (
         <div className="whaleFollowRows">
           {track.whales.map((whale) => (
@@ -954,6 +955,59 @@ function money(value: number): string { return `${value > 0 ? "+" : ""}${Number(
 function compactMoney(value: number): string { return value >= 1_000_000 ? `${(value / 1_000_000).toFixed(1)}M` : value >= 1_000 ? `${Math.round(value / 1_000)}K` : value.toFixed(0); }
 function signedCompactMoney(value: number): string { return `${value >= 0 ? "+" : "-"}${compactMoney(Math.abs(value))}`; }
 function whaleEventLabel(value: string): string { return ({ open: "신규 진입", increase: "증액", reduce: "감액", close: "청산", flip: "방향 전환" } as Record<string,string>)[value] ?? value; }
+
+// 2-4: −USDT 가 **고래 신호 탓인지 우리 출구 탓인지** 화면이 답하게 한다. 같은 진입에 출구
+// 두 개를 붙인 반사실이며, 출구 B 는 실적이 아니다(C2·C11) — 라벨로 못 박는다.
+function WhaleExitComparison({ comparison, replay }: { comparison?: OnchainWhaleExitComparison; replay?: OnchainWhaleEntryReplay }) {
+  const overall = comparison?.overall;
+  if (!overall || !overall.count) {
+    return <p className="onchainEmptyInline" data-testid="whale-exit-comparison">{comparison?.reason ?? "대조 가능한 거래가 없다 — 청산된 추종 거래가 쌓이면 출구 A/B 를 나란히 낸다."}</p>;
+  }
+  const verdict = comparison?.verdict;
+  const lead = comparison?.lead_breakdown;
+  const delta = overall.delta_net;
+  return (
+    <section className="whaleExitComparison" data-testid="whale-exit-comparison">
+      <header>
+        <div><span className="engineSectionLabel">출구 반사실 대조 · {overall.sample_note}</span><strong>신호 탓인가 출구 탓인가</strong></div>
+        <small>{comparison?.not_official}</small>
+      </header>
+      <div className="whaleExitGrid">
+        <div><span>출구 A · 현행 사다리</span><strong className={overall.a_net >= 0 ? "long" : "short"}>{overall.a_net >= 0 ? "+" : ""}{overall.a_net.toFixed(4)} USDT</strong><small>승률 {overall.a_win_pct ?? "—"}% · PF {overall.a_profit_factor ?? "—"}</small></div>
+        <div><span>출구 B · 고래 청산 추종</span><strong className={overall.b_net >= 0 ? "long" : "short"}>{overall.b_net >= 0 ? "+" : ""}{overall.b_net.toFixed(4)} USDT</strong><small>승률 {overall.b_win_pct ?? "—"}% · PF {overall.b_profit_factor ?? "—"} · 반사실</small></div>
+        <div><span>차이 (B−A)</span><strong className={(delta ?? 0) >= 0 ? "long" : "short"}>{(delta ?? 0) >= 0 ? "+" : ""}{(delta ?? 0).toFixed(4)} USDT</strong><small>{lead ? `우리 먼저 ${lead.ours_first}건 · 고래 먼저 ${lead.whale_first}건` : "선행 미상"}</small></div>
+      </div>
+      {verdict ? (
+        <TerminalWarning tone={verdict.actionable ? "info" : "warning"}>
+          {verdict.reason}{verdict.actionable ? "" : " · 지금은 출구를 바꿀 근거로 쓰지 않는다"}{verdict.caveat ? ` — ${verdict.caveat}` : ""}
+        </TerminalWarning>
+      ) : null}
+      {replay?.by_type && Object.keys(replay.by_type).length ? (
+        <div className="whaleEntryTypes">
+          <span className="engineSectionLabel">진입 유형별 추종 성적 · 미분류 {replay.unclassified_pct ?? "—"}%</span>
+          <div className="whaleEntryTypeRows">
+            {Object.entries(replay.by_type).sort((a, b) => b[1].count - a[1].count).map(([kind, row]) => (
+              <div key={kind}>
+                <code>{whaleEntryTypeLabel(kind)}</code>
+                <span>{row.count}건</span>
+                <span className={row.net_usdt >= 0 ? "long" : "short"}>{row.net_usdt >= 0 ? "+" : ""}{row.net_usdt.toFixed(4)} USDT</span>
+                <span>승률 {row.win_pct ?? "—"}%</span>
+                <span>PF {row.profit_factor ?? "—"}</span>
+                <small>{row.sample_note}</small>
+              </div>
+            ))}
+          </div>
+          <small>{replay.not_selection_criteria}</small>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function whaleEntryTypeLabel(kind: string): string {
+  return ({ herd: "무리 진입", solo: "단독 진입", unclassified: "미분류" } as Record<string, string>)[kind] ?? kind;
+}
+
 function whaleTrustState(value: string): string { return ({ trusted: "엄선 고래", review_ready: "승격 심사", validating: "4주 검증 중", excluded: "검증 제외" } as Record<string,string>)[value] ?? "4주 검증 중"; }
 // WHALE-FOLLOW-01 5-2: 행동 기반 **추정**이다. 라벨에 "추정"을 남겨 확정으로 읽히지 않게 한다.
 function whaleParticipantLabel(value: string): string { return ({ directional: "방향성 추정", market_maker: "MM 추정", basis_carry: "캐리 추정", unclassified: "유형 미분류" } as Record<string,string>)[value] ?? "유형 미분류"; }

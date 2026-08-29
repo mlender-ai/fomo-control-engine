@@ -6004,3 +6004,85 @@ textarea:focus {
   font-size: var(--fce-type-xs);
   line-height: 1.5;
 }
+
+/* 2-4: 출구 A/B 반사실 대조. 두 출구를 나란히 두지 않으면 "우리 출구 탓"이 보이지 않는다. */
+.whaleExitComparison {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--terminal-line);
+}
+
+.whaleExitComparison > header,
+.whaleExitComparison > header > div {
+  display: grid;
+  gap: 4px;
+}
+
+.whaleExitComparison > header strong {
+  font-size: var(--fce-type-md);
+}
+
+.whaleExitComparison > header small,
+.whaleEntryTypes > small {
+  color: var(--terminal-dim);
+  font-size: var(--fce-type-xs);
+}
+
+.whaleExitGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+}
+
+.whaleExitGrid > div {
+  display: grid;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid var(--terminal-line);
+}
+
+.whaleExitGrid span {
+  color: var(--terminal-muted);
+  font-size: var(--fce-type-xs);
+}
+
+.whaleExitGrid strong {
+  font-family: var(--fce-font-number);
+  font-size: var(--fce-type-lg);
+}
+
+.whaleExitGrid small {
+  color: var(--terminal-dim);
+  font-size: var(--fce-type-xs);
+}
+
+.whaleEntryTypes {
+  display: grid;
+  gap: 6px;
+}
+
+.whaleEntryTypeRows {
+  display: grid;
+  gap: 4px;
+}
+
+.whaleEntryTypeRows > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--terminal-line);
+  font-size: var(--fce-type-xs);
+}
+
+.whaleEntryTypeRows code {
+  font-family: var(--fce-font-mono);
+  color: var(--terminal-fg);
+}
+
+.whaleEntryTypeRows small {
+  color: var(--terminal-dim);
+  margin-left: auto;
+}

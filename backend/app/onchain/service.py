@@ -232,7 +232,7 @@ def whale_dashboard(repo: Any, settings: Any) -> dict[str, Any]:
         "cohort": _cohort_block(repo, wallets, states),
         # 4-3: 추종 트랙을 고래 탭에 낸다. 사용자 요구 — "고래 추종매매했으면 고래 탭에서
         # 그게 보여야 한다." 지금까지는 텔레그램으로만 보였다.
-        "follow_track": _follow_track_block(repo),
+        "follow_track": _follow_track_block(repo, settings),
         "selection_disclosure": selection_disclosure(win_rates),
         "max_wallets": int(settings.hyperliquid_whale_max_wallets),
         "minimum_event_size_usd": float(settings.hyperliquid_whale_min_size_usd),
@@ -307,7 +307,32 @@ def _cohort_block(repo: Any, wallets: list[Any], states: list[dict[str, Any]]) -
     }
 
 
-def _follow_track_block(repo: Any) -> dict[str, Any]:
+def _exit_replay_block(repo: Any, settings: Any) -> dict[str, Any]:
+    """2-4 — 출구 A/B 대조와 진입 유형별 성적을 고래 탭에 낸다.
+
+    **왜 화면인가.** 추종 −USDT 가 고래 신호 탓인지 우리 출구 탓인지, 지금은 화면 어디에도
+    답이 없다. 텔레그램 한 줄로는 27건 대 10건 같은 분해가 들어가지 않는다.
+
+    둘 다 저장된 원장만 읽으며 네트워크를 타지 않는다(C9). 실패가 고래 탭 전체를 죽이면
+    안 되므로 사유를 담아 돌려준다 — 이 화면이 죽으면 진단 자체가 사라진다.
+    """
+    from app.paper import whale_entry_types, whale_exit_replay
+
+    # 두 블록이 같은 (지갑, 심볼) 체결을 읽는다. 조회를 공유하지 않으면 락 대기가 두 배다.
+    cache = whale_exit_replay.EventCache(repo)
+    block: dict[str, Any] = {}
+    try:
+        block["exit_comparison"] = whale_exit_replay.build_comparison(repo, settings, cache=cache)
+    except Exception as exc:
+        block["exit_comparison"] = {"available": False, "reason": f"{type(exc).__name__}: {exc}"}
+    try:
+        block["entry_replay"] = whale_entry_types.build_replay(repo, cache=cache)
+    except Exception as exc:
+        block["entry_replay"] = {"available": False, "reason": f"{type(exc).__name__}: {exc}"}
+    return block
+
+
+def _follow_track_block(repo: Any, settings: Any) -> dict[str, Any]:
     """추종 트랙 성적 (4-3). 고래별 손익·자본·지연·이탈을 한 자리에 낸다.
 
     원장은 `whale_follow_trades` 이며 크립토 트랙과 분리돼 있다(`WHALE-FOLLOW-01` C3).
@@ -327,6 +352,7 @@ def _follow_track_block(repo: Any) -> dict[str, Any]:
     return {
         "available": True,
         "ledger": "whale_follow_trades",
+        **_exit_replay_block(repo, settings),
         "entries": len(trades),
         "closed": len(closed),
         "open": len(trades) - len(closed),

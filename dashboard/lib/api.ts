@@ -1974,10 +1974,41 @@ export type OnchainWhaleFollowTrade = {
   unverified: boolean;
 };
 
+export type OnchainWhaleExitComparison = {
+  available?: boolean;
+  reason?: string;
+  overall?: {
+    count: number;
+    a_net: number;
+    b_net: number;
+    a_win_pct: number | null;
+    b_win_pct: number | null;
+    a_profit_factor: number | null;
+    b_profit_factor: number | null;
+    delta_net: number | null;
+    sample_note: string;
+  };
+  lead_breakdown?: { ours_first: number; whale_first: number; whale_open: number };
+  verdict?: { verdict: string; reason: string; actionable: boolean; caveat?: string };
+  holding_bar_inflation?: { detected: boolean; count: number };
+  not_official?: string;
+};
+
+export type OnchainWhaleEntryReplay = {
+  available?: boolean;
+  reason?: string;
+  total?: number;
+  unclassified_pct?: number | null;
+  by_type?: Record<string, { count: number; net_usdt: number; win_pct: number | null; profit_factor: number | null; sample_note: string }>;
+  not_selection_criteria?: string;
+};
+
 export type OnchainWhaleFollowTrack = {
   available: boolean;
   reason?: string;
   ledger?: string;
+  exit_comparison?: OnchainWhaleExitComparison;
+  entry_replay?: OnchainWhaleEntryReplay;
   entries: number;
   closed: number;
   open: number;

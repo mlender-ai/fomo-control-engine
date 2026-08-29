@@ -176,7 +176,7 @@ def _actions(settings: Any) -> list[dict[str, Any]]:
 
 def build_report(repo: Any, settings: Any, *, now: datetime, last_sent_at: datetime | None = None) -> dict[str, Any]:
     """5트랙 리포트. 조회 실패는 그 트랙만 미상이 된다."""
-    from app.paper import whale_follow
+    from app.paper import whale_exit_replay, whale_follow
     from app.validation import track_capital
 
     since = daily_report.window_start(last_sent_at, now=now)
@@ -206,6 +206,18 @@ def build_report(repo: Any, settings: Any, *, now: datetime, last_sent_at: datet
                     extra.append(f"  대상  {len(whales)}지갑 · {short}")
             except Exception:
                 extra = []
+            # 2-4: 출구 반사실 한 줄. "얼마 잃었다"만 오면 **출구를 의심할 계기가 없다.**
+            # B 는 실적이 아니라 대조군이며 라벨에 못 박는다(C2·C11). 길이 제한 안에서 한 줄만.
+            try:
+                comparison = whale_exit_replay.build_comparison(repo, settings)
+                summary = comparison.get("overall") or {}
+                delta = summary.get("delta_net")
+                if summary.get("count") and delta is not None:
+                    sign = "+" if delta >= 0 else ""
+                    caution = "" if comparison.get("verdict", {}).get("actionable") else " · 전환 근거 아님"
+                    extra.append(f"  출구  고래청산 추종 시 {sign}{delta:.2f} (반사실 {summary['count']}건){caution}")
+            except Exception:
+                pass
         if track in {"stock_kr", "stock_us"} and connection is not None:
             # 전략(엄격) 표본만 센다. 탐색 계정은 성적에 합산하지 않는다(원 WO C4).
             market = "KR" if track == "stock_kr" else "US"
