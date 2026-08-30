@@ -1334,49 +1334,15 @@ def run_paper_engine() -> dict[str, Any]:
 
 
 def whale_follow_eligibility() -> dict[str, Any]:
-    """추종 자격 판정 (WO-FCE-WHALE-FOLLOW-02 7-1). 규칙 하나, 조건 셋.
+    """추종 자격 판정. 규칙 하나, 조건 셋 — N>=30 · 승률 점추정>=55% · MM 추정 아님.
 
-    N>=30 · 승률 점추정>=55% · MM 추정 아님. 승격 기준(`onchain/service.py` 의 28일·N>=30·
-    CI 하한 55%)을 읽지도 바꾸지도 않는다(C3).
+    계산은 `onchain.follow_report` 가 한다. **이 저장소에서 자격 목록의 출처는 그것 하나다**
+    (WO-FCE-REPORT-DEFECTS-01 7-2) — 리포트 계층이 따로 세다가 자격 밖 지갑을 `대상` 으로
+    표시한 것이 D2 였다.
     """
-    from app.backtest.statistics import bootstrap_ci_from_counts
-    from app.onchain import follow_eligibility, participant_type, service as onchain_service
+    from app.onchain import follow_report
 
-    repo = runtime.repository
-    now = utc_now()
-    sizes = onchain_service.whale_sample_sizes(repo)
-    wins = onchain_service.whale_sample_wins(repo)
-    contaminated = onchain_service.contaminated_sample_addresses(repo)
-
-    events: list[Any] = []
-    wallets = repo.list_whale_wallets(limit=1000)
-    for wallet in wallets:
-        events.extend(repo.list_whale_events(wallet_address=wallet.address, limit=onchain_service.CLASSIFICATION_EVENTS_PER_WALLET))
-    estimates = participant_type.classify_wallets(events)
-
-    statuses: dict[str, follow_eligibility.FollowStatus] = {}
-    for address, raw_size in sizes.items():
-        excluded = int(contaminated.get(address, {}).get("excluded_sample") or 0)
-        # 오염 지갑은 표본을 계수에서 뺀다 — 행은 지우지 않는다.
-        size = 0 if excluded else int(raw_size)
-        won = 0 if excluded else int(wins.get(address, 0))
-        # CI 하한은 **표시 전용**이다(§2). 자격 판정에 들어가지 않는다.
-        ci = bootstrap_ci_from_counts(won, size) if size else None
-        statuses[address] = follow_eligibility.follow_status(
-            address=address,
-            sample_size=size,
-            wins=won,
-            ci_low=round(float(ci[0]), 1) if ci else None,
-            estimate=estimates.get(address),
-            excluded_sample=excluded,
-        )
-    return {
-        **follow_eligibility.summary(statuses),
-        "statuses": {address: status.as_payload() for address, status in statuses.items()},
-        "contaminated": contaminated,
-        "contaminated_sample_total": sum(int(item["excluded_sample"]) for item in contaminated.values()),
-        "as_of": now.isoformat(),
-    }
+    return {**follow_report.follow_eligibility_report(runtime.repository), "as_of": utc_now().isoformat()}
 
 
 # 자격 판정은 지갑 전수 조회다. 체결은 30초마다 오지만 자격은 시간 단위로 변하므로

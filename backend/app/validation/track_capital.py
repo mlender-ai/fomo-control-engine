@@ -14,6 +14,29 @@
 | `return_on_capital_pct` | 금액 ÷ 시작 자본 × 100. **자본 미상이면 `None`** |
 | `unrealized_pnl` | **분리 표기.** 실현과 합산하지 않는다 |
 
+## 현재 자본과 수익률은 **같은 기준**이다 (WO-FCE-REPORT-DEFECTS-01 7-1)
+
+한동안 아니었다. 현재 자본은 NAV(현금 + 평가액)였고 수익률은 실현 ÷ 시작이었다. 그래서
+같은 줄의 두 숫자가 다른 것을 말했다 — 실측 2026-08-29:
+
+```
+주식 KR   100,000,000 → 100,074,340 KRW (-0.00%)
+          실현 -660.15 · 미실현 +75,000.00
+```
+
+**74,340 늘었는데 −0.00% 다.** 둘 다 각자 맞았지만 나란히 놓이면 거짓이었다.
+
+```
+현재 자본 = 시작 + 실현            ← 수익률과 같은 분자
+NAV      = 현금 + 평가액           ← 별도 필드. 미실현을 포함한다
+```
+
+그래서 **`current_capital` 이 늘면 `return_on_capital_pct` 도 반드시 양수**이고, 그 부호
+정합을 `test_capital_and_return_share_a_basis` 가 고정한다.
+
+미실현을 자본에서 빼면 숫자가 나빠 보일 수 있다. **나빠 보이는 것이 맞다**(C2) —
+미실현은 확정 손익이 아니고, 확정되지 않은 값을 자본에 섞은 것이 애초의 결함이다.
+
 ## 시작 자본을 역산하지 않는다
 
 트랙마다 출처가 다르고, 없는 트랙이 있다.
@@ -281,18 +304,24 @@ def track_capital(connection: sqlite3.Connection, settings: Any, track: str) -> 
 
     realized = flows.get("realized") if flows.get("available") else None
     unrealized = flows.get("unrealized") if flows.get("available") else None
-    # 현재 자본은 NAV 다. 현금 트랙은 `cash + 평가액` 이고 평가액이 없으면 미상이다 —
-    # 현금만으로 NAV 를 부르면 포지션에 묶인 자본이 사라진 것으로 보인다.
-    current = flows.get("nav")
     deployed = flows.get("deployed_capital")
-    if current is None and capital.known and realized is not None and not float(deployed or 0.0):
-        # 열린 포지션이 없을 때만 `시작 + 실현` 으로 현재 자본을 부를 수 있다.
-        #
-        # 포지션이 있는데 평가액을 모르면 현재 자본도 모른다. 실측에서 폴리가 그랬다 —
-        # 평가액 미상인데 `시작 + 실현(0)` = 10,000 으로 찍혀 **손익분기처럼 보였다.**
-        # 1,583 USDC 가 값을 모르는 포지션에 묶여 있는 상태를 "원금 그대로"로 표시하면
-        # 그것이 이 WO 가 고치려는 종류의 거짓이다(C7).
-        current = round(float(capital.amount or 0.0) + float(realized), 4)
+
+    # ── 현재 자본 = 시작 + **실현**. 수익률과 같은 분자다(7-1) ──────────
+    #
+    # 이 값에 미실현을 넣으면 아래 `return_pct` 와 기준이 갈리고, 갈린 두 수가 같은 줄에
+    # 놓이면 "74,340 늘었는데 −0.00%" 가 된다. 평가액을 포함한 값은 `nav` 로 따로 낸다.
+    current = round(float(capital.amount or 0.0) + float(realized), 4) if capital.known and realized is not None else None
+
+    # NAV — **다른 질문의 답이다.** "지금 다 정리하면 얼마인가".
+    # 현금 트랙은 원장이 직접 준다. 페이퍼 트랙은 시작 + 실현 + 미실현이며, 미실현을
+    # 모르면 만들지 않는다(C7 — 원가로 대신하면 미실현이 항상 0 으로 보인다).
+    nav = flows.get("nav")
+    if nav is None and current is not None and unrealized is not None:
+        nav = round(current + float(unrealized), 4)
+
+    # 평가 불가 포지션이 있으면 NAV 를 부르지 않는다. 실측에서 폴리가 그랬다 — 1,583 USDC
+    # 가 값을 모르는 포지션에 묶여 있는데 "원금 그대로"로 보이면 그것이 거짓이다.
+    unpriced = bool(float(deployed or 0.0)) and unrealized is None
 
     # C1 — 자본이 미상이면 수익률을 만들지 않는다. 대표값은 금액이다.
     return_pct = round(float(realized) / float(capital.amount) * 100, 4) if capital.known and realized is not None else None
@@ -306,6 +335,16 @@ def track_capital(connection: sqlite3.Connection, settings: Any, track: str) -> 
         "starting_capital_source": capital.source,
         "starting_capital_note": capital.note,
         "current_capital": current,
+        # 7-1 — 현재 자본이 무엇을 세는지 값과 함께 다닌다. 라벨 없는 자본이 D1 이었다.
+        "current_capital_basis": "realized",
+        "current_capital_basis_note": "시작 자본 + 실현 손익. 미실현은 포함하지 않는다 — 수익률과 같은 기준이다(C3).",
+        "nav": nav,
+        "nav_note": (
+            "현금 + 보유 평가액 — **미실현을 포함한다.** 현재 자본과 다른 질문의 답이며 수익률의 분자가 아니다."
+            if nav is not None
+            else "보유 포지션 평가액을 읽을 수 없어 NAV 를 만들지 않는다(C7)"
+        ),
+        "unpriced_positions": unpriced,
         "realized_pnl": realized,
         "unrealized_pnl": unrealized,
         "unrealized_note": flows.get("unrealized_note") or "실현과 합산하지 않는다 — 확정되지 않은 값이다(C4)",
@@ -313,9 +352,9 @@ def track_capital(connection: sqlite3.Connection, settings: Any, track: str) -> 
         "return_note": None if capital.known else "시작 자본 미상 — 수익률 미산출(C7)",
         "deployed_capital": flows.get("deployed_capital"),
         "current_capital_note": (
-            None
-            if current is not None
-            else ("보유 포지션 평가액 미상 — NAV 미산출(C7)" + (f" · {deployed:,.4f} {currency} 가 평가 불가 포지션에 묶여 있다" if deployed else ""))
+            "시작 자본 미상 — 현재 자본 미산출(C7)"
+            if current is None
+            else (f"{deployed:,.4f} {currency} 가 평가 불가 포지션에 묶여 있다 — NAV 미상" if unpriced else None)
         ),
         "closed_samples": closed,
         "open_positions": int(flows.get("open") or 0) if flows.get("available") else None,

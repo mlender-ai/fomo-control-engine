@@ -119,11 +119,24 @@ def observed_win_rates(events: list[Any], *, min_sample: int = MIN_SAMPLE) -> di
     return result
 
 
-def selection_disclosure(win_rates: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    """화면·알림이 "승률로 뽑았다"로 오해되지 않게 하는 고지(5-4)."""
-    scored = [row for row in win_rates.values() if not row["sample_low"]]
+def selection_disclosure(win_rates: dict[str, dict[str, Any]], *, min_sample: int = MIN_SAMPLE) -> dict[str, Any]:
+    """화면·알림이 "승률로 뽑았다"로 오해되지 않게 하는 고지(5-4).
+
+    ## 집계 방식이 값과 함께 다닌다 (WO-FCE-REPORT-DEFECTS-01 7-3)
+
+    `overall_win_rate_pct` 는 **체결 가중**이다 — 전체 승 ÷ 전체 체결이며 표본 미달 지갑도
+    포함한다. 지갑 평균이 아니다. 체결이 많은 소수 지갑이 값을 끌고 갈 수 있다.
+
+    그래서 지갑 중앙값(`wallet_median_win_rate_pct`)을 **함께** 낸다. 두 값이 크게 벌어지면
+    그 자체가 분포가 치우쳤다는 신호다 — 하나만 보이면 그것을 알 수 없다.
+
+    `min_sample` 은 **호출부가 넘긴다.** 넘기지 않으면 이 모듈 기본값이 쓰이는데, 라벨을
+    찍는 쪽이 다른 수를 들고 있으면 라벨이 거짓이 된다 — 실측에서 그랬다(라벨 30 · 실계산 20).
+    """
+    scored = [row for row in win_rates.values() if int(row["sample_size"]) >= min_sample]
     total = sum(int(row["sample_size"]) for row in win_rates.values())
     wins = sum(int(row["wins"]) for row in win_rates.values())
+    rates = sorted(round(int(row["wins"]) / int(row["sample_size"]) * 100, 1) for row in scored if int(row["sample_size"]))
     return {
         "selection_basis": "quality_score (월간 PnL · ROI · 계좌규모)",
         "win_rate_role": "사후 채점 지표 — 선정에 사용하지 않음",
@@ -132,6 +145,12 @@ def selection_disclosure(win_rates: dict[str, dict[str, Any]]) -> dict[str, Any]
         "total_wallets": len(win_rates),
         "closed_samples": total,
         "overall_win_rate_pct": round(wins / total * 100, 1) if total else None,
-        "min_sample": MIN_SAMPLE,
+        # 7-3 항목 1 — 계산 방식을 값 옆에 둔다. 방식 없는 승률은 읽는 사람이 지갑 평균으로 읽는다.
+        "overall_win_rate_basis": "fill_weighted",
+        "overall_win_rate_note": "전체 승 ÷ 전체 체결 — **체결 가중**이며 표본 미달 지갑을 포함한다. 지갑 평균이 아니다.",
+        "overall_population": "closed_pnl 이 있는 전체 지갑",
+        "wallet_median_win_rate_pct": rates[len(rates) // 2] if rates else None,
+        "wallet_median_population": f"표본 {min_sample}건 이상 지갑 {len(scored)}개",
+        "min_sample": int(min_sample),
         "label": f"선정: quality_score(PnL·ROI·규모) · 승률은 사후 채점(N={total:,})",
     }

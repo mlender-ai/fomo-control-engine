@@ -199,13 +199,31 @@ def build_report(repo: Any, settings: Any, *, now: datetime, last_sent_at: datet
             counts = {"entries": 0, "exits": 0, "wins": 0}
         extra: list[str] = []
         if track == "whale_follow":
+            # 7-2 — `대상` 은 **자격 통과 목록**이다. 거래 이력이 아니다.
+            #
+            # 이전에는 `performance_by_whale`(거래 이력)을 세어 자격 탈락 지갑
+            # (`0x1ee7…edf5` · 승률 51.3%)이 `대상` 으로 찍혔다. 자격 기준은 정확했고
+            # 목록이 다른 것을 세고 있었다(C4 — 기준 diff 0줄).
             try:
-                whales = whale_follow.performance_by_whale(repo.list_whale_follow_trades(limit=500))
-                if whales:
-                    short = " · ".join(f"{row['address'][:6]}…{row['address'][-4:]}" for row in whales[:3])
-                    extra.append(f"  대상  {len(whales)}지갑 · {short}")
+                from app.onchain import follow_report
+
+                traded = whale_follow.performance_by_whale(repo.list_whale_follow_trades(limit=500))
+                targets = follow_report.follow_targets(repo, traded=traded)
+                passers = targets.get("passers") or []
+                if passers:
+                    short = " · ".join(f"{row['address'][:6]}…{row['address'][-4:]}" for row in passers[:3])
+                    extra.append(f"  대상  {targets['eligible_count']}지갑 자격 통과 · {short}")
+                else:
+                    extra.append("  대상  0지갑 — 자격 통과 없음 (기준을 낮추지 않는다)")
+                lapsed = targets.get("lapsed_with_open_positions") or []
+                if lapsed:
+                    # 자격을 잃었는데 포지션이 열려 있다. 신규 진입은 막히고 출구는 규칙대로다(C1·C6).
+                    extra.append(f"  보유  {len(lapsed)}지갑 자격 상실 · 신규 진입 차단 · 출구 규칙대로 청산")
+                funnel = targets.get("funnel") or {}
+                if funnel.get("population"):
+                    extra.append(f"  자격  {funnel['label']}")
             except Exception:
-                extra = []
+                extra.append("  대상  미상 — 자격 조회 실패")
             # 2-4: 출구 반사실 한 줄. "얼마 잃었다"만 오면 **출구를 의심할 계기가 없다.**
             # B 는 실적이 아니라 대조군이며 라벨에 못 박는다(C2·C11). 길이 제한 안에서 한 줄만.
             try:

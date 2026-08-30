@@ -162,3 +162,20 @@ FCE_WHALE_FOLLOW_MAX_OPEN_POSITIONS=0      # 상한 해제
 
 `test_zero_declaration_reverts_to_unknown` · `test_cap_of_zero_disables_the_check` 가 원복
 경로를 고정한다.
+
+---
+
+## 현재 자본 = 시작 + 실현 (WO-FCE-REPORT-DEFECTS-01 7-1)
+
+`current_capital` 이 NAV(현금 + 평가액)였고 `return_on_capital_pct` 는 실현 기준이었다.
+두 수가 같은 줄에서 서로를 부정했다 — 정본 정의는 [`METRIC_DEFINITIONS.md`](METRIC_DEFINITIONS.md).
+
+| 필드 | 지금 |
+| --- | --- |
+| `current_capital` | 시작 + **실현**. `current_capital_basis="realized"` |
+| `nav` | 현금 + 평가액. **신설 필드** — 미실현을 포함한다 |
+| `unpriced_positions` | 평가 불가 포지션이 있으면 `True` 이고 `nav` 는 `None` |
+
+**화면과 리포트가 이 함수 하나를 읽는다.** `TrackCapitalRow.tsx` 는 `current_capital` 과
+`return_on_capital_pct` 를 그대로 쓰므로 두 곳이 어긋날 수 없다 —
+`test_screen_and_report_read_the_same_producer` 가 화면이 자기 자본식을 만들지 않음을 고정한다.

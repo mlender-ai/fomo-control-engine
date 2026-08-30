@@ -152,14 +152,41 @@ def test_unknown_capital_yields_no_return_pct() -> None:
     assert block["realized_pnl"] == pytest.approx(-8.6355)
 
 
-def test_open_positions_with_unknown_value_make_current_capital_unknown() -> None:
-    """폴리가 `시작 + 실현(0)` = 10,000 으로 손익분기처럼 보였다. 그것이 거짓이다."""
+def test_unpriced_positions_block_nav_not_the_realized_capital() -> None:
+    """평가 불가 포지션이 있어도 **실현 기준 자본은 말할 수 있다.**
+
+    이전에는 `current_capital` 을 통째로 `None` 으로 만들어 막았다. 그 가드가 막으려던 것은
+    `10,000` 이라는 숫자 자체가 아니라 **그 숫자가 NAV 로 읽히는 것**이었다 — 1,583 USDC 가
+    값 모르는 포지션에 묶여 있는데 "원금 그대로"로 보이는 것.
+
+    WO-FCE-REPORT-DEFECTS-01 7-1 이 자본을 실현 기준으로 통일하면서 그 가드를 **숨김에서
+    라벨로** 옮겼다. 폴리는 실현이 정확히 0 이고, 그것은 미상이 아니라 아는 값이다.
+    대신 NAV 는 만들지 않고 묶인 자본을 고지한다 — 모르는 것은 여전히 모른다고 적는다(C7).
+    """
     connection = _db()
     connection.execute("INSERT INTO poly_paper_track (id, initial_cash, cash) VALUES (1, 10000.0, 8416.8773)")
     connection.execute("INSERT INTO poly_positions (market_id, cost) VALUES ('m', 1583.1227)")
     block = tc.track_capital(connection, _Settings(), "poly")
-    assert block["current_capital"] is None
+
+    assert block["realized_pnl"] == pytest.approx(0.0), "실현은 정확히 0 이다 — 아무것도 청산되지 않았다"
+    assert block["current_capital"] == pytest.approx(10000.0)
+    assert block["current_capital_basis"] == "realized"
+    # **NAV 는 여전히 만들지 않는다.** 평가액을 모르면 모르는 것이다.
+    assert block["nav"] is None
+    assert block["unpriced_positions"] is True
     assert "묶여 있다" in block["current_capital_note"]
+
+
+def test_unpriced_position_warning_reaches_the_report() -> None:
+    """숫자만 고치고 고지가 사라지면 가드를 옮긴 것이 아니라 없앤 것이다."""
+    from app.notify import daily_report
+
+    connection = _db()
+    connection.execute("INSERT INTO poly_paper_track (id, initial_cash, cash) VALUES (1, 10000.0, 8416.8773)")
+    connection.execute("INSERT INTO poly_positions (market_id, cost) VALUES ('m', 1583.1227)")
+    lines = daily_report.capital_lines("poly", tc.track_capital(connection, _Settings(), "poly"))
+
+    assert any("평가 불가 포지션" in line and "1,583.12" in line for line in lines), lines
 
 
 def test_flat_track_can_state_current_capital() -> None:

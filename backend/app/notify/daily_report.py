@@ -77,8 +77,18 @@ def _pct(value: Any) -> str:
     return f"{'+' if number > 0 else ''}{number:.2f}%"
 
 
-def capital_lines(track: str, capital: dict[str, Any]) -> list[str]:
-    """자본 2줄. 실현과 미실현을 **다른 줄**에 둔다(C4)."""
+def capital_lines(track: str, capital: dict[str, Any], *, state: dict[str, Any] | None = None, compact: bool = False) -> list[str]:
+    """자본 줄. 실현과 미실현을 **다른 줄**에 둔다(C4).
+
+    ## 자본과 수익률은 같은 기준이다 (WO-FCE-REPORT-DEFECTS-01 7-1)
+
+    `current_capital` = 시작 + **실현**이고 `return_on_capital_pct` = 실현 ÷ 시작이다.
+    분자가 같으므로 **자본이 늘면 수익률도 반드시 양수**다. 실측 2026-08-29 에는 아니었다:
+
+        100,000,000 → 100,074,340 KRW (-0.00%)     ← 자본은 NAV, 수익률은 실현
+
+    평가액을 포함한 값(NAV)은 **별도 줄**로 낸다. 같은 줄에 두면 그 줄이 다시 거짓이 된다.
+    """
     currency = str(capital.get("currency") or "?")
     start = _money(capital.get("starting_capital"), currency)
     current = _money(capital.get("current_capital"), currency)
@@ -88,10 +98,18 @@ def capital_lines(track: str, capital: dict[str, Any]) -> list[str]:
         note = capital.get("current_capital_note") or "평가 불가"
         lines = [f"  자본  {start} {currency} → 미상 ({note.split(' —')[0].split(' ·')[0]})"]
     else:
-        lines = [f"  자본  {start} → {current} {currency} ({_pct(capital.get('return_on_capital_pct'))})"]
+        lines = [f"  자본  {start} → {current} {currency} ({_pct(capital.get('return_on_capital_pct'))}) · 실현 기준"]
     realized = _signed(capital.get("realized_pnl"), 2)
     unrealized = _signed(capital.get("unrealized_pnl"), 2)
-    lines.append(f"  실현  {realized} · 미실현 {unrealized}")
+    # D4 — 정지 트랙의 미실현은 **닫히지 못한 포지션**이다. 정상 트랙 미실현과 섞지 않는다(7-4).
+    halt = " · 정지 중 평가액(청산 안 됨)" if str((state or {}).get("kind") or "") == "halted" and capital.get("unrealized_pnl") else ""
+    lines.append(f"  실현  {realized} · 미실현 {unrealized}{halt}")
+    nav = capital.get("nav")
+    if nav is not None and not compact and capital.get("current_capital") is not None and round(float(nav), 4) != round(float(capital["current_capital"]), 4):
+        # 미실현을 포함한 값. **수익률의 분자가 아니다** — 그 사실을 라벨이 말한다.
+        lines.append(f"  평가  {_money(nav, currency)} {currency} (미실현 포함 · 수익률 분자 아님)")
+    if capital.get("unpriced_positions"):
+        lines.append(f"  ⚠️ 평가 불가 포지션 {_money(capital.get('deployed_capital'), currency)} {currency} — NAV 미산출")
     return lines
 
 
@@ -150,7 +168,7 @@ def track_block(
     blocked = blocked_line(state)
     if blocked:
         lines.append(blocked)
-    lines.extend(capital_lines(track, capital))
+    lines.extend(capital_lines(track, capital, state=state, compact=compact))
     if not blocked:
         lines.append(activity_line(counts))
         if not compact:

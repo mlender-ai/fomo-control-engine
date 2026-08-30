@@ -163,6 +163,51 @@ def eligible_addresses(statuses: dict[str, FollowStatus]) -> set[str]:
     return {address for address, status in statuses.items() if status.eligible}
 
 
+# 탈락 사유 분류. 사유 문자열을 세면 표현이 바뀔 때마다 집계가 깨진다 — 조건 순서로 센다.
+REASON_EXCLUDED_TYPE = "excluded_type"
+REASON_SAMPLE = "sample_below_min"
+REASON_WIN_RATE = "win_rate_below_min"
+REASON_PASS = "eligible"
+
+
+def rejection_reason(status: FollowStatus) -> str:
+    """왜 떨어졌는가. `follow_status` 와 **같은 순서**로 판정한다 — 두 곳이 갈리면 분해가 거짓이 된다."""
+    if status.eligible:
+        return REASON_PASS
+    if status.participant_type in FOLLOW_EXCLUDED_TYPES:
+        return REASON_EXCLUDED_TYPE
+    if status.sample_size < FOLLOW_MIN_SAMPLE:
+        return REASON_SAMPLE
+    return REASON_WIN_RATE
+
+
+def funnel(statuses: dict[str, FollowStatus]) -> dict[str, Any]:
+    """자격 깔때기 — **몇 개가 어디서 떨어졌는가** (WO-FCE-REPORT-DEFECTS-01 7-3 항목 3).
+
+    "N개 중 3개 통과"만 보이면 그 감소가 기준 탓인지 표본 탓인지 알 수 없다. 단계별로 센다.
+
+    > **모집단은 우리 판정 원장이다** — `whale_sample_sizes`(우리 엔진이 채점한 `whale_entry`
+    > 판정 건수)이며, `win_rate.observed_win_rates`(고래 자신의 체결 손익)와 **다른 것을
+    > 센다.** 두 수를 나란히 두고 "감소"라고 부르면 안 된다. 그것이 D3 이었다.
+    """
+    counts = {REASON_PASS: 0, REASON_EXCLUDED_TYPE: 0, REASON_SAMPLE: 0, REASON_WIN_RATE: 0}
+    for status in statuses.values():
+        counts[rejection_reason(status)] += 1
+    total = len(statuses)
+    return {
+        "population": total,
+        "population_note": "우리 판정 원장에서 채점된 지갑 수 (whale_sample_sizes) — 고래 자신의 체결 승률 모집단과 다르다",
+        "eligible": counts[REASON_PASS],
+        "rejected": {
+            REASON_EXCLUDED_TYPE: counts[REASON_EXCLUDED_TYPE],
+            REASON_SAMPLE: counts[REASON_SAMPLE],
+            REASON_WIN_RATE: counts[REASON_WIN_RATE],
+        },
+        "criteria": criteria(),
+        "label": f"{total}개 중 {counts[REASON_PASS]}개 통과 · MM {counts[REASON_EXCLUDED_TYPE]} · 표본 미달 {counts[REASON_SAMPLE]} · 승률 미달 {counts[REASON_WIN_RATE]}",
+    }
+
+
 def summary(statuses: dict[str, FollowStatus]) -> dict[str, Any]:
     """통과자와 **탈락자 사유**를 함께 낸다.
 

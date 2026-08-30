@@ -64,7 +64,9 @@ def _report(**overrides):
 
 def test_realized_and_unrealized_are_on_separate_lines() -> None:
     lines = dr.capital_lines("crypto", _capital())
-    realized_line = next(line for line in lines if "실현" in line)
+    # 자본 줄에도 `실현 기준` 이라는 말이 들어가므로 **접두사로** 고른다 — 부분 문자열로
+    # 고르면 자본 줄이 먼저 잡혀 이 회귀가 엉뚱한 줄을 검사하게 된다.
+    realized_line = next(line for line in lines if line.startswith("  실현 "))
     assert "미실현" in realized_line, "같은 줄에 둘이 함께 있어야 값이 분리돼 보인다"
     # 합산값이 나오면 안 된다 — 실현 −50.54 + 미실현 1.83 = −48.71
     assert "-48.71" not in "\n".join(lines)

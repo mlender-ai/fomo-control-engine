@@ -102,20 +102,34 @@ def whale_line(connection: sqlite3.Connection, *, min_sample: int = MIN_SAMPLE) 
     except Exception as exc:
         return f"🐋 <b>리더보드</b> — 미산출 (조회 실패: {str(exc)[:40]})"
 
-    rates = observed_win_rates(events)
-    disclosure = selection_disclosure(rates)
+    # **같은 `min_sample` 을 계산과 라벨 양쪽에 넘긴다** (WO-FCE-REPORT-DEFECTS-01 7-3).
+    #
+    # 넘기지 않았을 때 `observed_win_rates` 는 자기 기본값 20 을 쓰는데 라벨은 여기 30 을
+    # 찍었다. 그래서 `표본 30건 이상 지갑 65개` 가 실제로는 **20건 이상**이었다 — 라벨이
+    # 거짓이었고, 그 65 를 자격 통과 3 과 나란히 두면 읽는 사람이 감소로 오해한다.
+    rates = observed_win_rates(events, min_sample=min_sample)
+    disclosure = selection_disclosure(rates, min_sample=min_sample)
     scored = disclosure["scored_wallets"]
     total = disclosure["closed_samples"]
     overall = disclosure["overall_win_rate_pct"]
+    median = disclosure["wallet_median_win_rate_pct"]
 
     # "추종 지갑"이 아니라 **추적군**이다. 추종 자격은 별개이며 실측 20 대 1 이다 —
     # 깔때기 라벨이 같은 혼동을 일으켰고(`WHALE-COHORT-COLLAPSE-01`) 여기도 같았다.
     head = f"🐋 <b>리더보드</b> — 추적군 {wallets}개 · 사후 채점 {total:,}건"
     if not total:
         return f"{head}\n  아직 청산 표본이 없습니다 — 승률 미산출"
-    body = f"  사후 승률 {overall}% (표본 {min_sample}건 이상 지갑 {scored}개)"
+    # 7-3 항목 1·4 — 계산 방식을 값 옆에 박는다. 체결 가중과 지갑 중앙값은 다른 수다.
+    body = f"  사후 승률 {overall}% (체결 가중 · 전체 지갑)"
+    if median is not None:
+        body += f" · 지갑 중앙값 {median}% (표본 {min_sample}건 이상 {scored}개)"
+    else:
+        body += f" · 표본 {min_sample}건 이상 지갑 {scored}개"
     if scored == 0:
         body += " · ⚠️ 표본 부족 — 판정 불가"
+    # 이 승률은 **고래 자신의 체결 손익**이다. 추종 자격의 승률(우리 판정 원장 채점)과
+    # 모집단도 계산도 다르다 — 두 수를 나란히 두고 "감소"라고 부르면 안 된다(7-3 항목 2).
+    body += "\n  ※ 고래 자신의 체결 승률 — 추종 자격 승률(우리 판정 채점)과 다른 모집단"
     # 선정 기준을 하드코딩하지 않는다. `WHALE-FOLLOW-01` 6-1 이 비성과(규모·활동량)로
     # 바꿨는데 이 문구는 `quality_score(PnL·ROI·규모)` 로 남아 있었다 — 거짓이다(C10).
     return f"{head}\n{body}\n  선정 기준: {_selection_basis(connection)} · 승률은 사후 채점"
