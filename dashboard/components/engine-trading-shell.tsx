@@ -982,6 +982,49 @@ function WhaleExitComparison({ comparison, replay }: { comparison?: OnchainWhale
           {verdict.reason}{verdict.actionable ? "" : " · 지금은 출구를 바꿀 근거로 쓰지 않는다"}{verdict.caveat ? ` — ${verdict.caveat}` : ""}
         </TerminalWarning>
       ) : null}
+      {/* 2-1 — 매칭률이 낮으면 대조 자체가 표본 부족이다. 그 사실이 성적보다 먼저 보여야 한다. */}
+      <small className="whaleExitMeta">
+        고래 청산 매칭 {comparison?.matched ?? 0}/{comparison?.total ?? 0}
+        {comparison?.match_rate_pct != null ? ` (${comparison.match_rate_pct}%)` : ""}
+        {comparison?.whale_exit_kind ? ` · 전량 ${comparison.whale_exit_kind.close} · 부분 ${comparison.whale_exit_kind.reduce}` : ""}
+        {comparison?.hold_hours?.a_median != null ? ` · 보유 중앙값 A ${comparison.hold_hours.a_median}h` : ""}
+        {comparison?.hold_hours?.b_median != null ? ` / B ${comparison.hold_hours.b_median}h` : ""}
+      </small>
+      {/* 2-2 항목 4 — 22%p 갭. **셋 중 하나를 고르지 않는다**(C6) — 정합성만 표시한다. */}
+      {comparison?.gap?.gap_pp != null ? (
+        <div className="whaleGapHypotheses" data-testid="whale-gap-verdict">
+          <span className="engineSectionLabel">
+            고래 승률 {comparison.gap.whale_win_pct ?? "—"}% vs 추종 {comparison.gap.follow_win_pct ?? "—"}% · 갭 {comparison.gap.gap_pp}%p · {comparison.gap.sample_note}
+          </span>
+          {comparison.gap.hypotheses.map((row) => (
+            <div key={row.id} className={row.consistent === true ? "gapConsistent" : row.consistent === false ? "gapInconsistent" : "gapUnknown"}>
+              <code>{row.consistent === true ? "정합" : row.consistent === false ? "불일치" : "미판정"}</code>
+              <span>{row.label}</span>
+              <small>{row.note}</small>
+            </div>
+          ))}
+          <small>{comparison.gap.not_causal}</small>
+        </div>
+      ) : null}
+      {/* 2-8 항목 2 — 유형 × A/B 교차. 따로 보면 "어느 유형에서 출구가 문제인가"를 못 본다. */}
+      {comparison?.by_entry_type && Object.keys(comparison.by_entry_type).length ? (
+        <div className="whaleEntryTypes" data-testid="whale-type-ab-cross">
+          <span className="engineSectionLabel">진입 유형 × 출구 A/B</span>
+          <div className="whaleEntryTypeRows">
+            {Object.entries(comparison.by_entry_type).sort((a, b) => b[1].count - a[1].count).map(([kind, row]) => (
+              <div key={kind}>
+                <code>{whaleEntryTypeLabel(kind)}</code>
+                <span>{row.count}건</span>
+                <span className={row.a_net >= 0 ? "long" : "short"}>A {row.a_net >= 0 ? "+" : ""}{row.a_net.toFixed(4)}</span>
+                <span className={row.b_net >= 0 ? "long" : "short"}>B {row.b_net >= 0 ? "+" : ""}{row.b_net.toFixed(4)}</span>
+                <span className={(row.delta_net ?? 0) >= 0 ? "long" : "short"}>차이 {(row.delta_net ?? 0) >= 0 ? "+" : ""}{(row.delta_net ?? 0).toFixed(4)}</span>
+                <small>{row.sample_note}</small>
+              </div>
+            ))}
+          </div>
+          <small>출구 B 는 반사실이며 트랙 표본에 합산하지 않는다(C2).</small>
+        </div>
+      ) : null}
       {replay?.by_type && Object.keys(replay.by_type).length ? (
         <div className="whaleEntryTypes">
           <span className="engineSectionLabel">진입 유형별 추종 성적 · 미분류 {replay.unclassified_pct ?? "—"}%</span>

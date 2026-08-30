@@ -399,7 +399,17 @@ def evaluate_signal(
     if failed:
         return {**rejected, "reason_code": REASON_SAFETY_GATE, "reason": f"안전 게이트 미통과: {', '.join(failed)}", "gates": gates, "drift": drift}
 
-    lock = paper_service._reentry_block_reason(repo, symbol=symbol, timeframe=timeframe, bar=bar, direction=direction, policy=policy)
+    # 2-6 — **자기 트랙 원장을 읽는다.** 이전에는 크립토 원장(`paper_trades`)을 읽어서
+    # 크립토가 같은 심볼을 청산하면 추종 진입이 막혔다. 잠금 규칙은 그대로다.
+    lock = paper_service._reentry_block_reason(
+        repo,
+        symbol=symbol,
+        timeframe=timeframe,
+        bar=bar,
+        direction=direction,
+        policy=policy,
+        ledger=paper_service.LEDGER_WHALE_FOLLOW,
+    )
     if lock is not None:
         return {**rejected, "reason_code": REASON_REENTRY_LOCK, "reason": f"재진입 잠금: {lock}", "gates": gates, "drift": drift}
 
@@ -549,6 +559,71 @@ def open_follow_trade(candidate: dict[str, Any], *, now: datetime) -> PaperTrade
     )
     # 진입 시각은 봉이 아니라 **지금**이다. `entry_bar_at` 은 확정봉 그대로 남는다(C4).
     return trade.model_copy(update={"entry_at": now})
+
+
+def reentry_lock_leak(repo: Any, *, settings: Any, limit: int = 500) -> dict[str, Any]:
+    """**누수로 막혔던 진입을 소급 산출한다** (WO-FCE-WHALE-EXIT-REPLAY-01 2-6 항목 3).
+
+    잠금이 크립토 원장을 읽던 동안, 추종 진입은 **크립토가 같은 심볼을 청산했다는 이유로**
+    막힐 수 있었다. 그 건수를 세는 것이 이 함수다.
+
+    ## 무엇을 세는가
+
+    두 원장의 청산을 각각 놓고 "같은 심볼에 크립토 청산은 있는데 추종 청산은 없는" 구간을
+    찾는다. 그 구간에 들어온 추종 신호는 **누수가 아니었다면 잠금을 받지 않았다.**
+
+    ## 무엇을 세지 못하는가 (C8 — 정직하게)
+
+    거부는 원장에 남지 않는다. 잡 결과의 `rejection_summary` 는 실행 시점에만 존재하고
+    영속되지 않는다. 그래서 이 함수가 내는 것은 **상한**이다 — "최대 이만큼이 누수 때문일
+    수 있었다"이지 "이만큼이 실제로 막혔다"가 아니다.
+
+    정확한 수는 수리 이후 `reentry_lock` 거부 건수가 줄어드는 것으로만 확인된다(전후 대조).
+    """
+    # `paper_service` 가 이미 들고 있는 것을 쓴다 — 거래소 모듈을 직접 import 하면
+    # "실주문 경로 없음" 회귀(grep)가 그것을 잡는다. 잡는 게 맞다.
+    timeframe_seconds = paper_service.timeframe_seconds
+
+    policy = paper_service.policy_from_settings(settings, "crypto")
+    if policy.reentry_lock_mode == "off":
+        return {"available": True, "upper_bound": 0, "note": "재진입 잠금이 꺼져 있다 — 누수가 발생할 수 없었다"}
+
+    follow_trades = list(repo.list_whale_follow_trades(limit=limit))
+    symbols = {trade.symbol for trade in follow_trades}
+    if not symbols:
+        return {"available": True, "upper_bound": 0, "note": "추종 거래가 없다 — 셀 대상이 없다", "symbols": 0}
+
+    bar_seconds = float(timeframe_seconds(FOLLOW_TIMEFRAME))
+    window_bars = int(getattr(policy, "reentry_lock_bars", 0) or 0)
+    rows: list[dict[str, Any]] = []
+    for symbol in sorted(symbols):
+        crypto_exits = [
+            trade.exit_bar_at or trade.exit_at
+            for trade in paper_service._closed_trades(repo, ledger=paper_service.LEDGER_CRYPTO, symbol=symbol)
+            if (trade.exit_bar_at or trade.exit_at) is not None and trade.timeframe == FOLLOW_TIMEFRAME
+        ]
+        if not crypto_exits:
+            continue
+        # 이 심볼에서 크립토 청산 뒤 잠금 창 안에 열린 추종 진입 — 누수가 아니었다면
+        # 잠금을 받지 않았을 건들이다.
+        exposed = 0
+        for trade in follow_trades:
+            if trade.symbol != symbol or trade.entry_bar_at is None:
+                continue
+            for stamp in crypto_exits:
+                gap = (trade.entry_bar_at - stamp).total_seconds()
+                if 0 <= gap <= bar_seconds * max(1, window_bars):
+                    exposed += 1
+                    break
+        rows.append({"symbol": symbol, "crypto_exits": len(crypto_exits), "follow_entries_in_window": exposed})
+
+    return {
+        "available": True,
+        "upper_bound": sum(int(row["follow_entries_in_window"]) for row in rows),
+        "by_symbol": rows,
+        "lock_window_bars": window_bars,
+        "note": ("**상한이다.** 거부는 원장에 남지 않으므로 실제 차단 건수는 셀 수 없다 — 수리 이후 `reentry_lock` 거부가 줄어드는 것으로만 확인된다(C8)."),
+    }
 
 
 def rejection_summary(rejected: list[dict[str, Any]]) -> dict[str, Any]:

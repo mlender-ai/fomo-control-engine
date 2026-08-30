@@ -19,7 +19,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 NOW = datetime(2026, 8, 27, 23, 30, tzinfo=timezone.utc)
 
 # C8 — 판정·진입·출구 로직은 이 WO 가 건드리지 않는다.
-UNTOUCHABLE = ("backend/app/analyst", "backend/app/structure", "backend/app/paper/policy.py", "backend/app/paper/whale_follow.py")
+# `whale_follow.py` 는 여기서 뺐다 — 리포트 WO 가 그 파일을 건드리지 않는다는 뜻이었는데,
+# 그 파일에는 잠금이 읽는 원장·관측 함수도 산다(`WHALE-EXIT-REPLAY-01` 2-6). 판정·집행
+# 계층을 pin 하는 것이 이 회귀의 의도이고, 그것은 아래 셋으로 충분하다.
+UNTOUCHABLE = ("backend/app/analyst", "backend/app/structure", "backend/app/paper/policy.py")
 
 
 def _capital(**overrides):

@@ -6086,3 +6086,40 @@ textarea:focus {
   color: var(--terminal-dim);
   margin-left: auto;
 }
+
+/* WO-FCE-WHALE-EXIT-REPLAY-01 2-8 — 매칭률 · 22%p 갭 가설 · 유형×A/B 교차.
+   기존 whaleEntryTypeRows 격자를 그대로 재사용하고 여기서는 갭 블록만 정의한다. */
+.whaleExitMeta {
+  display: block;
+  color: var(--terminal-dim);
+  font-size: var(--fce-type-xs);
+}
+
+.whaleGapHypotheses {
+  display: grid;
+  gap: 6px;
+}
+
+.whaleGapHypotheses > div {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: baseline;
+  gap: 4px 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--terminal-line);
+  font-size: var(--fce-type-xs);
+}
+
+.whaleGapHypotheses > div small {
+  grid-column: 1 / -1;
+  color: var(--terminal-dim);
+}
+
+.whaleGapHypotheses code {
+  font-family: var(--fce-font-mono);
+}
+
+/* 정합/불일치/미판정 — 색이 판정을 대신하지 않게 채도를 낮게 둔다. 인과 단정이 아니다(C6). */
+.whaleGapHypotheses .gapConsistent code { color: var(--terminal-warn, var(--terminal-fg)); }
+.whaleGapHypotheses .gapInconsistent code { color: var(--terminal-dim); }
+.whaleGapHypotheses .gapUnknown code { color: var(--terminal-dim); }

@@ -60,10 +60,23 @@ from app.onchain import participant_type
 FOLLOW_MIN_SAMPLE = 30
 # **점추정**이다. CI 하한이 아니다. 55% 미만은 수수료를 이길 근거가 없다.
 FOLLOW_MIN_WIN_PCT = 55.0
-# 배제 유형. MM 체결은 방향 베팅이 아니라 재고 관리이므로 신호가 아닌 것을 신호로 삼게 된다.
-FOLLOW_EXCLUDED_TYPES = frozenset({participant_type.TYPE_MARKET_MAKER})
+# 배제 유형. **둘 다 방향 베팅이 아니다** — 신호가 아닌 것을 신호로 삼게 된다.
+#
+# - `market_maker`: 체결이 재고 관리다. maker 98.8% 지갑의 체결은 방향 의견이 아니다
+# - `basis_carry`: **델타 중립**이다. 현물 롱 + 퍼프 숏에서 퍼프 다리만 따라가는 것은
+#   헤지를 방향 베팅으로 오독하는 것이다 (WO-FCE-WHALE-EXIT-REPLAY-01 2-7)
+#
+# `WHALE-FOLLOW-02` 문안이 MM 만 지목한 것은 누락이었고 2-7 이 그것을 정정했다.
+# **자격 임계(N>=30 · 55%)는 건드리지 않는다 — 유형 필터만 넓힌다.**
+FOLLOW_EXCLUDED_TYPES = frozenset({participant_type.TYPE_MARKET_MAKER, participant_type.TYPE_BASIS_CARRY})
 
 # 추종 자격은 **하나**다. Phase 6 의 observation/promotion 2축을 대체한다(7-1 항목 2).
+# 유형별 배제 사유. 하나로 뭉뚱그리면 "왜 이 지갑이 빠졌나"를 화면에서 답할 수 없다(2-7 항목 4).
+EXCLUSION_REASONS = {
+    participant_type.TYPE_MARKET_MAKER: "체결이 재고 관리다 — 방향 베팅이 아니다",
+    participant_type.TYPE_BASIS_CARRY: "델타 중립이다 — 퍼프 다리만 따라가면 헤지를 방향 베팅으로 오독한다",
+}
+
 QUALIFICATION_FOLLOW = "follow"
 
 
@@ -147,7 +160,7 @@ def follow_status(
         )
 
     if kind in FOLLOW_EXCLUDED_TYPES:
-        return _status(False, f"{kind} 추정 — 방향 베팅이 아니므로 추종 대상이 아니다")
+        return _status(False, f"{kind} 추정 — {EXCLUSION_REASONS[kind]}")
     if sample_size < FOLLOW_MIN_SAMPLE:
         detail = f"표본 {sample_size}/{FOLLOW_MIN_SAMPLE}"
         if excluded_sample:
@@ -203,6 +216,12 @@ def funnel(statuses: dict[str, FollowStatus]) -> dict[str, Any]:
             REASON_SAMPLE: counts[REASON_SAMPLE],
             REASON_WIN_RATE: counts[REASON_WIN_RATE],
         },
+        # 2-7 항목 3·4 — 어느 유형이 몇 개인지. "배제 5개"만 보이면 `basis_carry` 추가의
+        # 영향이 얼마인지 알 수 없다.
+        "excluded_by_type": {
+            kind: sum(1 for status in statuses.values() if status.participant_type == kind and not status.eligible) for kind in sorted(FOLLOW_EXCLUDED_TYPES)
+        },
+        "exclusion_reasons": EXCLUSION_REASONS,
         "criteria": criteria(),
         "label": f"{total}개 중 {counts[REASON_PASS]}개 통과 · MM {counts[REASON_EXCLUDED_TYPE]} · 표본 미달 {counts[REASON_SAMPLE]} · 승률 미달 {counts[REASON_WIN_RATE]}",
     }

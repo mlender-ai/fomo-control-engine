@@ -321,14 +321,17 @@ def _exit_replay_block(repo: Any, settings: Any) -> dict[str, Any]:
     # 두 블록이 같은 (지갑, 심볼) 체결을 읽는다. 조회를 공유하지 않으면 락 대기가 두 배다.
     cache = whale_exit_replay.EventCache(repo)
     block: dict[str, Any] = {}
-    try:
-        block["exit_comparison"] = whale_exit_replay.build_comparison(repo, settings, cache=cache)
-    except Exception as exc:
-        block["exit_comparison"] = {"available": False, "reason": f"{type(exc).__name__}: {exc}"}
+    # 복기를 **먼저** 돌린다 — 유형 × A/B 교차표(2-8 항목 2)가 그 결과를 입력으로 받는다.
+    entry_types: dict[str, str] = {}
     try:
         block["entry_replay"] = whale_entry_types.build_replay(repo, cache=cache)
+        entry_types = {str(row["id"]): str(row.get("entry_type") or "unclassified") for row in (block["entry_replay"].get("trades") or []) if row.get("id")}
     except Exception as exc:
         block["entry_replay"] = {"available": False, "reason": f"{type(exc).__name__}: {exc}"}
+    try:
+        block["exit_comparison"] = whale_exit_replay.build_comparison(repo, settings, cache=cache, entry_types=entry_types)
+    except Exception as exc:
+        block["exit_comparison"] = {"available": False, "reason": f"{type(exc).__name__}: {exc}"}
     return block
 
 

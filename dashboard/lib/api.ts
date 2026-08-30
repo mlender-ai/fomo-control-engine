@@ -1990,6 +1990,33 @@ export type OnchainWhaleExitComparison = {
   };
   lead_breakdown?: { ours_first: number; whale_first: number; whale_open: number };
   verdict?: { verdict: string; reason: string; actionable: boolean; caveat?: string };
+  // 2-2 항목 4 — 22%p 갭이 셋 중 어느 가설과 정합적인가. 인과 단정이 아니다(C6).
+  gap?: {
+    whale_win_pct: number | null;
+    follow_win_pct: number | null;
+    gap_pp: number | null;
+    hypotheses: { id: string; label: string; consistent: boolean | null; note: string }[];
+    actionable: boolean;
+    not_causal: string;
+    sample_note: string;
+  };
+  // 2-1 — 매칭률과 전량/부분. 매칭률이 낮으면 대조 자체가 표본 부족이다.
+  matched?: number;
+  total?: number;
+  comparable?: number;
+  match_rate_pct?: number | null;
+  whale_exit_kind?: { close: number; reduce: number };
+  hold_hours?: { a_median: number | null; b_median: number | null; note: string };
+  // 2-8 항목 2 — 진입 유형 × 출구 A/B 교차.
+  by_entry_type?: Record<string, {
+    count: number;
+    a_net: number;
+    b_net: number;
+    a_win_pct: number | null;
+    b_win_pct: number | null;
+    delta_net: number | null;
+    sample_note: string;
+  }>;
   holding_bar_inflation?: { detected: boolean; count: number };
   not_official?: string;
 };

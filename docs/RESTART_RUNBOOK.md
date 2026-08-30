@@ -434,3 +434,45 @@ caffeinate -dimsu &
 재기동으로 복구되지 않는다. 실측 2026-08-27: KR 상한 10일 · US 8일 — 둘 다 창 미달이다.
 
 화면(주식 트랙 탭)이 상시 경고하며 명령을 복사 가능하게 낸다.
+
+---
+
+## 배포 절차 — **머지는 배포가 아니다** (WO-FCE-WHALE-EXIT-REPLAY-01 Phase 0)
+
+이 저장소에 **배포 워크플로가 없다.** `.github/workflows/` 에는 `ci.yml` 하나뿐이고 그것은
+검사만 한다. `origin/main` 에 머지돼도 **호스트의 실행 커밋은 바뀌지 않는다.**
+
+> 이 프로젝트가 네 번 겪은 사고다. 재기동 없이 측정하면 **전부 옛 코드 위의 값**이다.
+
+### 순서
+
+```bash
+# 1. 실행 커밋 확인 — 이것이 origin/main 과 다르면 아래 측정은 전부 무효다
+cd <호스트 저장소>
+git fetch origin main && git log --oneline -1 && git rev-parse origin/main
+
+# 2. 반영
+git merge --ff-only origin/main
+
+# 3. 절전 차단 — 유효일이 KR 8일 · US 6일까지 내려왔다. 이대로면 주식 검증이 성립하지 않는다
+caffeinate -dimsu &
+
+# 4. 워커 재기동 (프로젝트 기동 스크립트)
+
+# 5. 재기동 후 실행 커밋 재확인
+git rev-parse HEAD   # == origin/main 이어야 한다
+```
+
+### 재기동 후에만 나오는 회수 항목
+
+| WO | 항목 | 어디서 읽나 |
+| --- | --- | --- |
+| `REPORT-DEFECTS-01` 7-5 | D1~D4 해소 · 자본/수익률 부호 정합 · 리포트 == 화면 | 다음 일일 리포트 + 화면 |
+| `WHALE-FOLLOW-02` 7-4 | 지연·이탈 분포 · **상한 30분·25% 적정성** · 거부 사유 분포 | `GET /onchain/whales/follow-trades` · 잡 결과 `rejection_summary` |
+| `WHALE-EXIT-REPLAY-01` 2-2 | **22%p 갭 원인 판정** · A/B 대조 · 매칭률 | 고래 탭 · `exit_comparison.gap` |
+| `WHALE-EXIT-REPLAY-01` 2-6 | 누수로 막혔던 진입 **상한** | `whale_follow.reentry_lock_leak()` |
+| `WHALE-EXIT-REPLAY-01` 2-7 | `basis_carry` 배제 지갑 수 · 진입 감소 | `follow-eligibility` 의 `funnel.excluded_by_type` |
+
+**상한 적정성 판정 기준**: 이탈 분포가 상한에 몰려 있으면 너무 조인 것이고, 상한 근처가
+비어 있으면 느슨한 것이다. 진입이 0 이면 상한이 아니라 **자격**이 원인인지
+`rejection_summary` 로 먼저 가른다.

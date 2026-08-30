@@ -1174,17 +1174,50 @@ def _parse_datetime(value: Any) -> datetime | None:
         return None
 
 
-def _last_exit_for(repo: Any, *, symbol: str, timeframe: str) -> tuple[datetime | None, Direction | None]:
+# 잠금이 읽을 원장. **트랙마다 자기 원장을 읽는다** (WO-FCE-WHALE-EXIT-REPLAY-01 2-6).
+#
+# 원장은 `WHALE-FOLLOW-01` 이 갈라놨는데(`paper_trades` vs `whale_follow_trades`) 잠금만
+# 크립토 원장을 공유하고 있었다. 그래서 크립토가 BTCUSDT 를 청산하면 **고래 추종의
+# BTCUSDT 진입이 막혔다** — 추종 표본이 크립토 활동에 종속된 것이고, 트랙 오염 금지의
+# 위반이다.
+LEDGER_CRYPTO = "paper"
+LEDGER_WHALE_FOLLOW = "whale_follow"
+_LEDGER_READERS = {
+    LEDGER_CRYPTO: "list_paper_trades",
+    LEDGER_WHALE_FOLLOW: "list_whale_follow_trades",
+}
+
+
+def _closed_trades(repo: Any, *, ledger: str, symbol: str, limit: int = 50) -> list[Any]:
+    """잠금 판정이 볼 청산 이력. **읽는 원장만 트랙별로 갈린다 — 규칙은 그대로다.**
+
+    저장소가 그 원장을 지원하지 않으면 빈 목록이다. 없는 원장을 크립토로 대신 읽으면
+    누수가 조용히 되살아난다 — 그럴 바에는 잠금이 안 걸리는 편이 낫다(관측 가능하다).
+    """
+    reader = getattr(repo, _LEDGER_READERS.get(ledger, _LEDGER_READERS[LEDGER_CRYPTO]), None)
+    if reader is None:
+        return []
+    return list(reader(status="closed", symbol=symbol, limit=limit))
+
+
+def _last_exit_for(repo: Any, *, symbol: str, timeframe: str, ledger: str = LEDGER_CRYPTO) -> tuple[datetime | None, Direction | None]:
     """이 심볼·타임프레임의 **가장 최근 청산** 봉과 방향 (WO-FCE-RISK-SIZING-01 Phase 3).
 
     재진입 잠금 판정에만 쓴다. 청산 이력이 없으면 (None, None) 이라 잠금이 걸리지 않는다.
+
+    `ledger` 는 **어느 트랙의 청산을 볼 것인가**다. 기본값은 크립토이므로 기존 호출부는
+    동작이 바뀌지 않는다(2-6 — 크립토 잠금 동작 무변경).
     """
     latest_at: datetime | None = None
     latest_dir: Direction | None = None
-    for row in repo.list_paper_trades(status="closed", symbol=symbol, limit=50):
-        if row.timeframe != timeframe:
+    for row in _closed_trades(repo, ledger=ledger, symbol=symbol):
+        if getattr(row, "timeframe", None) != timeframe:
             continue
-        exit_bar = row.exit_bar_at or row.exit_at
+        # 청산 시각이 없는 행은 잠금을 걸 수 없다 — 이미 있던 규칙이다. 다만 **속성 자체가
+        # 없어도** 넘어간다: 저장소가 `status` 를 무시하고 열린 거래를 돌려주는 경우에도
+        # 잠금 판정이 죽지 않아야 한다. 죽으면 진입이 `error` 로 거부되고, 그 사유는
+        # "잠금에 걸렸다"와 구분되지 않는다.
+        exit_bar = getattr(row, "exit_bar_at", None) or getattr(row, "exit_at", None)
         if exit_bar is None:
             continue
         if latest_at is None or exit_bar > latest_at:
@@ -1193,11 +1226,24 @@ def _last_exit_for(repo: Any, *, symbol: str, timeframe: str) -> tuple[datetime 
     return latest_at, latest_dir
 
 
-def _reentry_block_reason(repo: Any, *, symbol: str, timeframe: str, bar: MarketCandle, direction: Direction | None, policy: PaperPolicy) -> str | None:
-    """진입 직전 잠금 판정. 막으면 사유를 돌려준다 (C10)."""
+def _reentry_block_reason(
+    repo: Any,
+    *,
+    symbol: str,
+    timeframe: str,
+    bar: MarketCandle,
+    direction: Direction | None,
+    policy: PaperPolicy,
+    ledger: str = LEDGER_CRYPTO,
+) -> str | None:
+    """진입 직전 잠금 판정. 막으면 사유를 돌려준다 (C10).
+
+    **잠금 규칙(봉 수·방향)은 `reentry_locked` 가 정하며 이 WO 가 바꾸지 않는다.**
+    바뀌는 것은 어느 원장의 청산을 세느냐 하나다(2-6).
+    """
     if direction is None or policy.reentry_lock_mode == "off":
         return None
-    last_at, last_dir = _last_exit_for(repo, symbol=symbol, timeframe=timeframe)
+    last_at, last_dir = _last_exit_for(repo, symbol=symbol, timeframe=timeframe, ledger=ledger)
     return reentry_locked(
         entry_bar_at=bar.timestamp,
         direction=direction,

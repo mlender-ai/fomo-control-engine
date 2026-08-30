@@ -45,10 +45,18 @@ def _status(**overrides):
 
 
 def test_the_rule_is_exactly_three_conditions() -> None:
-    """N>=30 · 승률 점추정 >=55% · MM 아님. 그 이상도 이하도 아니다(§2)."""
+    """N>=30 · 승률 점추정 >=55% · **방향 베팅이 아닌 유형 아님**.
+
+    `WHALE-EXIT-REPLAY-01` 2-7 이 `basis_carry` 를 배제 목록에 넣었다. 셋이라는 구조는
+    그대로이고 세 번째 조건의 **집합만** 넓어졌다 — 델타 중립인 캐리를 따라가는 것은
+    MM 을 따라가는 것과 같은 오독이다. **임계(30·55.0)는 그대로다.**
+    """
     assert fe.FOLLOW_MIN_SAMPLE == 30
     assert fe.FOLLOW_MIN_WIN_PCT == 55.0
-    assert fe.FOLLOW_EXCLUDED_TYPES == frozenset({participant_type.TYPE_MARKET_MAKER})
+    assert fe.FOLLOW_EXCLUDED_TYPES == frozenset({participant_type.TYPE_MARKET_MAKER, participant_type.TYPE_BASIS_CARRY})
+    # 배제는 **방향 베팅이 아닌 유형**에만 걸린다. directional·unclassified 는 들어오면 안 된다.
+    assert participant_type.TYPE_DIRECTIONAL not in fe.FOLLOW_EXCLUDED_TYPES
+    assert participant_type.TYPE_UNCLASSIFIED not in fe.FOLLOW_EXCLUDED_TYPES
 
 
 def test_sample_below_thirty_is_rejected() -> None:

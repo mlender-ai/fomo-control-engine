@@ -126,16 +126,30 @@ def compare_trade(trade: dict[str, Any], whale_exit: WhaleExit | None, *, cost_r
         "exit_b_net": None,
         "exit_b_at": None,
         "exit_b_kind": None,
+        "exit_b_full": None,
+        "entry_type": trade.get("entry_type"),
+        # 2-2 항목 2 — 보유 시간을 대조한다. 금액만 보면 "덜 잃었다"와 "빨리 나왔다"가
+        # 구분되지 않는데, 그 둘은 다른 처방이다.
+        "hold_a_hours": None,
+        "hold_b_hours": None,
         "delta": None,
         "lead": LEAD_NONE,
         "note": None,
     }
+    entry_at = _parse(trade.get("entry_at"))
+    if entry_at and our_exit_at:
+        row["hold_a_hours"] = round((our_exit_at - entry_at).total_seconds() / 3600.0, 3)
     if whale_exit is None:
         row["note"] = "고래가 아직 청산하지 않았다 — 반사실을 만들지 않는다"
         return row
     row["exit_b_at"] = whale_exit.at.isoformat()
     row["exit_b_kind"] = whale_exit.kind
+    # 2-1 항목 3 — 부분 감액과 전량 청산은 다른 사건이다. `reduce` 를 전량으로 읽으면
+    # "고래가 나갔다"가 거짓이 된다.
+    row["exit_b_full"] = whale_exit.full_exit
     row["lead"] = LEAD_OURS if (our_exit_at and our_exit_at <= whale_exit.at) else LEAD_WHALE
+    if entry_at:
+        row["hold_b_hours"] = round((whale_exit.at - entry_at).total_seconds() / 3600.0, 3)
     entry_price = _float(trade.get("entry_price"))
     quantity = _float(trade.get("quantity"))
     if whale_exit.price is None or entry_price is None or quantity is None:
@@ -198,15 +212,140 @@ def summarize(rows: list[dict[str, Any]]) -> dict[str, Any]:
                     bucket[f"{side}_profit"] += value
                 else:
                     bucket[f"{side}_loss"] += abs(value)
+    matched = [row for row in rows if row.get("exit_b_at")]
+    full = sum(1 for row in matched if row.get("exit_b_full") is True)
+    holds_a = sorted(float(row["hold_a_hours"]) for row in rows if isinstance(row.get("hold_a_hours"), (int, float)))
+    holds_b = sorted(float(row["hold_b_hours"]) for row in rows if isinstance(row.get("hold_b_hours"), (int, float)))
     return {
         "overall": _finish(overall),
         "by_wallet": {wallet: _finish(bucket) for wallet, bucket in by_wallet.items()},
+        "by_entry_type": _by_entry_type(rows),
         "lead_breakdown": leads,
         "comparable": comparable,
         "total": len(rows),
+        # 2-1 항목 2 — 매칭률. 낮으면 대조 자체가 표본 부족이고, 그 사실이 먼저 보여야 한다.
+        "matched": len(matched),
+        "match_rate_pct": round(len(matched) / len(rows) * 100, 1) if rows else None,
+        # 2-1 항목 3 — 전량 청산과 부분 감액을 나눠 센다.
+        "whale_exit_kind": {"close": full, "reduce": len(matched) - full},
+        "hold_hours": {
+            "a_median": holds_a[len(holds_a) // 2] if holds_a else None,
+            "b_median": holds_b[len(holds_b) // 2] if holds_b else None,
+            "a_count": len(holds_a),
+            "b_count": len(holds_b),
+            "note": "중앙값이다. 금액 차이만 보면 '덜 잃었다'와 '빨리 나왔다'가 구분되지 않는다",
+        },
         # C2 — 공식 표본은 A 하나다. 이 블록은 병기이며 트랙 판정에 합산하지 않는다.
         "official_sample": "exit_a",
         "not_official": "출구 B 는 반사실이며 whale_follow 트랙 표본에 합산하지 않는다(C2). 실적으로 보고하지 않는다(C11).",
+    }
+
+
+def _by_entry_type(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """진입 유형 × 출구 A/B 교차 (2-8 항목 2).
+
+    유형별 성적과 A/B 를 **따로** 보면 "무리 추종이 나쁘다"와 "무리 추종에서 우리 출구가
+    나쁘다"가 구분되지 않는다. 교차해야 어느 유형에서 출구가 문제인지 보인다.
+    """
+    buckets: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        a_net = row.get("exit_a_net")
+        b_net = row.get("exit_b_net")
+        if a_net is None or b_net is None:
+            continue
+        bucket = buckets.setdefault(str(row.get("entry_type") or "unclassified"), _bucket())
+        bucket["count"] += 1
+        bucket["a_net"] += float(a_net)
+        bucket["b_net"] += float(b_net)
+        for side, value in (("a", float(a_net)), ("b", float(b_net))):
+            if value > 0:
+                bucket[f"{side}_wins"] += 1
+                bucket[f"{side}_profit"] += value
+            else:
+                bucket[f"{side}_loss"] += abs(value)
+    return {kind: _finish(bucket) for kind, bucket in buckets.items()}
+
+
+def gap_verdict(
+    *,
+    summary: dict[str, Any],
+    whale_win_pct: float | None,
+    follow_win_pct: float | None,
+    latency: dict[str, Any] | None = None,
+    drift: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """**22%p 갭이 셋 중 어느 것과 정합적인가** (2-2 항목 4).
+
+    ```
+    고래 자신 승률 56.6%   vs   추종 승률 34.3%
+    ```
+
+    후보는 셋이다 — ① 우리 출구가 신호와 안 맞는다 ② 지연·비용이 우위를 먹는다
+    ③ 고래 승률이 우리 채점과 **다른 것을 잰다**.
+
+    ## 인과를 단정하지 않는다 (C6)
+
+    이 함수는 "원인은 X 다"라고 쓰지 않는다. 각 가설이 **데이터와 정합적인지**만 표시한다.
+    셋이 동시에 참일 수 있고, 표본이 부족하면 셋 다 미판정이다.
+
+    ③ 은 특히 조심해야 한다. 고래 승률은 `whale_events.closed_pnl`(고래 자신의 체결 손익)
+    이고 추종 승률은 `whale_follow_trades.net_pnl_usdt`(우리 사이징·비용·출구를 통과한
+    결과)다. **두 수는 애초에 같은 것을 재지 않으므로 갭의 일부는 정의상 존재한다.**
+    """
+    overall = summary.get("overall") or {}
+    count = int(overall.get("count") or 0)
+    gap = round(float(whale_win_pct) - float(follow_win_pct), 1) if whale_win_pct is not None and follow_win_pct is not None else None
+    delta = overall.get("delta_net")
+
+    hypotheses: list[dict[str, Any]] = []
+    if count < MIN_SAMPLE:
+        exit_verdict = {"id": "exit", "consistent": None, "note": f"대조 {count}건 — N<{MIN_SAMPLE} 이므로 판정하지 않는다"}
+    elif delta is not None and delta > 0:
+        exit_verdict = {"id": "exit", "consistent": True, "note": f"출구 B 가 {delta:+.4f} USDT 낫다 — 우리 출구가 신호와 어긋나는 것과 정합적이다"}
+    elif delta is not None and delta < 0:
+        exit_verdict = {"id": "exit", "consistent": False, "note": f"출구 A 가 {-delta:+.4f} USDT 낫다 — 출구가 갭의 원인이라는 가설과 어긋난다"}
+    else:
+        exit_verdict = {"id": "exit", "consistent": False, "note": "A 와 B 가 같다 — 출구는 갭을 설명하지 못한다"}
+    hypotheses.append({**exit_verdict, "label": "① 우리 출구가 신호와 안 맞는다"})
+
+    # ② 지연·비용. 진입이 상한 가까이 몰려 있으면 마찰이 우위를 먹는 것과 정합적이다.
+    latency_median = (latency or {}).get("median")
+    drift_median = (drift or {}).get("median")
+    if latency_median is None and drift_median is None:
+        friction = {"consistent": None, "note": "지연·이탈 분포가 없다 — 호스트 관측(7-4)이 필요하다"}
+    else:
+        loaded = (drift_median is not None and float(drift_median) >= 15.0) or (latency_median is not None and float(latency_median) >= 15.0)
+        friction = {
+            "consistent": bool(loaded),
+            "note": (
+                f"지연 중앙값 {latency_median} 분 · 이탈 중앙값 {drift_median} %(무효화 거리 대비)"
+                + (" — 상한 가까이 몰려 있다. 마찰이 우위를 먹는 것과 정합적이다" if loaded else " — 상한에서 멀다. 마찰만으로 갭을 설명하기 어렵다")
+            ),
+        }
+    hypotheses.append({"id": "friction", "label": "② 지연·비용이 우위를 먹는다", **friction})
+
+    # ③ 채점 기준. 이것은 **항상 부분적으로 참**이다 — 두 수가 다른 것을 재기 때문이다.
+    hypotheses.append(
+        {
+            "id": "scoring",
+            "label": "③ 고래 승률이 우리 채점과 다른 것을 잰다",
+            "consistent": True,
+            "note": (
+                "고래 승률은 고래 자신의 체결 손익(`whale_events.closed_pnl`)이고 추종 승률은 우리 사이징·비용·출구를 "
+                "통과한 결과(`whale_follow_trades`)다. **같은 것을 재지 않으므로 갭의 일부는 정의상 존재한다** — "
+                "얼마가 정의 차이인지는 이 대조만으로 분리되지 않는다."
+            ),
+        }
+    )
+
+    return {
+        "whale_win_pct": whale_win_pct,
+        "follow_win_pct": follow_win_pct,
+        "gap_pp": gap,
+        "hypotheses": hypotheses,
+        "actionable": count >= MIN_SAMPLE,
+        "not_causal": "정합성 표시다. 인과를 단정하지 않는다(C6) — 셋이 동시에 참일 수 있다.",
+        "sample_note": f"대조 N={count}" + ("" if count >= MIN_SAMPLE else f" — N<{MIN_SAMPLE}"),
     }
 
 
@@ -273,8 +412,19 @@ class EventCache:
         return self._cache[key]
 
 
-def build_comparison(repo: Any, settings: Any, *, limit: int = 500, cache: EventCache | None = None) -> dict[str, Any]:
-    """원장에서 A/B 대조를 만든다. 네트워크를 타지 않는다(C9) — 저장된 체결만 읽는다."""
+def build_comparison(
+    repo: Any,
+    settings: Any,
+    *,
+    limit: int = 500,
+    cache: EventCache | None = None,
+    entry_types: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """원장에서 A/B 대조를 만든다. 네트워크를 타지 않는다(C9) — 저장된 체결만 읽는다.
+
+    `entry_types` 는 거래 id → 진입 유형이다(`whale_entry_types.build_replay` 산출).
+    넘기지 않으면 교차표가 `unclassified` 한 칸이 된다 — **없는 유형을 만들지 않는다.**
+    """
     from app.paper import service as paper_service
 
     # 비용률을 직접 만들지 않는다 — 출구 A 와 **같은 정책 객체**에서 읽는다. 비용이 다르면
@@ -304,24 +454,68 @@ def build_comparison(repo: Any, settings: Any, *, limit: int = 500, cache: Event
                     "direction": trade.direction.value,
                     "whale_address": wallet,
                     "net_pnl_usdt": trade.net_pnl_usdt,
+                    "entry_at": trade.entry_at,
                     "exit_at": trade.exit_at,
                     "exit_reason": trade.exit_reason,
                     "entry_price": trade.entry_price,
                     "quantity": trade.quantity,
+                    "entry_type": (entry_types or {}).get(str(trade.id)),
                 },
                 whale_exit,
                 cost_rate=cost_rate,
             )
         )
     summary = summarize(rows)
-    inflation = detect_holding_bar_inflation(repo.list_whale_follow_trades(limit=limit))
+    all_trades = repo.list_whale_follow_trades(limit=limit)
+    inflation = detect_holding_bar_inflation(all_trades)
     return {
         "trades": rows,
         **summary,
         "verdict": verdict(summary, inflation=inflation),
+        # 2-2 항목 4 — 22%p 갭이 셋 중 어느 가설과 정합적인가. 지연·이탈 분포는 호스트
+        # 관측이 있어야 채워지므로 여기서는 원장에서 읽을 수 있는 것만 넘긴다.
+        "gap": gap_verdict(
+            summary=summary,
+            whale_win_pct=_whale_win_pct(all_trades),
+            follow_win_pct=_follow_win_pct(all_trades),
+            latency=_latency_summary(all_trades),
+            drift=_drift_summary(all_trades),
+        ),
         "holding_bar_inflation": inflation,
         "cost_rate": cost_rate,
     }
+
+
+def _whale_win_pct(trades: list[Any]) -> float | None:
+    """추종한 지갑들의 **진입 시점 기록 승률** 중앙값.
+
+    `entry_evidence.win_pct` 는 자격 판정이 진입 때 박아 둔 값이다. 지금 시점 승률이
+    아니지만 **그 거래를 열 때 우리가 믿었던 수**이므로 갭 비교의 기준으로는 그쪽이 옳다.
+    """
+    values = sorted(
+        float((trade.entry_evidence or {}).get("win_pct")) for trade in trades if isinstance((trade.entry_evidence or {}).get("win_pct"), (int, float))
+    )
+    return values[len(values) // 2] if values else None
+
+
+def _follow_win_pct(trades: list[Any]) -> float | None:
+    closed = [trade for trade in trades if trade.status == "closed"]
+    if not closed:
+        return None
+    return round(sum(1 for trade in closed if float(trade.net_pnl_usdt or 0.0) > 0) / len(closed) * 100, 1)
+
+
+def _median_of(trades: list[Any], key: str, *, scale: float = 1.0) -> dict[str, Any]:
+    values = sorted(float((trade.entry_evidence or {}).get(key)) * scale for trade in trades if isinstance((trade.entry_evidence or {}).get(key), (int, float)))
+    return {"median": round(values[len(values) // 2], 2), "count": len(values)} if values else {"median": None, "count": 0}
+
+
+def _latency_summary(trades: list[Any]) -> dict[str, Any]:
+    return _median_of(trades, "signal_to_entry_seconds", scale=1 / 60.0)
+
+
+def _drift_summary(trades: list[Any]) -> dict[str, Any]:
+    return _median_of(trades, "price_drift_pct_of_stop")
 
 
 def detect_holding_bar_inflation(trades: list[Any], *, timeframe_hours: float = 4.0) -> dict[str, Any]:

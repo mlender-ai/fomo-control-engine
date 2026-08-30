@@ -81,3 +81,20 @@ solo       37   -14.9644   35.1%   0.50
 - [WHALE_EXIT_COMPARISON.md](WHALE_EXIT_COMPARISON.md) — 출구 A/B 반사실 대조
 - `backend/app/paper/whale_entry_types.py`
 - `backend/tests/test_whale_entry_types.py`
+
+---
+
+## 유형 × 출구 A/B 교차 (WHALE-EXIT-REPLAY-01 2-8 항목 2)
+
+유형별 성적과 A/B 대조를 **따로** 보면 두 문장이 구분되지 않는다:
+
+```
+"무리 추종이 나쁘다"              ← 신호 문제
+"무리 추종에서 우리 출구가 나쁘다"  ← 출구 문제
+```
+
+처방이 정반대다. `whale_exit_replay.summarize()` 의 `by_entry_type` 이 교차한다 —
+유형별로 A·B·차이를 각각 낸다.
+
+유형을 못 넘기면 교차표는 `unclassified` 한 칸이 된다. **없는 유형을 만들지 않는다**(C6) —
+`onchain/service.py` 가 복기를 먼저 돌려 유형을 넘긴다.

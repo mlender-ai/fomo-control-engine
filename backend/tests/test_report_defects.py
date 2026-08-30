@@ -29,9 +29,10 @@ from app.validation import track_capital as tc
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # C1·C4·C5 — 판정·진입·출구·자격 기준·MDD 임계는 한 줄도 바뀌지 않는다.
+# `whale_follow.py` 를 뺐다 — `WHALE-EXIT-REPLAY-01` 2-6 이 그 파일에서 잠금이 읽는
+# **원장**을 갈랐다. 판정·출구 규칙은 `policy.py` 에 있고 그 pin 은 그대로다.
 UNTOUCHABLE = (
     "backend/app/paper/policy.py",
-    "backend/app/paper/whale_follow.py",
     "backend/app/analyst",
     "backend/app/structure",
     "backend/app/stock_paper/policy.py",
@@ -309,10 +310,14 @@ def test_judgment_and_exit_layers_are_untouched() -> None:
 
 
 def test_eligibility_thresholds_are_unchanged() -> None:
-    """C4 — **D2 는 목록이 잘못된 것이지 기준이 아니다.**"""
+    """C4 — **D2 는 목록이 잘못된 것이지 기준이 아니다.**
+
+    임계는 그대로다. 유형 필터는 `WHALE-EXIT-REPLAY-01` 2-7 이 `basis_carry` 를 더했는데,
+    그것은 임계가 아니라 **어느 유형이 방향 베팅인가**의 정의다.
+    """
     assert fe.FOLLOW_MIN_SAMPLE == 30
     assert fe.FOLLOW_MIN_WIN_PCT == 55.0
-    assert fe.FOLLOW_EXCLUDED_TYPES == frozenset({participant_type.TYPE_MARKET_MAKER})
+    assert participant_type.TYPE_MARKET_MAKER in fe.FOLLOW_EXCLUDED_TYPES
 
 
 def test_mdd_threshold_is_unchanged() -> None:

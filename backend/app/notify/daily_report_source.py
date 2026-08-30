@@ -234,6 +234,12 @@ def build_report(repo: Any, settings: Any, *, now: datetime, last_sent_at: datet
                     sign = "+" if delta >= 0 else ""
                     caution = "" if comparison.get("verdict", {}).get("actionable") else " · 전환 근거 아님"
                     extra.append(f"  출구  고래청산 추종 시 {sign}{delta:.2f} (반사실 {summary['count']}건){caution}")
+                # 2-8 항목 3 — **한 항목만.** 갭이 얼마이고 표본이 판정 가능한가.
+                # 가설 셋을 본문에 다 실으면 길이 한도를 먹는다 — 그것은 화면 몫이다.
+                gap = comparison.get("gap") or {}
+                if gap.get("gap_pp") is not None:
+                    verdict = "판정 가능" if gap.get("actionable") else "표본 부족 · 판정 보류"
+                    extra.append(f"  갭    고래 {gap['whale_win_pct']}% vs 추종 {gap['follow_win_pct']}% ({gap['gap_pp']}%p) · {verdict}")
             except Exception:
                 pass
         if track in {"stock_kr", "stock_us"} and connection is not None:

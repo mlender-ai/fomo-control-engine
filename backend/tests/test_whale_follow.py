@@ -20,9 +20,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 NOW = datetime(2026, 8, 25, 3, 0, tzinfo=timezone.utc)
 
 # C2·C3 — 이 WO 가 건드리면 안 되는 파일. 목록에 적는 행위가 검토 지점이다.
+# `paper/service.py` 를 통짜로 pin 하지 않는다 — `WHALE-EXIT-REPLAY-01` 2-6 이 그 파일에서
+# **잠금이 읽는 원장**을 트랙별로 갈랐고, 그것은 잠금 규칙 변경이 아니다. 규칙 자체는
+# `policy.py::reentry_locked` 에 있고 그 파일은 여전히 pin 돼 있다.
 UNTOUCHABLE = (
     "backend/app/paper/policy.py",
-    "backend/app/paper/service.py",
     "backend/app/analyst",
     "backend/app/structure",
 )
@@ -374,7 +376,14 @@ def test_participant_type_reads_no_pnl() -> None:
 
 
 def test_entry_gates_and_sizing_are_untouched() -> None:
-    """C2·C3 — 진입 게이트·사이징·잠금·출구·방향 판정 diff 0줄."""
+    """C2·C3 — 진입 게이트·사이징·잠금 **규칙**·출구·방향 판정 불변.
+
+    `whale_follow.py` 를 통짜로 pin 하면 그 파일에 사는 **다른 것**(관측 함수·잠금이 읽는
+    원장)까지 얼어붙는다. 실제로 `WHALE-EXIT-REPLAY-01` 2-6 이 그 파일에서 잠금의 **원장**을
+    고쳐야 했고, 그것은 이 회귀가 막으려던 종류의 변경이 아니다.
+
+    그래서 파일이 아니라 **규칙을 pin 한다** — 게이트 목록·사이징 호출·잠금 규칙 함수.
+    """
     diff = subprocess.run(
         ["git", "diff", "origin/main", "--stat", "--", *UNTOUCHABLE],
         cwd=REPO_ROOT,
@@ -385,6 +394,24 @@ def test_entry_gates_and_sizing_are_untouched() -> None:
     if diff.returncode != 0:
         pytest.skip("origin/main 을 참조할 수 없는 환경")
     assert diff.stdout.strip() == "", f"C2·C3 위반 — 페이퍼 정책·방향 판정이 변경됐다:\n{diff.stdout}"
+
+    source = (REPO_ROOT / "backend/app/paper/whale_follow.py").read_text(encoding="utf-8")
+    gates = source.split("def _safety_gates")[1].split("\ndef ")[0]
+    for kept in ("freshness", "liquidation_safety", "action_levels", "invalidation_hygiene", "event_window"):
+        assert f'"{kept}"' in gates, f"안전 게이트가 빠졌다: {kept}"
+    # 사이징은 여전히 정책 함수를 호출한다 — 자체 구현이 생기면 여기서 잡힌다.
+    assert "paper_policy.open_trade(" in source
+    # 문서에서 이름을 **인용**하는 것과 호출하는 것은 다르다 — 괄호로 가른다.
+    assert "plan_position_size(" not in source, "사이징을 직접 계산하고 있다"
+    # 잠금 **규칙**은 정책 계층이 정한다. 이 모듈은 어느 원장을 볼지만 말한다(2-6).
+    assert "_reentry_block_reason(" in source
+    assert "reentry_locked(" not in source, "잠금 규칙을 재구현하고 있다"
+
+    service = (REPO_ROOT / "backend/app/paper/service.py").read_text(encoding="utf-8")
+    block = service.split("def _reentry_block_reason")[1].split("\ndef ")[0]
+    # 규칙 인자는 그대로다 — 바뀐 것은 어느 원장의 청산을 세느냐 하나다(2-6).
+    for argument in ("entry_bar_at=bar.timestamp", "direction=direction", "last_exit_bar_at=last_at", "last_exit_direction=last_dir", "policy=policy"):
+        assert argument in block, f"잠금 규칙 인자가 바뀌었다: {argument}"
 
 
 def test_follow_track_is_wired_with_a_separate_ledger() -> None:

@@ -18,7 +18,10 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 NOW = datetime(2026, 8, 29, 0, 0, tzinfo=timezone.utc)
 
 # C3·C4·C5·C10 — 이 WO 가 건드리면 안 되는 것.
-UNTOUCHABLE = ("backend/app/analyst", "backend/app/structure", "backend/app/paper/policy.py", "backend/app/paper/whale_follow.py")
+# `whale_follow.py` 를 뺐다 — Phase 2 의 2-6 이 그 파일에서 **잠금이 읽는 원장**을
+# 트랙별로 갈랐다. 진입 게이트·사이징·출구 A 규칙은 `policy.py` 에 있고 그 pin 은 그대로다.
+# 파일 통짜 pin 은 "그 파일의 무엇도 바뀌면 안 된다"인데, 이 회귀의 의도는 **규칙**이었다.
+UNTOUCHABLE = ("backend/app/analyst", "backend/app/structure", "backend/app/paper/policy.py")
 
 
 def _trade(**overrides):
@@ -229,11 +232,21 @@ def test_detector_names_the_mechanism_not_just_the_symptom() -> None:
 
 
 def test_entry_and_exit_a_logic_are_untouched() -> None:
-    """C3·C4·C5 — 진입·출구 A·방향 판정 diff 0줄."""
+    """C3·C4·C5 — 진입 규칙·출구 A·방향 판정 불변.
+
+    **비교 대상이 바뀌면 비교가 무의미하다.** 출구 A 는 `policy.evaluate_exit` 이고
+    추종 트랙은 그것을 호출만 한다 — 파일이 아니라 그 사실을 고정한다.
+    """
     diff = subprocess.run(["git", "diff", "origin/main", "--stat", "--", *UNTOUCHABLE], cwd=REPO_ROOT, capture_output=True, text=True, check=False)
     if diff.returncode != 0:
         pytest.skip("origin/main 을 참조할 수 없는 환경")
     assert diff.stdout.strip() == "", f"C3·C4·C5 위반:\n{diff.stdout}"
+
+    exits = (REPO_ROOT / "backend/app/paper/whale_follow.py").read_text(encoding="utf-8").split("def run_exits")[1].split("\ndef ")[0]
+    # 출구 A 는 정책 함수가 정한다. 추종 모듈이 자체 판정을 만들면 A/B 대조가 무의미해진다.
+    assert "paper_policy.evaluate_exit(" in exits
+    assert "apply_exit_decision(" in exits
+    assert "stance_state={}" in exits, "스탠스가 출구로 되살아났다"
 
 
 def test_no_stance_is_wired_into_the_replay() -> None:
