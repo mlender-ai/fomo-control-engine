@@ -71,14 +71,20 @@ def migrated_store(tmp_path) -> StockPaperStore:
     return store
 
 
-def test_session_gate_queues_then_gap_order_uses_observed_open() -> None:
+def test_session_gate_queues_then_gap_order_uses_the_validated_bar() -> None:
+    """큐 주문도 **검증하는 봉**에서 체결가를 만든다 (WO-FCE-MAKE-IT-RUN-01 Phase 1).
+
+    이전에는 시가로 만들고 현재 분봉으로 검사해 두 봉이 어긋났다 — US 정지의 원인이다.
+    """
     pending = execute_order(order(), observation(session_open=False))
     assert pending.order.status == OrderStatus.QUEUED
     assert pending.reason == "session_closed"
 
-    opened = execute_order(pending.order, observation(session_open=True, bid=105.0, ask=105.0))
+    bar = observation(session_open=True, bid=105.0, ask=105.0)
+    opened = execute_order(pending.order, bar)
     assert opened.fill is not None
-    assert opened.fill.price == 105.0
+    assert bar.minute_low <= opened.fill.price <= bar.minute_high, "가격 출처와 검증 봉이 어긋났다"
+    assert opened.fill.price == pytest.approx(bar.minute_close)
 
 
 def test_whole_share_and_market_tick_rules_are_enforced() -> None:
@@ -124,10 +130,17 @@ def test_liquidity_cap_partially_fills_and_applies_half_spread() -> None:
 
 
 def test_fill_range_invariant_stops_track_and_logs_failure(tmp_path) -> None:
+    """invariant 는 **여전히 발화하고 트랙을 정지시킨다** — 완화하지 않았다(C1).
+
+    다만 발화 조건이 달라졌다. 예전 픽스처(스프레드가 범위를 밀어낸 경우)는 이제
+    **모형이 처리한다** — 그 분에 거래되지 않은 값으로는 체결될 수 없으므로 범위 끝으로
+    자른다. 남는 발화 자리는 **관측 자체가 모순인 경우**이고, 그때는 자르지 않는다:
+    종가가 자기 봉 범위 밖이면 데이터 결함이며 덮으면 안 된다.
+    """
     store = migrated_store(tmp_path)
     broker = PaperBroker(store)
     with pytest.raises(FillInvariantViolation):
-        broker.place(order(), observation(minute_low=99, minute_high=100.05, bid=99.8, ask=100.4))
+        broker.place(order(), observation(minute_low=99, minute_high=100.05, minute_close=200.0))
     track = next(item for item in store.dashboard()["tracks"] if item["market"] == "US")
     assert track["status"] == "stopped"
     assert track["stop_reason"] == "fill_price_outside_observed_range"

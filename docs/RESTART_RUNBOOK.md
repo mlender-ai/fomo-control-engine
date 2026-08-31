@@ -476,3 +476,31 @@ git rev-parse HEAD   # == origin/main 이어야 한다
 **상한 적정성 판정 기준**: 이탈 분포가 상한에 몰려 있으면 너무 조인 것이고, 상한 근처가
 비어 있으면 느슨한 것이다. 진입이 0 이면 상한이 아니라 **자격**이 원인인지
 `rejection_summary` 로 먼저 가른다.
+
+---
+
+## MAKE-IT-RUN-01 회수 절차 (2026-08-31)
+
+재기동 후 **이 순서로** 확인한다. C9 — 한 번에 하나씩.
+
+```bash
+# 0. 실행 커밋
+git rev-parse HEAD                       # == origin/main 이어야 한다
+
+# 1. 절전 (Phase 3) — 이게 없으면 주식을 고쳐도 표본이 안 쌓인다
+caffeinate -dimsu &
+
+# 2. 폴리 공급원 판정 (Phase 2) — 컨테이너에서는 못 낸다
+cd backend && PYTHONPATH=. python3 scripts/prediction_market_probe.py
+
+# 3. 진입 0건 원인 (Phase 0) — 잡 실행률·거부 퍼널·유니버스 크기
+#    재진입 잠금 누수는 이미 수리돼 있다(0566fe8) — 배포가 안 됐을 뿐이다
+
+# 4. US 정지 해제 → 24시간 재발 0건 확인 → **그 다음에** KR 큐 해제
+#    FCE_STOCK_PAPER_HOLD_QUEUED_ORDERS=false
+#    개장 시각 전후 잡 실행률을 함께 잰다(C4)
+```
+
+**Phase 0 항목 5 전제 정정**: WO 는 재진입 잠금 누수를 미수리로 적었지만
+`0566fe8`(WHALE-EXIT-REPLAY-01 2-6)이 이미 고쳤다. 남은 것은 **배포**다 — 이것 자체가
+Phase 0 항목 2("머지 ≠ 서버 반영")의 사례다.

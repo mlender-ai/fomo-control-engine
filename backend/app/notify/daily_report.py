@@ -37,6 +37,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from app.validation import mdd_watch
+
 # 트랙 표시 순서와 라벨. 5트랙이 **항상 전부** 등장한다 — 이벤트가 없어서 침묵하던
 # 구조를 `PERFORMANCE-REPORT-01` 이 제거했고 그 원칙을 여기서도 지킨다.
 TRACK_ORDER = (
@@ -134,7 +136,11 @@ def metric_line(metrics: dict[str, Any]) -> str:
     parts.append(f"승률 {win:.1f}%" if win is not None else "승률 미산출")
     parts.append(f"PF {profit_factor:.2f}" if profit_factor is not None else "PF 미산출")
     if mdd is not None:
-        parts.append(f"MDD {mdd:.2f}%")
+        # WO-FCE-MAKE-IT-RUN-01 Phase 4 — **초과를 숫자 옆에 붙인다.** 숫자만 있으면
+        # 서명값을 넘겼다는 사실이 어디에도 안 나온다. 임계는 올리지 않는다(C2).
+        status = mdd_watch.mdd_status(mdd)
+        suffix = f" ({status['label']})" if status.get("label") else ""
+        parts.append(f"MDD {mdd:.2f}%{suffix}")
     tag = f"   [표본 부족 · N<{MIN_SAMPLE}]" if count < MIN_SAMPLE else ""
     return f"  누적  {' · '.join(parts)}{tag}"
 

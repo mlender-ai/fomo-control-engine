@@ -14,11 +14,19 @@ from .models import Currency, Market, MarketObservation, OrderStatus, Side, Stoc
 from .parameters import load_stock_parameters
 from app.notify.paper_events import track_event
 
+
 from .analysis import analyze_stock_candidate
 from .exit_policy import evaluate_stock_exit, load_exit_parameters
 from .policy import evaluate_stock_entry
 from .store import StockPaperStore
 from .universe import load_universe
+
+# WO-FCE-MAKE-IT-RUN-01 Phase 1 항목 4 — 재제출 배치 상한 (C4).
+#
+# 개장 순간 큐 전체가 한꺼번에 나가면 잡 실행 시간이 큐 길이에 비례한다. 그것이
+# `DISCOVERY-UNBLOCK-01` 의 라이브 장애 기전이고, KR 큐 13,934건이면 규모가 훨씬 크다.
+# 남은 건은 버리지 않고 다음 실행으로 넘긴다.
+DEFAULT_REQUEUE_BATCH_LIMIT = 200
 
 TRACK = "stock"
 # 청산 경로 부재 구간(WO-FCE-STOCK-EXIT-01 이전)에 진입한 포지션의 제외 사유.
@@ -65,6 +73,7 @@ def run_stock_paper_engine(settings: Settings, market_payloads: dict[str, dict[s
         toss_store,
         payloads,
         hold_queued=bool(getattr(settings, "stock_paper_hold_queued_orders", False)),
+        batch_limit=int(getattr(settings, "stock_paper_requeue_batch_limit", DEFAULT_REQUEUE_BATCH_LIMIT)),
     )
     processed = int(pending["processed"])
     evaluated = rejected = strict_entered = coverage_evaluated = coverage_attempted = coverage_entered = 0
@@ -381,7 +390,15 @@ def _process_exits(
     무효화 가격 마법 체결이 구조적으로 불가능하다(C1).
     """
     parameters = load_exit_parameters()
-    counters = {"evaluated": 0, "triggered": 0, "filled": 0, "unfilled": 0}
+    counters = {"evaluated": 0, "triggered": 0, "filled": 0, "unfilled": 0, "deduped": 0}
+    # WO-FCE-MAKE-IT-RUN-01 Phase 1 항목 5 — **큐 적체를 근원에서 막는다.**
+    #
+    # 마감 중에는 체결이 안 되므로 청산 신호가 매 틱 다시 발화하고, 그때마다 같은 심볼에
+    # 새 주문이 쌓였다. KR 큐 13,934건이 그렇게 만들어졌다 — 전부 같은 소수 심볼의 중복이다.
+    #
+    # 상한이 아니라 **중복 제거**다. 같은 (시장·심볼·방향)에 이미 대기 주문이 있으면
+    # 새로 만들지 않는다. 상한을 두면 상한만큼은 여전히 중복이 쌓인다.
+    pending = _pending_order_keys(broker)
     for row in store.open_positions():
         market = Market(str(row["market"]))
         symbol = str(row["symbol"]).upper()
@@ -405,6 +422,11 @@ def _process_exits(
         held = int(row["quantity"])
         quantity = held if decision.fraction >= 1.0 else max(1, math.floor(held * decision.fraction))
         quantity = min(quantity, held)
+        if (market.value, symbol, Side.SELL.value) in pending:
+            # 이미 같은 청산 주문이 대기 중이다. 하나면 충분하고, 둘째부터는 적체다.
+            counters["deduped"] += 1
+            continue
+        pending.add((market.value, symbol, Side.SELL.value))
         order = StockOrder(
             symbol=symbol,
             market=market,
@@ -456,6 +478,11 @@ def _process_exits(
             # "빠져나올 수 없었다"를 정직하게 기록하는 것이 성과를 좋게 보이게 하는 것보다 중요하다.
             counters["unfilled"] += 1
     return counters
+
+
+def _pending_order_keys(broker: PaperBroker) -> set[tuple[str, str, str]]:
+    """대기·부분체결 주문의 (시장, 심볼, 방향). 한 실행에서 **한 번만** 조회한다."""
+    return {(order.market.value, order.symbol.upper(), order.side.value) for order in broker.store.list_orders((OrderStatus.QUEUED, OrderStatus.PARTIAL))}
 
 
 def _holding_days(opened_at: Any) -> int:
@@ -702,6 +729,7 @@ def _process_pending_orders(
     payloads: dict[str, dict[str, Any]],
     *,
     hold_queued: bool = False,
+    batch_limit: int = DEFAULT_REQUEUE_BATCH_LIMIT,
 ) -> dict[str, Any]:
     """대기 주문 재제출. `hold_queued` 면 **세션이 열렸을 때 큐 주문을 보내지 않는다.**
 
@@ -723,11 +751,18 @@ def _process_pending_orders(
     """
     processed = 0
     held: dict[str, int] = {}
+    deferred = 0
+    limit = max(1, int(batch_limit))
     for order in broker.store.list_orders((OrderStatus.QUEUED, OrderStatus.PARTIAL)):
         payload = payloads.get(order.market.value) or {}
         session_open = payload.get("market_state") == "open"
         if hold_queued and session_open and order.status == OrderStatus.QUEUED:
             held[order.market.value] = held.get(order.market.value, 0) + 1
+            continue
+        if processed >= limit:
+            # Phase 1 항목 4 (C4) — 개장 순간 13,934건이 한꺼번에 나가면 `sync_positions`
+            # 450초 사고가 재발한다. 남은 건은 다음 실행으로 넘긴다 — **버리지 않는다.**
+            deferred += 1
             continue
         observation = _observation(toss_store, order.market, order.symbol, session_open)
         broker.place(order, observation)
@@ -743,7 +778,14 @@ def _process_pending_orders(
                 payload={"held": count, "wo": "WO-FCE-DEFAULTS-01 1-4"},
                 stale_seconds=300,
             )
-    return {"processed": processed, "held": held, "held_total": sum(held.values())}
+    return {
+        "processed": processed,
+        "held": held,
+        "held_total": sum(held.values()),
+        # 상한에 걸려 이번 실행에서 보내지 않은 건수. 0 이 아니면 다음 실행이 이어받는다.
+        "deferred": deferred,
+        "batch_limit": limit,
+    }
 
 
 def _observation(store: TossStockStore, market: Market, symbol: str, session_open: bool) -> MarketObservation | None:

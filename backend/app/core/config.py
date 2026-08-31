@@ -210,6 +210,15 @@ class Settings(BaseSettings):
         True,
         validation_alias=AliasChoices("FCE_STOCK_PAPER_HOLD_QUEUED_ORDERS", "STOCK_PAPER_HOLD_QUEUED_ORDERS"),
     )
+    # WO-FCE-MAKE-IT-RUN-01 Phase 1 항목 4 — 재제출 배치 상한 (C4).
+    #
+    # 개장 순간 큐 전체가 한꺼번에 나가면 잡 실행 시간이 큐 길이에 비례한다. 남은 건은
+    # 버리지 않고 다음 실행으로 넘긴다 — `deferred` 로 조회된다.
+    stock_paper_requeue_batch_limit: int = Field(
+        200,
+        ge=1,
+        validation_alias=AliasChoices("FCE_STOCK_PAPER_REQUEUE_BATCH_LIMIT", "STOCK_PAPER_REQUEUE_BATCH_LIMIT"),
+    )
     # WO-FCE-DEFAULTS-01 1-2 — 폴리를 검증 판정 범위에서 뺀다. **임시값이다.**
     #
     # 451 지역 차단이 안 풀리면 유니버스 교체(B안)가 불가능하고, 유지(C안)는 판정을 영구

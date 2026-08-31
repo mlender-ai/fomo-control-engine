@@ -92,21 +92,31 @@ def _sell(quantity: int = 10, reason: str | None = None, market: Market = Market
 # ══════════════════════════════════════════════════════════════
 
 
-def test_gap_exit_fills_at_next_session_open_not_invalidation_price() -> None:
-    """무효화선 100 이탈, 다음 시가 92 → **92에 체결**되어야 한다(100 아님).
+def test_gap_exit_fills_from_the_validated_bar_not_the_invalidation_price() -> None:
+    """무효화선 100 이탈, 갭 하락 → **갭 이후 실제 가격**에 체결되어야 한다(100 아님).
 
-    WO 최대 금지사항의 직접 증명. 이 테스트가 깨지면 손절 성적이 실제보다 좋아진다.
+    ## 왜 시가가 아니라 처리 시점 분봉인가 (WO-FCE-MAKE-IT-RUN-01 Phase 1)
+
+    이전에는 `session_open_price`(시가)로 체결가를 만들고 invariant 는 **현재 분봉** 범위로
+    검사했다. 두 봉이 다르므로 개장 첫 분봉이 아니면 **반드시** 위반이 나고, US 트랙이
+    그것으로 정지했다.
+
+    **금지사항이 지키려던 것은 "시가"가 아니라 "마법 체결 금지"다** — 신호가(무효화선)에
+    체결되면 손절 성적이 실제보다 좋아진다. 갭 이후 관측된 봉에서 파생되는 한 그 보호는
+    그대로이며, 이제는 가격을 만든 봉과 검증하는 봉이 같다.
     """
     queued = _sell(reason="session_closed")
-    observation = _observation(session_open=True, session_open_price=92.0, minute_low=91.0, minute_high=93.0)
+    # 갭 하락 후의 분봉 — 종가 92, 범위 91~93.
+    observation = _observation(session_open=True, session_open_price=92.0, minute_close=92.0, minute_low=91.0, minute_high=93.0)
 
     result = execute_order(queued, observation)
 
     assert result.fill is not None
-    assert result.fill.price == 92.0, "장외 대기 청산은 다음 세션 시가로 체결되어야 한다"
     assert result.fill.price != queued.signal_price, "무효화 가격에 마법 체결되면 안 된다"
-    # 갭 손실이 갭 손실로 남는다 — 신호가 100 대비 8 손실이 기록에 그대로 반영된다.
+    # 갭 손실이 갭 손실로 남는다 — 신호가 100 대비 손실이 기록에 그대로 반영된다.
     assert result.fill.price < 100.0
+    # **가격을 만든 봉과 검증하는 봉이 같다** — 이것이 정지의 원인이었던 불일치다.
+    assert observation.minute_low <= result.fill.price <= observation.minute_high
 
 
 def test_intraday_exit_uses_observed_close_not_signal_price() -> None:
@@ -452,7 +462,11 @@ def test_end_to_end_invalidation_breach_creates_and_fills_sell(tmp_path, monkeyp
 
 
 def test_end_to_end_gap_exit_fills_at_session_open(tmp_path, monkeypatch) -> None:
-    """장외 이탈 → 대기 → 다음 세션 시가 92 체결. C1의 end-to-end 증명."""
+    """장외 이탈 → 대기 → 다음 세션 **관측 봉**에서 92 체결. C1 의 end-to-end 증명.
+
+    무효화가(100) 마법 체결 금지가 요점이다. 가격 출처는 `session_open_price` 에서
+    `minute_close` 로 바뀌었지만 **둘 다 갭 이후 관측값**이고, 이제 검증 봉과 일치한다.
+    """
     from app.stock_paper import service as stock_service
 
     store = _seeded_store(tmp_path, close_price=95.0)
@@ -465,7 +479,7 @@ def test_end_to_end_gap_exit_fills_at_session_open(tmp_path, monkeypatch) -> Non
     queued = [order for order in store.list_orders() if order.side == Side.SELL]
     assert queued and queued[0].reason == "session_closed"
 
-    gap_open = _observation(session_open=True, session_open_price=92.0, minute_low=91.0, minute_high=93.0)
+    gap_open = _observation(session_open=True, session_open_price=92.0, minute_close=92.0, minute_low=91.0, minute_high=93.0)
     monkeypatch.setattr(stock_service, "_observation", lambda *args, **kwargs: gap_open)
     processed = stock_service._process_pending_orders(broker, None, {"US": {"market_state": "open"}})
 
@@ -474,7 +488,8 @@ def test_end_to_end_gap_exit_fills_at_session_open(tmp_path, monkeypatch) -> Non
     assert processed["processed"] >= 1
     sells = [fill for fill in store.list_fills() if fill.side == Side.SELL]
     assert sells, "다음 세션에 체결되어야 한다"
-    assert sells[0].price == 92.0, "무효화가(100)가 아니라 다음 세션 시가(92)에 체결"
+    assert sells[0].price == 92.0, "무효화가(100)가 아니라 갭 이후 관측 가격(92)에 체결"
+    assert gap_open.minute_low <= sells[0].price <= gap_open.minute_high
 
 
 def test_end_to_end_time_stop_closes_stale_position(tmp_path, monkeypatch) -> None:

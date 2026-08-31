@@ -1504,6 +1504,29 @@ def whale_follow_trades(status: str | None = None, symbol: str | None = None, li
     }
 
 
+def crypto_drawdown_watch(limit: int = 500) -> dict[str, Any]:
+    """MDD 서명값 초과 관측 (WO-FCE-MAKE-IT-RUN-01 Phase 4).
+
+    낙폭 구간과 동시 보유 상한 반사실을 함께 낸다. **임계를 바꾸지 않는다**(C2) —
+    초과 사실과 그 구간을 보이게 할 뿐이다.
+    """
+    from app.paper import service as paper_service
+    from app.validation import mdd_watch
+
+    rows = runtime.repository.list_paper_trades(limit=limit)
+    board = paper_service.paper_scoreboard(runtime.repository, runtime.settings)
+    metrics = dict((board.get("competition") or {}).get("engine") or {})
+    cap = int(getattr(runtime.settings, "paper_max_open_positions", 0) or 0)
+    return {
+        "status": mdd_watch.mdd_status(metrics.get("mdd_pct")),
+        "window": mdd_watch.drawdown_window(rows),
+        "concurrent_cap_counterfactual": mdd_watch.concurrent_cap_counterfactual(rows, max_concurrent=cap)
+        if cap
+        else {"available": False, "reason": "동시 보유 상한이 설정에 없다"},
+        "note": "서명값 20% 는 표시용이다 — 진입도 전환도 막지 않는다. 게이트로 쓰려면 별도 결정이 필요하다.",
+    }
+
+
 def paper_trades(status: str | None = None, symbol: str | None = None, limit: int = 200) -> dict[str, Any]:
     rows = runtime.repository.list_paper_trades(status=status, symbol=symbol, limit=limit)
     return {"count": len(rows), "trades": [item.model_dump(mode="json") for item in rows]}
