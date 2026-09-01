@@ -328,6 +328,19 @@ def job_starvation(
             reason = "never_ran_and_overdue"
         elif age is not None and age > limit:
             reason = "interval_overrun"
+        elif str(job.get("status") or "") == "error" and next_run is None:
+            # `failed_and_unscheduled` — **2026-09-01 사고의 형태.** 위 두 조건은 둘 다
+            # 시각을 필요로 한다. 잡이 실패하고 재예약도 못 되면 `next_run_at` 과
+            # `last_effective_run_at` 이 **동시에 None** 이 되어 두 조건을 모두 빠져나가고,
+            # 가장 심한 상태가 `healthy` 로 계산됐다.
+            #
+            # `sync_positions` 가 450초 타임아웃 3연속으로 이 상태가 됐고, 알림 훅 전체가
+            # 그 잡 안에서만 도므로(`scheduled=False`) 진입 알림이 15시간 사라졌다.
+            # 그런데 기아 판정은 32개 잡을 "건강"이라고 보고했다.
+            #
+            # 시각이 아니라 **상태로** 잡는다 — 재기동 직후의 `idle` 잡은 `error` 가 아니므로
+            # 오탐이 늘지 않는다. 오탐이 쌓이면 신호 전체가 무시된다(이 파일 위쪽 주석).
+            reason = "failed_and_unscheduled"
 
         if reason is None:
             healthy += 1
