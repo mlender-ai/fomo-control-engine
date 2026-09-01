@@ -916,14 +916,28 @@ def sync_live_positions() -> dict:
     positions = [position for position in all_positions if position.status == PositionStatus.open]
     scout_tracking_removed = _clear_watchlist_for_open_positions(positions)
     analyzed = []
+    # 분석에 실패해 **관측에서 빠진** 포지션. 이전에는 조용히 `continue` 였다 —
+    # 그래서 포지션은 열려 있는데 알림도 펄스도 구조 관측도 오지 않았고, 그 사실이
+    # 어디에도 남지 않았다. 침묵과 고장이 구분되지 않는 상태다.
+    unavailable: list[dict[str, str]] = []
     for position in positions:
         try:
             analyzed.append(_live_position_payload(position, store_snapshot=True))
-        except HTTPException:
-            continue
+        except HTTPException as exc:
+            unavailable.append(
+                {
+                    "id": str(position.id),
+                    "symbol": position.symbol,
+                    "reason": str(getattr(exc, "detail", "") or exc.__class__.__name__)[:200],
+                }
+            )
     return {
         **sync_result,
         "positions": analyzed,
+        # **빠진 포지션을 셈에 남긴다.** `open_count` 와 `len(positions)` 가 어긋나면
+        # 그 차이가 곧 관측 공백이다.
+        "positions_unavailable": unavailable,
+        "positions_unavailable_count": len(unavailable),
         "open_count": len(positions),
         "scout_tracking_removed": scout_tracking_removed,
         "needs_exit_record_count": len(

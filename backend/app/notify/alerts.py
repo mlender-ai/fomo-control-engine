@@ -20,6 +20,7 @@ from app.notify.bot.formatters import (
     setup_alert_keyboard,
 )
 from app.notify.lifecycle import (
+    degraded_opened_candidate,
     closed_candidate,
     opened_candidate,
     pulse_candidate,
@@ -151,7 +152,15 @@ class AlertEngine:
                 try:
                     context = await asyncio.to_thread(service.live_position_alert_context, UUID(str(position_id)))
                 except Exception as exc:
+                    # **알림을 버리지 않는다.** 컨텍스트는 거래소 스냅샷을 타므로 신규
+                    # 상장·레이트리밋·일시 오류에 실패한다. 이전에는 여기서 `continue`
+                    # 였고 진입 알림이 통째로 사라졌다 — 포지션은 잡혔는데 텔레그램이
+                    # 조용한 것이 그 기전이다. 진입 사실은 1차 정보이므로 최소 형태로 낸다.
                     logger.warning("opened alert context failed position_id=%s error=%s", position_id, exc)
+                    fallback = await asyncio.to_thread(service.minimal_position_payload, UUID(str(position_id)))
+                    if fallback is None:
+                        continue
+                    sent += await self._fire_if_allowed(degraded_opened_candidate(fallback, reason=f"{type(exc).__name__}"))
                     continue
                 sent += await self._fire_if_allowed(opened_candidate(context))
 
@@ -195,6 +204,8 @@ class AlertEngine:
         contexts = []
         for payload in sync_payload.get("positions", []) or []:
             contexts.append(await self._alert_context(payload))
+        # 분석 실패로 관측에서 빠진 포지션. 싣지 않으면 "전부 정상"이 그 위에 찍힌다.
+        unavailable = [item for item in (sync_payload.get("positions_unavailable") or []) if isinstance(item, dict)]
         tracked: list[dict[str, Any]] = []
         try:
             scout_payload = await asyncio.to_thread(service.scout_scan, 100)
@@ -206,7 +217,7 @@ class AlertEngine:
             paper = await asyncio.to_thread(service.paper_pulse_summary)
         except Exception:
             logger.exception("notify.periodic_pulse.paper_load_failed")
-        candidate = pulse_candidate(contexts, tracked=tracked, paper=paper, pending_redelivery=self.state.pending_redelivery)
+        candidate = pulse_candidate(contexts, tracked=tracked, paper=paper, pending_redelivery=self.state.pending_redelivery, unavailable=unavailable)
         if candidate is None:
             return 0
         if quiet_hours_active(self.settings, now):

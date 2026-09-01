@@ -835,6 +835,19 @@ def live_position_alert_context(position_id: UUID) -> dict[str, Any]:
     }
 
 
+def minimal_position_payload(position_id: UUID) -> dict[str, Any] | None:
+    """원장 행만으로 만든 포지션 페이로드. **네트워크를 타지 않는다.**
+
+    `live_position_alert_context` 가 실패했을 때 진입 알림을 살리는 용도다. 그 함수는
+    거래소 스냅샷·차트 분석을 타므로 실패할 수 있고, 그 실패가 **진입 사실**까지 삼키면
+    안 된다(1차 정보 우선).
+
+    포지션 행조차 없으면 `None` 이다 — 없는 것을 지어내지 않는다.
+    """
+    position = runtime.repository.get_position(position_id)
+    return position.model_dump(mode="json") if position is not None else None
+
+
 def create_position_insight(position_id: UUID, *, auto_generated: bool = False) -> dict[str, Any]:
     position = runtime.repository.get_position(position_id)
     if position is None:

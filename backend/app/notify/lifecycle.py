@@ -57,6 +57,44 @@ def opened_candidate(context: dict[str, Any]) -> AlertCandidate:
     )
 
 
+def degraded_opened_candidate(position: dict[str, Any], *, reason: str) -> AlertCandidate:
+    """부가 정보 조회가 실패했을 때의 진입 알림.
+
+    ## 왜 필요한가
+
+    `opened_candidate` 는 `live_position_alert_context` 가 만든 판정·시나리오·액션플랜을
+    쓴다. 그 컨텍스트는 첫 줄에서 `_generate_and_store_report()` 를 부르고, 그것은
+    거래소 스냅샷을 타므로 **신규 상장·레이트리밋·일시 오류에 실패한다.**
+
+    실패하면 지금까지는 `logger.warning` 뒤 `continue` 였다 — **진입 알림이 통째로
+    사라지고 원장에도 안 남았다.** 포지션은 잡혔는데 텔레그램은 조용했다.
+
+    > **진입 사실은 1차 정보다.** 판정·시나리오는 부가 정보이고, 부가 정보 조회 실패가
+    > 1차 정보를 삼키면 안 된다. 워커가 `sync_and_analyze` 를 훅으로 격리한 것과 같은
+    > 원칙이다 — **생존 신호가 데이터 수집 성공에 의존하면 안 된다.**
+
+    그래서 원장 행만으로 만들 수 있는 최소 알림을 낸다. **무엇이 빠졌는지 본문에 적는다** —
+    조용히 축약하면 "판정이 없다"와 "판정을 못 읽었다"가 구분되지 않는다.
+    """
+    lines = [
+        f"🟢 진입 감지 · <b>{escape(str(position.get('symbol') or '-'))}</b> {_direction_kr(position)} "
+        f"{position.get('leverage', '-')}x @ {_price(position.get('entry_price'))}",
+        f"⚠️ 초기 판정 미첨부 — 부가 정보 조회 실패 ({escape(reason)})",
+        "진입 사실은 확정이다. 판정·시나리오는 다음 주기에 붙는다.",
+        "판단은 사용자 몫입니다. 주문 실행 없음.",
+    ]
+    return _candidate(
+        "position_opened",
+        "action",
+        position,
+        {},
+        identity=str(position.get("opened_at") or position.get("id") or "opened"),
+        title=RULE_LABELS["position_opened"],
+        message="\n".join(lines),
+        payload={"kind": "lifecycle", "degraded": True, "degraded_reason": reason},
+    )
+
+
 def closed_candidate(position: dict[str, Any], trade: dict[str, Any] | None) -> AlertCandidate:
     """position_closed — 실현 손익 + 자동 복기 요약 2줄 (판단 채점)."""
     trade = trade or {}
@@ -198,11 +236,22 @@ def pulse_candidate(
     tracked: list[dict[str, Any]] | None = None,
     paper: dict[str, Any] | None = None,
     pending_redelivery: list[dict[str, Any]] | None = None,
+    unavailable: list[dict[str, Any]] | None = None,
 ) -> AlertCandidate | None:
-    """periodic_pulse — 보유 포지션 1줄 상태 묶음 1통. "전부 정상"도 발송 (침묵 ≠ 정상 증명)."""
+    """periodic_pulse — 보유 포지션 1줄 상태 묶음 1통. "전부 정상"도 발송 (침묵 ≠ 정상 증명).
+
+    `unavailable` 은 **분석 실패로 관측에서 빠진** 포지션이다. 이것을 싣지 않으면
+    "보유 포지션 없음 — 감시 정상"이 열린 포지션 위에서 찍힌다 — 침묵이 정상으로 위장된다.
+    """
     lines = [f"📡 <b>{RULE_LABELS['periodic_pulse']}</b> · 기준 {_time(datetime.now(timezone.utc))}"]
     if not contexts:
-        lines.append("보유 포지션 없음 — 감시 정상 동작 중입니다.")
+        lines.append("보유 포지션 없음 — 감시 정상 동작 중입니다." if not unavailable else "관측 가능한 보유 포지션 없음.")
+    for row in unavailable or []:
+        # **열려 있는데 못 보고 있다.** 그 사실이 "전부 정상"보다 먼저 나와야 한다.
+        lines.append(
+            f"⚠️ <b>{escape(str(row.get('symbol') or '-'))}</b> 관측 불가 — 분석 조회 실패"
+            f"({escape(str(row.get('reason') or '사유 미상'))[:80]}). 포지션은 열려 있다."
+        )
     all_normal = True
     for context in contexts:
         position = _position(context)
