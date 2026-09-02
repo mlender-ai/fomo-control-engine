@@ -522,17 +522,33 @@ cat logs/alert_delivery.json
 grep 침묵 logs/deadman.log
 
 # 4. 450초를 먹는 훅 특정 (3-3 잔여)
+# 건수만 세면 "어느 훅이 먹는가"에 답할 수 없다 — 소요·p95·최대·미완을 낸다.
 python3 - <<'EOF'
 import json, collections
-spans, starts = collections.defaultdict(list), {}
+from datetime import datetime, timedelta
+def ts(v): return datetime.fromisoformat(v)
+rows = []
 for line in open('logs/job-trace.jsonl'):
-    row = json.loads(line)
-    if row['phase'] == 'start':
-        starts[row['job']] = row['at']
-    elif row['job'] in starts:
-        spans[row['job']].append((row['at'], starts.pop(row['job'])))
-for job, rows in sorted(spans.items(), key=lambda kv: -len(kv[1])):
-    print(job, len(rows))
+    try: rows.append(json.loads(line))
+    except Exception: pass
+cut = ts(rows[-1]['at']) - timedelta(days=7)   # 옛 구조의 실행을 섞지 않는다
+rows = [r for r in rows if ts(r['at']) >= cut]
+spans, open_at, unfinished = collections.defaultdict(list), {}, collections.Counter()
+for r in rows:
+    job, at, phase = r['job'], ts(r['at']), r['phase']
+    if phase == 'start':
+        if job in open_at: unfinished[job] += 1   # 이전 실행이 끝나지 않았다
+        open_at[job] = at
+    elif job in open_at:
+        spans[job].append((at - open_at.pop(job)).total_seconds())
+for job in open_at: unfinished[job] += 1
+print(f"{'잡/훅':<30}{'건':>6}{'평균':>8}{'p95':>8}{'최대':>9}{'미완':>6}")
+out = []
+for job, xs in spans.items():
+    xs.sort()
+    out.append((max(xs), job, len(xs), sum(xs) / len(xs), xs[min(len(xs) - 1, int(len(xs) * 0.95))]))
+for mx, job, n, avg, p95 in sorted(out, reverse=True)[:20]:
+    print(f"{job:<30}{n:>6}{avg:>8.1f}{p95:>8.1f}{mx:>9.1f}{unfinished[job]:>6}")
 EOF
 ```
 
