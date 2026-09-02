@@ -231,10 +231,18 @@ async def test_daily_summary_is_silent_when_muted(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_sync_failure_does_not_kill_pulse_and_paper(tmp_path) -> None:
-    """sync_and_analyze_positions 가 던져도 페이퍼·펄스·일일요약은 계속 실행되어야 한다.
+async def test_sync_failure_does_not_kill_paper_or_alerts(tmp_path) -> None:
+    """수집이 던져도 페이퍼·알림은 계속 돈다.
 
-    기존 구조에선 이 한 줄이 아래 8단계를 통째로 삼켰다.
+    ## 구조가 바뀌었다 (WO-FCE-ALERT-SILENCE-01 3-1)
+
+    `ENGINE-LIVENESS-01` D1 은 훅 격리로 **한 훅의 예외**를 막았다. 그러나 알림이 여전히
+    `sync_positions` **안에서** 돌았기 때문에 **부모 잡의 타임아웃**은 못 막았다 — 훅이
+    아무리 격리돼 있어도 부모가 취소되면 뒤쪽 훅은 시작조차 못 한다. 실제로 그렇게
+    3회 이상 죽었다(9/1 15시간 · 8시간 43분 침묵).
+
+    이제 알림은 **독립 잡**이다. 그래서 이 회귀도 두 잡을 각각 돌려 확인한다 — 예외뿐
+    아니라 **부모가 통째로 사라져도** 알림이 사는 것이 요점이다.
     """
     repo = MemoryRepository()
     configure_runtime(repo=repo, provider=MockMarketDataProvider())
@@ -249,11 +257,33 @@ async def test_sync_failure_does_not_kill_pulse_and_paper(tmp_path) -> None:
 
     # 수집은 실패로 기록되고…
     assert manager.heartbeats["sync_and_analyze"].status == "error"
-    # …나머지 8단계는 전부 실행됐어야 한다(하트비트가 증거). 특히 생존 신호 2종.
-    for name in ("detect_closures", "paper_engine", "evaluate_lifecycle", "evaluate_alerts", "evaluate_performance_alerts", "periodic_pulse", "daily_summary"):
+    # …같은 잡의 나머지 단계는 계속 실행됐다.
+    for name in ("detect_closures", "paper_engine"):
+        assert manager.heartbeats[name].status == "ok", f"{name} 이 수집 실패에 함께 죽었다"
+    assert isinstance(result, dict)
+
+    # **알림 잡은 별도로 돈다.** 수집이 죽어도, 아예 호출되지 않아도 산다.
+    await manager._deliver_alerts()
+    for name in ("evaluate_lifecycle", "evaluate_alerts", "evaluate_performance_alerts", "periodic_pulse", "daily_summary"):
         assert manager.heartbeats[name].status == "ok", f"{name} 이 수집 실패에 함께 죽었다"
     assert manager.heartbeats["periodic_pulse"].runs >= 1, "생존 펄스가 데이터 수집 실패에 종속되면 안 된다"
-    assert isinstance(result, dict)
+
+
+@pytest.mark.asyncio
+async def test_alerts_run_even_if_sync_never_ran_at_all(tmp_path) -> None:
+    """**부모 잡이 통째로 사라진 경우.** 타임아웃으로 취소되면 이 상태가 된다.
+
+    `_sync_positions` 를 한 번도 부르지 않고 알림 잡만 돌린다 — 예전 구조에서는
+    불가능했고, 그 불가능이 8시간 43분 침묵의 형태였다.
+    """
+    repo = MemoryRepository()
+    configure_runtime(repo=repo, provider=MockMarketDataProvider())
+    manager = WorkerManager(_settings(tmp_path, telegram_alerts_enabled=False))
+
+    await manager._deliver_alerts()
+
+    assert manager.heartbeats["periodic_pulse"].status == "ok"
+    assert manager.heartbeats["evaluate_lifecycle"].status == "ok"
 
 
 # ── 오탐 방지: 장 마감 중 "정지" 알림 금지 ──────────────────────────

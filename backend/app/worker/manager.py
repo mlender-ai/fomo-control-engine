@@ -145,6 +145,16 @@ _HEAVY_JOBS = frozenset(
     }
 )
 
+# 부모 잡 하나에 매달린 훅 수. 예산을 이 수로 나눈다(3-3) — **올리는 값이 아니다.**
+# 훅을 늘리거나 줄이면 여기도 함께 고친다. 어긋나면 예산이 다시 한 훅에 쏠린다.
+_HOOK_SHARES = {
+    # sync_and_analyze · detect_closures · paper_engine
+    "sync_positions": 3,
+    # evaluate_lifecycle · evaluate_alerts · evaluate_structure_context ·
+    # evaluate_performance_alerts · periodic_pulse · daily_summary
+    "deliver_alerts": 6,
+}
+
 # 전용 풀 크기. 작게 둔다 — 크게 잡으면 GIL 경합이 되살아나 격리의 의미가 없다.
 # 누수가 나도 이 수만큼만 묶이고 기본 풀은 온전하다.
 _HEAVY_EXECUTOR_WORKERS = 4
@@ -197,6 +207,10 @@ class WorkerManager:
         # 예산(150초)을 먹고 그것이 곧 잡 타임아웃이다. 대신 별도 태스크로 띄우고
         # 중복 실행만 막는다.
         self._whale_follow_task: asyncio.Task | None = None
+        # ALERT-SILENCE-01 3-1: 알림 잡이 읽는 마지막 동기화 결과. 동기화가 죽어도 알림은
+        # 이것을 들고 돌며, 낡았으면 낡았다고 알린다.
+        self._last_sync_payload: dict[str, Any] | None = None
+        self._last_sync_at: datetime | None = None
         self._started = False
         # WO-FCE-WORKER-HANG-02: 매달림 증거 경로. 하트비트 파일과 같은 logs 디렉터리를 쓴다.
         log_dir = Path(str(settings.worker_liveness_path)).expanduser().parent
@@ -327,8 +341,24 @@ class WorkerManager:
             return None
         return await self._run_job(name, job.runner, scheduled=True)
 
-    async def _run_hook(self, name: str, runner: JobRunner) -> Any:
-        return await self._run_job(name, runner, scheduled=False)
+    async def _run_hook(self, name: str, runner: JobRunner, *, parent: str | None = None) -> Any:
+        """부모 잡 안에서 도는 훅. `parent` 를 주면 **부모 예산을 나눠 쓴다**(3-3).
+
+        훅마다 자기 예산이 있어도 **부모 잡의 타임아웃이 전체를 덮는다.** 훅 5개가 각자
+        450초를 받아도 부모가 450초면 첫 훅 하나가 그것을 다 먹고 나머지는 시작조차 못 한다 —
+        `sync_positions` 가 3회 이상 그렇게 죽었다.
+
+        그래서 훅 예산을 **부모 예산 ÷ 훅 수**로 낮춘다. **타임아웃을 올리지 않는다**(C4) —
+        나누는 것이므로 모든 값이 작아진다. 느린 훅 하나가 잘리고 뒤쪽 훅은 살아남는다.
+        """
+        return await self._run_job(name, runner, scheduled=False, max_seconds=self._hook_budget(parent) if parent else None)
+
+    def _hook_budget(self, parent: str) -> int:
+        """부모 잡 예산을 훅 수로 나눈 값. **하한은 부모 주기** — 한 주기도 못 도는 예산은 무의미하다."""
+        parent_budget = self._job_timeout_seconds(parent)
+        share = max(1, int(_HOOK_SHARES.get(parent, 1)))
+        interval = int(getattr(self.jobs.get(parent), "interval_seconds", 0) or 0)
+        return max(min(parent_budget, interval or parent_budget), parent_budget // share)
 
     async def _run_in_thread(self, name: str, func: Any, *args: Any, **kwargs: Any) -> Any:
         """잡을 알맞은 실행기의 스레드에서 돌린다 (Phase 2-3).
@@ -362,7 +392,7 @@ class WorkerManager:
         except OSError as exc:
             logger.debug("job trace write failed: %s", exc)
 
-    async def _run_job(self, name: str, runner: JobRunner, *, scheduled: bool) -> Any:
+    async def _run_job(self, name: str, runner: JobRunner, *, scheduled: bool, max_seconds: int | None = None) -> Any:
         heartbeat = self.heartbeats[name]
         lock = self._locks[name]
         if lock.locked():
@@ -387,6 +417,9 @@ class WorkerManager:
                 # 초과하면 취소한다. 취소해도 락은 `async with` 가 풀어주므로 다음 틱은 정상 실행된다.
                 # 2026-07-28 사고 이전엔 manager 전체에 timeout 이 0건이었다.
                 budget = self._job_timeout_seconds(name)
+                if max_seconds is not None:
+                    # **낮추기만 한다**(C4). 부모 예산을 나눈 값이며 올리는 경로가 아니다.
+                    budget = min(budget, max(1, int(max_seconds)))
                 result = runner()
                 if inspect.isawaitable(result):
                     result = await asyncio.wait_for(result, timeout=budget)
@@ -437,39 +470,37 @@ class WorkerManager:
                 self._persist(heartbeat)
 
     async def _sync_positions(self) -> dict[str, Any]:
-        # WO-FCE-ENGINE-LIVENESS-01 작업 2(D1): 이 줄이 유일하게 _run_hook 보호 밖에 있어,
-        # Bitget 오류·DB 잠금 하나로 아래 8단계(크립토 페이퍼·모든 알림·생존 펄스·일일 요약)가
-        # 통째로 소멸했다. 훅으로 격리하고, 실패해도 빈 payload 로 나머지를 계속 실행한다.
-        # 생존 신호(pulse·daily_summary)가 데이터 수집 성공에 의존하면 안 된다.
+        """포지션 동기화와 페이퍼 실행. **알림은 여기서 돌지 않는다**(ALERT-SILENCE-01 3-1).
+
+        ## 왜 뗐나
+
+        `27b6e11` 이 기록한 사고가 이 구조 때문이다:
+
+        ```
+        sync_positions ── 진입 알림 · 정기 펄스 · 구조 알림 · 무효화 경보
+        ```
+
+        **단일 실패점이었다.** 이 잡이 450초 타임아웃으로 죽으면 알림 전체가 같이 죽었고,
+        그 전력이 3회 이상이다. 9/1 에는 15시간, 이번에는 8시간 43분 침묵했다.
+
+        `ENGINE-LIVENESS-01` D1 이 훅 격리로 **한 훅의 예외**는 막았지만 **부모 잡의
+        타임아웃**은 못 막는다 — 훅이 아무리 격리돼 있어도 부모가 취소되면 뒤쪽 훅은
+        시작조차 못 한다. 그래서 알림을 별도 스케줄 잡으로 뺀다.
+
+        동기화 결과는 여기서 **저장만** 하고, `_deliver_alerts` 가 그것을 읽는다.
+        동기화가 죽어도 알림 잡은 돌고, 데이터가 낡았으면 **낡았다고 알린다.**
+        """
         sync_job = self.jobs["sync_and_analyze"]
-        payload = await self._run_hook("sync_and_analyze", sync_job.runner) if sync_job.runner else None
+        payload = await self._run_hook("sync_and_analyze", sync_job.runner, parent="sync_positions") if sync_job.runner else None
         if not isinstance(payload, dict):
             payload = {"positions": [], "sync_failed": True}
-        await self._run_hook("detect_closures", lambda: asyncio.to_thread(service.detect_closures))
-        paper_result = await self._run_hook("paper_engine", lambda: asyncio.to_thread(service.run_paper_engine))
+        else:
+            self._last_sync_at = datetime.now(timezone.utc)
+        self._last_sync_payload = payload
+        await self._run_hook("detect_closures", lambda: asyncio.to_thread(service.detect_closures), parent="sync_positions")
+        paper_result = await self._run_hook("paper_engine", lambda: asyncio.to_thread(service.run_paper_engine), parent="sync_positions")
         if isinstance(paper_result, dict):
             await self._send_paper_events(paper_result)
-        # WO-44: 진입/종료/판정 전이 — 라이프사이클이 1차 정보이므로 조건 알림보다 먼저.
-        await self._run_hook("evaluate_lifecycle", lambda: self.alerts.evaluate_lifecycle(payload))
-        await self._run_hook(
-            "evaluate_alerts",
-            lambda: self.alerts.evaluate_positions(payload.get("positions", [])),
-        )
-        # WO-FCE-STRUCTURE-CONTEXT-01: 보유 포지션의 구조 관계 전이(레인지 이탈·OB 진입·국면 전환).
-        await self._run_hook(
-            "evaluate_structure_context",
-            lambda: self.alerts.evaluate_position_structure(payload.get("positions", [])),
-        )
-        await self._run_hook(
-            "evaluate_performance_alerts",
-            lambda: self._evaluate_performance_alerts(),
-        )
-        await self._run_hook("periodic_pulse", lambda: self.alerts.maybe_send_pulse(payload))
-        # 작업 5: 트랙 생존 라인 동봉 — 진입이 0이어도 "살아있음"이 매일 도착해야 한다(뮤트 관통).
-        await self._run_hook(
-            "daily_summary",
-            lambda: self.alerts.maybe_send_daily_summary(payload, self._liveness_lines(), self._performance_lines()),
-        )
         return {
             "open_count": payload.get("open_count"),
             "needs_exit_record_count": payload.get("needs_exit_record_count"),
@@ -477,6 +508,74 @@ class WorkerManager:
             "created": payload.get("created"),
             "auto_closed": payload.get("auto_closed"),
         }
+
+    def _alert_payload(self) -> dict[str, Any]:
+        """알림 잡이 읽을 동기화 결과. **없거나 낡았으면 그 사실을 실어 보낸다.**
+
+        침묵하지 않는 것이 요점이다 — 동기화가 죽었을 때 알림까지 멈추면 그 죽음을 알릴
+        경로가 사라진다(3-1 항목 2).
+        """
+        payload = dict(self._last_sync_payload or {"positions": [], "sync_failed": True})
+        if self._last_sync_at is None:
+            payload["sync_age_seconds"] = None
+            payload["sync_stale"] = True
+            payload["sync_stale_note"] = "동기화 결과가 아직 없다"
+            return payload
+        age = (datetime.now(timezone.utc) - self._last_sync_at).total_seconds()
+        # 동기화 주기의 3배를 넘기면 낡은 것으로 본다. `worker_liveness_stale_multiplier`
+        # 와 같은 배수다 — 문턱을 새로 만들지 않는다.
+        limit = float(self.settings.worker_sync_positions_interval_seconds) * max(2, int(self.settings.worker_liveness_stale_multiplier))
+        payload["sync_age_seconds"] = round(age, 1)
+        payload["sync_stale"] = age > limit
+        if payload["sync_stale"]:
+            payload["sync_stale_note"] = f"포지션 동기화가 {age / 60:.0f}분째 갱신되지 않았다 — 아래 값은 그 시점 기준이다"
+        return payload
+
+    async def _deliver_alerts(self) -> dict[str, Any]:
+        """알림 전용 잡 (ALERT-SILENCE-01 3-1). **동기화 실패와 독립이다.**
+
+        `sync_positions` 가 타임아웃으로 죽어도 이 잡은 돈다. 읽는 데이터가 낡았으면
+        낡았다고 알리고, 조용해지지 않는다.
+
+        훅 목록과 순서는 그대로다 — 옮긴 것이지 바꾼 것이 아니다(C3).
+        """
+        payload = self._alert_payload()
+        # 진입·청산은 **한 번만** 소비한다. 낡은 페이로드를 매 틱 다시 읽으면 같은 진입이
+        # 반복 판정된다 — 쿨다운이 막아 주긴 하지만 그것에 기대지 않는다.
+        lifecycle = dict(payload)
+        self._consume_lifecycle_payload()
+        # WO-44: 진입/종료/판정 전이 — 라이프사이클이 1차 정보이므로 조건 알림보다 먼저.
+        await self._run_hook("evaluate_lifecycle", lambda: self.alerts.evaluate_lifecycle(lifecycle), parent="deliver_alerts")
+        await self._run_hook(
+            "evaluate_alerts",
+            lambda: self.alerts.evaluate_positions(payload.get("positions", [])),
+            parent="deliver_alerts",
+        )
+        # WO-FCE-STRUCTURE-CONTEXT-01: 보유 포지션의 구조 관계 전이(레인지 이탈·OB 진입·국면 전환).
+        await self._run_hook(
+            "evaluate_structure_context",
+            lambda: self.alerts.evaluate_position_structure(payload.get("positions", [])),
+            parent="deliver_alerts",
+        )
+        await self._run_hook(
+            "evaluate_performance_alerts",
+            lambda: self._evaluate_performance_alerts(),
+            parent="deliver_alerts",
+        )
+        await self._run_hook("periodic_pulse", lambda: self.alerts.maybe_send_pulse(payload), parent="deliver_alerts")
+        # 작업 5: 트랙 생존 라인 동봉 — 진입이 0이어도 "살아있음"이 매일 도착해야 한다(뮤트 관통).
+        await self._run_hook(
+            "daily_summary",
+            lambda: self.alerts.maybe_send_daily_summary(payload, self._liveness_lines(), self._performance_lines()),
+            parent="deliver_alerts",
+        )
+        return {"sync_stale": bool(payload.get("sync_stale")), "sync_age_seconds": payload.get("sync_age_seconds")}
+
+    def _consume_lifecycle_payload(self) -> None:
+        """진입·청산 목록을 비운다. 같은 사건을 다음 틱이 다시 읽지 않게."""
+        if isinstance(self._last_sync_payload, dict):
+            self._last_sync_payload["created_position_ids"] = []
+            self._last_sync_payload["closed_positions"] = []
 
     async def _send_paper_events(self, result: dict[str, Any]) -> int:
         if not isinstance(result, dict):
@@ -704,6 +803,18 @@ class WorkerManager:
                 "sync_positions",
                 self.settings.worker_sync_positions_interval_seconds,
                 self._sync_positions,
+            ),
+            # ALERT-SILENCE-01 3-1 — **알림은 독립 잡이다.**
+            #
+            # `sync_positions` 안에서 돌던 구조가 단일 실패점이었다. 그 잡이 450초
+            # 타임아웃으로 죽으면 진입 알림·펄스·구조 알림이 통째로 죽었고, 그 전력이
+            # 3회 이상이다(9/1 15시간 · 이번 8시간 43분).
+            #
+            # 같은 주기로 돌되 **부모가 없다.** 동기화가 죽어도 이 잡은 산다.
+            "deliver_alerts": WorkerJob(
+                "deliver_alerts",
+                self.settings.worker_sync_positions_interval_seconds,
+                self._deliver_alerts,
             ),
             "refresh_market_data": WorkerJob(
                 "refresh_market_data",

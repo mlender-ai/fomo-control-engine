@@ -1129,6 +1129,14 @@ class Settings(BaseSettings):
         "../logs/liveness.json",
         validation_alias=AliasChoices("FCE_WORKER_LIVENESS_PATH", "WORKER_LIVENESS_PATH"),
     )
+    # WO-FCE-ALERT-SILENCE-01 3-2 — 마지막 **발송** 시각. 데드맨이 이것을 읽는다.
+    #
+    # `liveness.json` 은 **잡 상태**를 담고 이 파일은 **발송 이력**을 담는다. 다른 것을
+    # 재기 때문에 파일도 다르다 — 잡이 "정상"인데 알림이 0건인 구간이 실제로 있었다.
+    alert_delivery_path: str = Field(
+        "../logs/alert_delivery.json",
+        validation_alias=AliasChoices("FCE_ALERT_DELIVERY_PATH", "ALERT_DELIVERY_PATH"),
+    )
     db_size_alert_gb: float = Field(
         10.0,
         validation_alias=AliasChoices("FCE_DB_SIZE_ALERT_GB", "DB_SIZE_ALERT_GB"),

@@ -146,7 +146,10 @@ def test_a_single_fresh_tick_does_not_declare_recovery(host: Path) -> None:
     log = _deadman_log(host)
     assert "엔진 복구" not in log
     assert "복구 대기" in log
-    status, _notified, _selfcheck, fresh_since = _read_state(host)
+    # 필드 수를 고정하지 않는다 — `ALERT-SILENCE-01` 3-2 가 침묵 알림 시각을 5번째로
+    # 붙였고, 앞으로도 붙을 수 있다. 이 회귀가 지키는 것은 **복구 판정**이지 파일 형식이 아니다.
+    fields = _read_state(host)
+    status, _notified, _selfcheck, fresh_since = fields[0], fields[1], fields[2], fields[3]
     assert status == "dead"
     assert int(fresh_since) > 0, "신선 구간 진입 시각이 기록돼야 지속을 셀 수 있다"
 
@@ -174,15 +177,23 @@ def test_recovery_streak_resets_when_freshness_lapses(host: Path) -> None:
     assert _read_state(host)[3] == "0"
 
 
-def test_legacy_three_field_state_file_still_loads(host: Path) -> None:
-    """구 상태 파일(3필드)이 있어도 기동해야 한다 — 배포 시점에 파일이 이미 존재한다."""
+@pytest.mark.parametrize("legacy", ["dead|0|0", "dead|0|0|0"])
+def test_legacy_state_files_still_load(host: Path, legacy: str) -> None:
+    """구 상태 파일이 있어도 기동해야 한다 — 배포 시점에 파일이 이미 존재한다.
+
+    필드는 늘어난다(3 → 4 → 5). **읽는 쪽이 짧은 파일을 견뎌야** 배포가 안전하다.
+    """
     _heartbeat(host, age_seconds=10)
-    _state(host, "dead|0|0")
+    _state(host, legacy)
 
     result = _run_deadman(host)
 
     assert result.returncode == 0
-    assert len(_read_state(host)) == 4
+    fields = _read_state(host)
+    # 쓰기는 항상 현재 형식으로 한다 — 빠진 필드는 0 으로 채워진다.
+    assert len(fields) >= 4
+    assert fields[0] in {"ok", "dead"}
+    assert all(field != "" for field in fields), f"빈 필드가 남았다: {fields}"
 
 
 # ── 2. 포기 래치 (A2) ───────────────────────────────────────────────────

@@ -80,13 +80,18 @@ def test_null_last_success_is_not_flattened_to_a_dash() -> None:
     assert "성공 이력 없음" in _TOP_BAR.read_text()
 
 
-def test_alert_hooks_run_only_inside_sync_positions() -> None:
-    """이 결합이 단일 실패점이다. 구조가 바뀌면 이 회귀의 전제가 무너지므로 알려야 한다."""
+def test_alert_hooks_no_longer_live_inside_sync_positions() -> None:
+    """**그 결합이 단일 실패점이었고, 이제 없다** (WO-FCE-ALERT-SILENCE-01 3-1).
+
+    이 회귀는 방향이 뒤집혔다. 예전에는 "알림이 `sync_positions` 안에 있다"를 고정했다 —
+    구조가 바뀌면 알리기 위한 감시였다. 구조가 바뀌었으므로 이제 **되돌아가지 않는 것**을
+    고정한다. 알림이 다시 그 잡으로 들어오면 같은 침묵이 반복된다.
+    """
     manager_src = (pathlib.Path(__file__).resolve().parents[1] / "app/worker/manager.py").read_text()
-    body = manager_src.split("async def _sync_positions")[1].split("\n    async def ")[0]
-    # 포매터가 줄바꿈하므로 호출 형태로 찾지 않고 `_sync_positions` 본문 안에 있는지만 본다.
+    body = manager_src.split("async def _sync_positions")[1].split("\n    def _alert_payload")[0]
     for hook in ("evaluate_lifecycle", "evaluate_alerts", "periodic_pulse"):
-        assert f'"{hook}"' in body, f"{hook} 가 _sync_positions 밖으로 나갔다 — 이 회귀의 전제가 바뀌었다"
+        assert f'"{hook}"' not in body, f"{hook} 가 다시 _sync_positions 안으로 들어왔다 — 단일 실패점이 되살아난다"
+    assert '"deliver_alerts": WorkerJob(' in manager_src, "알림 전용 잡이 사라졌다"
 
 
 def test_worker_is_not_called_normal_without_a_single_sync_success() -> None:

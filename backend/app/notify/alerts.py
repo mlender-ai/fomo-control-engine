@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+from pathlib import Path
 from datetime import datetime, timezone
 from html import escape
 from typing import Any, Callable
@@ -573,6 +575,10 @@ class AlertEngine:
 
         delivered_count = await self.sender.send_to_all(enriched.message, reply_markup=self._reply_markup(enriched))
         self._record(enriched, delivered=delivered_count > 0, fired_at=now)
+        if delivered_count > 0:
+            # 3-2 — 외부 감시자(데드맨)가 읽을 **발송 이력**. 워커 안에서 침묵을 판정하면
+            # 그 판정도 워커와 함께 죽는다. 파일만 남기고 판정은 밖에서 한다.
+            self._touch_delivery_marker(now)
         if delivered_count == 0 and self.sender.enabled:
             # WO-44 Part C: 발송 실패분은 다음 pulse에 병합해 도달을 보증한다.
             self.state.pending_redelivery.append(
@@ -648,6 +654,24 @@ class AlertEngine:
         )
         # 원장에도 delivered=False 로 남겨 사후 감사 경로를 하나로 유지한다.
         self._record(candidate, delivered=False, fired_at=now)
+
+    def _touch_delivery_marker(self, now: datetime) -> None:
+        """마지막 발송 시각을 파일에 남긴다 (ALERT-SILENCE-01 3-2).
+
+        **판정하지 않는다.** 침묵인지 아닌지는 워커 밖의 데드맨이 정한다 — 감시자가 감시
+        대상 안에 살면 침묵이 스스로를 은폐한다(`ENGINE-LIVENESS-01` 작업 3의 원칙).
+
+        쓰기 실패가 알림 발송을 막으면 안 된다. 실패는 로그로만 남긴다.
+        """
+        path = str(getattr(self.settings, "alert_delivery_path", "") or "")
+        if not path:
+            return
+        try:
+            target = Path(path)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(json.dumps({"last_delivered_at": now.isoformat()}), encoding="utf-8")
+        except OSError as exc:
+            logger.debug("alert delivery marker write failed: %s", exc)
 
     def _record(self, candidate: AlertCandidate, *, delivered: bool, fired_at: datetime) -> None:
         record = AlertRecord(

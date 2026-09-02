@@ -85,13 +85,15 @@ send_telegram() {
 # 지속 조건을 만족해야 선언된다 — 단발 갱신 하나로는 복구가 아니다(A1).
 # 4번째 필드가 없는 구 상태 파일도 그대로 읽힌다(0으로 취급).
 read_state() {
-  if [[ -f "$STATE_FILE" ]]; then cat "$STATE_FILE"; else echo "ok|0|0|0"; fi
+  if [[ -f "$STATE_FILE" ]]; then cat "$STATE_FILE"; else echo "ok|0|0|0|0"; fi
 }
-write_state() { echo "$1|$2|$3|${4:-0}" > "$STATE_FILE"; }
+# 5번째 필드는 침묵 알림 발송 시각(ALERT-SILENCE-01 3-2). 4필드짜리 구 파일도 0으로 읽힌다.
+write_state() { echo "$1|$2|$3|${4:-0}|${5:-$last_silence_notified}" > "$STATE_FILE"; }
 
 now_epoch=$(date +%s)
-IFS='|' read -r prev_status last_notified last_selfcheck fresh_since <<< "$(read_state)"
+IFS='|' read -r prev_status last_notified last_selfcheck fresh_since last_silence_notified <<< "$(read_state)"
 last_notified=${last_notified:-0}; last_selfcheck=${last_selfcheck:-0}; fresh_since=${fresh_since:-0}
+last_silence_notified=${last_silence_notified:-0}
 
 # supervisor 가 "자동 복구 포기"를 알릴 때 쓰는 강제 메시지 경로(C5).
 #
@@ -143,6 +145,79 @@ if lsof -ti :8875 -sTCP:LISTEN >/dev/null 2>&1; then proc="8875 리스닝 중"; 
 # 0건일 때 `grep -c` 가 exit 1 이라 `|| echo 0` 이 겹쳐 "0 0회"로 표시됐다.
 # 이제 원장(`restarts.jsonl`) 하나만 보고, 사유·대상·창을 문구에 박는다.
 restart_line="$(liveness_restart_line "$LOG_DIR/restarts.jsonl")"
+
+# ── 1-2. 알림 침묵 감지 (WO-FCE-ALERT-SILENCE-01 3-2) ────────────────
+#
+# ## 왜 하트비트로 부족한가
+#
+# 위 판정은 **잡 상태**를 본다. 이것은 **발송 이력**을 본다. 둘은 다른 것이고, 실제로
+# 갈라진 적이 있다 — 잡이 "정상"인데 알림이 8시간 43분 0건이었다.
+#
+# 그리고 사망 알림은 사용자 지시로 강등돼 있다(2026-08-16). 그래서 구조가 이랬다:
+#
+#   sync_positions 사망 → 모든 알림 정지 → 사망 알림도 정지(원래 강등)
+#                                        → **아무도 모른다**
+#
+# ## 이 알림은 강등을 되돌리는 것이 아니다 (C1)
+#
+# 생존·사망 신호는 그대로 강등돼 있다. 이것은 **다른 신호**다 — 잡 상태가 아니라 발송
+# 이력을 보고, **침묵할 때만** 울리며, 정상 동작 중에는 절대 울리지 않는다. 그래서
+# `DEADMAN_PUSH` 게이트를 지나지 않는다.
+#
+# ## 정숙 시간에도 발화한다 (D3)
+#
+# 정숙 시간(01:00~08:00 KST)이 진짜 침묵을 정상 침묵으로 위장한다. **밤에 죽는 것이 가장
+# 위험하다** — 아침 리포트까지 아무도 모른다. 대신 **하루 1회 상한**으로 스팸을 막는다(C6).
+SILENCE_LIMIT="${FCE_ALERT_SILENCE_LIMIT_SECONDS:-14400}"      # 기본 4시간
+SILENCE_REMIND="${FCE_ALERT_SILENCE_REMIND_SECONDS:-86400}"    # 하루 1회 (C6)
+DELIVERY_FILE="${FCE_ALERT_DELIVERY_FILE:-$LOG_DIR/alert_delivery.json}"
+
+send_telegram_direct() {
+  # 침묵 알림 전용 발송기. `DEADMAN_PUSH` 를 지나지 않는다 — 강등된 것은 생존 신호이고
+  # 이것은 그것이 아니다(C1). 실패해도 전문을 로그에 남긴다.
+  local text="$1" token chat code
+  token="$(read_env FCE_TELEGRAM_BOT_TOKEN)"; [[ -z "$token" ]] && token="$(read_env TELEGRAM_BOT_TOKEN)"
+  chat="$(read_env FCE_TELEGRAM_CHAT_ID)";    [[ -z "$chat"  ]] && chat="$(read_env TELEGRAM_CHAT_ID)"
+  if [[ -z "$token" || -z "$chat" ]]; then
+    log "침묵 알림 발송 불가(자격증명 없음):"; printf '%s\n' "$text" >> "$DEADMAN_LOG"; return 1
+  fi
+  code=$(curl -s -m 15 -o /dev/null -w "%{http_code}" \
+    -X POST "https://api.telegram.org/bot${token}/sendMessage" \
+    -d "chat_id=${chat}" -d "parse_mode=HTML" --data-urlencode "text=${text}")
+  log "silence telegram HTTP $code :: ${text%%$'\n'*}"
+  [[ "$code" == "200" ]]
+}
+
+silence_age=-1
+if [[ -f "$DELIVERY_FILE" ]]; then
+  silence_epoch=$(python3 -c "
+import json
+from datetime import datetime
+try:
+    value = json.load(open('$DELIVERY_FILE')).get('last_delivered_at', '')
+    print(int(datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp()))
+except Exception:
+    print(0)
+" 2>/dev/null)
+  (( ${silence_epoch:-0} > 0 )) && silence_age=$(( now_epoch - silence_epoch ))
+fi
+
+# 발송 이력 파일이 없으면 판정하지 않는다. **모르는 것을 침묵으로 단정하지 않는다** —
+# 배포 직후나 알림이 한 번도 나간 적 없는 상태와 진짜 침묵은 다른 사건이다.
+if (( silence_age >= 0 )) && (( silence_age > SILENCE_LIMIT )); then
+  if (( now_epoch - last_silence_notified >= SILENCE_REMIND )); then
+    last_sent=$(date -d "@$silence_epoch" '+%Y-%m-%d %H:%M' 2>/dev/null || date -r "$silence_epoch" '+%Y-%m-%d %H:%M' 2>/dev/null || echo "미상")
+    if send_telegram_direct "🔇 <b>알림 침묵 감지 (외부 감시자)</b>
+최근 $((silence_age / 3600))시간 알림 0건 · 마지막 발송 ${last_sent}
+하트비트 경과: ${age}초 · 프로세스: ${proc}
+감시자: deadman.sh (워커 외부 · 발송 이력 기준)
+→ 진단 API 로 잡 상태를 확인하세요: GET /api/system/paper/diagnosis"; then
+      last_silence_notified=$now_epoch
+    fi
+  else
+    log "침묵 지속 $((silence_age / 60))분 — 하루 1회 상한으로 미발송"
+  fi
+fi
 
 # ── 2. 사망 판정 / 복구 판정 ────────────────────────────────────────
 if [[ -n "$reason" ]]; then

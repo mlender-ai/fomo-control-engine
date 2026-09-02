@@ -504,3 +504,37 @@ cd backend && PYTHONPATH=. python3 scripts/prediction_market_probe.py
 **Phase 0 항목 5 전제 정정**: WO 는 재진입 잠금 누수를 미수리로 적었지만
 `0566fe8`(WHALE-EXIT-REPLAY-01 2-6)이 이미 고쳤다. 남은 것은 **배포**다 — 이것 자체가
 Phase 0 항목 2("머지 ≠ 서버 반영")의 사례다.
+
+---
+
+## ALERT-SILENCE-01 회수 (2026-09-02)
+
+재기동 후 확인:
+
+```bash
+# 1. 알림 잡이 독립적으로 도는가
+curl -s localhost:8875/api/system/paper/diagnosis | python3 -m json.tool | grep -A3 deliver_alerts
+
+# 2. 발송 이력 파일이 생기는가 — 데드맨이 이것을 읽는다
+cat logs/alert_delivery.json
+
+# 3. 침묵 감지 동작 (오탐 0건 확인)
+grep 침묵 logs/deadman.log
+
+# 4. 450초를 먹는 훅 특정 (3-3 잔여)
+python3 - <<'EOF'
+import json, collections
+spans, starts = collections.defaultdict(list), {}
+for line in open('logs/job-trace.jsonl'):
+    row = json.loads(line)
+    if row['phase'] == 'start':
+        starts[row['job']] = row['at']
+    elif row['job'] in starts:
+        spans[row['job']].append((row['at'], starts.pop(row['job'])))
+for job, rows in sorted(spans.items(), key=lambda kv: -len(kv[1])):
+    print(job, len(rows))
+EOF
+```
+
+**침묵 알림은 정숙 시간에도 온다.** 밤에 죽는 것이 가장 위험하기 때문이며, 하루 1회
+상한이 걸려 있다. 문구가 `최근 N시간 알림 0건` 이면 그것은 오탐이 아니라 진짜 침묵이다.
