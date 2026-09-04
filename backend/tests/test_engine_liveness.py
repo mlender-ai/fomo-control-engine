@@ -216,7 +216,7 @@ async def test_daily_summary_is_silent_when_muted(tmp_path) -> None:
     from zoneinfo import ZoneInfo
 
     hour, minute = (int(part) for part in settings.telegram_daily_summary_time.strip().split(":"))
-    local = datetime(2026, 7, 27, hour, minute, tzinfo=ZoneInfo(settings.telegram_quiet_hours_timezone))
+    local = datetime(2026, 7, 27, hour, minute, tzinfo=ZoneInfo(settings.telegram_local_timezone))
     setattr(engine, "_now", lambda: local.astimezone(timezone.utc))
 
     count = await engine.maybe_send_daily_summary({"positions": []}, ["<b>트랙 생존</b>", "• 크립토 페이퍼: 🟢 정상"])

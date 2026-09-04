@@ -232,7 +232,7 @@ def test_catchup_logic_is_untouched() -> None:
 
     class _S:
         telegram_daily_summary_time = "08:30"
-        telegram_quiet_hours_timezone = "Asia/Seoul"
+        telegram_local_timezone = "Asia/Seoul"
 
     late = datetime(2026, 8, 27, 14, 0, tzinfo=timezone.utc)  # KST 23:00 — 목표 한참 뒤
     due, key = morning_summary_due(_S(), None, late)

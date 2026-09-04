@@ -19,7 +19,7 @@ KST = ZoneInfo("Asia/Seoul")
 
 
 def _settings(target: str = "08:30") -> Settings:
-    return Settings(telegram_daily_summary_time=target, telegram_quiet_hours_timezone="Asia/Seoul")
+    return Settings(telegram_daily_summary_time=target, telegram_local_timezone="Asia/Seoul")
 
 
 def _at(hour: int, minute: int, second: int = 30) -> datetime:

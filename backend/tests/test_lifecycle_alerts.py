@@ -28,7 +28,6 @@ FORBIDDEN_PHRASES = ["진입하세요", "진입해도 좋", "매수하세요", "
 def _settings(**overrides) -> Settings:
     base = {
         "telegram_alerts_enabled": True,
-        "telegram_quiet_hours_enabled": False,
         "notification_state_path": "",  # 테스트는 파일 영속화 비활성
     }
     base.update(overrides)
@@ -302,19 +301,21 @@ def test_failed_delivery_queued_for_next_pulse(monkeypatch) -> None:
     assert state.pending_redelivery == []
 
 
-def test_pulse_respects_quiet_hours(monkeypatch) -> None:
-    settings = _settings(
-        telegram_quiet_hours_enabled=True,
-        telegram_quiet_hours_start="00:00",
-        telegram_quiet_hours_end="23:59",
-    )
-    engine, sender, state = _engine(settings=settings)
+def test_pulse_has_no_quiet_window_left(monkeypatch) -> None:
+    """펄스에 남은 무음 창이 없다 — 시각과 무관하게 주기만 본다.
+
+    옛 회귀는 무음 창 안에서 펄스가 0건이고 억제 큐에 쌓이는 것을 고정했다. 방향을 뒤집는다:
+    설정에 무음 창 자체가 없으므로 어떤 시각이든 주기가 되면 나간다.
+    """
+    engine, sender, state = _engine()
     monkeypatch.setattr("app.notify.alerts.service.record_alert", lambda record: record)
     sent = asyncio.run(engine.maybe_send_pulse({"positions": [_context()]}))
-    assert sent == 0
-    assert sender.messages == []  # 무음 준수
-    assert state.suppressed_alerts  # 아침 요약 병합 대기
+    assert sent == 1
+    assert sender.messages
+    assert state.suppressed_alerts == []
     assert state.last_pulse_at is not None
+    # 설정에서 사라졌다는 것 자체를 고정한다 — 되살아나면 여기서 걸린다.
+    assert not hasattr(engine.settings, "telegram_quiet_hours_enabled")
 
 
 def test_pulse_interval_gate(monkeypatch) -> None:

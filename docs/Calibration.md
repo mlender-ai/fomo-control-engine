@@ -92,7 +92,7 @@ Default Telegram schedule:
 
 - Day: Sunday (`6`, Python weekday)
 - Time: `20:00`
-- Timezone: `telegram_quiet_hours_timezone`, default `Asia/Seoul`
+- Timezone: `telegram_local_timezone`, default `Asia/Seoul` (옛 `telegram_quiet_hours_timezone` 환경변수는 별칭으로 유지)
 
 The weekly report includes the recent scorecard, confidence curve, highlights, and pending suggestions.
 

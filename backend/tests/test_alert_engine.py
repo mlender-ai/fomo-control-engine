@@ -315,8 +315,14 @@ async def test_trigger_near_rearms_only_after_exit_and_cooldown(repo) -> None:
 
 
 @pytest.mark.asyncio
-async def test_quiet_hours_suppresses_warn_and_morning_summary_sends(repo) -> None:
-    clock = [datetime(2026, 7, 5, 17, 0, tzinfo=timezone.utc)]  # 02:00 KST
+async def test_night_alert_is_delivered_now_not_merged_into_morning(repo) -> None:
+    """정숙 시간 제거(사용자 지시 2026-09-04)를 **방향을 뒤집어** 고정한다.
+
+    옛 회귀는 02:00 KST 의 warn 이 억제되고 아침 요약에 병합되는 것을 고정했다.
+    지금은 그 시각에 **바로 나가야** 한다 — 밤에 진입해도 그때 알아야 한다는 것이 지시였고,
+    아침 요약 한 줄로는 "그때 안 왔다"와 구분되지 않았다.
+    """
+    clock = [datetime(2026, 7, 5, 17, 0, tzinfo=timezone.utc)]  # 02:00 KST — 옛 무음 창 한가운데
     sender = FakeTelegramSender()
     engine = AlertEngine(
         _settings(telegram_daily_summary_time="08:30"),
@@ -333,14 +339,11 @@ async def test_quiet_hours_suppresses_warn_and_morning_summary_sends(repo) -> No
         leverage=3,
     )
 
-    assert await engine.evaluate_positions([payload]) == 0
-    assert len(engine.state.suppressed_alerts) == 1
-    assert repo.list_alerts(position_id)[0].delivered is False
-
-    clock[0] = datetime(2026, 7, 5, 23, 30, tzinfo=timezone.utc)  # 08:30 KST
-    assert await engine.maybe_send_daily_summary({"positions": [payload], "timestamp": clock[0].isoformat()}) == 1
-    assert not engine.state.suppressed_alerts
+    assert await engine.evaluate_positions([payload]) == 1
     assert "상태 악화" in sender.messages[-1]
+    assert repo.list_alerts(position_id)[0].delivered is True
+    # 억제 큐에 쌓이지 않는다 — 쌓이면 그것이 곧 "그때 안 왔다"이다.
+    assert engine.state.suppressed_alerts == []
 
 
 @pytest.mark.asyncio

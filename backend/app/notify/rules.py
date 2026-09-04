@@ -276,22 +276,6 @@ def cooldown_seconds(severity: AlertSeverity, settings: Settings) -> int:
     return int(_cooldown_minutes(severity, settings) * 60)
 
 
-def quiet_hours_active(settings: Settings, now: datetime | None = None) -> bool:
-    if not settings.telegram_quiet_hours_enabled:
-        return False
-    current = (now or datetime.now(timezone.utc)).astimezone(_quiet_timezone(settings))
-    start = _parse_hhmm(settings.telegram_quiet_hours_start)
-    end = _parse_hhmm(settings.telegram_quiet_hours_end)
-    if start is None or end is None:
-        return False
-    current_minutes = current.hour * 60 + current.minute
-    start_minutes = start[0] * 60 + start[1]
-    end_minutes = end[0] * 60 + end[1]
-    if start_minutes <= end_minutes:
-        return start_minutes <= current_minutes < end_minutes
-    return current_minutes >= start_minutes or current_minutes < end_minutes
-
-
 def morning_summary_due(settings: Settings, last_summary_date: str | None, now: datetime | None = None) -> tuple[bool, str]:
     """일일 요약 발송 시점 판정 — **목표 시각을 지났고 오늘 아직 안 보냈으면 due**.
 
@@ -304,7 +288,7 @@ def morning_summary_due(settings: Settings, last_summary_date: str | None, now: 
     은폐한다. 목표 시각 경과 + 당일 미발송을 조건으로 바꿔 **놓친 틱을 따라잡게** 한다.
     하루 1회 상한은 `last_summary_date` 가 그대로 보장한다.
     """
-    current = (now or datetime.now(timezone.utc)).astimezone(_quiet_timezone(settings))
+    current = (now or datetime.now(timezone.utc)).astimezone(_local_timezone(settings))
     date_key = current.strftime("%Y-%m-%d")
     if last_summary_date == date_key:
         return False, date_key
@@ -1174,11 +1158,12 @@ def _parse_hhmm(value: str) -> tuple[int, int] | None:
         return None
 
 
-def _quiet_timezone(settings: Settings):
+def _local_timezone(settings: Settings):
+    """표시·일일 요약 시각 판정용 지역 시간대. **억제 판정에는 쓰이지 않는다.**"""
     try:
         from zoneinfo import ZoneInfo
 
-        return ZoneInfo(settings.telegram_quiet_hours_timezone)
+        return ZoneInfo(settings.telegram_local_timezone)
     except Exception:
         return timezone.utc
 
@@ -1205,10 +1190,10 @@ def _time(value: Any) -> str:
     parsed = _parse_dt(value)
     if parsed is None:
         return "-"
-    return parsed.astimezone(_quiet_timezone_placeholder()).strftime("%H:%M")
+    return parsed.astimezone(_local_timezone_placeholder()).strftime("%H:%M")
 
 
-def _quiet_timezone_placeholder():
+def _local_timezone_placeholder():
     try:
         from zoneinfo import ZoneInfo
 
