@@ -145,6 +145,10 @@ _HEAVY_JOBS = frozenset(
     }
 )
 
+# 라이프사이클 대기 큐 상한. 알림이 며칠 죽어 있어도 메모리가 무한히 늘면 안 된다.
+# 넘치면 **버린 수를 센다** — 조용히 버리는 것이 이 결함의 본체다.
+_LIFECYCLE_QUEUE_MAX = 500
+
 # 부모 잡 하나에 매달린 훅 수. 예산을 이 수로 나눈다(3-3) — **올리는 값이 아니다.**
 # 훅을 늘리거나 줄이면 여기도 함께 고친다. 어긋나면 예산이 다시 한 훅에 쏠린다.
 _HOOK_SHARES = {
@@ -211,6 +215,12 @@ class WorkerManager:
         # 이것을 들고 돌며, 낡았으면 낡았다고 알린다.
         self._last_sync_payload: dict[str, Any] | None = None
         self._last_sync_at: datetime | None = None
+        # 진입·청산은 **누적한다.** 페이로드에 얹어 두면 다음 동기화가 통째로 덮어써
+        # 알림 잡이 한 틱만 늦어도 사라진다 — `sync_positions` 는 90초마다 돌면서 대부분
+        # 빈 목록을 반환하므로 그 손실은 예외가 아니라 흔한 경우다.
+        self._pending_created: list[str] = []
+        self._pending_closed: list[dict[str, Any]] = []
+        self._lifecycle_dropped = 0
         self._started = False
         # WO-FCE-WORKER-HANG-02: 매달림 증거 경로. 하트비트 파일과 같은 logs 디렉터리를 쓴다.
         log_dir = Path(str(settings.worker_liveness_path)).expanduser().parent
@@ -354,11 +364,31 @@ class WorkerManager:
         return await self._run_job(name, runner, scheduled=False, max_seconds=self._hook_budget(parent) if parent else None)
 
     def _hook_budget(self, parent: str) -> int:
-        """부모 잡 예산을 훅 수로 나눈 값. **하한은 부모 주기** — 한 주기도 못 도는 예산은 무의미하다."""
+        """훅 하나가 부모 예산을 통째로 먹지 못하게 하는 상한.
+
+        ## 하한은 시스템이 이미 안전하다고 정한 값이다
+
+        처음에는 `부모 예산 ÷ 훅 수` 를 그대로 썼고 그것이 **너무 조였다** —
+        `deliver_alerts` 훅이 450초에서 **90초로** 줄었다. `evaluate_lifecycle` 은 신규
+        포지션마다 분석을 조회하므로(심볼당 ~30초) 진입이 3건이면 그 자리에서 잘린다.
+        **알림을 살리려던 변경이 알림을 자르는 것이 된다.**
+
+        그래서 하한을 `worker_job_timeout_floor_seconds` 로 둔다. 그 설정은 "주기가 짧은
+        잡도 이만큼은 받아야 조기 취소되지 않는다"는 뜻이며, 새 문턱을 만들지 않고 그것을
+        재사용한다.
+
+        ## 이것이 보장하지 않는 것 (정직하게)
+
+        훅 여럿이 동시에 느리면 합이 부모 예산을 넘어 뒷훅이 시작조차 못 하는 것은 여전하다.
+        이 상한은 **하나가 전부를 먹는 것**만 막는다. 어느 훅이 실제로 느린지는 호스트
+        트레이스(`job-trace.jsonl`)로 특정해야 하고, 그것이 3-3 의 남은 절반이다.
+
+        **어느 경우에도 부모 예산을 넘기지 않는다** — 올리는 경로가 아니다(C4).
+        """
         parent_budget = self._job_timeout_seconds(parent)
         share = max(1, int(_HOOK_SHARES.get(parent, 1)))
-        interval = int(getattr(self.jobs.get(parent), "interval_seconds", 0) or 0)
-        return max(min(parent_budget, interval or parent_budget), parent_budget // share)
+        floor = max(1, int(self.settings.worker_job_timeout_floor_seconds))
+        return min(parent_budget, max(floor, parent_budget // share))
 
     async def _run_in_thread(self, name: str, func: Any, *args: Any, **kwargs: Any) -> Any:
         """잡을 알맞은 실행기의 스레드에서 돌린다 (Phase 2-3).
@@ -497,6 +527,8 @@ class WorkerManager:
         else:
             self._last_sync_at = datetime.now(timezone.utc)
         self._last_sync_payload = payload
+        # **덮어쓰지 않고 쌓는다.** 알림 잡이 가져갈 때까지 남아 있어야 한다.
+        self._queue_lifecycle(payload)
         await self._run_hook("detect_closures", lambda: asyncio.to_thread(service.detect_closures), parent="sync_positions")
         paper_result = await self._run_hook("paper_engine", lambda: asyncio.to_thread(service.run_paper_engine), parent="sync_positions")
         if isinstance(paper_result, dict):
@@ -540,12 +572,14 @@ class WorkerManager:
         훅 목록과 순서는 그대로다 — 옮긴 것이지 바꾼 것이 아니다(C3).
         """
         payload = self._alert_payload()
-        # 진입·청산은 **한 번만** 소비한다. 낡은 페이로드를 매 틱 다시 읽으면 같은 진입이
-        # 반복 판정된다 — 쿨다운이 막아 주긴 하지만 그것에 기대지 않는다.
-        lifecycle = dict(payload)
-        self._consume_lifecycle_payload()
+        # 진입·청산은 **큐에서 꺼낸다.** 페이로드에서 읽으면 다음 동기화가 덮어써 사라진다.
+        created, closed = self._drain_lifecycle()
+        lifecycle = {**payload, "created_position_ids": created, "closed_positions": closed}
         # WO-44: 진입/종료/판정 전이 — 라이프사이클이 1차 정보이므로 조건 알림보다 먼저.
-        await self._run_hook("evaluate_lifecycle", lambda: self.alerts.evaluate_lifecycle(lifecycle), parent="deliver_alerts")
+        delivered = await self._run_hook("evaluate_lifecycle", lambda: self.alerts.evaluate_lifecycle(lifecycle), parent="deliver_alerts")
+        if delivered is None and (created or closed):
+            # 훅이 죽었다. 큐를 이미 비웠으므로 되돌리지 않으면 그 진입은 영영 사라진다.
+            self._requeue_lifecycle(created, closed)
         await self._run_hook(
             "evaluate_alerts",
             lambda: self.alerts.evaluate_positions(payload.get("positions", [])),
@@ -569,13 +603,57 @@ class WorkerManager:
             lambda: self.alerts.maybe_send_daily_summary(payload, self._liveness_lines(), self._performance_lines()),
             parent="deliver_alerts",
         )
-        return {"sync_stale": bool(payload.get("sync_stale")), "sync_age_seconds": payload.get("sync_age_seconds")}
+        return {
+            "sync_stale": bool(payload.get("sync_stale")),
+            "sync_age_seconds": payload.get("sync_age_seconds"),
+            "lifecycle_delivered": len(created) + len(closed),
+            "lifecycle_pending": len(self._pending_created) + len(self._pending_closed),
+            "lifecycle_dropped": self._lifecycle_dropped,
+        }
 
-    def _consume_lifecycle_payload(self) -> None:
-        """진입·청산 목록을 비운다. 같은 사건을 다음 틱이 다시 읽지 않게."""
-        if isinstance(self._last_sync_payload, dict):
-            self._last_sync_payload["created_position_ids"] = []
-            self._last_sync_payload["closed_positions"] = []
+    def _queue_lifecycle(self, payload: dict[str, Any]) -> None:
+        """진입·청산을 대기 큐에 **쌓는다** (덮어쓰지 않는다).
+
+        ## 왜 큐인가
+
+        `_last_sync_payload` 에 얹어 두면 다음 동기화가 통째로 교체한다. 두 잡이 같은 주기로
+        돌고 순서 보장이 없으므로, 알림 잡이 한 틱만 늦으면(락 점유·타임아웃) 그 사이의
+        진입이 **영영 사라진다.** 실측: 동기화 2회 사이에 알림 1회가 빠지면 첫 진입이 소멸.
+
+        게다가 동기화는 대부분 **빈 목록**을 반환한다 — 진입이 없는 주기가 정상이기 때문이다.
+        그래서 빈 목록이 직전 진입을 지우는 것이 예외가 아니라 흔한 경로였다.
+
+        중복은 id 로 거른다. 같은 진입이 두 번 큐에 들어가면 알림이 두 번 나간다.
+        """
+        created = [str(item) for item in (payload.get("created_position_ids") or [])]
+        known = set(self._pending_created)
+        self._pending_created.extend(item for item in created if item not in known and not known.add(item))
+        for item in payload.get("closed_positions") or []:
+            if isinstance(item, dict):
+                self._pending_closed.append(item)
+        # 알림이 며칠 죽어 있어도 메모리가 무한히 늘면 안 된다. **버린 수를 센다** —
+        # 조용히 버리는 것이 이 WO 가 고치는 결함 그 자체다.
+        for queue in (self._pending_created, self._pending_closed):
+            overflow = len(queue) - _LIFECYCLE_QUEUE_MAX
+            if overflow > 0:
+                del queue[:overflow]
+                self._lifecycle_dropped += overflow
+                logger.warning("lifecycle queue overflow: dropped %s (total %s)", overflow, self._lifecycle_dropped)
+
+    def _drain_lifecycle(self) -> tuple[list[str], list[dict[str, Any]]]:
+        """큐를 비우고 내용을 돌려준다. **가져간 것만** 비운다 — 그 사이 들어온 것은 남는다."""
+        created, closed = self._pending_created, self._pending_closed
+        self._pending_created, self._pending_closed = [], []
+        return created, closed
+
+    def _requeue_lifecycle(self, created: list[str], closed: list[dict[str, Any]]) -> None:
+        """전달에 실패한 사건을 큐 **앞으로** 되돌린다.
+
+        훅이 예외로 죽으면 `_run_hook` 이 `None` 을 준다. 그때 큐를 이미 비웠다면 그 진입은
+        사라진다 — 되돌리지 않으면 이 수리가 새 손실을 만든다.
+        """
+        self._pending_created = created + [item for item in self._pending_created if item not in set(created)]
+        self._pending_closed = closed + self._pending_closed
 
     async def _send_paper_events(self, result: dict[str, Any]) -> int:
         if not isinstance(result, dict):

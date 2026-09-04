@@ -60,7 +60,7 @@ def test_alerts_are_a_separate_scheduled_job() -> None:
 
 def test_alert_job_carries_every_hook_that_moved() -> None:
     """옮긴 것이지 뺀 것이 아니다 — 훅이 사라지면 그 알림이 영영 안 온다."""
-    deliver = MANAGER.split("async def _deliver_alerts")[1].split("\n    def _consume_lifecycle_payload")[0]
+    deliver = MANAGER.split("async def _deliver_alerts")[1].split("\n    def _queue_lifecycle")[0]
     for hook in (
         "evaluate_lifecycle",
         "evaluate_alerts",
@@ -74,7 +74,7 @@ def test_alert_job_carries_every_hook_that_moved() -> None:
 
 def test_alert_job_does_not_call_the_sync_runner() -> None:
     """알림이 동기화를 호출하면 결합이 되살아난다."""
-    deliver = MANAGER.split("async def _deliver_alerts")[1].split("\n    def _consume_lifecycle_payload")[0]
+    deliver = MANAGER.split("async def _deliver_alerts")[1].split("\n    def _queue_lifecycle")[0]
     assert "sync_and_analyze" not in deliver
     assert "_alert_payload()" in deliver
 
@@ -128,15 +128,123 @@ def test_fresh_sync_is_not_flagged() -> None:
     assert "sync_stale_note" not in payload
 
 
-def test_lifecycle_events_are_consumed_once() -> None:
-    """낡은 페이로드를 매 틱 다시 읽으면 같은 진입이 반복 판정된다."""
+def test_lifecycle_events_are_delivered_once() -> None:
+    """낡은 페이로드를 매 틱 다시 읽으면 같은 진입이 반복 판정된다.
+
+    큐로 바뀐 뒤에도 같다 — 꺼낸 것은 큐에서 빠진다.
+    """
     from app.worker.manager import WorkerManager
 
-    manager = _Manager(None, {"created_position_ids": ["a"], "closed_positions": [{"x": 1}]}, None)
-    WorkerManager._consume_lifecycle_payload(manager)
+    queue = _Queue()
+    queue.sync(["a"])
 
-    assert manager._last_sync_payload["created_position_ids"] == []
-    assert manager._last_sync_payload["closed_positions"] == []
+    assert WorkerManager._drain_lifecycle(queue)[0] == ["a"]
+    assert WorkerManager._drain_lifecycle(queue)[0] == [], "같은 진입이 두 번 전달된다"
+
+
+# ── 라이프사이클 큐 — 분리가 만든 손실 창을 막는다 ─────────────────────
+
+
+class _Queue:
+    """큐 헬퍼만 쓴다 — 워커 전체를 세우지 않고 손실 여부를 검사한다."""
+
+    def __init__(self) -> None:
+        from app.core.config import Settings
+
+        self.settings = Settings()
+        self._last_sync_payload = None
+        self._last_sync_at = None
+        self._pending_created: list[str] = []
+        self._pending_closed: list[dict] = []
+        self._lifecycle_dropped = 0
+
+    def sync(self, ids: list[str]) -> None:
+        """`_sync_positions` 가 하는 그대로 — 페이로드를 통째로 교체하고 큐에 쌓는다."""
+        from app.worker.manager import WorkerManager
+
+        payload = {"positions": [], "created_position_ids": list(ids), "closed_positions": []}
+        self._last_sync_payload = payload
+        self._last_sync_at = datetime.now(timezone.utc)
+        WorkerManager._queue_lifecycle(self, payload)
+
+    def drain(self) -> list[str]:
+        from app.worker.manager import WorkerManager
+
+        return WorkerManager._drain_lifecycle(self)[0]
+
+
+def test_entry_survives_a_skipped_alert_tick() -> None:
+    """**PR #28 이 만든 손실 창.**
+
+    알림을 독립 잡으로 뺐지만 진입 목록을 페이로드에 얹어 뒀다. 두 잡이 같은 주기로 돌고
+    순서 보장이 없으므로, 알림이 한 틱만 늦으면(락 점유·타임아웃) 그 사이 동기화가
+    페이로드를 **통째로 교체**해 진입이 사라졌다.
+    """
+    queue = _Queue()
+    queue.sync(["POS-2"])
+    queue.sync(["POS-3"])
+
+    assert queue.drain() == ["POS-2", "POS-3"], "알림이 한 틱 늦은 사이 진입이 사라졌다"
+
+
+def test_an_empty_sync_does_not_erase_a_pending_entry() -> None:
+    """**가장 흔한 경로다.** 동기화는 90초마다 돌면서 대부분 빈 목록을 반환한다 —
+    진입이 없는 주기가 정상이기 때문이다. 그 빈 목록이 직전 진입을 지웠다."""
+    queue = _Queue()
+    queue.sync(["POS-4"])
+    queue.sync([])
+
+    assert queue.drain() == ["POS-4"], "빈 동기화가 대기 중인 진입을 지웠다"
+
+
+def test_the_same_entry_is_not_queued_twice() -> None:
+    """같은 진입이 두 번 큐에 들어가면 알림이 두 번 나간다."""
+    queue = _Queue()
+    queue.sync(["POS-5"])
+    queue.sync(["POS-5"])
+
+    assert queue.drain() == ["POS-5"]
+
+
+def test_a_failed_delivery_puts_the_entry_back() -> None:
+    """훅이 죽었는데 큐를 이미 비웠으면 그 진입은 영영 사라진다 — 수리가 새 손실을 만든다."""
+    from app.worker.manager import WorkerManager
+
+    queue = _Queue()
+    queue.sync(["POS-6"])
+    created, closed = WorkerManager._drain_lifecycle(queue)
+    WorkerManager._requeue_lifecycle(queue, created, closed)
+
+    assert queue.drain() == ["POS-6"]
+
+
+def test_queue_overflow_is_counted_not_silent() -> None:
+    """**조용히 버리는 것이 이 결함의 본체다.** 상한은 두되 버린 수를 센다."""
+    from app.worker.manager import _LIFECYCLE_QUEUE_MAX
+
+    queue = _Queue()
+    for index in range(_LIFECYCLE_QUEUE_MAX + 100):
+        queue.sync([f"P{index}"])
+
+    assert len(queue._pending_created) == _LIFECYCLE_QUEUE_MAX
+    assert queue._lifecycle_dropped == 100
+
+
+def test_delivery_job_reports_queue_depth() -> None:
+    """대기·유실이 조회되지 않으면 이 결함이 다시 침묵한다."""
+    deliver = MANAGER.split("async def _deliver_alerts")[1].split("\n    def _queue_lifecycle")[0]
+
+    assert "_drain_lifecycle()" in deliver, "알림 잡이 큐에서 꺼내지 않는다"
+    assert "_requeue_lifecycle" in deliver
+    for field in ("lifecycle_pending", "lifecycle_dropped", "lifecycle_delivered"):
+        assert field in deliver, f"큐 상태가 결과에 없다: {field}"
+
+
+def test_sync_queues_instead_of_overwriting() -> None:
+    """페이로드에 얹어 두면 다음 동기화가 덮어쓴다 — 그것이 손실의 기전이었다."""
+    sync = MANAGER.split("async def _sync_positions")[1].split("\n    def _alert_payload")[0]
+
+    assert "_queue_lifecycle(payload)" in sync
 
 
 # ── 3-3 훅 예산 분할 ────────────────────────────────────────────────────
@@ -154,21 +262,42 @@ def test_hook_budget_divides_and_never_raises() -> None:
         assert hook_budget <= parent_budget, f"{parent}: 훅 예산이 부모보다 크다"
 
 
-def test_hook_budget_is_at_least_one_interval() -> None:
-    """한 주기도 못 도는 예산은 무의미하다 — 나누되 바닥을 둔다."""
+def test_hook_budget_is_never_below_the_configured_floor() -> None:
+    """**나누되 조이지 않는다.**
+
+    처음 구현은 `부모 ÷ 훅 수` 를 그대로 써서 `deliver_alerts` 훅을 450초→90초로 줄였다.
+    `evaluate_lifecycle` 은 신규 포지션마다 분석을 조회하므로(심볼당 ~30초) 진입 3건이면
+    그 자리에서 잘린다 — 알림을 살리려던 변경이 알림을 자르게 된다.
+
+    하한은 `worker_job_timeout_floor_seconds` 다. 시스템이 이미 "이만큼은 받아야 조기
+    취소되지 않는다"고 정한 값이며, 새 문턱을 만들지 않고 재사용한다.
+    """
+    from app.core.config import Settings
+    from app.worker.manager import WorkerManager
+
+    settings = Settings()
+    manager = WorkerManager(settings)
+    floor = int(settings.worker_job_timeout_floor_seconds)
+    for parent in ("sync_positions", "deliver_alerts"):
+        budget = manager._hook_budget(parent)
+        assert budget >= min(floor, manager._job_timeout_seconds(parent)), f"{parent}: 훅 예산이 안전 하한 아래다"
+
+
+def test_lifecycle_hook_can_analyse_several_new_positions() -> None:
+    """진입이 여러 건일 때 분석 조회가 예산 안에 들어가는가 — 절단이 곧 침묵이다."""
     from app.core.config import Settings
     from app.worker.manager import WorkerManager
 
     manager = WorkerManager(Settings())
-    interval = int(manager.jobs["sync_positions"].interval_seconds)
-    assert manager._hook_budget("sync_positions") >= min(interval, manager._job_timeout_seconds("sync_positions"))
+    # 실측 기준 심볼당 ~30초. 최소 3건은 처리할 수 있어야 한다.
+    assert manager._hook_budget("deliver_alerts") >= 90
 
 
 def test_hook_share_counts_match_the_actual_hooks() -> None:
     """어긋나면 예산이 다시 한 훅에 쏠린다."""
     from app.worker.manager import _HOOK_SHARES
 
-    deliver = MANAGER.split("async def _deliver_alerts")[1].split("\n    def _consume_lifecycle_payload")[0]
+    deliver = MANAGER.split("async def _deliver_alerts")[1].split("\n    def _queue_lifecycle")[0]
     assert deliver.count('parent="deliver_alerts"') == _HOOK_SHARES["deliver_alerts"]
     sync = MANAGER.split("async def _sync_positions")[1].split("\n    def _alert_payload")[0]
     assert sync.count('parent="sync_positions"') == _HOOK_SHARES["sync_positions"]

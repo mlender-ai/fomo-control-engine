@@ -120,7 +120,14 @@ test("live position cockpit smoke path", async ({ page }) => {
   await expect(page.getByTestId("position-strip")).toBeVisible();
   await expect(page.getByTestId("minimal-asset-card")).toHaveCount(3);
   await expect(page.getByTestId("compact-chart-workspace")).toBeVisible();
-  await expect(page.getByTestId("stance-ribbon")).toBeVisible();
+  // 리본은 워크스페이스보다 늦다 — gauges.stance_history 가 도착해야 렌더된다(빈 배열이면 렌더하지 않는다).
+  // 그 배열은 /api/live/positions/{id} 가 만들고, 콜드 요청은 72점 스탠스 재생 때문에 비싸다.
+  // 실측(워커 e2e 설정 · 같은 컨테이너 · 콜드 4회):
+  //   이 브랜치  5.62 · 4.39 · 3.08 · 6.06s
+  //   origin/main 2.40 · 1.39 · 4.69 · 5.86s
+  // 양쪽 모두 기본 대기 5초를 넘나든다 — 브랜치 회귀가 아니라 이 단언이 서버 콜드 비용과
+  // 겹쳐 있었던 것이다. 대기만 그 비용에 맞춘다. 리본이 끝내 뜨지 않으면 여전히 실패한다.
+  await expect(page.getByTestId("stance-ribbon")).toBeVisible({ timeout: 30_000 });
   await expect(page.getByTestId("stance-hud")).toBeVisible();
   await expect(page.getByTestId("stance-hud")).toContainText("4h");
   await expect(page.getByTestId("stance-hud")).toContainText("상방");
