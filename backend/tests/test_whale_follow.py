@@ -468,17 +468,28 @@ def _settings(**overrides):
 
 
 def _seed(repo, address: str, *, added_days: int, source: str = "discovery") -> None:
-    from app.db.models import WhaleWallet
+    """활동 중인 지갑을 심는다.
 
+    `last_fill_at` 은 **실제 현재 시각**이다. 고정 `NOW` 를 쓰면 `discover_leaderboard_wallets`
+    가 벽시계를 보므로 시간이 지날수록 이 지갑이 휴면으로 판정된다 — 실제로 그렇게 깨졌다.
+    `NOW`(2026-08-25) 기준으로 쓴 테스트가 `COHORT_DORMANT_DAYS=10` 일째인 2026-09-04 에
+    처음 실패했다. **시한폭탄이었지 회귀가 아니다.**
+
+    `added_at`(가입 연차)은 고정 시각 기준이어도 무방하다 — 시간이 지나면 더 오래된
+    지갑이 될 뿐 판정 방향이 뒤집히지 않는다.
+    """
+    from app.db.models import WhaleWallet, utc_now
+
+    now = utc_now()
     repo.upsert_whale_wallet(
         WhaleWallet(
             address=address,
             label=address[:10],
             source=source,
             active=True,
-            added_at=NOW - timedelta(days=added_days),
-            updated_at=NOW,
-            last_fill_at=NOW,
+            added_at=now - timedelta(days=added_days),
+            updated_at=now,
+            last_fill_at=now,
         )
     )
 
