@@ -25,6 +25,7 @@ sync_positions ── 진입 알림 · 정기 펄스 · 구조 알림 · 무효�
 
 from __future__ import annotations
 
+import ast
 import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -400,18 +401,42 @@ def test_judgement_layers_are_untouched() -> None:
 
 
 def test_no_new_alert_rule_was_added() -> None:
-    """C2 — 신설은 침묵 감지 하나뿐이고 그것은 워커 밖에 있다."""
+    """C2 — 신설은 침묵 감지 하나뿐이고 그것은 워커 밖에 있다.
+
+    옛 형태는 `rules.py`·`delivery_gate.py` 의 **바이트 diff 0줄**이었다. 그 가드가 지키려던
+    것은 "규칙이 늘거나 바뀌지 않았다"이지 "이 파일을 영원히 못 고친다"가 아니다 —
+    실제로 정숙 시간 제거(2026-09-04 사용자 지시)를 이 가드가 막았다.
+
+    그래서 **규칙 집합 자체**를 origin/main 과 대조한다. 바이트보다 좁고, 의도에는 더 정확하다:
+    규칙 id 가 하나라도 늘거나 사라지거나 심각도가 바뀌면 여기서 걸린다.
+    """
     from app.notify import delivery_gate, rules
 
-    gate_diff = subprocess.run(
-        ["git", "diff", "origin/main", "--", "backend/app/notify/rules.py", "backend/app/notify/delivery_gate.py"],
+    base = subprocess.run(
+        ["git", "show", "origin/main:backend/app/notify/rules.py"],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
         check=False,
     )
-    if gate_diff.returncode == 0:
-        assert gate_diff.stdout.strip() == "", "알림 규칙이 신설·변경됐다(C2)"
+    if base.returncode == 0:
+        # AST 로 읽는다 — 소스를 실행하지 않으므로 임포트 부작용도 예외 주석도 없다.
+        baseline = _literal_dicts(base.stdout, {"RULE_LABELS", "RULE_SEVERITY"})
+        assert set(baseline["RULE_LABELS"]) == set(rules.RULE_LABELS), "알림 규칙 id 집합이 바뀌었다(C2)"
+        assert baseline["RULE_SEVERITY"] == rules.RULE_SEVERITY, "알림 심각도가 바뀌었다(C2)"
     # 강등 목록도 그대로다(C1).
     assert delivery_gate.LIVENESS_DEMOTED_RULES == frozenset({"data_stall", "engine_liveness", "job_backoff_stuck", "infra_capacity", "process_restarted"})
     assert "position_opened" in rules.RULE_LABELS
+
+
+def _literal_dicts(source: str, names: set[str]) -> dict[str, dict]:
+    """모듈 소스에서 이름이 지정된 리터럴 dict 만 꺼낸다 (실행 없음)."""
+    found: dict[str, dict] = {}
+    for node in ast.parse(source).body:
+        targets = node.targets if isinstance(node, ast.Assign) else ([node.target] if isinstance(node, ast.AnnAssign) else [])
+        for target in targets:
+            if isinstance(target, ast.Name) and target.id in names and node.value is not None:
+                found[target.id] = ast.literal_eval(node.value)
+    missing = names - set(found)
+    assert not missing, f"origin/main 에서 {missing} 를 찾지 못했다"
+    return found

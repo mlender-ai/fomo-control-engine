@@ -117,24 +117,21 @@ export function SettingsShell() {
     }
   }
 
-  async function updateQuietHours(patch: {
-    quiet_hours_enabled?: boolean;
-    quiet_hours_start?: string;
-    quiet_hours_end?: string;
+  async function updateAlertDelivery(patch: {
     daily_summary_time?: string;
     pulse_interval_hours?: number;
     paper_alerts_enabled?: boolean;
     scout_auto_arm_enabled?: boolean;
   }) {
-    setBusy("quiet");
+    setBusy("delivery");
     setError("");
     setNotice("");
     try {
       const next = await api.updateAlertSettings(patch);
       setAlertSettings(next);
-      setNotice("무음 시간 설정이 저장되었습니다.");
+      setNotice("알림 발송 설정이 저장되었습니다.");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to update quiet hours");
+      setError(err instanceof Error ? err.message : "Failed to update alert delivery settings");
     } finally {
       setBusy("");
     }
@@ -146,7 +143,13 @@ export function SettingsShell() {
     setNotice("");
     try {
       const result = await api.sendTestAlert(ruleId);
-      setNotice(result.sent > 0 ? `테스트 알림 ${result.sent}건을 발송했습니다.` : result.configured ? "Telegram 발송이 실패했습니다. 백엔드 로그를 확인하세요." : "Telegram 토큰 또는 chat_id가 설정되지 않았습니다.");
+      if (result.sent > 0) {
+        setNotice(`${result.rule_id} 경로로 ${result.sent}건 발송 — 관문·룰 활성·뮤트·룰 상태 전부 통과했습니다.`);
+      } else {
+        // 어디서 죽었는지 말하지 않으면 "안 왔다"와 "안 보냈다"가 구분되지 않는다.
+        const blocked = result.stages.find((stage) => !stage.ok);
+        setError(blocked ? `${result.rule_id} 발송이 ${blocked.stage} 에서 막혔습니다 — ${blocked.detail}` : "발송이 실패했습니다. 백엔드 로그를 확인하세요.");
+      }
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to send test alert");
@@ -206,7 +209,7 @@ export function SettingsShell() {
 
       <TerminalPanel
         title="Telegram 알림"
-        subtitle="판단이 필요한 순간만 발송하고, 야간에는 critical 외 알림을 아침 요약으로 묶습니다"
+        subtitle="판단이 필요한 순간만 발송합니다. 야간 무음은 없습니다 — 밤에 진입해도 그때 옵니다"
         status={alertSettings?.telegram.configured ? "ok" : "warning"}
         actions={
           <button className="button secondary" onClick={() => sendTestAlert()} disabled={busy === "test-alert"}>
@@ -218,7 +221,6 @@ export function SettingsShell() {
         <div className="statusGrid">
           <StatusItem label="Telegram" value={alertSettings?.telegram.configured ? "configured" : "missing"} tone={alertSettings?.telegram.configured ? "ok" : "muted"} />
           <StatusItem label="Chat IDs" value={String(alertSettings?.telegram.chat_ids_configured ?? "-")} tone="muted" />
-          <StatusItem label="Quiet Hours" value={alertSettings?.telegram.quiet_hours_enabled ? `${alertSettings.telegram.quiet_hours_start}-${alertSettings.telegram.quiet_hours_end}` : "off"} tone="muted" />
           <StatusItem label="Morning Summary" value={alertSettings?.telegram.daily_summary_time ?? "-"} tone="muted" />
           <StatusItem label="Pulse" value={alertSettings ? `${alertSettings.telegram.pulse_interval_hours}h` : "-"} tone="muted" />
           <StatusItem label="엔진 거래" value={alertSettings?.telegram.paper_alerts_enabled ? "on" : "off"} tone="muted" />
@@ -228,18 +230,9 @@ export function SettingsShell() {
             <label className="alertQuietToggle">
               <input
                 type="checkbox"
-                checked={alertSettings.telegram.quiet_hours_enabled}
-                onChange={(event) => updateQuietHours({ quiet_hours_enabled: event.currentTarget.checked })}
-                disabled={busy === "quiet"}
-              />
-              야간 무음 사용
-            </label>
-            <label className="alertQuietToggle">
-              <input
-                type="checkbox"
                 checked={alertSettings.telegram.paper_alerts_enabled}
-                onChange={(event) => updateQuietHours({ paper_alerts_enabled: event.currentTarget.checked })}
-                disabled={busy === "quiet"}
+                onChange={(event) => updateAlertDelivery({ paper_alerts_enabled: event.currentTarget.checked })}
+                disabled={busy === "delivery"}
               />
               엔진 페이퍼 진입·청산 알림
             </label>
@@ -247,31 +240,17 @@ export function SettingsShell() {
               <input
                 type="checkbox"
                 checked={alertSettings.scout.auto_arm_enabled}
-                onChange={(event) => updateQuietHours({ scout_auto_arm_enabled: event.currentTarget.checked })}
-                disabled={busy === "quiet"}
+                onChange={(event) => updateAlertDelivery({ scout_auto_arm_enabled: event.currentTarget.checked })}
+                disabled={busy === "delivery"}
               />
               스카우트 엔진 자동 감지 ({alertSettings.scout.auto_arm_symbol_limit}심볼 상한)
             </label>
-            <input
-              aria-label="무음 시작"
-              type="time"
-              value={alertSettings.telegram.quiet_hours_start}
-              onChange={(event) => setAlertSettings({ ...alertSettings, telegram: { ...alertSettings.telegram, quiet_hours_start: event.currentTarget.value } })}
-              onBlur={(event) => updateQuietHours({ quiet_hours_start: event.currentTarget.value })}
-            />
-            <input
-              aria-label="무음 종료"
-              type="time"
-              value={alertSettings.telegram.quiet_hours_end}
-              onChange={(event) => setAlertSettings({ ...alertSettings, telegram: { ...alertSettings.telegram, quiet_hours_end: event.currentTarget.value } })}
-              onBlur={(event) => updateQuietHours({ quiet_hours_end: event.currentTarget.value })}
-            />
             <input
               aria-label="아침 요약"
               type="time"
               value={alertSettings.telegram.daily_summary_time}
               onChange={(event) => setAlertSettings({ ...alertSettings, telegram: { ...alertSettings.telegram, daily_summary_time: event.currentTarget.value } })}
-              onBlur={(event) => updateQuietHours({ daily_summary_time: event.currentTarget.value })}
+              onBlur={(event) => updateAlertDelivery({ daily_summary_time: event.currentTarget.value })}
             />
             <input
               aria-label="펄스 주기"
@@ -285,7 +264,7 @@ export function SettingsShell() {
                   telegram: { ...alertSettings.telegram, pulse_interval_hours: Number(event.currentTarget.value) }
                 })
               }
-              onBlur={(event) => updateQuietHours({ pulse_interval_hours: Number(event.currentTarget.value) })}
+              onBlur={(event) => updateAlertDelivery({ pulse_interval_hours: Number(event.currentTarget.value) })}
             />
           </div>
         ) : null}

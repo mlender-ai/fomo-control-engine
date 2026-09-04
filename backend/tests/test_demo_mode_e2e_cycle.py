@@ -17,7 +17,6 @@ def test_demo_mode_full_cycle(monkeypatch):
     configure_runtime(repo=repo, provider=provider)
     monkeypatch.setattr(handlers.settings, "demo_mode", True)
     monkeypatch.setattr(handlers.settings, "telegram_alerts_enabled", True)
-    monkeypatch.setattr(handlers.settings, "telegram_quiet_hours_enabled", False)
 
     seeded = service.seed_demo_data()
     assert seeded["enabled"] is True

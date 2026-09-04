@@ -37,7 +37,6 @@ from app.notify.rules import (
     evaluate_performance_alerts,
     evaluate_position_alerts,
     morning_summary_due,
-    quiet_hours_active,
     rearm_signals,
 )
 from app.notify import delivery_gate
@@ -221,13 +220,6 @@ class AlertEngine:
             logger.exception("notify.periodic_pulse.paper_load_failed")
         candidate = pulse_candidate(contexts, tracked=tracked, paper=paper, pending_redelivery=self.state.pending_redelivery, unavailable=unavailable)
         if candidate is None:
-            return 0
-        if quiet_hours_active(self.settings, now):
-            # 무음 준수 — 억제분은 아침 요약에 병합되고, 펄스 주기는 다음 창에서 재개.
-            self._suppress(candidate)
-            self._record(candidate, delivered=False, fired_at=now)
-            self.state.last_pulse_at = now
-            self._persist()
             return 0
         delivered_count = await self.sender.send_to_all(candidate.message)
         self._record(candidate, delivered=delivered_count > 0, fired_at=now)
@@ -552,10 +544,14 @@ class AlertEngine:
         # WO-FCE-BREACH-ALERT-FIX-01 작업 1: 이탈은 상태다 — 같은 깊이를 반복해 알리지 않는다.
         # 상태 축출·재기동으로 status 가 armed 로 되살아나도 여기서 한 번 더 막는다(이중 방어).
         if _breach_repeat_suppressed(candidate, rule_state, self.settings):
+            self._record_dropped(candidate, "breach_repeat", now=now)
             return 0
         if rule_state.status != "armed":
+            self._record_dropped(candidate, f"rule_state:{rule_state.status}", now=now)
             return 0
         if rule_state.cooldown_until is not None and now < rule_state.cooldown_until:
+            remaining = int((rule_state.cooldown_until - now).total_seconds())
+            self._record_dropped(candidate, f"cooldown:{remaining}s", now=now)
             return 0
 
         cooldown = cooldown_seconds(candidate.severity, self.settings)
@@ -567,11 +563,6 @@ class AlertEngine:
             rule_state.last_breach_pct = _breach_depth_pct(candidate)
 
         enriched = self._with_response_history(candidate)
-
-        if quiet_hours_active(self.settings, now) and enriched.severity != "critical":
-            self._suppress(enriched)
-            self._record(enriched, delivered=False, fired_at=now)
-            return 0
 
         delivered_count = await self.sender.send_to_all(enriched.message, reply_markup=self._reply_markup(enriched))
         self._record(enriched, delivered=delivered_count > 0, fired_at=now)
@@ -621,18 +612,29 @@ class AlertEngine:
             payload={**candidate.payload, "response_history_line": line},
         )
 
-    def _suppress(self, candidate: AlertCandidate) -> None:
-        self.state.suppressed_alerts.append(
+    def _record_dropped(self, candidate: AlertCandidate, reason: str, *, now: datetime) -> None:
+        """관문 뒤에서 떨어진 알림에 **사유를 남긴다.**
+
+        여기까지 온 알림은 규칙상 발송 대상인데 룰 상태·쿨다운·이탈 반복 때문에 떨어진다.
+        지금까지는 셋 다 `return 0` 뿐이었다 — 사용자가 "왜 안 왔냐"고 물으면 코드를 읽어야
+        답할 수 있었고, 그것은 **침묵과 고장이 구분되지 않는** 그 형태다.
+
+        원장에는 쓰지 않는다. 쿨다운·이탈 반복은 매 틱 발생할 수 있어 원장을 덮는다 —
+        조회용 큐(상한 200)에만 남겨 "무엇이 왜 떨어졌는가"에 답할 수 있게 한다.
+        """
+        self.state.blocked_alerts.append(
             {
                 "rule_id": candidate.rule_id,
                 "symbol": candidate.symbol,
                 "title": candidate.title,
                 "severity": candidate.severity,
-                "emoji": _severity_emoji(candidate.severity),
-                "summary": _summary_line(candidate.payload),
+                "reason": reason,
+                "demoted": False,
+                "blocked_at": now.isoformat(),
                 "payload": candidate.payload,
             }
         )
+        self.state.blocked_alerts = self.state.blocked_alerts[-200:]
 
     def _record_blocked(self, candidate: AlertCandidate, decision: delivery_gate.PushDecision, *, now: datetime) -> None:
         """관문이 막은 알림을 조회 큐와 원장에 남긴다 (C3 침묵 금지).
@@ -804,7 +806,7 @@ def _summary_line(payload: dict[str, Any]) -> str:
 
 def _weekly_calibration_due(settings: Settings, last_date_key: str | None, now: datetime) -> tuple[bool, str]:
     try:
-        local_timezone = ZoneInfo(settings.telegram_quiet_hours_timezone)
+        local_timezone = ZoneInfo(settings.telegram_local_timezone)
     except ZoneInfoNotFoundError:
         local_timezone = timezone.utc
     current = now.astimezone(local_timezone)

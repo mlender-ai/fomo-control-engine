@@ -1074,21 +1074,18 @@ class Settings(BaseSettings):
         "20:00",
         validation_alias=AliasChoices("FCE_TELEGRAM_WEEKLY_CALIBRATION_TIME", "TELEGRAM_WEEKLY_CALIBRATION_TIME"),
     )
-    telegram_quiet_hours_enabled: bool = Field(
-        True,
-        validation_alias=AliasChoices("FCE_TELEGRAM_QUIET_HOURS_ENABLED", "TELEGRAM_QUIET_HOURS_ENABLED"),
-    )
-    telegram_quiet_hours_start: str = Field(
-        "01:00",
-        validation_alias=AliasChoices("FCE_TELEGRAM_QUIET_HOURS_START", "TELEGRAM_QUIET_HOURS_START"),
-    )
-    telegram_quiet_hours_end: str = Field(
-        "08:00",
-        validation_alias=AliasChoices("FCE_TELEGRAM_QUIET_HOURS_END", "TELEGRAM_QUIET_HOURS_END"),
-    )
-    telegram_quiet_hours_timezone: str = Field(
+    # 정숙 시간은 제거됐다(사용자 지시 2026-09-04). 밤에 진입해도 알림이 와야 한다 —
+    # 억제되던 알림은 아침 요약에 한 줄로 병합될 뿐이라 "그때 안 왔다"와 구분되지 않았다.
+    # 남은 것은 **표시용 지역 시간대**뿐이다: 일일 요약 시각 판정과 본문의 현지 시각 표기.
+    # 옛 환경변수 이름을 별칭으로 유지한다 — 운영 `.env` 를 고치지 않고 넘어가기 위해서다.
+    telegram_local_timezone: str = Field(
         "Asia/Seoul",
-        validation_alias=AliasChoices("FCE_TELEGRAM_QUIET_HOURS_TIMEZONE", "TELEGRAM_QUIET_HOURS_TIMEZONE"),
+        validation_alias=AliasChoices(
+            "FCE_TELEGRAM_LOCAL_TIMEZONE",
+            "TELEGRAM_LOCAL_TIMEZONE",
+            "FCE_TELEGRAM_QUIET_HOURS_TIMEZONE",
+            "TELEGRAM_QUIET_HOURS_TIMEZONE",
+        ),
     )
     alert_rules_enabled: str = Field(
         "trigger_near,invalidation_breach,take_profit_hit,status_worsened,health_drop,liq_proximity,liq_unknown_high_lev,wyckoff_event,data_stall,funding_extreme,oi_divergence,liq_cluster_near,setup_near,setup_triggered,setup_invalidated,intent_approaching,intent_zone_entered,intent_zone_entered_partial,intent_invalidated,universe_discovery,mdd_limit_warn,mdd_limit_critical,"

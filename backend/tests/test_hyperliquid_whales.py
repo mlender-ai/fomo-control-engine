@@ -776,9 +776,7 @@ async def test_whale_alert_batches_same_wallet_fills_for_three_minutes() -> None
     clock = {"now": started_at}
     # CI 는 FCE_TELEGRAM_ALERTS_ENABLED=false 를 주입 — 테스트는 명시적으로 켠다.
     engine = AlertEngine(
-        Settings(
-            database_url="memory://", telegram_bot_token="token", telegram_chat_id="123", telegram_alerts_enabled=True, telegram_quiet_hours_enabled=False
-        ),
+        Settings(database_url="memory://", telegram_bot_token="token", telegram_chat_id="123", telegram_alerts_enabled=True),
         sender,
         NotificationState(),
         now_provider=lambda: clock["now"],
@@ -861,9 +859,7 @@ async def test_whale_alert_drops_single_fill_and_keeps_increase_in_multi_fill() 
     started_at = datetime(2026, 7, 22, 0, 0, tzinfo=timezone.utc)
     clock = {"now": started_at}
     engine = AlertEngine(
-        Settings(
-            database_url="memory://", telegram_bot_token="token", telegram_chat_id="123", telegram_alerts_enabled=True, telegram_quiet_hours_enabled=False
-        ),
+        Settings(database_url="memory://", telegram_bot_token="token", telegram_chat_id="123", telegram_alerts_enabled=True),
         sender,
         NotificationState(),
         now_provider=lambda: clock["now"],
@@ -939,7 +935,6 @@ async def test_whale_alert_batch_survives_restart_and_excludes_outside_window(tm
         telegram_bot_token="token",
         telegram_chat_id="123",
         telegram_alerts_enabled=True,
-        telegram_quiet_hours_enabled=False,
         notification_state_path=str(state_path),
     )
     sender = FakeSender()

@@ -41,7 +41,7 @@
 | verdict_changed | WO-40 4상태 전이 | "관찰 유지 → 위험 확인 필요" + 사유 1줄 + 다음 가격 (악화=warn, 완화=info) |
 | stance_flipped | 종합 스탠스 상방↔하방 | 반전 근거 상위 1개 (1줄 판정 최강 모듈) |
 | evidence_insufficient | standby 또는 판정 가능 모듈 <3, 2h 지속 | "판단 근거 부족 — 구조 형성 대기" |
-| periodic_pulse | 보유 중 4h(config) | 포지션별 1줄 묶음 1통. **"전부 정상"도 발송** — 침묵과 고장의 구분. 무음 준수(억제 시 아침 요약 병합) |
+| periodic_pulse | 보유 중 4h(config) | 포지션별 1줄 묶음 1통. **"전부 정상"도 발송** — 침묵과 고장의 구분. 무음 창 없음(2026-09-04 제거) |
 
 - 기존 규칙 22종 유지, 위 6종은 기본 활성(`FCE_ALERT_RULES_ENABLED`에 추가).
 - 워커 훅 순서: detect_closures → **evaluate_lifecycle** → evaluate_alerts → performance → **periodic_pulse** → daily_summary.
@@ -55,7 +55,7 @@
 - [x] 진단 보고서 (이 문서) — 원인 분류 3주원인 + 수리 내역
 - [x] 신규 진입 시 opened 알림 + 초기 판정: sync 주기(90s) 내 발화 — 1분 내 요건 충족 (E2E 테스트)
 - [x] 종료 시 복기 요약 + 가짜 종료 오탐 테스트 (`test_bitget_sync_auto_records_missing_position_exit` 2틱 시나리오)
-- [x] 4h 펄스 무음 준수 (`test_pulse_respects_quiet_hours`) + 간격 게이트
+- [x] 4h 펄스 무음 창 없음 (`test_pulse_has_no_quiet_window_left`) + 간격 게이트
 - [x] 금지 문형 grep 0 (소스·메시지 이중 검증)
 - E2E: `test_e2e_lifecycle_sequence` — open → verdict change → close가 페이크 싱크에 순서대로 도착
 

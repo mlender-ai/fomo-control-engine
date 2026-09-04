@@ -261,23 +261,88 @@ deliver_alerts   부모 450초 · 훅당 120초
 > **여전히 보장하지 않는 것**: 훅 여럿이 동시에 느리면 합이 부모 예산을 넘어 뒷훅이
 > 시작조차 못 한다. 이 상한은 **하나가 전부를 먹는 것**만 막는다.
 
-## 9. 정숙 시간이 진입 알림을 삼킨다 (사용자 결정 대기)
+## 9. 정숙 시간 — 제거됨 (사용자 지시 2026-09-04)
 
 ```
-정숙 시간            01:00 ~ 08:00 KST
-position_opened      severity = action   (critical 만 관통한다)
+옛 동작   01:00 ~ 08:00 KST · severity < critical 억제 → 아침 요약에 한 줄 병합
+현재      없음. 시각과 무관하게 발송된다.
 ```
 
-실측: 01:00~08:00 KST 사이 진입은 **억제**되고 `suppressed_alerts` 에 **한 줄 요약**으로만
-남아 아침 펄스에 병합된다. 알림 자체는 오지 않는다.
+§9 는 원래 "결정 대기"였다. 사용자가 **없애라**고 지시했고 그대로 없앴다.
 
-**이 문서는 바꾸지 않았다** — 정숙 시간은 의도된 설계이고 변경은 사용자 결정이다.
-바꾸려면 두 갈래가 있다:
+억제분이 아침 요약 한 줄로 병합되는 것은 알림이 아니었다 — "그때 안 왔다"와 구분되지 않고,
+밤에 잡은 포지션은 아침에야 알게 된다. 판단이 필요한 시점을 지나서 오는 알림은 기록이지 알림이 아니다.
 
-| 안 | 효과 |
+제거한 것:
+
+| | |
 | --- | --- |
-| `position_opened` 를 `critical` 로 | 진입만 정숙 시간을 관통. 다른 알림은 그대로 |
-| 정숙 시간 창 축소·해제 | 전체가 관통 — 스팸 위험 |
+| `quiet_hours_active()` | 술어 자체를 삭제 — 남겨 두면 다시 배선된다 |
+| `telegram_quiet_hours_enabled/_start/_end` | 설정 삭제 |
+| `AlertEngine._suppress()` | 호출부가 없어져 삭제 |
+| 화면 무음 토글·시각 입력 | 삭제 |
+
+남긴 것:
+
+| | |
+| --- | --- |
+| `telegram_local_timezone` | 일일 요약 시각 판정과 본문 시각 표기용. **억제와 무관하다** |
+| 옛 환경변수 `FCE_TELEGRAM_QUIET_HOURS_TIMEZONE` | 별칭으로 계속 읽는다 — 운영 `.env` 를 고칠 수 없다 |
+| 아침 요약의 `suppressed_alerts` 배출 | 저장된 상태에 남은 옛 억제분이 한 번은 나가도록. 새로 쌓이지는 않는다 |
+
+회귀는 지우지 않고 **방향을 뒤집었다**: `test_night_alert_is_delivered_now_not_merged_into_morning`,
+`test_pulse_has_no_quiet_window_left`, `test_alert_fires_inside_the_old_quiet_window`.
+
+> `test_no_new_alert_rule_was_added` 가 이 변경을 막았다 — `rules.py` 를 **바이트 diff 0줄**로
+> 고정하고 있었다. 그 가드의 의도는 "규칙이 늘거나 바뀌지 않았다"이므로 규칙 id 집합과
+> 심각도표를 `origin/main` 과 대조하도록 좁혔다. 바이트보다 좁고 의도에는 더 정확하다.
+
+## 9-1. 왜 안 왔는지에 답할 수 있게 했다
+
+정숙 시간이 유일한 침묵 경로가 아니었다. 관문을 통과한 뒤에도 **세 곳이 사유 없이** 떨어뜨렸다:
+
+```
+_breach_repeat_suppressed → return 0
+rule_state.status != armed → return 0
+cooldown_until > now       → return 0
+```
+
+셋 다 아무것도 남기지 않았다. "왜 안 왔냐"에 답하려면 코드를 읽어야 했고, 그것이 곧
+**침묵과 고장이 구분되지 않는** 형태다. 이제 `blocked_alerts`(상한 200)에 사유가 남는다 —
+`cooldown:1800s` · `rule_state:cooldown` · `breach_repeat`.
+
+원장에는 쓰지 않는다. 쿨다운은 매 틱 발생할 수 있어 원장을 덮는다.
+
+## 9-2. 테스트 발송이 실제 경로를 지난다
+
+옛 `/api/alerts/test` 는 `sender.send_to_all` 을 **직접** 불렀다. 관문·룰 활성·뮤트·룰 상태를
+전부 건너뛴다 — 봇 토큰이 살아있다는 것만 증명하고 **진입 알림이 온다는 것은 증명하지 않는다.**
+"테스트는 오는데 진입 알림은 안 온다"가 정확히 그 구멍이었다.
+
+지금은 기본값 `position_opened` 로 진짜 후보를 만들어 `_fire_if_allowed` 에 태우고,
+**단계별 통과 여부**를 돌려준다:
+
+```
+telegram_configured → alerts_enabled → not_muted → rule_enabled → delivery_gate → delivered
+verdict: "delivered" | "blocked:<막힌 단계>"
+recent_blocked: 최근 차단·탈락 사유 10건
+```
+
+**운영 상태를 건드리지 않는다.** 두 가지를 회귀가 고정한다:
+
+| 위험 | 왜 사고인가 |
+| --- | --- |
+| `_persist()` 가 상태 파일을 덮는다 | 일회용 상태 객체만으로는 부족하다 — 빈 상태가 워커의 쿨다운·라이프사이클 추적을 통째로 날린다. **회귀가 실제로 이 결함을 잡았다** |
+| 발송 마커를 갱신한다 | 진단 1건이 데드맨의 침묵 시계를 되돌리면, 상류가 죽어 진짜 알림이 0건인 구간을 "발송되고 있다"로 덮는다 |
+
+둘 다 `model_copy` 로 경로를 비운 설정을 써서 막는다. 진단 후보의 `identity` 에는 시각이 들어가
+실제 포지션의 `state_key` 와 절대 겹치지 않는다 — 겹치면 그 포지션의 진입 알림이 사라진다.
+
+사용법 (호스트에서):
+
+```bash
+curl -sS -X POST http://127.0.0.1:8000/api/alerts/test | python3 -m json.tool
+```
 
 ## 10. 부수 관측 — 포지션 상세의 콜드 비용이 e2e 단언과 겹쳐 있었다
 

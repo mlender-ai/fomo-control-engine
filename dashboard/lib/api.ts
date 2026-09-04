@@ -2962,10 +2962,7 @@ export type AlertSettings = {
   telegram: {
     configured: boolean;
     alerts_enabled: boolean;
-    quiet_hours_enabled: boolean;
-    quiet_hours_start: string;
-    quiet_hours_end: string;
-    quiet_hours_timezone: string;
+    local_timezone: string;
     daily_summary_time: string;
     pulse_interval_hours: number;
     paper_alerts_enabled: boolean;
@@ -2981,18 +2978,26 @@ export type AlertSettings = {
 
 export type AlertSettingsUpdate = {
   rules?: Record<string, { enabled?: boolean; threshold?: number | null }>;
-  quiet_hours_enabled?: boolean;
-  quiet_hours_start?: string;
-  quiet_hours_end?: string;
   daily_summary_time?: string;
   pulse_interval_hours?: number;
   paper_alerts_enabled?: boolean;
   scout_auto_arm_enabled?: boolean;
 };
 
+export type AlertDeliveryStage = {
+  stage: string;
+  ok: boolean;
+  detail: string;
+};
+
 export type AlertTestResult = {
   configured: boolean;
   sent: number;
+  rule_id: string;
+  /** "delivered" 또는 "blocked:<막힌 단계>" — 어디서 죽었는지 한 줄로 답한다. */
+  verdict: string;
+  stages: AlertDeliveryStage[];
+  recent_blocked: Array<Record<string, unknown>>;
 };
 
 export type RuleCheckSummary = {
