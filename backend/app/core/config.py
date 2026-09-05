@@ -1147,6 +1147,18 @@ class Settings(BaseSettings):
         4.0,
         validation_alias=AliasChoices("FCE_ALERT_PULSE_INTERVAL_HOURS", "ALERT_PULSE_INTERVAL_HOURS"),
     )
+    # 진입 알림을 **이벤트가 아니라 빚으로** 다루는 창(분). 알림이 안 나간 열린 포지션을
+    # 이 시간 안에서 찾아 갚는다 — 대시보드가 동기화를 가로챘거나 워커가 재시작돼
+    # 메모리 큐가 날아가도 진입 알림이 산다. 0 이면 회수하지 않는다.
+    alert_open_backfill_window_minutes: int = Field(
+        180,
+        validation_alias=AliasChoices("FCE_ALERT_OPEN_BACKFILL_WINDOW_MINUTES", "ALERT_OPEN_BACKFILL_WINDOW_MINUTES"),
+    )
+    # 한 주기에 갚는 빚의 개수 상한 — 배포 직후 한꺼번에 울리는 것을 막는다.
+    alert_open_backfill_limit: int = Field(
+        5,
+        validation_alias=AliasChoices("FCE_ALERT_OPEN_BACKFILL_LIMIT", "ALERT_OPEN_BACKFILL_LIMIT"),
+    )
     alert_closure_confirm_ticks: int = Field(
         2,
         validation_alias=AliasChoices("FCE_ALERT_CLOSURE_CONFIRM_TICKS", "ALERT_CLOSURE_CONFIRM_TICKS"),

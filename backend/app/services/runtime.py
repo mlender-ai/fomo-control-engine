@@ -848,6 +848,59 @@ def minimal_position_payload(position_id: UUID) -> dict[str, Any] | None:
     return position.model_dump(mode="json") if position is not None else None
 
 
+def positions_owing_open_alert(*, max_age_minutes: int, limit: int = 10) -> list[str]:
+    """진입 알림이 아직 안 나간 열린 포지션 id. **누가 만들었는지 묻지 않는다.**
+
+    ## 왜 필요한가
+
+    지금까지 진입 알림은 `sync_live_positions()` 가 그 호출에서 **새로 만든** 포지션 id
+    목록(`created_position_ids`)에만 의존했다. 그 목록은 호출한 쪽에게만 돌아간다.
+
+    그런데 같은 핸들러를 **워커만 부르는 게 아니다.** `POST /api/live/positions/sync` 가
+    같은 함수를 부르고, 대시보드의 수동 새로고침·커맨드 팔레트가 그것을 호출한다.
+    포지션을 잡은 직후 화면을 여는 것은 트레이더의 기본 동작이다. 그 클릭이 먼저 닿으면:
+
+    ```
+    브라우저 sync → 포지션 행 생성 → created_position_ids 가 브라우저로 감 → 버려짐
+    워커  sync   → 이미 있음 → updated → created_position_ids 비어 있음 → 알림 없음
+    ```
+
+    **진입 알림이 영원히 안 난다.** 재기동해도 안 난다 — 잃어버린 것은 이벤트이지 상태가
+    아니기 때문이다. 같은 이유로 워커가 재시작되면 메모리 대기 큐도 통째로 사라진다.
+
+    ## 그래서 이벤트가 아니라 빚으로 다룬다
+
+    "이 포지션에 진입 알림을 보냈는가"는 원장에 있는 **상태**다. 안 보냈으면 빚이고,
+    빚은 다음 주기에 갚는다. 누가 행을 만들었는지, 그 사이 프로세스가 죽었는지 무관해진다.
+
+    두 개의 상한이 폭주를 막는다:
+
+    - `max_age_minutes` — 배포 직후 오래된 보유 포지션까지 한꺼번에 울리지 않는다.
+    - `limit` — 한 주기에 갚는 빚의 개수.
+    """
+    if max_age_minutes <= 0 or limit <= 0:
+        return []
+    cutoff = utc_now() - timedelta(minutes=max_age_minutes)
+    owing: list[str] = []
+    for position in runtime.repository.list_positions(PositionStatus.open):
+        opened = position.opened_at
+        if opened is None:
+            continue
+        # 저장소에서 시간대 없는 값이 올라오면 비교가 TypeError 로 터지고, 그 예외가
+        # 알림 잡을 죽인다 — 알림을 살리려는 코드가 알림을 죽이면 안 된다.
+        if opened.tzinfo is None:
+            opened = opened.replace(tzinfo=timezone.utc)
+        if opened < cutoff:
+            continue
+        already = any(record.rule_id == "position_opened" for record in runtime.repository.list_alerts(position.id, limit=50))
+        if already:
+            continue
+        owing.append(str(position.id))
+        if len(owing) >= limit:
+            break
+    return owing
+
+
 def create_position_insight(position_id: UUID, *, auto_generated: bool = False) -> dict[str, Any]:
     position = runtime.repository.get_position(position_id)
     if position is None:
