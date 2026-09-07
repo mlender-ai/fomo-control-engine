@@ -156,7 +156,7 @@ _HOOK_SHARES = {
     "sync_positions": 3,
     # evaluate_lifecycle · evaluate_alerts · evaluate_structure_context ·
     # evaluate_performance_alerts · periodic_pulse · daily_summary
-    "deliver_alerts": 6,
+    "deliver_alerts": 7,
 }
 
 # 전용 풀 크기. 작게 둔다 — 크게 잡으면 GIL 경합이 되살아나 격리의 의미가 없다.
@@ -574,7 +574,23 @@ class WorkerManager:
         payload = self._alert_payload()
         # 진입·청산은 **큐에서 꺼낸다.** 페이로드에서 읽으면 다음 동기화가 덮어써 사라진다.
         created, closed = self._drain_lifecycle()
-        lifecycle = {**payload, "created_position_ids": created, "closed_positions": closed}
+        # 큐만으로는 부족하다. 같은 동기화 핸들러를 대시보드도 부르고(`POST /api/live/positions/sync`),
+        # 그쪽이 먼저 닿으면 신규 판정이 브라우저로 가서 버려진다 — 워커는 그 포지션을 "기존"으로
+        # 보므로 **진입 알림이 영원히 안 난다.** 워커 재시작으로 메모리 큐가 날아가도 같다.
+        #
+        # 그래서 원장을 근거로 **빚을 회수한다**: 알림이 안 나간 열린 포지션은 다음 주기에 갚는다.
+        # 이벤트를 놓치는 것과 상태를 놓치는 것은 다르다 — 상태는 다시 읽으면 된다.
+        backfilled = await self._run_hook(
+            "backfill_open_alerts",
+            lambda: asyncio.to_thread(
+                service.positions_owing_open_alert,
+                max_age_minutes=int(self.settings.alert_open_backfill_window_minutes),
+                limit=int(self.settings.alert_open_backfill_limit),
+            ),
+            parent="deliver_alerts",
+        )
+        owed = [position_id for position_id in (backfilled or []) if position_id not in created]
+        lifecycle = {**payload, "created_position_ids": [*created, *owed], "closed_positions": closed}
         # WO-44: 진입/종료/판정 전이 — 라이프사이클이 1차 정보이므로 조건 알림보다 먼저.
         delivered = await self._run_hook("evaluate_lifecycle", lambda: self.alerts.evaluate_lifecycle(lifecycle), parent="deliver_alerts")
         if delivered is None and (created or closed):
@@ -607,6 +623,7 @@ class WorkerManager:
             "sync_stale": bool(payload.get("sync_stale")),
             "sync_age_seconds": payload.get("sync_age_seconds"),
             "lifecycle_delivered": len(created) + len(closed),
+            "lifecycle_backfilled": len(owed),
             "lifecycle_pending": len(self._pending_created) + len(self._pending_closed),
             "lifecycle_dropped": self._lifecycle_dropped,
         }
@@ -982,6 +999,14 @@ class WorkerManager:
             ),
             "evaluate_lifecycle": WorkerJob(
                 "evaluate_lifecycle",
+                self.settings.worker_sync_positions_interval_seconds,
+                None,
+                scheduled=False,
+            ),
+            # 진입 알림 빚 회수. 스케줄되지 않고 `_deliver_alerts` 안에서만 돈다 —
+            # 하트비트를 갖기 위해 잡으로 등록한다(훅도 기아·실패가 보여야 한다).
+            "backfill_open_alerts": WorkerJob(
+                "backfill_open_alerts",
                 self.settings.worker_sync_positions_interval_seconds,
                 None,
                 scheduled=False,
