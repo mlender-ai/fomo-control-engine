@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import random
 import zlib
+from functools import lru_cache
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -40,10 +41,41 @@ def bootstrap_ci_from_counts(
     iterations: int = 1000,
     confidence: float = 0.95,
 ) -> tuple[float, float] | None:
-    """(correct, tested) 카운트에서 승패 벡터를 복원해 CI를 산출한다."""
+    """(correct, tested) 카운트에서 승패 벡터를 복원해 CI를 산출한다.
+
+    ## 왜 캐시하는가 (2026-09-08)
+
+    차트 엔드포인트가 15.8초 걸려 프론트가 타임아웃하고 그것을 500 으로 바꿨다 —
+    화면에는 "차트 데이터를 불러올 수 없습니다 · API request failed: 500" 이 떴다.
+    프로파일 결과 28.4초 중 **25.6초가 이 함수**였고, `random.randrange` 가 4,623만 회
+    호출됐다. `chart_onchain_context` 가 지갑 리뷰 528건을 계산하며 각각 CI 를 새로 돌린다.
+
+    실측 호출 551회 중 **서로 다른 인자는 79개**다(중복 85.7%). `(30, 47)` 이 221회,
+    `(105, 226)` 이 125회 반복된다 — 같은 카운트를 같은 시드로 수백 번 다시 계산했다.
+
+    ## 값이 바뀌지 않는다
+
+    이 함수는 `(correct, tested, iterations, confidence)` 만의 **순수 결정론 함수**다.
+    승패 벡터를 `[True]*correct + [False]*(tested-correct)` 로 항상 같은 순서로 만들고,
+    시드는 그 시퀀스에서 `crc32` 로 파생된다(모듈 docstring). 같은 입력에 항상 같은 출력이므로
+    캐시는 **재계산만 없애고 판정값은 한 글자도 바꾸지 않는다.**
+
+    문턱을 낮추거나 리샘플 수를 줄이는 것이 아니다 — `iterations` 는 그대로 1000 이다.
+    """
     if tested <= 0:
         return None
     correct = max(0, min(tested, correct))
+    return _bootstrap_ci_cached(correct, tested, iterations, confidence)
+
+
+# 조합은 (correct, tested) 쌍이라 실제로 몇십 개다. 상한은 폭주 방지용이며 성능이 아니다.
+@lru_cache(maxsize=4096)
+def _bootstrap_ci_cached(
+    correct: int,
+    tested: int,
+    iterations: int,
+    confidence: float,
+) -> tuple[float, float] | None:
     wins = [True] * correct + [False] * (tested - correct)
     return bootstrap_win_ci(wins, iterations=iterations, confidence=confidence)
 
