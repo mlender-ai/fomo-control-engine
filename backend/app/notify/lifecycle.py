@@ -238,6 +238,7 @@ def pulse_candidate(
     pending_redelivery: list[dict[str, Any]] | None = None,
     unavailable: list[dict[str, Any]] | None = None,
     gap_lines: list[str] | None = None,
+    empty_note: str = "",
 ) -> AlertCandidate | None:
     """periodic_pulse — 보유 포지션 1줄 상태 묶음 1통. "전부 정상"도 발송 (침묵 ≠ 정상 증명).
 
@@ -254,7 +255,9 @@ def pulse_candidate(
         if unavailable or gap_lines:
             lines.append("관측 가능한 보유 포지션 없음.")
         else:
-            lines.append("보유 포지션 없음 — 감시 정상 동작 중입니다.")
+            # 사유가 없어도 출처는 댄다 — "감시 정상"만으로는 거래소 앱과의 어긋남을
+            # 사용자가 국소화할 수 없다(2026-09-09 2차 보고).
+            lines.append(f"보유 포지션 없음 ({empty_note}) — 감시 정상 동작 중입니다." if empty_note else "보유 포지션 없음 — 감시 정상 동작 중입니다.")
     for row in unavailable or []:
         # **열려 있는데 못 보고 있다.** 그 사실이 "전부 정상"보다 먼저 나와야 한다.
         lines.append(

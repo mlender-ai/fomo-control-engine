@@ -91,6 +91,42 @@ def can_assert_empty(payload: Mapping[str, Any], *, rendered: int | None = None)
     return not observation_gap_lines(payload, rendered=rendered)
 
 
+def empty_evidence_line(payload: Mapping[str, Any]) -> str:
+    """ "없음"의 **출처**. 근거를 대지 못하면 그 "없음"은 여전히 주장일 뿐이다.
+
+    2026-09-09 2차: 사유가 하나도 없는데도(동기화 성공·신선·원장 0건) 계좌에는 포지션이
+    열려 있는 경우가 남는다 — 거래소가 그 포지션을 **응답에 담지 않은** 경우다. 이때
+    `can_assert_empty` 는 참이고 화면은 "감시 정상"을 찍는다. 우리 쪽 판정은 옳지만
+    사용자가 보는 화면과는 어긋난다.
+
+    그 어긋남을 **한 줄로 국소화한다.** 거래소가 몇 건을 줬는지(어떤 productType 으로)와
+    원장이 몇 건인지를 함께 적으면, 거래소 앱에 포지션이 보이는데 여기가 0건이면 문제는
+    표시가 아니라 **거래소 조회**라는 것이 즉시 드러난다(계정 유형·productType 불일치).
+    """
+    parts: list[str] = []
+    synced = _int_or_none(payload.get("synced"))
+    if synced is not None:
+        product = str(payload.get("product_type") or "").strip()
+        parts.append(f"거래소 {escape(product)} {synced}건" if product else f"거래소 {synced}건")
+    open_count = _int_or_none(payload.get("open_count"))
+    if open_count is not None:
+        parts.append(f"원장 {open_count}건")
+    age = _age_phrase(payload.get("sync_age_seconds"))
+    if age:
+        parts.append(age)
+    return " · ".join(parts)
+
+
+def _age_phrase(value: Any) -> str:
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        return ""
+    if seconds < 90:
+        return "방금 동기화"
+    return f"동기화 {seconds / 60:.0f}분 전"
+
+
 def ledger_fallback_lines(rows: list[Mapping[str, Any]]) -> list[str]:
     """원장 행만으로 만든 대체 목록. **네트워크를 타지 않는 값만 쓴다.**
 

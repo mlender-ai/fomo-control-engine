@@ -6,7 +6,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from app.notify.bot.callbacks import encode_callback
-from app.notify.position_visibility import observation_gap_lines
+from app.notify.position_visibility import empty_evidence_line, observation_gap_lines
 
 TELEGRAM_LIMIT = 4096
 DISPLAY_TIMEZONE = ZoneInfo("Asia/Seoul")
@@ -242,7 +242,10 @@ def format_positions_summary(payload: dict[str, Any]) -> str:
         if gap:
             # **"없다"고 말하지 않는다.** 못 본 것과 없는 것은 다르다.
             return "\n".join(["<b>열린 포지션 판정 불가</b>", *gap])
-        return "열린 포지션이 없습니다."
+        # 사유가 없어도 **출처는 댄다.** 거래소 앱엔 보이는데 여기가 0건이면, 문제는
+        # 표시가 아니라 거래소 조회라는 사실이 이 한 줄에서 드러난다.
+        evidence = empty_evidence_line(payload)
+        return f"열린 포지션이 없습니다. ({evidence})" if evidence else "열린 포지션이 없습니다."
     lines = ["<b>라이브 포지션</b>", f"기준 {_time(payload.get('timestamp'))}", ""]
     for item in positions:
         position = _position(item)

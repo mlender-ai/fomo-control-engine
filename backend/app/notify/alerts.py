@@ -30,6 +30,7 @@ from app.notify.lifecycle import (
 )
 from app.notify.position_visibility import (
     can_assert_empty,
+    empty_evidence_line,
     ledger_fallback_lines,
     observation_gap_lines,
 )
@@ -232,6 +233,7 @@ class AlertEngine:
             pending_redelivery=self.state.pending_redelivery,
             unavailable=unavailable,
             gap_lines=gap_lines,
+            empty_note=empty_evidence_line(sync_payload),
         )
         if candidate is None:
             return 0

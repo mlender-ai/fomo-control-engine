@@ -646,6 +646,9 @@ def _sync_bitget_positions() -> dict:
     return {
         "provider": "bitget",
         "status": "ok",
+        # **어떤 productType 으로 물었는지**가 없으면 "거래소가 0건을 줬다"를 해석할 수 없다.
+        # 계정 유형 변경(classic→통합)·마진코인 불일치가 정확히 이 자리에서 0건을 만든다.
+        "product_type": getattr(market_provider, "product_type", ""),
         "synced": len(exchange_positions),
         "created": created,
         "updated": updated,

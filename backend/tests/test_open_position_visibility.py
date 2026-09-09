@@ -331,9 +331,47 @@ def test_pulse_does_not_say_all_normal_over_a_gap() -> None:
 
 def test_healthy_empty_payload_still_says_no_positions() -> None:
     """오탐 금지. 이 문구가 사라지면 이번엔 반대 방향으로 거짓말을 하는 것이다."""
-    text = format_positions_summary({"positions": [], "open_count": 0, "status": "ok", "sync_stale": False})
+    text = format_positions_summary({"positions": [], "open_count": 0, "status": "ok", "sync_stale": False, "synced": 0, "product_type": "USDT-FUTURES"})
 
-    assert text == NONE_CLAIM
+    assert text.startswith(NONE_CLAIM)
+    assert "판정 불가" not in text
+
+
+# ── 2차 보고: 사유가 없어도 **출처**는 댄다 ─────────────────────────────
+
+
+def test_no_positions_claim_carries_its_source() -> None:
+    """거래소 앱엔 포지션이 보이는데 여기가 0건이면, 문제는 표시가 아니라 거래소 조회다.
+
+    사용자 2차 보고(2026-09-09 13:16 펄스): "여전히 없다고 나오는데 뭔소리야."
+    동기화가 성공하고 원장도 0건이면 1차 수리의 사유 줄은 하나도 뜨지 않는다 — 우리 판정은
+    옳지만 화면과 계좌가 어긋난 사실은 여전히 감춰진다. 출처를 적어 그 어긋남을 국소화한다.
+    """
+    text = format_positions_summary({"positions": [], "open_count": 0, "status": "ok", "synced": 0, "product_type": "USDT-FUTURES", "sync_age_seconds": 240})
+
+    assert text.startswith(NONE_CLAIM)
+    assert "거래소 USDT-FUTURES 0건" in text, "거래소가 몇 건을 줬는지가 없으면 해석이 안 된다"
+    assert "원장 0건" in text
+    assert "동기화 4분 전" in text
+
+
+def test_pulse_empty_note_localises_the_mismatch() -> None:
+    """ "감시 정상"만으로는 사용자가 어디를 볼지 알 수 없다."""
+    candidate = pulse_candidate([], empty_note="거래소 USDT-FUTURES 0건 · 원장 0건")
+
+    assert candidate is not None
+    assert "거래소 USDT-FUTURES 0건" in candidate.message
+    assert "감시 정상 동작 중입니다" in candidate.message, "정상 판정 자체는 유지된다"
+
+
+def test_sync_result_reports_the_product_type_it_queried() -> None:
+    """0건의 해석은 productType 없이는 불가능하다 — 계정 유형 변경이 여기서 0건을 만든다."""
+    from pathlib import Path as _Path
+
+    source = (_Path(__file__).resolve().parents[1] / "app/services/http_handlers.py").read_text(encoding="utf-8")
+    block = source.split("def _sync_bitget_positions")[1].split("\ndef ")[0]
+
+    assert '"product_type"' in block
 
 
 def test_healthy_list_has_no_gap_footer() -> None:
