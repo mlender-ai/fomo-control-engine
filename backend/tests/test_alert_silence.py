@@ -83,19 +83,20 @@ def test_alert_job_does_not_call_the_sync_runner() -> None:
 class _Manager:
     """`_alert_payload` 만 흉내낸다 — 워커 전체를 세우지 않고 계약을 검사한다."""
 
-    def __init__(self, settings, payload, last_sync_at) -> None:
+    def __init__(self, settings, payload, last_sync_at, last_sync_failed=False) -> None:
         self.settings = settings
         self._last_sync_payload = payload
         self._last_sync_at = last_sync_at
+        self._last_sync_failed = last_sync_failed
 
     _alert_payload = None  # 아래에서 실제 구현을 붙인다
 
 
-def _payload_for(payload, last_sync_at):
+def _payload_for(payload, last_sync_at, last_sync_failed=False):
     from app.core.config import Settings
     from app.worker.manager import WorkerManager
 
-    manager = _Manager(Settings(), payload, last_sync_at)
+    manager = _Manager(Settings(), payload, last_sync_at, last_sync_failed)
     return WorkerManager._alert_payload(manager)
 
 

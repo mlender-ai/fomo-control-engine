@@ -6,6 +6,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from app.notify.bot.callbacks import encode_callback
+from app.notify.position_visibility import observation_gap_lines
 
 TELEGRAM_LIMIT = 4096
 DISPLAY_TIMEZONE = ZoneInfo("Asia/Seoul")
@@ -229,8 +230,18 @@ def format_entry_intents(payload: dict[str, Any]) -> str:
 
 
 def format_positions_summary(payload: dict[str, Any]) -> str:
-    positions = payload.get("positions", [])
+    """라이브 포지션 요약. **빈 목록을 근거 없이 "없음"으로 읽지 않는다.**
+
+    2026-09-09: 이 함수가 열린 포지션 위에서 "열린 포지션이 없습니다."를 찍었다.
+    동기화 실패·낡음·관측 실패가 모두 같은 빈 리스트로 도착하는데 그 사유를
+    한 번도 읽지 않았기 때문이다. 판정은 `position_visibility` 가 만든다.
+    """
+    positions = payload.get("positions", []) or []
+    gap = observation_gap_lines(payload, rendered=len(positions))
     if not positions:
+        if gap:
+            # **"없다"고 말하지 않는다.** 못 본 것과 없는 것은 다르다.
+            return "\n".join(["<b>열린 포지션 판정 불가</b>", *gap])
         return "열린 포지션이 없습니다."
     lines = ["<b>라이브 포지션</b>", f"기준 {_time(payload.get('timestamp'))}", ""]
     for item in positions:
@@ -243,6 +254,9 @@ def format_positions_summary(payload: dict[str, Any]) -> str:
             f"PnL {_signed_pct(state.get('pnl_percent'))} · 건강도 {state.get('health_score', '-')}/100"
         )
         lines.append(f"→ {escape(_compact(headline, 90))}")
+    if gap:
+        # 일부만 보였을 때도 그 사실이 목록과 **함께** 가야 한다.
+        lines.extend(["", *gap])
     return "\n".join(lines)
 
 

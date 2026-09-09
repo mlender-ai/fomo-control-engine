@@ -891,9 +891,28 @@ def _merge_bitget_position(position: Position, exchange_position: BitgetPosition
 def list_live_positions(compact: bool = False) -> dict:
     all_positions = repository.list_positions()
     positions = [position for position in all_positions if position.status == PositionStatus.open]
+    # 한 심볼의 분석 실패가 **목록 전체를 삼키면 안 된다.** 리스트 컴프리헨션 안에서
+    # `HTTPException` 이 그대로 올라오면 `/positions` 응답 자체가 사라지고, 그 침묵은
+    # "포지션 없음"과 구분되지 않는다(2026-09-09). `sync_live_positions` 와 같은 규약으로
+    # 빠진 포지션을 셈에 남긴다 — `open_count` 와의 차이가 곧 관측 공백이다.
+    analyzed: list[dict] = []
+    unavailable: list[dict[str, str]] = []
+    for position in positions:
+        try:
+            analyzed.append(_cached_live_position_payload(position) if compact else _live_position_payload(position, store_snapshot=False))
+        except HTTPException as exc:
+            unavailable.append(
+                {
+                    "id": str(position.id),
+                    "symbol": position.symbol,
+                    "reason": str(getattr(exc, "detail", "") or exc.__class__.__name__)[:200],
+                }
+            )
     return {
         "provider": _provider_name(),
-        "positions": [_cached_live_position_payload(position) if compact else _live_position_payload(position, store_snapshot=False) for position in positions],
+        "positions": analyzed,
+        "positions_unavailable": unavailable,
+        "positions_unavailable_count": len(unavailable),
         "open_count": len(positions),
         "needs_exit_record_count": len(
             [

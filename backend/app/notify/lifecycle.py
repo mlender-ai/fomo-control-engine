@@ -237,15 +237,24 @@ def pulse_candidate(
     paper: dict[str, Any] | None = None,
     pending_redelivery: list[dict[str, Any]] | None = None,
     unavailable: list[dict[str, Any]] | None = None,
+    gap_lines: list[str] | None = None,
 ) -> AlertCandidate | None:
     """periodic_pulse — 보유 포지션 1줄 상태 묶음 1통. "전부 정상"도 발송 (침묵 ≠ 정상 증명).
 
     `unavailable` 은 **분석 실패로 관측에서 빠진** 포지션이다. 이것을 싣지 않으면
     "보유 포지션 없음 — 감시 정상"이 열린 포지션 위에서 찍힌다 — 침묵이 정상으로 위장된다.
+
+    `gap_lines` 는 같은 위장의 나머지 절반이다(2026-09-09). 동기화가 **죽거나 낡으면**
+    포지션 목록은 그냥 빈 리스트로 도착하고, `unavailable` 도 비어 있다 — 그러면 이 함수는
+    열린 포지션 위에서 "감시 정상"을 찍었다. 판정은 `position_visibility` 가 만든다.
     """
     lines = [f"📡 <b>{RULE_LABELS['periodic_pulse']}</b> · 기준 {_time(datetime.now(timezone.utc))}"]
+    lines.extend(gap_lines or [])
     if not contexts:
-        lines.append("보유 포지션 없음 — 감시 정상 동작 중입니다." if not unavailable else "관측 가능한 보유 포지션 없음.")
+        if unavailable or gap_lines:
+            lines.append("관측 가능한 보유 포지션 없음.")
+        else:
+            lines.append("보유 포지션 없음 — 감시 정상 동작 중입니다.")
     for row in unavailable or []:
         # **열려 있는데 못 보고 있다.** 그 사실이 "전부 정상"보다 먼저 나와야 한다.
         lines.append(
@@ -267,7 +276,8 @@ def pulse_candidate(
             f"{_signed_pct(state.get('pnl_percent'))} · 판정 {VERDICT_LABELS.get(verdict, verdict)} · "
             f"{_counts_line(one_liners)}"
         )
-    if contexts and all_normal:
+    if contexts and all_normal and not (unavailable or gap_lines):
+        # 공백 위에서는 "전부"라고 쓰지 않는다 — 본 것만 정상이지 전부가 아니다.
         lines.append("전부 정상 · 변화 없음")
     tracked_items: list[dict[str, Any]] = []
     tracked_symbols: set[str] = set()

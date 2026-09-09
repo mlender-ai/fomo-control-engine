@@ -215,6 +215,7 @@ class WorkerManager:
         # 이것을 들고 돌며, 낡았으면 낡았다고 알린다.
         self._last_sync_payload: dict[str, Any] | None = None
         self._last_sync_at: datetime | None = None
+        self._last_sync_failed = False
         # 진입·청산은 **누적한다.** 페이로드에 얹어 두면 다음 동기화가 통째로 덮어써
         # 알림 잡이 한 틱만 늦어도 사라진다 — `sync_positions` 는 90초마다 돌면서 대부분
         # 빈 목록을 반환하므로 그 손실은 예외가 아니라 흔한 경우다.
@@ -523,12 +524,17 @@ class WorkerManager:
         sync_job = self.jobs["sync_and_analyze"]
         payload = await self._run_hook("sync_and_analyze", sync_job.runner, parent="sync_positions") if sync_job.runner else None
         if not isinstance(payload, dict):
+            # **실패한 주기가 직전 성공 결과를 지우면 안 된다.** 지우면 알림 경로가 그 빈
+            # 리스트를 "포지션 없음"으로 읽는다 — 계좌에 포지션이 열려 있는데도(2026-09-09).
+            # 마지막 성공 스냅샷은 남기고, 실패했다는 사실만 따로 실어 보낸다.
+            self._last_sync_failed = True
             payload = {"positions": [], "sync_failed": True}
         else:
+            self._last_sync_failed = False
             self._last_sync_at = datetime.now(timezone.utc)
-        self._last_sync_payload = payload
-        # **덮어쓰지 않고 쌓는다.** 알림 잡이 가져갈 때까지 남아 있어야 한다.
-        self._queue_lifecycle(payload)
+            self._last_sync_payload = payload
+            # **덮어쓰지 않고 쌓는다.** 알림 잡이 가져갈 때까지 남아 있어야 한다.
+            self._queue_lifecycle(payload)
         await self._run_hook("detect_closures", lambda: asyncio.to_thread(service.detect_closures), parent="sync_positions")
         paper_result = await self._run_hook("paper_engine", lambda: asyncio.to_thread(service.run_paper_engine), parent="sync_positions")
         if isinstance(paper_result, dict):
@@ -548,6 +554,9 @@ class WorkerManager:
         경로가 사라진다(3-1 항목 2).
         """
         payload = dict(self._last_sync_payload or {"positions": [], "sync_failed": True})
+        if self._last_sync_failed:
+            payload["sync_failed"] = True
+            payload["sync_failed_note"] = "아래 값은 마지막 성공 시점 기준이다"
         if self._last_sync_at is None:
             payload["sync_age_seconds"] = None
             payload["sync_stale"] = True
