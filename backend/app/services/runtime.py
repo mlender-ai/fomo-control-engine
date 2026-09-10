@@ -910,6 +910,52 @@ def positions_owing_open_alert(*, max_age_minutes: int, limit: int = 10) -> list
     return owing
 
 
+def positions_owing_close_alert(*, max_age_minutes: int, limit: int = 10) -> list[dict[str, Any]]:
+    """종료 알림이 아직 안 나간 **닫힌** 포지션. `positions_owing_open_alert` 의 대칭.
+
+    ## 왜 진입만으로는 부족했나 (2026-09-10)
+
+    진입은 빚으로 회수하게 만들었지만(`WO-FCE-ALERT-SILENCE-01` 후속) **종료는 그대로였다.**
+    그래서 같은 손실 창이 종료 쪽에 그대로 남아 있었다:
+
+    ```
+    브라우저 sync → 확정 틱 충족 → 포지션 닫힘 → closed_positions 가 브라우저로 감 → 버려짐
+    워커  sync   → 이미 closed → 부재 목록에 없음 → 알릴 것이 없다
+    ```
+
+    **포지션을 정리한 직후 화면을 새로고침하는 것은 트레이더의 기본 동작이다.** 대시보드의
+    수동 새로고침과 커맨드 팔레트가 같은 핸들러를 부르므로, 그 클릭 하나가 종료 알림을
+    영구히 삼켰다. 재기동해도 오지 않는다 — 잃은 것이 상태가 아니라 이벤트이기 때문이다.
+
+    "이 포지션에 종료 알림을 보냈는가"는 원장에 있는 **상태**다. 안 보냈으면 빚이다.
+
+    상한 둘은 진입과 같은 이유다 — 배포 직후 며칠 전 종료분이 한꺼번에 울리지 않게 하고,
+    한 주기에 갚는 개수를 묶는다.
+    """
+    if max_age_minutes <= 0 or limit <= 0:
+        return []
+    cutoff = utc_now() - timedelta(minutes=max_age_minutes)
+    owing: list[dict[str, Any]] = []
+    for status in (PositionStatus.closed, PositionStatus.needs_exit_record):
+        for position in runtime.repository.list_positions(status):
+            closed_at = position.closed_at
+            if closed_at is None:
+                continue
+            # 시간대 없는 값이 올라오면 비교가 TypeError 로 터지고 그 예외가 알림 잡을 죽인다 —
+            # 알림을 살리려는 코드가 알림을 죽이면 안 된다(진입 쪽과 같은 방어).
+            if closed_at.tzinfo is None:
+                closed_at = closed_at.replace(tzinfo=timezone.utc)
+            if closed_at < cutoff:
+                continue
+            already = any(record.rule_id == "position_closed" for record in runtime.repository.list_alerts(position.id, limit=50))
+            if already:
+                continue
+            owing.append({"position": position.model_dump(mode="json"), "trade": None})
+            if len(owing) >= limit:
+                return owing
+    return owing
+
+
 def create_position_insight(position_id: UUID, *, auto_generated: bool = False) -> dict[str, Any]:
     position = runtime.repository.get_position(position_id)
     if position is None:

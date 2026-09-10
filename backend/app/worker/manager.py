@@ -154,9 +154,12 @@ _LIFECYCLE_QUEUE_MAX = 500
 _HOOK_SHARES = {
     # sync_and_analyze · detect_closures · paper_engine
     "sync_positions": 3,
-    # evaluate_lifecycle · evaluate_alerts · evaluate_structure_context ·
-    # evaluate_performance_alerts · periodic_pulse · daily_summary
-    "deliver_alerts": 7,
+    # backfill_open_alerts · backfill_close_alerts · evaluate_lifecycle · evaluate_alerts ·
+    # evaluate_structure_context · evaluate_performance_alerts · periodic_pulse · daily_summary
+    #
+    # 2026-09-10 에 `backfill_close_alerts` 가 늘어 7 → 8 이 됐다. 훅이 늘면 각 몫은
+    # **작아진다** — 그것이 이 표의 의미다. 실측상 알림 훅은 평균 0~1초이므로 여유가 있다.
+    "deliver_alerts": 8,
 }
 
 # 전용 풀 크기. 작게 둔다 — 크게 잡으면 GIL 경합이 되살아나 격리의 의미가 없다.
@@ -599,7 +602,26 @@ class WorkerManager:
             parent="deliver_alerts",
         )
         owed = [position_id for position_id in (backfilled or []) if position_id not in created]
-        lifecycle = {**payload, "created_position_ids": [*created, *owed], "closed_positions": closed}
+        # 종료도 같은 창으로 새는데 회수가 없었다(2026-09-10). 포지션을 정리한 **직후 화면을
+        # 새로고침하면** 그 클릭이 확정 틱을 채워 포지션을 닫고 `closed_positions` 를 가져가
+        # 버린다 — 워커는 그 포지션을 "이미 닫힘"으로 보므로 알릴 것이 없다. 진입만 빚으로
+        # 다루고 종료를 이벤트로 남겨두면 손실 창이 절반만 닫힌다.
+        closed_backfilled = await self._run_hook(
+            "backfill_close_alerts",
+            lambda: asyncio.to_thread(
+                service.positions_owing_close_alert,
+                max_age_minutes=int(self.settings.alert_open_backfill_window_minutes),
+                limit=int(self.settings.alert_open_backfill_limit),
+            ),
+            parent="deliver_alerts",
+        )
+        queued_ids = {str((item.get("position") or {}).get("id")) for item in closed if isinstance(item, dict)}
+        owed_closed = [item for item in (closed_backfilled or []) if str((item.get("position") or {}).get("id")) not in queued_ids]
+        lifecycle = {
+            **payload,
+            "created_position_ids": [*created, *owed],
+            "closed_positions": [*closed, *owed_closed],
+        }
         # WO-44: 진입/종료/판정 전이 — 라이프사이클이 1차 정보이므로 조건 알림보다 먼저.
         delivered = await self._run_hook("evaluate_lifecycle", lambda: self.alerts.evaluate_lifecycle(lifecycle), parent="deliver_alerts")
         if delivered is None and (created or closed):
@@ -1016,6 +1038,13 @@ class WorkerManager:
             # 하트비트를 갖기 위해 잡으로 등록한다(훅도 기아·실패가 보여야 한다).
             "backfill_open_alerts": WorkerJob(
                 "backfill_open_alerts",
+                self.settings.worker_sync_positions_interval_seconds,
+                None,
+                scheduled=False,
+            ),
+            # 종료 빚 회수. 진입과 같은 창·같은 상한을 쓴다 — 문턱을 새로 만들지 않는다.
+            "backfill_close_alerts": WorkerJob(
+                "backfill_close_alerts",
                 self.settings.worker_sync_positions_interval_seconds,
                 None,
                 scheduled=False,
