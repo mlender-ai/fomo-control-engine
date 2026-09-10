@@ -782,6 +782,15 @@ def list_open_position_refs() -> list[dict[str, Any]]:
     return [{"id": position.id, "symbol": position.symbol} for position in runtime.repository.list_positions(PositionStatus.open)]
 
 
+def open_positions_ledger() -> list[dict[str, Any]]:
+    """열린 포지션의 **원장 행**. `minimal_position_payload` 와 같은 이유로 네트워크를 안 탄다.
+
+    동기화가 죽었을 때 알림이 "열린 포지션이 없습니다"라고 말하는 대신 **가진 것을 말하게**
+    하려고 쓴다(2026-09-09 사건). 관측값(현재가·판정)은 없다 — 없는 것을 지어내지 않는다.
+    """
+    return [position.model_dump(mode="json") for position in runtime.repository.list_positions(PositionStatus.open)]
+
+
 def cached_live_position_detail(position_id: UUID) -> dict[str, Any]:
     position = runtime.repository.get_position(position_id)
     if position is None:

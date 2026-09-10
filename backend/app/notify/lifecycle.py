@@ -237,41 +237,27 @@ def pulse_candidate(
     paper: dict[str, Any] | None = None,
     pending_redelivery: list[dict[str, Any]] | None = None,
     unavailable: list[dict[str, Any]] | None = None,
-    sync_unknown: str | None = None,
+    gap_lines: list[str] | None = None,
+    empty_note: str = "",
 ) -> AlertCandidate | None:
     """periodic_pulse — 보유 포지션 1줄 상태 묶음 1통. "전부 정상"도 발송 (침묵 ≠ 정상 증명).
 
     `unavailable` 은 **분석 실패로 관측에서 빠진** 포지션이다. 이것을 싣지 않으면
     "보유 포지션 없음 — 감시 정상"이 열린 포지션 위에서 찍힌다 — 침묵이 정상으로 위장된다.
 
-    `sync_unknown` 은 **동기화 자체가 실패했거나 아직 없다**는 사유다. 이때 "없음"은 거짓이다 —
-    포지션이 없는 것이 아니라 **아직 모르는 것**이다.
-
-    ## 2026-09-10
-
-    사용자가 포지션 2개를 보유한 상태에서 이 펄스를 받았다:
-
-        📡 정기 상태 펄스 · 기준 09-10 23:03
-        보유 포지션 없음 — 감시 정상 동작 중입니다.
-
-    1분 뒤 같은 워커가 그 두 포지션의 진입 알림을 보냈다. 재기동 직후 `sync_positions` 가
-    아직 한 번도 성공하지 않은 시점이었고 원장이 비어 있었다 — 그 공백을 "없음"으로,
-    그리고 **"감시 정상"으로** 썼다.
-
-    `unavailable` 은 "열려 있는데 분석 실패"만 잡는다. 동기화가 아예 안 돈 경우는 원장이
-    비어 있어 `contexts` 도 `unavailable` 도 빈다 — 가장 모르는 상태가 가장 정상으로 보였다.
-    상단 바에서 "워커 정상 · 마지막 sync 성공 이력 없음"을 고친 것과 같은 모순이다.
+    `gap_lines` 는 같은 위장의 나머지 절반이다(2026-09-09). 동기화가 **죽거나 낡으면**
+    포지션 목록은 그냥 빈 리스트로 도착하고, `unavailable` 도 비어 있다 — 그러면 이 함수는
+    열린 포지션 위에서 "감시 정상"을 찍었다. 판정은 `position_visibility` 가 만든다.
     """
     lines = [f"📡 <b>{RULE_LABELS['periodic_pulse']}</b> · 기준 {_time(datetime.now(timezone.utc))}"]
+    lines.extend(gap_lines or [])
     if not contexts:
-        if sync_unknown:
-            # **모름을 없음으로 쓰지 않는다.** 여기서 "정상"이라고 쓰면 사용자가 화면을
-            # 열어볼 이유를 잃는다 — 그것이 이 펄스가 존재하는 목적과 정반대다.
-            lines.append(f"⚠️ 보유 포지션 <b>미상</b> — {escape(sync_unknown)}. 없다는 뜻이 아니다.")
-        elif unavailable:
+        if unavailable or gap_lines:
             lines.append("관측 가능한 보유 포지션 없음.")
         else:
-            lines.append("보유 포지션 없음 — 감시 정상 동작 중입니다.")
+            # 사유가 없어도 출처는 댄다 — "감시 정상"만으로는 거래소 앱과의 어긋남을
+            # 사용자가 국소화할 수 없다(2026-09-09 2차 보고).
+            lines.append(f"보유 포지션 없음 ({empty_note}) — 감시 정상 동작 중입니다." if empty_note else "보유 포지션 없음 — 감시 정상 동작 중입니다.")
     for row in unavailable or []:
         # **열려 있는데 못 보고 있다.** 그 사실이 "전부 정상"보다 먼저 나와야 한다.
         lines.append(
@@ -293,7 +279,8 @@ def pulse_candidate(
             f"{_signed_pct(state.get('pnl_percent'))} · 판정 {VERDICT_LABELS.get(verdict, verdict)} · "
             f"{_counts_line(one_liners)}"
         )
-    if contexts and all_normal:
+    if contexts and all_normal and not (unavailable or gap_lines):
+        # 공백 위에서는 "전부"라고 쓰지 않는다 — 본 것만 정상이지 전부가 아니다.
         lines.append("전부 정상 · 변화 없음")
     tracked_items: list[dict[str, Any]] = []
     tracked_symbols: set[str] = set()

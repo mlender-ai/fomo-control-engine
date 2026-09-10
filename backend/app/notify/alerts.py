@@ -28,6 +28,12 @@ from app.notify.lifecycle import (
     pulse_candidate,
     transition_candidates,
 )
+from app.notify.position_visibility import (
+    can_assert_empty,
+    empty_evidence_line,
+    ledger_fallback_lines,
+    observation_gap_lines,
+)
 from app.notify.rules import (
     RULE_LABELS,
     AlertCandidate,
@@ -207,6 +213,8 @@ class AlertEngine:
             contexts.append(await self._alert_context(payload))
         # 분석 실패로 관측에서 빠진 포지션. 싣지 않으면 "전부 정상"이 그 위에 찍힌다.
         unavailable = [item for item in (sync_payload.get("positions_unavailable") or []) if isinstance(item, dict)]
+        # 동기화가 죽거나 낡으면 목록은 그냥 비어서 온다 — 그 위에 "감시 정상"을 찍지 않는다.
+        gap_lines = observation_gap_lines(sync_payload, rendered=len(contexts))
         tracked: list[dict[str, Any]] = []
         try:
             scout_payload = await asyncio.to_thread(service.scout_scan, 100)
@@ -224,7 +232,8 @@ class AlertEngine:
             paper=paper,
             pending_redelivery=self.state.pending_redelivery,
             unavailable=unavailable,
-            sync_unknown=_sync_unknown_reason(sync_payload),
+            gap_lines=gap_lines,
+            empty_note=empty_evidence_line(sync_payload),
         )
         if candidate is None:
             return 0
@@ -351,7 +360,7 @@ class AlertEngine:
         else:
             lines.append("억제된 알림은 없습니다.")
         lines.append("")
-        lines.append(format_positions_summary(payload))
+        lines.append(await self._positions_block(payload))
         # WO-FCE-DAILY-REPORT-01 3-3 항목 4: **두 개를 보내지 않는다.**
         #
         # `performance_lines`(PERFORMANCE-REPORT-01 §2-1)와 5트랙 리포트가 겹친다 — 둘 다
@@ -401,6 +410,25 @@ class AlertEngine:
             self.state.suppressed_alerts.clear()
             self.state.last_summary_date = date_key
         return count
+
+    async def _positions_block(self, payload: dict[str, Any]) -> str:
+        """일일 요약의 포지션 블록. **못 본 것을 없는 것으로 적지 않는다.**
+
+        2026-09-09: 이 자리에 "열린 포지션이 없습니다."가 열린 포지션 위에서 찍혔다.
+        `format_positions_summary` 가 사유를 읽게 고쳤고, 여기서는 한 걸음 더 간다 —
+        단정할 수 없으면 **원장을 직접 읽어** 가진 것을 적는다. 원장 조회는 DB 한 번이고
+        네트워크를 타지 않으므로, 동기화를 죽인 그 원인으로 같이 죽지 않는다.
+        """
+        text = format_positions_summary(payload)
+        positions = payload.get("positions") or []
+        if positions or can_assert_empty(payload, rendered=len(positions)):
+            return text
+        try:
+            rows = await asyncio.to_thread(service.open_positions_ledger)
+        except Exception:
+            logger.exception("notify.daily_summary.ledger_fallback_failed")
+            return f"{text}\n원장 조회도 실패했다 — 포지션 상태 미상."
+        return "\n".join([text, "", *ledger_fallback_lines(rows)])
 
     def _daily_report_lines(self) -> list[str]:
         """5트랙 계좌 리포트 (WO-FCE-DAILY-REPORT-01).
@@ -1145,18 +1173,3 @@ def _parse_iso(value: Any) -> datetime | None:
     except (TypeError, ValueError):
         return None
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
-
-
-def _sync_unknown_reason(sync_payload: dict[str, Any]) -> str | None:
-    """포지션 원장이 빈 것이 **없음**인지 **모름**인지 가른다.
-
-    동기화가 실패했거나 아직 없거나 낡았으면 빈 원장은 "포지션 0건"의 근거가 못 된다.
-    `_alert_payload` 가 이미 실어 보내는 값을 읽는다 — 새 문턱을 만들지 않는다.
-    """
-    if sync_payload.get("sync_failed"):
-        return "포지션 동기화 실패 — 원장을 신뢰할 수 없다"
-    if sync_payload.get("sync_age_seconds") is None:
-        return str(sync_payload.get("sync_stale_note") or "동기화 결과가 아직 없다")
-    if sync_payload.get("sync_stale"):
-        return str(sync_payload.get("sync_stale_note") or "포지션 동기화가 낡았다")
-    return None
