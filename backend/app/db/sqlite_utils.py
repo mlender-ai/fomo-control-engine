@@ -142,6 +142,8 @@ class TimedSQLiteConnection(sqlite3.Connection):
 
 def _caller_outside_db_layer() -> str:
     """락을 요구한 **호출부**를 찾는다. DB 계층 프레임은 건너뛴다 — 그건 항상 같다."""
+    # 진단이 쓰기를 막으면 안 되므로 좁게 잡는다. 광범위 `except` 는 래칫 대상이고,
+    # 여기서 실제로 날 수 있는 것은 프레임 속성 접근·문자열 분해 실패뿐이다.
     try:
         for frame in traceback.extract_stack()[::-1]:
             name = frame.filename.replace("\\", "/")
@@ -150,8 +152,8 @@ def _caller_outside_db_layer() -> str:
             if "/app/" not in name:
                 continue
             return f"{name.split('/app/', 1)[1]}:{frame.lineno} {frame.name}"
-    except Exception:  # noqa: BLE001 — 진단이 실패해도 쓰기를 막지 않는다
-        pass
+    except (AttributeError, IndexError, ValueError):
+        return "미상"
     return "미상"
 
 
