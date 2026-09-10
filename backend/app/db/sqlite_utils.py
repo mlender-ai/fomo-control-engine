@@ -4,12 +4,53 @@ import logging
 import sqlite3
 import threading
 import time
+import traceback
 from pathlib import Path
 from typing import Any
 
 
 SQLITE_WRITE_LOCK = threading.RLock()
 logger = logging.getLogger(__name__)
+
+# 전역 쓰기 락 대기 상한. **무한 대기를 금지한다.**
+#
+# ## 2026-09-10 침묵 (16시간)
+#
+# `SQLITE_WRITE_LOCK.acquire()` 에 타임아웃이 없었다. 그래서 대량 쓰기 하나가 락을 잡으면
+# 나머지 스레드가 **영원히** 기다렸고, 매달린 채 아무 흔적도 남기지 않다가 워커 잡
+# 타임아웃(450초)으로 죽었다. faulthandler 덤프가 그 모양을 그대로 보여줬다:
+#
+#   보유: executemany → trade_cache.store_fills → refresh_derivative_data
+#   대기: 5개 스레드 (`_acquire_write_lock`) ← 알림 경로 포함
+#
+# 죽은 잡: sync_positions · deliver_alerts (둘 다 "timeout after 450s").
+# 알림을 `sync_positions` 에서 분리했지만(ALERT-SILENCE-01 3-1) **분리된 잡도 같은 락에서
+# 죽었다.** 분리는 부모 예산 문제를 풀었고 이것은 다른 문제다.
+#
+# 상한을 걸면 그 쓰기가 실패한다. 그러나 **캐시 쓰기 하나를 잃는 것이 알림 전체를 잃는 것보다
+# 낫다** — 매달림은 조용하고, 실패는 로그를 남긴다.
+WRITE_LOCK_TIMEOUT_SECONDS = 30.0
+
+# 대기가 이 시간을 넘으면 경고한다. 치명적이 되기 **전에** 경합이 보여야 한다.
+WRITE_LOCK_WARN_SECONDS = 3.0
+
+# 진단 전용. 락을 보호하지 않으며 근사값이어도 된다 — 없는 것보다 낫다.
+# 지난 침묵에서 "누가 잡고 있었나"에 답할 수 있는 것이 덤프뿐이었고, 덤프는 워커가
+# 매달려 supervisor 가 kill 할 때만 남는다.
+_WRITE_LOCK_HOLDER: dict[str, Any] = {}
+
+
+class SQLiteWriteLockTimeout(sqlite3.OperationalError):
+    """전역 쓰기 락을 제한 시간 안에 얻지 못했다.
+
+    `sqlite3.OperationalError` 를 상속한다 — 기존 `except sqlite3.Error` 경로가 그대로
+    받아서 DB 오류처럼 처리한다. 알 수 없는 예외로 터뜨려 상위를 놀래지 않는다.
+    """
+
+
+def write_lock_holder() -> dict[str, Any]:
+    """현재 락 보유자 정보 (진단용 사본)."""
+    return dict(_WRITE_LOCK_HOLDER)
 
 
 class TimedSQLiteConnection(sqlite3.Connection):
@@ -65,14 +106,53 @@ class TimedSQLiteConnection(sqlite3.Connection):
     def _acquire_write_lock(self) -> None:
         if self._fce_write_lock_acquired:
             return
-        SQLITE_WRITE_LOCK.acquire()
+        started = time.monotonic()
+        if not SQLITE_WRITE_LOCK.acquire(timeout=WRITE_LOCK_TIMEOUT_SECONDS):
+            waited = time.monotonic() - started
+            holder = dict(_WRITE_LOCK_HOLDER)
+            logger.warning(
+                "sqlite write lock timeout after %.1fs — holder=%s",
+                waited,
+                holder or "미상",
+            )
+            raise SQLiteWriteLockTimeout(
+                f"전역 쓰기 락을 {waited:.1f}초 안에 얻지 못했다 "
+                f"(보유: {holder.get('thread', '미상')} / {holder.get('where', '미상')}). "
+                "무한 대기하면 이 스레드가 조용히 매달린다 — 실패로 끝내고 기록한다."
+            )
+        waited = time.monotonic() - started
         self._fce_write_lock_acquired = True
+        _WRITE_LOCK_HOLDER.update(
+            {
+                "thread": threading.current_thread().name,
+                "where": _caller_outside_db_layer(),
+                "acquired_at": time.time(),
+            }
+        )
+        if waited > WRITE_LOCK_WARN_SECONDS:
+            logger.warning("sqlite write lock waited %.1fs before acquiring", waited)
 
     def _release_write_lock(self) -> None:
         if not self._fce_write_lock_acquired:
             return
         self._fce_write_lock_acquired = False
+        _WRITE_LOCK_HOLDER.clear()
         SQLITE_WRITE_LOCK.release()
+
+
+def _caller_outside_db_layer() -> str:
+    """락을 요구한 **호출부**를 찾는다. DB 계층 프레임은 건너뛴다 — 그건 항상 같다."""
+    try:
+        for frame in traceback.extract_stack()[::-1]:
+            name = frame.filename.replace("\\", "/")
+            if "/app/db/" in name:
+                continue
+            if "/app/" not in name:
+                continue
+            return f"{name.split('/app/', 1)[1]}:{frame.lineno} {frame.name}"
+    except Exception:  # noqa: BLE001 — 진단이 실패해도 쓰기를 막지 않는다
+        pass
+    return "미상"
 
 
 def connect_sqlite(path: str | Path) -> sqlite3.Connection:

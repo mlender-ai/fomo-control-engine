@@ -237,15 +237,41 @@ def pulse_candidate(
     paper: dict[str, Any] | None = None,
     pending_redelivery: list[dict[str, Any]] | None = None,
     unavailable: list[dict[str, Any]] | None = None,
+    sync_unknown: str | None = None,
 ) -> AlertCandidate | None:
     """periodic_pulse — 보유 포지션 1줄 상태 묶음 1통. "전부 정상"도 발송 (침묵 ≠ 정상 증명).
 
     `unavailable` 은 **분석 실패로 관측에서 빠진** 포지션이다. 이것을 싣지 않으면
     "보유 포지션 없음 — 감시 정상"이 열린 포지션 위에서 찍힌다 — 침묵이 정상으로 위장된다.
+
+    `sync_unknown` 은 **동기화 자체가 실패했거나 아직 없다**는 사유다. 이때 "없음"은 거짓이다 —
+    포지션이 없는 것이 아니라 **아직 모르는 것**이다.
+
+    ## 2026-09-10
+
+    사용자가 포지션 2개를 보유한 상태에서 이 펄스를 받았다:
+
+        📡 정기 상태 펄스 · 기준 09-10 23:03
+        보유 포지션 없음 — 감시 정상 동작 중입니다.
+
+    1분 뒤 같은 워커가 그 두 포지션의 진입 알림을 보냈다. 재기동 직후 `sync_positions` 가
+    아직 한 번도 성공하지 않은 시점이었고 원장이 비어 있었다 — 그 공백을 "없음"으로,
+    그리고 **"감시 정상"으로** 썼다.
+
+    `unavailable` 은 "열려 있는데 분석 실패"만 잡는다. 동기화가 아예 안 돈 경우는 원장이
+    비어 있어 `contexts` 도 `unavailable` 도 빈다 — 가장 모르는 상태가 가장 정상으로 보였다.
+    상단 바에서 "워커 정상 · 마지막 sync 성공 이력 없음"을 고친 것과 같은 모순이다.
     """
     lines = [f"📡 <b>{RULE_LABELS['periodic_pulse']}</b> · 기준 {_time(datetime.now(timezone.utc))}"]
     if not contexts:
-        lines.append("보유 포지션 없음 — 감시 정상 동작 중입니다." if not unavailable else "관측 가능한 보유 포지션 없음.")
+        if sync_unknown:
+            # **모름을 없음으로 쓰지 않는다.** 여기서 "정상"이라고 쓰면 사용자가 화면을
+            # 열어볼 이유를 잃는다 — 그것이 이 펄스가 존재하는 목적과 정반대다.
+            lines.append(f"⚠️ 보유 포지션 <b>미상</b> — {escape(sync_unknown)}. 없다는 뜻이 아니다.")
+        elif unavailable:
+            lines.append("관측 가능한 보유 포지션 없음.")
+        else:
+            lines.append("보유 포지션 없음 — 감시 정상 동작 중입니다.")
     for row in unavailable or []:
         # **열려 있는데 못 보고 있다.** 그 사실이 "전부 정상"보다 먼저 나와야 한다.
         lines.append(

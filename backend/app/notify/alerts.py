@@ -218,7 +218,14 @@ class AlertEngine:
             paper = await asyncio.to_thread(service.paper_pulse_summary)
         except Exception:
             logger.exception("notify.periodic_pulse.paper_load_failed")
-        candidate = pulse_candidate(contexts, tracked=tracked, paper=paper, pending_redelivery=self.state.pending_redelivery, unavailable=unavailable)
+        candidate = pulse_candidate(
+            contexts,
+            tracked=tracked,
+            paper=paper,
+            pending_redelivery=self.state.pending_redelivery,
+            unavailable=unavailable,
+            sync_unknown=_sync_unknown_reason(sync_payload),
+        )
         if candidate is None:
             return 0
         delivered_count = await self.sender.send_to_all(candidate.message)
@@ -1138,3 +1145,18 @@ def _parse_iso(value: Any) -> datetime | None:
     except (TypeError, ValueError):
         return None
     return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _sync_unknown_reason(sync_payload: dict[str, Any]) -> str | None:
+    """포지션 원장이 빈 것이 **없음**인지 **모름**인지 가른다.
+
+    동기화가 실패했거나 아직 없거나 낡았으면 빈 원장은 "포지션 0건"의 근거가 못 된다.
+    `_alert_payload` 가 이미 실어 보내는 값을 읽는다 — 새 문턱을 만들지 않는다.
+    """
+    if sync_payload.get("sync_failed"):
+        return "포지션 동기화 실패 — 원장을 신뢰할 수 없다"
+    if sync_payload.get("sync_age_seconds") is None:
+        return str(sync_payload.get("sync_stale_note") or "동기화 결과가 아직 없다")
+    if sync_payload.get("sync_stale"):
+        return str(sync_payload.get("sync_stale_note") or "포지션 동기화가 낡았다")
+    return None

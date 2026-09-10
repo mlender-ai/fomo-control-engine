@@ -11,6 +11,11 @@ from app.db.sqlite_utils import SQLITE_WRITE_LOCK, connect_sqlite
 from app.exchange.bitget.trades import BitgetTradeFill
 
 
+# 청크 크기. 작으면 커밋 오버헤드가, 크면 락 보유 시간이 늘어난다.
+# 2000행이면 보유가 수십 ms 수준이라 대기자가 통과한다.
+_STORE_CHUNK_ROWS = 2000
+
+
 @dataclass(frozen=True)
 class TradeFillCacheSlice:
     fills: list[BitgetTradeFill]
@@ -93,32 +98,46 @@ class BitgetTradeFillCache:
     ) -> None:
         now = datetime.now(timezone.utc).isoformat()
         symbol_key = symbol.upper()
-        with self._lock, self._connect() as connection:
-            connection.executemany(
-                """
-                INSERT OR REPLACE INTO bitget_trade_fills
-                    (symbol, trade_id, timestamp, payload, fetched_at)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                [
-                    (
-                        symbol_key,
-                        fill.trade_id,
-                        fill.timestamp.isoformat(),
-                        json.dumps(fill.model_dump(mode="json"), ensure_ascii=False),
-                        now,
+        rows = [
+            (
+                symbol_key,
+                fill.trade_id,
+                fill.timestamp.isoformat(),
+                json.dumps(fill.model_dump(mode="json"), ensure_ascii=False),
+                now,
+            )
+            for fill in fills
+        ]
+        with self._lock:
+            # **한 트랜잭션으로 다 쓰지 않는다.** 전역 쓰기 락은 첫 변경문부터 커밋까지
+            # 유지되므로, 수만 행을 한 번에 쓰면 그동안 다른 스레드가 전부 멈춘다.
+            # 2026-09-10 침묵이 그 모양이었다 — 이 `executemany` 가 락을 잡은 채
+            # 알림 경로를 포함한 5개 스레드가 대기하다 450초 타임아웃으로 죽었다.
+            #
+            # 청크마다 트랜잭션을 끊어 **락을 놓아준다.** 유입은 하루 최대 200만 행이고
+            # 이 테이블은 캐시다 — 캐시 쓰기가 알림을 죽여선 안 된다.
+            for index in range(0, len(rows), _STORE_CHUNK_ROWS):
+                with self._connect() as connection:
+                    connection.executemany(
+                        """
+                        INSERT OR REPLACE INTO bitget_trade_fills
+                            (symbol, trade_id, timestamp, payload, fetched_at)
+                        VALUES (?, ?, ?, ?, ?)
+                        """,
+                        rows[index : index + _STORE_CHUNK_ROWS],
                     )
-                    for fill in fills
-                ],
-            )
-            connection.execute(
-                """
-                INSERT OR REPLACE INTO bitget_trade_fill_fetch_state
-                    (symbol, timeframe, start_at, end_at, fetched_at)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (symbol_key, timeframe, start_at.isoformat(), end_at.isoformat(), now),
-            )
+            # 조회 상태는 **마지막에** 쓴다. 중간에 끊기면 이 행이 없으므로 그 창을 다시
+            # 가져온다 — `INSERT OR REPLACE` 라 재수집은 멱등이다. 먼저 쓰면 부분 적재를
+            # "수집 완료"로 표시해 **조용한 구멍**이 남는다.
+            with self._connect() as connection:
+                connection.execute(
+                    """
+                    INSERT OR REPLACE INTO bitget_trade_fill_fetch_state
+                        (symbol, timeframe, start_at, end_at, fetched_at)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (symbol_key, timeframe, start_at.isoformat(), end_at.isoformat(), now),
+                )
 
 
 def _parse_dt(value: str) -> datetime:
