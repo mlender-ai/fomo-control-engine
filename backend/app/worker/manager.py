@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from apscheduler.events import EVENT_JOB_MISSED
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.util import undefined
 
 from app.core.config import Settings
 from app.core.logging import configure_logging
@@ -1281,6 +1282,38 @@ class WorkerManager:
             return {"written": False, "error": f"{type(exc).__name__}: {exc}"}
         return {"written": True, "at": payload["written_at"]}
 
+    def _revive_paused_jobs(self) -> int:
+        """스케줄러는 사는데 **정지된** 잡을 되살린다.
+
+        근본 원인(`_schedule_job` 의 `next_run_time=None`)은 고쳤지만, 잡이 스케줄에서
+        빠지는 경로가 그것뿐이라고 단정하지 않는다. 정지는 **조용하다** — 워커는 계속
+        "running" 이고 `heartbeat` 도 뛴다. 그래서 감지가 아니라 **복구**를 둔다.
+
+        스케줄러가 멈춰 있으면 손대지 않는다 — 그때는 잡이 아니라 스케줄러가 문제다.
+        """
+        if not self.scheduler.running:
+            return 0
+        revived = 0
+        for name, job in self.jobs.items():
+            if not job.scheduled or not job.enabled:
+                continue
+            scheduled = self.scheduler.get_job(name)
+            # 등록 자체가 없거나, 등록은 됐는데 다음 실행이 없으면(=정지) 되살린다.
+            if scheduled is not None and scheduled.next_run_time is not None:
+                continue
+            heartbeat = self.heartbeats.get(name)
+            interval = int(getattr(heartbeat, "base_interval_seconds", 0) or job.interval_seconds or 0)
+            if interval <= 0:
+                continue
+            try:
+                self._schedule_job(name, interval)
+            except Exception:
+                logger.exception("worker.%s revive failed", name)
+                continue
+            revived += 1
+            logger.warning("worker.%s was paused — revived at interval=%ss", name, interval)
+        return revived
+
     async def _evaluate_liveness(self) -> dict[str, Any]:
         """트랙 정지·백오프 고착·인프라·재시작 감시(진단 스냅샷 포함).
 
@@ -1288,6 +1321,9 @@ class WorkerManager:
         `_write_heartbeat` 가 남긴 파일을 외부 감시자(scripts/local/deadman.sh)가 읽어서 한다.
         이 잡이 느려지거나 실패해도 심장박동은 별도 잡이라 계속 뛴다(C2).
         """
+        # 정지된 잡을 먼저 되살린다. 판정보다 **복구가 먼저**다 — 정지를 알리기만 하고
+        # 두면 사용자가 매번 프로세스를 재시작해야 한다(2026-09-15 까지 실제로 그랬다).
+        self._revive_paused_jobs()
         status = self.status()
         market_data = self._stock_market_data()
         market_reasons = self._stock_market_reasons()
@@ -1342,6 +1378,30 @@ class WorkerManager:
         )
 
     def _schedule_job(self, name: str, interval_seconds: int, next_run_time: datetime | None = None) -> None:
+        """잡을 (재)등록한다.
+
+        ## `None` 은 "트리거로 계산"이 아니라 "정지"다 (2026-09-15)
+
+        APScheduler 에서 `add_job(next_run_time=None)` 은 **일시정지된 잡**을 만든다 —
+        `pause_job()` 의 구현이 정확히 `modify_job(next_run_time=None)` 이다. "지정 안 함"의
+        센티널은 `None` 이 아니라 `undefined` 다.
+
+        이 함수는 기본값 `None` 을 그대로 넘기고 있었고, 호출부 셋 중 **둘이 기본값을 쓴다**:
+
+            _apply_backoff_if_needed  → 3연속 실패 시 간격을 늘리며 재등록
+            _restore_interval_if_needed → 회복 시 간격을 되돌리며 재등록
+
+        그래서 잡이 3번 연속 실패하면 **백오프가 그 잡을 영구히 정지시켰다.** 스케줄러는
+        계속 돌고 `heartbeat` 는 매분 실행되므로 워커는 "running" 으로 보인다. 화면·API 에는
+        `next_run_at: None` 만 남는다.
+
+        이것이 반복된 알림 침묵의 근본이다. 절전·네트워크 단절·락 대기 무엇이든 3연속 실패를
+        만들면 `sync_positions` 와 `deliver_alerts` 가 함께 정지했고, **프로세스 재시작만이
+        유일한 복구 경로**였다. 회복하려는 코드가 잡을 죽이고 있었다.
+
+        실측(2026-09-14): 두 잡 모두 `last_started_at` 09-12T03:49 이후 정지,
+        `skipped=0 · misfired=0 · next_run_at=None`, `heartbeat` 는 runs=1529 로 정상.
+        """
         interval = max(1, int(interval_seconds))
         grace = _misfire_grace_seconds(name, interval)
         self.scheduler.add_job(
@@ -1352,7 +1412,8 @@ class WorkerManager:
             coalesce=True,
             max_instances=1,
             replace_existing=True,
-            next_run_time=next_run_time,
+            # 지정이 없으면 트리거가 계산하게 둔다. `None` 을 넘기면 정지가 된다.
+            next_run_time=next_run_time if next_run_time is not None else undefined,
             # Phase 2-2: 기본 1초로 두면 루프 지연 앞에서 발화가 소실된다.
             misfire_grace_time=grace,
         )
