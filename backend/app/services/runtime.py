@@ -938,6 +938,22 @@ def positions_owing_close_alert(*, max_age_minutes: int, limit: int = 10) -> lis
     owing: list[dict[str, Any]] = []
     for status in (PositionStatus.closed, PositionStatus.needs_exit_record):
         for position in runtime.repository.list_positions(status):
+            # **`closed_at` 으로 창을 재면 안 된다.** 그것은 부재를 확정한 시각이지 청산 시각이
+            # 아니다. 워커가 09-12~09-14 정지한 뒤 재기동하자 그 사이 청산된 포지션들이 한꺼번에
+            # 종료 처리됐고, 이 회수가 3일 전 청산을 "방금 종료"로 발송했다 — 사용자가 즉시
+            # 알아봤다. 감지가 늦었다고 그 사건이 방금 일어난 것은 아니다.
+            #
+            # `last_seen_at` 은 거래소 목록에 **실제로 있었을 때만** 갱신된다. 실제 청산은 그
+            # 직후이므로 이 값이 창 안이어야 "최근 종료"다.
+            last_seen = position.last_seen_at
+            if last_seen is None:
+                # 모르면 울리지 않는다. 이 값이 없는 것은 구버전이 만든 행이고, 그것들은
+                # 이미 지난 사건이다 — **모름을 최근으로 취급하면 같은 소음이 반복된다.**
+                continue
+            if last_seen.tzinfo is None:
+                last_seen = last_seen.replace(tzinfo=timezone.utc)
+            if last_seen < cutoff:
+                continue
             closed_at = position.closed_at
             if closed_at is None:
                 continue

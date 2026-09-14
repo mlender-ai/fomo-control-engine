@@ -608,13 +608,18 @@ def _sync_bitget_positions() -> dict:
         seen_keys.add(key)
         current = _find_bitget_position(existing, exchange_position.symbol, Direction(exchange_position.hold_side))
         if current is None:
-            saved = repository.add_position(_position_from_bitget(exchange_position))
+            new_position = _position_from_bitget(exchange_position)
+            new_position.last_seen_at = utc_now()
+            saved = repository.add_position(new_position)
             created += 1
             created_position_ids.append(str(saved.id))
         else:
             merged = _merge_bitget_position(current, exchange_position)
             # WO-44 Part C: 재등장 → 부재 카운터 리셋 (일시 오류로 인한 가짜 종료 방지).
             merged.sync_miss_count = 0
+            # **여기가 유일하게 "살아 있는 것을 봤다"고 말할 수 있는 자리다.** 부재 순회에서
+            # 갱신되는 `synced_at` 과 달리 이 값은 거래소 목록에 실제로 있었을 때만 움직인다.
+            merged.last_seen_at = utc_now()
             repository.update_position(merged)
             updated += 1
 

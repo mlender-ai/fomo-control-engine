@@ -29,6 +29,9 @@ from app.db.models import PositionStatus
 from app.services import runtime as runtime_module
 
 
+_UNSET = object()
+
+
 class _Repo:
     def __init__(self, positions, alerts_by_position=None):
         self._positions = positions
@@ -43,12 +46,16 @@ class _Repo:
         return self._alerts.get(position_id, [])
 
 
-def _position(*, status=PositionStatus.closed, closed_at=None, symbol="BTCUSDT"):
+def _position(*, status=PositionStatus.closed, closed_at=None, symbol="BTCUSDT", last_seen_at=_UNSET):
+    # 기본은 "방금 살아 있는 것을 봤다" — 창을 재는 기준이다.
+    if last_seen_at is _UNSET:
+        last_seen_at = closed_at
     return SimpleNamespace(
         id=uuid4(),
         symbol=symbol,
         status=status,
         closed_at=closed_at,
+        last_seen_at=last_seen_at,
         model_dump=lambda mode="json": {"id": "x", "symbol": symbol, "status": status.value},
     )
 
@@ -159,3 +166,55 @@ def test_close_backfill_is_isolated_in_a_hook() -> None:
     src = pathlib.Path(runtime_module.__file__).parents[1].joinpath("worker/manager.py").read_text()
     assert '"backfill_close_alerts",' in src
     assert 'parent="deliver_alerts"' in src
+
+
+# ── 감지 지연: 옛날 청산을 "방금"으로 울리지 않는다 (2026-09-15) ──────────
+
+
+def test_a_closure_detected_long_after_the_fact_is_not_alerted(patched) -> None:
+    """**사용자가 즉시 알아본 그 소음이다** — "이건 옛날 거잖아".
+
+    워커가 09-12~09-14 정지한 뒤 재기동하자 그 사이 청산된 포지션들이 한꺼번에 종료
+    처리됐다. `closed_at` 은 부재를 확정한 시각이라 전부 "방금"으로 보였다.
+    """
+    position = _position(
+        closed_at=_now() - timedelta(minutes=2),  # 방금 확정
+        last_seen_at=_now() - timedelta(days=3),  # 그러나 3일 전에 마지막으로 봤다
+    )
+    patched(_Repo([position]))
+    assert runtime_module.positions_owing_close_alert(max_age_minutes=180) == []
+
+
+def test_a_genuinely_recent_closure_still_alerts(patched) -> None:
+    """지연을 거르느라 진짜 종료까지 막으면 이 수리가 새 침묵을 만든다."""
+    position = _position(
+        closed_at=_now() - timedelta(minutes=2),
+        last_seen_at=_now() - timedelta(minutes=4),
+    )
+    patched(_Repo([position]))
+    assert len(runtime_module.positions_owing_close_alert(max_age_minutes=180)) == 1
+
+
+def test_unknown_last_seen_is_not_treated_as_recent(patched) -> None:
+    """구버전이 만든 행에는 이 값이 없다. **모름을 최근으로 취급하면 소음이 반복된다.**"""
+    position = _position(closed_at=_now() - timedelta(minutes=2), last_seen_at=None)
+    patched(_Repo([position]))
+    assert runtime_module.positions_owing_close_alert(max_age_minutes=180) == []
+
+
+def test_naive_last_seen_does_not_raise(patched) -> None:
+    position = _position(closed_at=_now() - timedelta(minutes=2), last_seen_at=datetime.now() - timedelta(minutes=4))
+    patched(_Repo([position]))
+    assert len(runtime_module.positions_owing_close_alert(max_age_minutes=180)) == 1
+
+
+def test_last_seen_is_only_stamped_on_a_real_sighting() -> None:
+    """부재 순회에서도 갱신되면 `synced_at` 과 똑같이 쓸모없어진다."""
+    import pathlib as _p
+
+    src = _p.Path(runtime_module.__file__).parents[1].joinpath("services/http_handlers.py").read_text()
+    body = src.split("def _sync_bitget_positions")[1].split("\ndef ")[0]
+    sighting = body.split("for position in existing:")[0]
+    absence = body.split("for position in existing:")[1]
+    assert "last_seen_at" in sighting, "거래소 목록 순회에서 기록해야 한다"
+    assert "last_seen_at" not in absence, "부재 순회에서 갱신하면 의미가 사라진다"
