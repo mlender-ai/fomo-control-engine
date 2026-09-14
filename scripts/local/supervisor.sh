@@ -109,6 +109,29 @@ check_heartbeat_hang() {
     fi
     return 0
   fi
+  # ── 절전은 매달림이 아니다 (2026-09-15) ──────────────────────────────
+  #
+  # 맥이 자면 하트비트도 함께 멈춘다. 깨어나면 `age` 가 수천 초로 보이고 이 루프는 그것을
+  # "워커 매달림"으로 읽어 `kill -9` 했다. 실측 09-15 오전: 절전 7.1시간, 그 구간마다
+  # 재시작 — 05:07(88분) · 06:41(55분) · 07:03(18분) · 08:42(56분). **네 번 다 오진이다.**
+  #
+  # 워커는 멈춘 것이 아니라 얼어 있었고, 깨면 스스로 돌아온다. 죽이면 진행 중이던 작업과
+  # 메모리 큐만 잃는다 — 복구가 손해를 만든다.
+  #
+  # `kern.waketime` 은 마지막 깨어난 시각이다. 정체 구간이 그 이후에 시작됐다면 잠든 것이
+  # 아니므로 진짜 매달림이고, 깨어난 지 얼마 안 됐다면 그 정체는 절전이 설명한다.
+  # 유예를 지나서도 정체가 이어지면 그때는 죽인다 — 절전을 핑계로 진짜 매달림을 놓치지 않는다.
+  # `{ sec = 1789429328, usec = 486971 }` 에서 **sec** 만 뽑는다. `.*sec = ` 는 greedy 라
+  # `usec` 을 잡아 6자리 숫자를 돌려준다 — 그러면 항상 "절전 아님"으로 판정된다.
+  wake_epoch="$(sysctl -n kern.waketime 2>/dev/null | sed -n 's/^{ *sec = \([0-9][0-9]*\).*/\1/p')"
+  if [ -n "$wake_epoch" ] 2>/dev/null; then
+    since_wake=$((now - wake_epoch))
+    if [ "$since_wake" -ge 0 ] && [ "$since_wake" -lt "${FCE_SUPERVISOR_WAKE_GRACE:-300}" ]; then
+      log "heartbeat stale ${age}s — 그러나 ${since_wake}s 전에 절전에서 깨어났다. 매달림이 아니므로 재시작하지 않는다"
+      return 0
+    fi
+  fi
+
   if [ $((now - HB_LAST_RESTART)) -lt "$HB_COOLDOWN" ]; then return 0; fi   # C5 쿨다운
   recent="$(restarts_last_hour)"
   if [ "$recent" -ge "$HB_MAX_PER_HOUR" ] 2>/dev/null; then
