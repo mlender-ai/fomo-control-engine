@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import json
+import threading
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 from app.db.migrations import run_migrations
-from app.db.sqlite_utils import SQLITE_WRITE_LOCK, connect_sqlite
+from app.db.sqlite_utils import connect_sqlite
 from app.exchange.bitget.trades import BitgetTradeFill
 
 
@@ -25,7 +26,16 @@ class TradeFillCacheSlice:
 class BitgetTradeFillCache:
     def __init__(self, database_path: str) -> None:
         self.database_path = database_path
-        self._lock = SQLITE_WRITE_LOCK
+        # **전역 쓰기 락을 여기 쓰지 않는다** (2026-09-17).
+        #
+        # 이 락의 목적은 `store_fills` 호출끼리의 직렬화다. 그런데 전역 쓰기 락을 빌려 쓰면
+        # 대량 적재 내내 **DB 전체의 쓰기**가 막힌다. 2026-09-10 에 `executemany` 를 청크로
+        # 나눴지만 바깥에서 이 락을 계속 잡고 있어 **청크가 무의미했다** — 조각내 놓고 자물쇠는
+        # 그대로 쥐고 있었다.
+        #
+        # 캐시 전용 락으로 바꾼다. 실제 쓰기 직렬화는 청크마다 연결이 알아서 가져간다
+        # (`TimedSQLiteConnection` 이 변경문에서만 잡고 커밋에서 놓는다).
+        self._lock = threading.Lock()
         Path(database_path).parent.mkdir(parents=True, exist_ok=True)
         self._init_schema()
 

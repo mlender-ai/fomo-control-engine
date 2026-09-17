@@ -63,16 +63,27 @@ def run_database_backup(settings: Settings, repo: Repository) -> dict:
     temp_db_path.unlink(missing_ok=True)
     temp_gzip_path.unlink(missing_ok=True)
     try:
-        with SQLITE_WRITE_LOCK:
-            source = connect_sqlite(source_path)
+        # **전역 쓰기 락을 잡지 않는다** (2026-09-17).
+        #
+        # 이전에는 `with SQLITE_WRITE_LOCK:` 안에서 백업했다. DB 가 10.83 GB 로 자라자 그
+        # 복사가 수십 분이 됐고, 그동안 **모든 쓰기가 막혔다** — 알림 원장 기록도 쓰기이므로
+        # `deliver_alerts` 가 450초 타임아웃으로 죽었다. 실측: 종료 4건이 알림 없이 지나갔고
+        # `loop_lag` 가 136초까지 올랐다.
+        #
+        # SQLite 의 백업 API 는 **온라인 백업**이다. WAL 에서 읽는 동안 쓰기가 계속될 수 있고,
+        # 소스가 바뀌면 해당 페이지를 다시 읽는다. 락으로 세상을 멈출 이유가 없다.
+        #
+        # `pages`/`sleep` 으로 조각내 진행한다 — 한 번에 다 복사하면 그 사이 I/O 를 독점해
+        # 락 없이도 다른 작업을 굶긴다. 백업은 **가장 급하지 않은 작업**이므로 양보한다.
+        source = connect_sqlite(source_path)
+        try:
+            target = sqlite3.connect(temp_db_path)
             try:
-                target = sqlite3.connect(temp_db_path)
-                try:
-                    source.backup(target)
-                finally:
-                    target.close()
+                source.backup(target, pages=_BACKUP_PAGES_PER_STEP, sleep=_BACKUP_SLEEP_SECONDS)
             finally:
-                source.close()
+                target.close()
+        finally:
+            source.close()
         table_counts = sqlite_table_counts(temp_db_path)
         with (
             temp_db_path.open("rb") as raw_file,
@@ -111,6 +122,11 @@ def run_database_backup(settings: Settings, repo: Repository) -> dict:
         temp_gzip_path.unlink(missing_ok=True)
     _record_backup_event(repo, event)
     return event.model_dump(mode="json")
+
+
+# 백업 한 걸음당 페이지 수와 걸음 사이 휴식. 백업은 급하지 않다 — 다른 작업에 양보한다.
+_BACKUP_PAGES_PER_STEP = 2000
+_BACKUP_SLEEP_SECONDS = 0.05
 
 
 def enforce_retention(settings: Settings, repo: Repository) -> dict:
