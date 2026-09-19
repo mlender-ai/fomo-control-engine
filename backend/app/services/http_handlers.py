@@ -626,13 +626,18 @@ def _sync_bitget_positions() -> dict:
     # WO-44 Part C: 종료 확정은 N틱 연속 부재 확인 후 — sync 간극/거래소 일시 오류 오탐 방지.
     confirm_ticks = max(1, int(getattr(settings, "alert_closure_confirm_ticks", 2)))
     missing = 0
+    # 거래소가 확인해주지 않은 포지션. **화면과 알림이 이것을 정상 보유로 말하면 안 된다.**
+    # 2026-09-19: 펄스가 이미 청산된 NEARUSDT 를 "숏 10.0x · PnL -108.55% · 건강도 25" 로
+    # 확신 있게 보고했다. 없는 포지션의 손익을 자신 있게 말하는 것이 침묵보다 나쁘다.
+    unconfirmed_ids: list[str] = []
     for position in existing:
         key = (position.symbol, position.direction)
         if position.source == "bitget" and position.status in EXIT_RECORDABLE_STATUSES and key not in seen_keys:
             missing += 1
+            unconfirmed_ids.append(str(position.id))
             position.sync_miss_count = int(position.sync_miss_count or 0) + 1
+            position.synced_at = utc_now()
             if position.sync_miss_count < confirm_ticks:
-                position.synced_at = utc_now()
                 repository.update_position(position)
                 continue
             closed, error = _auto_record_missing_bitget_exit(position)
@@ -647,6 +652,10 @@ def _sync_bitget_positions() -> dict:
                 )
             elif error:
                 exit_record_errors.append(error)
+                # **증가한 카운터를 저장한다.** 이전에는 이 분기에 저장이 없어, 종료 기록이
+                # 실패하면 다음 순회가 같은 값을 다시 읽고 다시 1 을 더했다 — 확정 문턱에
+                # 영원히 닿지 못하고 유령 포지션이 원장에 남았다.
+                repository.update_position(position)
 
     return {
         "provider": "bitget",
@@ -658,6 +667,7 @@ def _sync_bitget_positions() -> dict:
         "created": created,
         "updated": updated,
         "missing_from_exchange": missing,
+        "unconfirmed_position_ids": unconfirmed_ids,
         "auto_closed": auto_closed,
         "created_position_ids": created_position_ids,
         "closed_positions": closed_positions,
@@ -947,7 +957,20 @@ def sync_live_positions() -> dict:
     # 그래서 포지션은 열려 있는데 알림도 펄스도 구조 관측도 오지 않았고, 그 사실이
     # 어디에도 남지 않았다. 침묵과 고장이 구분되지 않는 상태다.
     unavailable: list[dict[str, str]] = []
+    # 거래소가 확인해주지 않은 포지션은 **관측 불가**로 돌린다. 분석은 원장 값으로 계산되므로
+    # 이미 청산된 포지션도 그럴듯한 손익·건강도를 만들어낸다 — 그것이 화면과 알림에 그대로
+    # 실려 나갔다(2026-09-19 펄스가 없는 NEARUSDT 를 PnL -108.55% 로 보고).
+    unconfirmed = {str(item) for item in (sync_result.get("unconfirmed_position_ids") or [])}
     for position in positions:
+        if str(position.id) in unconfirmed:
+            unavailable.append(
+                {
+                    "id": str(position.id),
+                    "symbol": position.symbol,
+                    "reason": "거래소 목록에서 확인되지 않음 — 종료 확정 대기 중",
+                }
+            )
+            continue
         try:
             analyzed.append(_live_position_payload(position, store_snapshot=True))
         except HTTPException as exc:

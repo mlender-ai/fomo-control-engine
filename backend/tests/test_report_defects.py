@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import sqlite3
+import re
 import subprocess
 from pathlib import Path
 
@@ -344,7 +345,24 @@ def test_mdd_threshold_is_unchanged() -> None:
     if diff.returncode != 0:
         pytest.skip("origin/main 을 참조할 수 없는 환경")
     changed = [line for line in diff.stdout.splitlines() if line.startswith(("+", "-")) and not line.startswith(("+++", "---"))]
-    assert not any("mdd" in line.lower() for line in changed), f"MDD 임계가 변경됐다:\n{changed}"
+    # **임계와 이름을 구분한다.** 이 가드가 지키는 것은 "MDD 문턱을 올리지 않았다"이지
+    # "mdd 라는 글자를 건드리지 않았다"가 아니다. 2026-09-19 에 알림 규칙 목록에서
+    # `liq_unknown_high_lev` 를 빼자, 같은 줄에 있던 `mdd_limit_warn`·`mdd_limit_critical`
+    # **규칙 이름** 때문에 이 가드가 터졌다 — 임계는 한 글자도 바뀌지 않았는데.
+    #
+    # 주석과 규칙 이름 나열은 임계가 아니다. 숫자가 붙은 설정 줄만 본다.
+    suspects = []
+    for line in changed:
+        body = line[1:].strip()
+        if not body or body.startswith("#"):
+            continue
+        if "mdd" not in body.lower():
+            continue
+        # `mdd_limit_warn,mdd_limit_critical` 처럼 규칙 **이름**만 나열된 줄은 제외한다.
+        if "_pct" not in body and "limit_pct" not in body and not re.search(r"mdd\w*\s*[:=]", body.lower()):
+            continue
+        suspects.append(line)
+    assert not suspects, f"MDD 임계가 변경됐다:\n{suspects}"
 
 
 def test_no_liquidation_path_was_added() -> None:

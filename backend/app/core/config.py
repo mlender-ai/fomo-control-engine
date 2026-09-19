@@ -1088,7 +1088,16 @@ class Settings(BaseSettings):
         ),
     )
     alert_rules_enabled: str = Field(
-        "trigger_near,invalidation_breach,take_profit_hit,status_worsened,health_drop,liq_proximity,liq_unknown_high_lev,wyckoff_event,data_stall,funding_extreme,oi_divergence,liq_cluster_near,setup_near,setup_triggered,setup_invalidated,intent_approaching,intent_zone_entered,intent_zone_entered_partial,intent_invalidated,universe_discovery,mdd_limit_warn,mdd_limit_critical,"
+        # `liq_unknown_high_lev` 는 뺐다 (사용자 지시 2026-09-19).
+        #
+        # "청산가 미수신 · 10x 인데 N시간째 수신되지 않았습니다" 를 반복 발송했다. 그런데
+        # 사용자 운용에서는 **증거금을 낮게 잡으면 거래소가 청산가를 주지 않는 것이 정상**이다.
+        # 정상 상태를 경고로 계속 내보내면 알림 전체의 신뢰가 깎인다.
+        #
+        # `liq_proximity`(실제 청산가가 가까워짐)는 그대로 둔다 — 그것은 진짜 위험 신호다.
+        # 규칙을 **수집에서 지운 것이 아니라 기본 활성 목록에서 뺀 것**이므로,
+        # `FCE_ALERT_RULES_ENABLED` 에 다시 넣으면 살아난다.
+        "trigger_near,invalidation_breach,take_profit_hit,status_worsened,health_drop,liq_proximity,wyckoff_event,data_stall,funding_extreme,oi_divergence,liq_cluster_near,setup_near,setup_triggered,setup_invalidated,intent_approaching,intent_zone_entered,intent_zone_entered_partial,intent_invalidated,universe_discovery,mdd_limit_warn,mdd_limit_critical,"
         "position_opened,position_closed,verdict_changed,stance_flipped,evidence_insufficient,periodic_pulse,full_alignment,flow_divergence,whale_entry,"
         # WO-FCE-ENGINE-LIVENESS-01: 생존 감시 계열은 기본 활성 — 끄면 침묵이 다시 은폐된다.
         "engine_liveness,job_backoff_stuck,infra_capacity,process_restarted,"

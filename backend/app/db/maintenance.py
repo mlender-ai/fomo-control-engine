@@ -4,6 +4,7 @@ import gzip
 import json
 import logging
 import sqlite3
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -297,12 +298,66 @@ def _apply_sqlite_retention(connection: sqlite3.Connection, settings: Settings) 
     try:
         connection.commit()
         connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        connection.execute("PRAGMA incremental_vacuum")
+        details["incremental_vacuum"] = reclaim_free_pages(connection)
         connection.commit()
-        details["incremental_vacuum"] = "ok"
     except Exception as exc:  # 회수 실패가 리텐션 자체를 무효화하지 않게 격리
         details["incremental_vacuum"] = f"skipped: {type(exc).__name__}: {exc}"
     return details
+
+
+# 한 걸음에 회수할 페이지 수와 전체 예산. **한 번에 다 하지 않는다.**
+#
+# 인자 없는 `PRAGMA incremental_vacuum` 은 자유 페이지를 **전부** 회수하려 한다. 실측
+# 2026-09-19 기준 자유 페이지가 1,446,012개(5.52GB)였고, 그것을 한 트랜잭션에 회수하면
+# 백업이 10.8GB 를 락 걸고 복사하던 것과 같은 정체가 된다 — 그 사고로 익절 알림이 사라졌다.
+#
+# 조각내고 예산을 건다. 다 못 끝내면 남은 것은 다음 주기에 회수한다 — 회수는 급하지 않다.
+_VACUUM_PAGES_PER_STEP = 2000
+_VACUUM_BUDGET_SECONDS = 60.0
+
+
+def reclaim_free_pages(
+    connection: sqlite3.Connection,
+    *,
+    pages_per_step: int = _VACUUM_PAGES_PER_STEP,
+    budget_seconds: float = _VACUUM_BUDGET_SECONDS,
+) -> dict[str, object]:
+    """삭제로 생긴 빈 페이지를 **조금씩** OS 로 돌려준다.
+
+    `auto_vacuum=INCREMENTAL` 인 DB 에서만 실제로 동작한다(그 외에는 무해한 no-op).
+
+    ## 왜 조각내는가
+
+    리텐션 DELETE 는 행을 지우지만 파일은 줄지 않는다 — 빈 페이지가 freelist 로 갈 뿐이다.
+    2026-09-19 실측: 파일 10.83GB 중 **50.9%(5.52GB)가 빈 페이지**였다. 그 상태로 백업하면
+    쓰지도 않는 5.5GB 를 매일 복사·압축·검증한다.
+
+    그렇다고 한 번에 회수하면 그 자체가 장애가 된다. **예산 안에서 조금씩** 돌려주고,
+    남은 것은 다음 주기에 맡긴다.
+    """
+    started = time.monotonic()
+    before = int(connection.execute("PRAGMA freelist_count").fetchone()[0])
+    steps = 0
+    while True:
+        remaining = int(connection.execute("PRAGMA freelist_count").fetchone()[0])
+        if remaining <= 0:
+            break
+        if time.monotonic() - started >= budget_seconds:
+            break
+        connection.execute(f"PRAGMA incremental_vacuum({max(1, int(pages_per_step))})")
+        connection.commit()
+        steps += 1
+    after = int(connection.execute("PRAGMA freelist_count").fetchone()[0])
+    return {
+        "status": "ok",
+        "freelist_before": before,
+        "freelist_after": after,
+        "pages_reclaimed": max(0, before - after),
+        "steps": steps,
+        "elapsed_seconds": round(time.monotonic() - started, 2),
+        # 남았으면 다음 주기가 이어받는다 — 끝내지 못한 것이 실패는 아니다.
+        "complete": after == 0,
+    }
 
 
 def _downsample_derivative_metrics(connection: sqlite3.Connection, cutoff: datetime, bucket_minutes: int) -> dict[str, object]:
