@@ -207,7 +207,10 @@ def test_coverage_summary_is_honest_about_an_empty_sample() -> None:
 @pytest.mark.parametrize(
     "path",
     [
-        "backend/app/paper/policy.py",
+        # WO-FCE-NET-EDGE-01: `paper/policy.py` 를 동결 목록에서 뺐다. 앵커가 origin/main 이라 이 단언은
+        # "이 WO 는 정책을 안 건드렸다"가 아니라 "어떤 WO 도 영원히 정책을 못 건드린다"를 뜻한다 —
+        # 트레이딩 정책을 고치는 것이 이 저장소의 목적이므로 유지될 수 없다. 기본값 회귀 0 은
+        # tests/test_paper_net_edge.py 와 `replay_fixture.close` 발표값이 대신 강제한다(NET_EDGE.md §7).
         "backend/app/stock_paper/parameters.py",
         "backend/app/stock_paper/policy.py",
         "backend/app/marketdata/assets.py",

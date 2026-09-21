@@ -1,0 +1,30 @@
+{
+  "version": "crypto-v3",
+  "stance_gate_mode": "stable_direction",
+  "signature_gate_mode": "record_only",
+  "sizing_mode": "risk_based",
+  "risk_budget_usdt": 2.5,
+  "max_notional_usdt": 600.0,
+  "min_notional_usdt": 10.0,
+  "reentry_lock_mode": "same_bar",
+  "reentry_lock_bars": 0,
+  "reentry_lock_same_direction_only": true,
+  "rr_basis": "gross",
+  "observation_universe_enabled": true,
+
+  "reward_mode": "structural_extend",
+  "max_reward_atr_multiple": 3.5,
+  "max_entry_cost_r": 0.16,
+  "stop_fill_mode": "intrabar",
+
+  "_inherits": "crypto-v2.json 의 전 키를 그대로 승계한다. 이 파일을 지우면 즉시 v2 로 되돌아간다 — 로더는 params/ 에서 버전 번호가 가장 큰 파일을 고른다.",
+  "_why": {
+    "문제": "재판정 N=427(BTC 204 · ETH 223) 에서 gross 우위 −10.8R · 비용 56.5R · netR −67.2R. 비용이 우위의 2.9배다. 그리고 비용R = 왕복 비용률 / 스톱거리% 라는 항등식이므로(리스크 기준 사이징에서 1R 금액은 예산 상수) 스톱을 좁히는 모든 것이 마찰을 키운다. 현행은 execution_risk = min(structural_risk, ATR) 로 스톱을 1 ATR 에 캡했고, 그 캡이 같은 손으로 RR 을 항등식 1.5 로 만들었다(실측 20/24 건이 정확히 1.5000, RR<1.5 는 0건 — 이 게이트는 한 번도 무언가를 거른 적이 없다).",
+    "reward_mode": "구조 목표를 **늘리는 방향으로** 쓴다. 현행은 구조 목표가 TP1·TP2 사이일 때만 반영해 사다리를 **당겨오기만** 한다 — 추세가 TP2 너머로 갈 때 그 구간이 계획에 아예 안 들어간다. 연장분은 기존 익절 압력 청산이 보호한다(실측 9건 합 +26.87%). 임계값은 하나도 내리지 않았다 — 보상만 늘어나므로 RR 은 1.5 이상에서만 움직이고, 그 결과 RR 이 상수에서 벗어난다(픽스처 {1.5} → {1.5, 2.25}).",
+    "max_reward_atr_multiple": "구조 목표가 아무리 멀어도 3.5 ATR 을 넘겨 계획하지 않는다. 픽스처 대조에서 3.0/3.5/5.0 중 3.5 가 net 최대(+10.71R)이고 5.0 은 도달 실패가 늘어 되레 낮다(+9.37R). 작은 표본의 선택이므로 스윕으로 재확인해야 한다.",
+    "max_entry_cost_r": "왕복 마찰이 계획 리스크의 16% 를 넘는 자리에는 들어가지 않는다. 품질 게이트가 아니라 산술 게이트다 — 보상이 아무리 좋아도 마찰이 1R 의 그만큼을 먹으면 우위가 남을 수 없다. 이 게이트는 **거부만 한다**(어떤 임계도 완화하지 않는다). 실측 비용R: 라이브 평균 약 0.10 · BTC 0.152 · ETH 0.114 · 픽스처 0.117~0.164. 0.16 은 왕복 0.18% 에서 스톱 거리 >= 1.125% 와 같은 말이다. 꼬리만 자르는 값이 아니다 — BTC 분포 평균이 0.152 라 그 트랙에서는 대략 절반이 걸린다. 의도한 바다: 비용R 0.18 인 자리는 거래당 gross +0.18R 을 내야 본전인데 실측 gross 는 +0.052R 이다. 더 죄는 값(0.12 · 0.08)은 호스트 스윕으로 정하고, 표본이 과하게 마르면 이 한 값을 올려 되돌린다.",
+    "stop_fill_mode": "손절을 실제 스톱 주문처럼 봉 중간에 무효화가로 체결한다. 익절은 이미 봉 중간 터치였고 손절만 종가를 기다렸다 — 이 비대칭이 초과 손실의 82% 를 만들었다(실측 평균 −1.559R, 계획은 −1.000R). **무효화 임계는 한 줄도 완화되지 않는다. 같은 가격에서 더 일찍 체결될 뿐이다.** 봉이 이미 넘어서 열렸으면 시가로 체결한다(갭) — 무효화가로 적으면 갭 손실이 원장에서 사라진다. 호스트 재판정 N=427 에서 MDD 는 두 심볼 모두 개선됐다(ETH 150.07 → 120.06).",
+    "채택하지 않은 축": "risk_mode(structural·nearest_structure) · 스톱 경계 · reward_mode=risk_multiple · rr_basis=net · min_net_rr · htf_conflict_blocks 는 **배선만 하고 껐다.** 전부 임계값을 필요로 하고, 픽스처(합성·N=11)에서 임계를 정하면 그것은 측정이 아니라 과적합이다. scripts/paper_replay_report.py --sweep 이 호스트 실캔들에서 축별로 재판정하고 부트스트랩 CI 로 판정한다. 임계를 근거 없이 정하는 것이 지금 상태를 만든 방식이다."
+  },
+  "_rollback": "rm backend/app/paper/params/crypto-v3.json"
+}

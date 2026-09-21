@@ -96,15 +96,21 @@ PUBLISHED_VALUES: dict[str, PublishedValue] = {
         source_doc="docs/validation/REPLAY_HARNESS.md §재판정 CI 기준선 (stop_fill=intrabar)",
         values={
             "trades_closed": 11,
-            "gross_r": 10.5,
-            "cost_r": 1.6049,
-            "net_r": 8.8951,
-            "profit_factor": 4.849,
-            "mdd_usdt": 5.7775,
+            "gross_r": 9.9221,
+            "cost_r": 1.6044,
+            "net_r": 8.3177,
+            "profit_factor": 3.8797,
+            "mdd_usdt": 7.221,
         },
         reproduces=True,
         requires_database=False,
-        note="봉 중간 터치 손절 반사실의 기준선. `close` 행과의 차이가 곧 체결 규칙의 효과다.",
+        note=(
+            "봉 중간 터치 손절 반사실의 기준선. `close` 행과의 차이가 곧 체결 규칙의 효과다. "
+            "WO-FCE-NET-EDGE-01 에서 값이 이동했다(net 8.8951 → 8.3177): 구 하네스는 갭 봉도 "
+            "무효화가에 체결해 **갭 손실을 원장에서 지웠다.** 봉이 이미 무효화가를 넘어서 열렸으면 "
+            "그 가격에 체결될 수 없다 — 시가가 첫 체결 가능 가격이다. 픽스처 3건 중 1건이 그 경우이며, "
+            "이동분 전부가 그 한 건에서 나온다. 새 값이 더 나쁘고 더 정직하다."
+        ),
     ),
     "stop_execution.phase2": PublishedValue(
         key="stop_execution.phase2",
