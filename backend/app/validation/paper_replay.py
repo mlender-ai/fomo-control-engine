@@ -31,8 +31,10 @@
 봉은 손절되지 않는다. Phase 2 는 이 반사실을 **크립토 봉 미보존**으로 포기했다 — 4-2 가
 봉을 저장하면서 비로소 가능해졌다.
 
-`stop_fill="intrabar"` 는 **하네스가** 그 판정을 대신 내린다. `paper/policy.py` 는 한 줄도
-바뀌지 않는다(C3) — 반사실은 정책이 아니라 관측이다.
+`stop_fill="intrabar"` 는 정책의 `stop_fill_mode` 를 이 실행에 한해 덮어쓴다
+(`WO-FCE-NET-EDGE-01` 이후). **하네스는 체결 규칙을 다시 구현하지 않는다** — 정책 함수를
+호출한다. 규칙이 두 곳에 있으면 그중 하나는 반드시 어긋나고, 그때 재판정은 라이브가 아니라
+하네스 자신을 대변한다.
 
 ## 이것은 반사실이지 실적이 아니다 (C9)
 
@@ -140,7 +142,7 @@ def replay_paper_engine(
     timeframe: str,
     candles: Sequence[MarketCandle],
     policy: PaperPolicy,
-    stop_fill: str = "close",
+    stop_fill: str | None = None,
     min_candles: int = MIN_CHART_CANDLES,
     hysteresis_params: dict[str, Any] | None = None,
     assumptions: ReplayAssumptions | None = None,
@@ -152,8 +154,12 @@ def replay_paper_engine(
     돌린다. 한 심볼은 한 번에 한 포지션이며, 이는 라이브 `run_paper_engine` 의 동작
     (`open_rows` 에서 같은 타임프레임 건을 찾아 있으면 진입 평가를 건너뜀)과 같다.
     """
+    # 생략하면 **정책이 정한 모드**를 쓴다. 반사실을 돌릴 때만 명시해서 덮어쓴다 —
+    # 기본값을 "close" 로 못박으면 정책이 intrabar 인데 재판정은 close 로 도는 어긋남이 생긴다.
+    stop_fill = policy.stop_fill_mode if stop_fill is None else stop_fill
     if stop_fill not in STOP_FILL_MODES:
         raise ValueError(f"stop_fill must be one of {STOP_FILL_MODES}: {stop_fill}")
+    policy = replace(policy, stop_fill_mode=stop_fill)
 
     ordered = sorted(candles, key=lambda candle: candle.timestamp)
     facts = assumptions or ReplayAssumptions()
@@ -188,7 +194,6 @@ def replay_paper_engine(
                 timeframe=timeframe,
                 policy=policy,
                 prior_high_pressure_streak=high_streak,
-                stop_fill=stop_fill,
             )
             live_trade = apply_exit_decision(live_trade, decision=decision, bar=bar, policy=policy)
             if decision.action == "close":
@@ -242,18 +247,13 @@ def _exit_decision(
     timeframe: str,
     policy: PaperPolicy,
     prior_high_pressure_streak: int,
-    stop_fill: str,
 ) -> tuple[ExitDecision, int]:
-    """출구 판정. `intrabar` 만 하네스가 대신 내린다 (C3 — 정책 파일 diff 0줄).
+    """출구 판정. **체결 규칙은 정책이 정한다** — 여기서 다시 쓰지 않는다.
 
-    봉 중간 터치가 종가 판정보다 **먼저** 일어난다. 그래서 터치가 있으면 나머지 출구 사다리를
-    보지 않고 즉시 손절로 확정한다 — 같은 봉 안에서 손절과 익절이 모두 닿았을 때 어느 쪽이
-    먼저였는지는 봉 데이터로 알 수 없고, 리스크 관측에서는 나쁜 쪽을 가정하는 것이 정직하다.
+    `evaluate_exit` 안에서 손절 판정이 다른 출구 사다리보다 **먼저** 일어난다. 같은 봉에서
+    손절과 익절이 모두 닿았을 때 어느 쪽이 먼저였는지는 봉 데이터로 알 수 없고, 리스크
+    관측에서는 나쁜 쪽을 가정하는 것이 정직하다.
     """
-    if stop_fill == "intrabar" and _stop_touched_intrabar(trade, bar):
-        reason = "breakeven_stop" if trade.partial_exit_at else "invalidation_breach"
-        return ExitDecision("close", reason, 0, trade.stop_price), 0
-
     gauges = paper_service.build_gauges(
         analysis=analysis,
         confluence=confluence,
@@ -272,12 +272,6 @@ def _exit_decision(
         policy=policy,
     )
     return decision, decision.high_pressure_streak
-
-
-def _stop_touched_intrabar(trade: PaperTrade, bar: MarketCandle) -> bool:
-    if trade.direction == Direction.long:
-        return bar.low <= trade.stop_price
-    return bar.high >= trade.stop_price
 
 
 def _entry_attempt(
@@ -346,6 +340,11 @@ def _entry_attempt(
         data_fresh=True,
         confirmed_bar=True,
         policy=policy,
+        # WO-FCE-NET-EDGE-01. 라이브와 **같은 인자**를 넘긴다. 여기서 빠뜨리면 새 게이트가
+        # 재판정에서만 꺼져 반사실이 라이브보다 관대해지고, 그 사실이 결과 어디에도 안 남는다.
+        cost_r=paper_service._float(target_plan.get("cost_r")),
+        stop_atr_multiple=paper_service._float(target_plan.get("stop_atr_multiple")),
+        htf_conflict=contract.get("htf_conflict") is True,
     )
     if not decision.enter:
         return None, f"gate:{decision.rejection_reasons[0]}"
@@ -462,6 +461,8 @@ def replay_metrics(result: ReplayResult) -> dict[str, Any]:
         "profit_factor": None if summary.profit_factor is None else round(summary.profit_factor, 4),
         "mdd_usdt": round(summary.mdd_usdt, 4),
         "mean_stop_distance_pct": round(summary.mean_stop_distance_pct, 4),
+        # 거래당 평균과 그 CI 로만 축을 비교한다 — 합계는 거래 수에 끌려간다.
+        "mean_net_r": None if summary.mean_net_r is None else round(summary.mean_net_r, 4),
         "assumptions": result.assumptions.as_dict(),
         "disclaimer": "재판정 반사실이다 — 라이브 실적이 아니다(C9).",
     }
@@ -546,12 +547,20 @@ def sweep(
     timeframe: str,
     candles: Sequence[MarketCandle],
     variants: Sequence[tuple[str, PaperPolicy]],
-    stop_fill: str = "close",
+    stop_fill: str | None = None,
     min_candles: int = MIN_CHART_CANDLES,
     hysteresis_params: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """파라미터를 바꿔가며 일괄 재판정한다 (4-4 작업 5)."""
+    """파라미터를 바꿔가며 일괄 재판정한다 (4-4 작업 5).
+
+    `stop_fill` 을 주지 않으면 **각 변형의 정책이 정한 모드**로 돈다 — 그래야 체결 규칙도
+    하나의 축으로 스윕할 수 있다. 고정하면 그 축만 영원히 못 잰다.
+
+    첫 행이 기준선이고 나머지는 그것과 대조해 판정된다. 판정은 **거래당 netR 평균의
+    부트스트랩 CI 비겹침**으로만 "개선"을 주장한다(`docs/ImprovementProof.md`).
+    """
     rows = []
+    variant_metrics: list[tuple[str, rsr.Metrics]] = []
     for label, policy in variants:
         result = replay_paper_engine(
             symbol=symbol,
@@ -564,12 +573,37 @@ def sweep(
             policy_label=label,
         )
         rows.append(replay_metrics(result))
+        variant_metrics.append((label, rsr.metrics(as_replay_trades(result.trades))))
+
+    verdicts: list[dict[str, Any]] = []
+    if variant_metrics:
+        _, baseline = variant_metrics[0]
+        for label, variant in variant_metrics[1:]:
+            verdict = rsr.judge(label, baseline, variant)
+            verdicts.append(
+                {
+                    "label": verdict.label,
+                    "baseline_n": verdict.baseline_n,
+                    "variant_n": verdict.variant_n,
+                    "baseline_mean_net_r": verdict.baseline_mean_net_r,
+                    "variant_mean_net_r": verdict.variant_mean_net_r,
+                    "delta_mean_net_r": verdict.delta,
+                    "baseline_ci": list(verdict.baseline_ci) if verdict.baseline_ci else None,
+                    "variant_ci": list(verdict.variant_ci) if verdict.variant_ci else None,
+                    "verdict": verdict.verdict,
+                    "reason": verdict.reason,
+                    "row": verdict.as_row(),
+                }
+            )
+
     return {
         "kind": REPLAY_KIND,
         "symbol": symbol.upper(),
         "timeframe": timeframe,
         "stop_fill": stop_fill,
         "rows": rows,
+        "baseline": variant_metrics[0][0] if variant_metrics else None,
+        "verdicts": verdicts,
         "overfit_warning": ("스윕은 과거 데이터다. 여기서 고른 설정은 전방 라이브로 확인해야 하며, 그 확인 규칙은 **결과를 보기 전에** 정해야 한다."),
         "disclaimer": "재판정 반사실이다 — 라이브 실적이 아니다(C9).",
     }

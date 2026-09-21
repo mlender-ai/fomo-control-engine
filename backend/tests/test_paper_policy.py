@@ -572,7 +572,7 @@ def test_worker_engine_opens_once_per_confirmed_bar_and_records_ledger() -> None
         "checklist_passed": 6,
         "checklist_total": 6,
         "action_plan": {
-            "invalidation": {"price": 99},
+            "invalidation": {"price": 98.5},
             "take_profit": [{"price": 110}],
         },
     }
@@ -663,7 +663,7 @@ def test_candidate_bootstrap_requires_scored_active_candidate_and_tags_trade() -
         "checklist": [{"status": "pass"}] * 6,
         "checklist_passed": 6,
         "checklist_total": 6,
-        "action_plan": {"invalidation": {"price": 99}, "take_profit": [{"price": 110}]},
+        "action_plan": {"invalidation": {"price": 98.5}, "take_profit": [{"price": 110}]},
     }
 
     below_floor = _signature_gate_evaluation(repo, _settings(), payload["analysis"], payload, Direction.long)
@@ -891,11 +891,15 @@ def test_flip_block_logs_explain_each_failed_gate_and_checklist_rates() -> None:
     repo.upsert_watchlist_item(WatchlistItem(symbol="TESTUSDT", asset_class="crypto"))
     payload = _candidate_entry_payload()
     simulation = _candidate_entry_simulation()
+    # WO-FCE-NET-EDGE-01: 실패 항목을 `rr` 에서 `htf` 로 옮겼다. `rr` 항목은
+    # `_paper_simulation_contract` 가 목표 계획의 RR 로 덮어쓰므로 시뮬레이터가 준 상태를
+    # 유지하지 않는다 — 이 테스트가 재는 것은 **차단 로그와 항목별 통과율**이지 RR 산출이
+    # 아니므로, 덮어쓰이지 않는 항목으로 실패를 만든다.
     simulation.update(
         {
             "checklist": [
-                {"key": "rr", "label": "손익비", "status": "fail"},
-                {"key": "htf", "label": "상위 TF 정렬", "status": "pass"},
+                {"key": "rr", "label": "손익비", "status": "pass"},
+                {"key": "htf", "label": "상위 TF 정렬", "status": "fail"},
             ],
             "checklist_passed": 1,
             "checklist_total": 2,
@@ -921,8 +925,8 @@ def test_flip_block_logs_explain_each_failed_gate_and_checklist_rates() -> None:
     checklist_stage = next(item for item in funnel["stages"] if item["id"] == "checklist")
     assert checklist_stage["rejection_top3"][0]["count"] == 1
     rates = {item["key"]: item for item in funnel["checklist_pass_rates"]}
-    assert rates["rr"]["pass_rate_pct"] == 0.0
-    assert rates["htf"]["pass_rate_pct"] == 100.0
+    assert rates["rr"]["pass_rate_pct"] == 100.0
+    assert rates["htf"]["pass_rate_pct"] == 0.0
 
 
 @pytest.mark.parametrize(
@@ -1158,7 +1162,7 @@ def test_benchmark_bootstrap_opens_current_stance_once_without_flip() -> None:
         "checklist": [{"status": "pass"}] * 3 + [{"status": "fail"}] * 2,
         "checklist_passed": 3,
         "checklist_total": 5,
-        "action_plan": {"invalidation": {"price": 99}, "take_profit": [{"price": 106}]},
+        "action_plan": {"invalidation": {"price": 98.5}, "take_profit": [{"price": 106}]},
     }
 
     first = run_paper_engine(
@@ -1223,7 +1227,7 @@ def test_validation_sampler_refills_slot_after_scored_trade_closes() -> None:
         "checklist": [{"status": "pass"}] * 3 + [{"status": "fail"}] * 2,
         "checklist_passed": 3,
         "checklist_total": 5,
-        "action_plan": {"invalidation": {"price": 99}, "take_profit": [{"price": 106}]},
+        "action_plan": {"invalidation": {"price": 98.5}, "take_profit": [{"price": 106}]},
     }
 
     def load_analysis(_symbol: str, _timeframe: str) -> dict[str, object]:
@@ -1307,7 +1311,7 @@ def test_benchmark_bootstrap_recovers_policy_invalid_seed_on_new_bar() -> None:
         "checklist": [{"status": "pass"}] * 3 + [{"status": "fail"}] * 2,
         "checklist_passed": 3,
         "checklist_total": 5,
-        "action_plan": {"invalidation": {"price": 99}, "take_profit": [{"price": 106}]},
+        "action_plan": {"invalidation": {"price": 98.5}, "take_profit": [{"price": 106}]},
     }
 
     def load_analysis(_symbol: str, _timeframe: str) -> dict[str, object]:
@@ -1530,5 +1534,5 @@ def _candidate_entry_simulation() -> dict:
         "checklist": [{"key": f"check-{index}", "label": f"체크 {index}", "status": "pass"} for index in range(6)],
         "checklist_passed": 6,
         "checklist_total": 6,
-        "action_plan": {"invalidation": {"price": 99}, "take_profit": [{"price": 110}]},
+        "action_plan": {"invalidation": {"price": 98.5}, "take_profit": [{"price": 110}]},
     }

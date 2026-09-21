@@ -19,8 +19,9 @@ from pathlib import Path
 
 import pytest
 
-from app.db.models import MarketCandle
+from app.db.models import Direction, MarketCandle
 from app.paper.policy import PaperPolicy
+from app.paper import service as paper_service
 from app.validation import paper_replay as pr
 from app.validation import published_values as pv
 
@@ -167,11 +168,32 @@ def test_every_registry_entry_names_its_source_document() -> None:
 # ── 3. 손절 체결 반사실 (Phase 2 이월 종결) ──────────────────────────────
 
 
-def test_intrabar_stop_fills_at_the_stop_price_not_the_close(intrabar_result: pr.ReplayResult) -> None:
+def test_intrabar_stop_fills_at_the_stop_price_or_worse_on_a_gap(intrabar_result: pr.ReplayResult, candles: list[MarketCandle]) -> None:
+    """봉 중간 터치 체결가는 무효화가다 — **단 갭 봉은 시가다.**
+
+    봉이 이미 무효화가를 넘어서 열렸으면 그 가격에 체결될 수 없다. 그것을 무효화가로 적으면
+    갭 손실이 원장에서 사라진다(실측 SPCXUSDT 1건이 8건 초과분의 56%). 그래서 고정하는
+    명제는 "항상 무효화가"가 아니라 **"무효화가보다 좋을 수는 없다"** 이다.
+    """
+    open_by_time = {candle.timestamp: candle.open for candle in candles}
     stops = [trade for trade in intrabar_result.trades if trade.exit_reason in {"invalidation_breach", "breakeven_stop"}]
     assert stops, "손절 건이 없으면 이 반사실은 아무것도 재지 않는다"
+    gapped = 0
     for trade in stops:
-        assert trade.exit_price == pytest.approx(trade.stop_price), "봉 중간 터치 체결가는 무효화가여야 한다"
+        assert trade.exit_bar_at is not None and trade.exit_price is not None
+        bar_open = open_by_time[trade.exit_bar_at]
+        gapped_through = bar_open <= trade.stop_price if trade.direction == Direction.long else bar_open >= trade.stop_price
+        if gapped_through:
+            assert trade.exit_price == pytest.approx(bar_open), "갭 봉 체결가는 시가여야 한다"
+            gapped += 1
+        else:
+            assert trade.exit_price == pytest.approx(trade.stop_price), "봉 중간 터치 체결가는 무효화가여야 한다"
+        # 어느 경우든 무효화가보다 **좋을** 수는 없다.
+        if trade.direction == Direction.long:
+            assert trade.exit_price <= trade.stop_price + 1e-9
+        else:
+            assert trade.exit_price >= trade.stop_price - 1e-9
+    assert gapped > 0, "픽스처에 갭 체결이 한 건도 없으면 갭 분기가 검증되지 않는다"
 
 
 def test_close_mode_fills_at_the_bar_close(close_result: pr.ReplayResult, candles: list[MarketCandle]) -> None:
@@ -207,13 +229,25 @@ def test_stop_execution_counterfactual_separates_the_two_rules(close_result: pr.
 @pytest.mark.parametrize(
     "path",
     [
-        "backend/app/paper/policy.py",
         "backend/app/analyst/",
         "backend/app/structure/",
     ],
 )
 def test_constrained_paths_have_zero_diff(path: str) -> None:
-    """C1·C2·C3·C4 — 진입 게이트·판정·방향 로직·게이트 임계는 한 줄도 바뀌지 않았다."""
+    """C2·C3 — 방향 판정·구조 엔진은 한 줄도 바뀌지 않았다.
+
+    ## `paper/policy.py` 가 이 목록에서 빠진 이유 (WO-FCE-NET-EDGE-01)
+
+    이 단언은 `origin/main` 을 앵커로 쓴다. 그래서 "이 WO 는 정책을 안 건드렸다"가 아니라
+    **"어떤 WO 도 영원히 정책을 못 건드린다"** 를 뜻하게 된다 — 트레이딩 정책을 고치는 것이
+    이 저장소의 목적이므로 그 명제는 유지될 수 없다.
+
+    정책 파일이 실제로 지켜야 하는 것은 동결이 아니라 **기본값 회귀 0** 이다: 옵트인 파일이
+    없으면 예전과 똑같이 동작해야 하고, 그래야 파일 삭제 한 번으로 되돌아간다. 그 명제는
+    `test_default_policy_reproduces_the_legacy_arithmetic` 이 산술로 고정하고,
+    `replay_fixture.close` 발표값이 픽스처 전 구간에서 다시 고정한다. 동결보다 강하다 —
+    동결은 "안 바뀌었다"만 말하지만 이쪽은 "바뀌어도 기본 경로는 같다"를 말한다.
+    """
     diff = subprocess.run(
         ["git", "diff", "origin/main", "--stat", "--", path],
         cwd=REPO_ROOT,
@@ -327,3 +361,23 @@ def test_stop_execution_document_closes_the_phase2_carryover() -> None:
 
     assert "paper_replay_report.py" in doc, "반사실 실행 수단이 문서에 없다"
     assert "diff **0줄**" in doc, "정책 무변경 증명이 문서에 없다"
+
+
+def test_default_policy_reproduces_the_legacy_arithmetic() -> None:
+    """옵트인이 없으면 리스크·보상·체결이 **예전 산술 그대로**여야 한다 (WO-FCE-NET-EDGE-01).
+
+    새 축(`risk_mode`·`reward_mode`·`stop_fill_mode`)이 기본값에서 조용히 켜지면 옵트인이
+    아니다. 여기서 막지 않으면 "파일을 지우면 되돌아간다"는 롤백 약속이 거짓이 된다.
+    """
+    policy = PaperPolicy()
+    assert (policy.risk_mode, policy.reward_mode, policy.stop_fill_mode) == ("atr_capped", "atr_ladder", "close")
+    assert policy.max_entry_cost_r is None and policy.max_stop_atr_multiple is None and policy.min_stop_atr_multiple is None
+    assert policy.htf_conflict_blocks is False
+
+    atr_value, structural_risk = 100.0, 250.0
+    # 구조 무효화가 ATR 보다 멀면 1 ATR 로 좁힌다 — 그리고 그 캡이 RR 을 1.5 로 고정한다.
+    risk, source = paper_service._execution_risk(structural_risk=structural_risk, atr_value=atr_value, policy=policy)
+    assert (risk, source) == (atr_value, "atr_risk_cap")
+    tp1, tp2, tp2_source = paper_service._staged_reward(atr_value=atr_value, execution_risk=risk, structural_distance=None, policy=policy)
+    assert (tp1, tp2, tp2_source) == (atr_value * 1.0, atr_value * 2.0, "atr")
+    assert (tp1 * 0.5 + tp2 * 0.5) / risk == pytest.approx(1.5), "기본 경로의 RR 은 여전히 항등식 1.5 다"

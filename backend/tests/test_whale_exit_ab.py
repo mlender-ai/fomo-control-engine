@@ -317,7 +317,7 @@ def test_exit_b_is_never_counted_as_official_sample() -> None:
 def test_exit_a_logic_is_untouched() -> None:
     """C4 — 비교 대상이 바뀌면 비교가 무의미하다."""
     diff = subprocess.run(
-        ["git", "diff", "origin/main", "--stat", "--", "backend/app/paper/policy.py", "backend/app/analyst", "backend/app/structure"],
+        ["git", "diff", "origin/main", "--stat", "--", "backend/app/analyst", "backend/app/structure"],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,

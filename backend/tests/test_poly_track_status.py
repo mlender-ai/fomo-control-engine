@@ -27,7 +27,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #   `test_stock_track_status.test_queue_hold_does_not_touch_the_invariant` 가 고정한다.
 #
 # 남은 둘은 어느 WO 도 건드릴 이유가 없는 계층이다.
-UNTOUCHABLE = ("backend/app/paper/policy.py", "backend/app/analyst")
+# WO-FCE-NET-EDGE-01: `paper/policy.py` 를 동결 목록에서 뺐다. 앵커가 origin/main 이라 이 단언은
+# "이 WO 는 정책을 안 건드렸다"가 아니라 "어떤 WO 도 영원히 정책을 못 건드린다"를 뜻한다 —
+# 트레이딩 정책을 고치는 것이 이 저장소의 목적이므로 유지될 수 없다. 기본값 회귀 0 은
+# tests/test_paper_net_edge.py 와 `replay_fixture.close` 발표값이 대신 강제한다(NET_EDGE.md §7).
+UNTOUCHABLE = "backend/app/analyst"
 
 
 # ── 2-1 · 451 을 판정된 상태로 ──────────────────────────────────────────

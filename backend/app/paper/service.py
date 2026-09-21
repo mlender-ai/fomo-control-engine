@@ -32,6 +32,7 @@ from app.paper.policy import (
     plan_position_size,
     portfolio_cap_block_reason,
     reentry_locked,
+    stop_within_bounds,
 )
 from app.paper.earnings_state import earnings_gate_passes, earnings_observation, earnings_state
 from app.paper.slippage import observe_depth
@@ -54,52 +55,106 @@ VALIDATION_BOOTSTRAP_MAX_POSITIONS = 2
 VALIDATION_BOOTSTRAP_MIN_EVIDENCE = 3
 VALIDATION_BOOTSTRAP_MIN_CHECKLIST_PASSED = 3
 VALIDATION_BOOTSTRAP_MIN_RR = 1.0
-ENTRY_GATE_VERSION = "pooled-signature-v1"
+# WO-FCE-NET-EDGE-01 에서 올린다. 게이트 집합이 바뀌었으므로 이미 평가한 봉도 한 번 더
+# 본다 — 올리지 않으면 새 게이트가 다음 봉부터만 적용되고, 직전에 거부된 자리들이 낡은
+# 사유를 단 채 원장에 남는다.
+ENTRY_GATE_VERSION = "net-edge-v1"
 
 
-CRYPTO_POLICY_PARAMETERS_PATH = Path(__file__).with_name("params") / "crypto-v2.json"
+CRYPTO_POLICY_PARAMETERS_DIR = Path(__file__).with_name("params")
+
+# 파일에서 읽는 키. 타입별로 나눠 두는 이유는 **모르는 키를 조용히 삼키지 않기** 위해서다 —
+# 오타 난 키가 기본값으로 지나가면 "켰다고 생각했는데 안 켜진" 상태가 되고, 그것이 가장
+# 진단하기 어려운 종류의 결함이다.
+_POLICY_STR_KEYS = (
+    "version",
+    "stance_gate_mode",
+    "signature_gate_mode",
+    "sizing_mode",
+    "reentry_lock_mode",
+    "rr_basis",
+    "risk_mode",
+    "reward_mode",
+    "stop_fill_mode",
+)
+_POLICY_FLOAT_KEYS = (
+    "risk_budget_usdt",
+    "max_notional_usdt",
+    "min_notional_usdt",
+    "min_stop_atr_multiple",
+    "max_stop_atr_multiple",
+    "max_reward_atr_multiple",
+    "take_profit_1_r",
+    "take_profit_2_r_max",
+    "take_profit_2_r_default",
+    "max_entry_cost_r",
+    "min_net_rr",
+)
+_POLICY_INT_KEYS = ("reentry_lock_bars",)
+_POLICY_BOOL_KEYS = ("reentry_lock_same_direction_only", "htf_conflict_blocks")
 
 
-def _crypto_policy_modes(path: Path = CRYPTO_POLICY_PARAMETERS_PATH) -> dict[str, Any]:
-    """크립토 진입 게이트 모드와 사이즈 파라미터 (WO-FCE-CORE-DEFECTS-01 · RISK-SIZING-01).
+def crypto_policy_parameters_path(directory: Path = CRYPTO_POLICY_PARAMETERS_DIR) -> Path | None:
+    """지금 유효한 크립토 정책 파일. **버전 번호가 가장 큰 것**이 이긴다.
+
+    `crypto-v3.json` 을 추가하면 `crypto-v2.json` 을 승계하고, **지우면 즉시 v2 로 되돌아간다.**
+    둘 다 없으면 `None` 이고 `PaperPolicy` 기본값(= 최초 동작)이 쓰인다. 롤백이 파일 삭제
+    한 번이어야 옵트인이라고 부를 수 있다.
+    """
+    best: tuple[int, Path] | None = None
+    try:
+        candidates = list(directory.glob("crypto-v*.json"))
+    except OSError:
+        return None
+    for path in candidates:
+        suffix = path.stem.removeprefix("crypto-v")
+        if not suffix.isdigit():
+            continue
+        version = int(suffix)
+        if best is None or version > best[0]:
+            best = (version, path)
+    return best[1] if best else None
+
+
+def _crypto_policy_modes(path: Path | None = None) -> dict[str, Any]:
+    """크립토 진입 게이트 모드·사이즈·리스크/보상 파라미터 (CORE-DEFECTS · RISK-SIZING · NET-EDGE).
 
     파일이 없으면 빈 dict 를 돌려 `PaperPolicy` 기본값(= 기존 동작)이 유지된다 —
     옵트인이므로 파일을 지우면 즉시 이전 정책으로 되돌아간다.
     """
+    resolved = crypto_policy_parameters_path() if path is None else path
+    if resolved is None:
+        return {}
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(resolved.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
-    modes: dict[str, Any] = {
-        key: str(payload[key])
-        for key in ("version", "stance_gate_mode", "signature_gate_mode", "sizing_mode", "reentry_lock_mode", "rr_basis")
-        if isinstance(payload.get(key), str)
-    }
-    # WO-FCE-RISK-SIZING-01 Phase 1. 사이즈 파라미터도 같은 옵트인 파일에서 읽는다 —
-    # 파일을 지우면 고정 명목(기존 동작)으로 즉시 되돌아간다.
-    for key in ("risk_budget_usdt", "max_notional_usdt", "min_notional_usdt"):
+    modes: dict[str, Any] = {key: str(payload[key]) for key in _POLICY_STR_KEYS if isinstance(payload.get(key), str)}
+    for key in _POLICY_FLOAT_KEYS:
         value = payload.get(key)
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             modes[key] = float(value)
-    # Phase 3. 재진입 잠금도 같은 옵트인 파일에서 읽는다.
-    bars = payload.get("reentry_lock_bars")
-    if isinstance(bars, int) and not isinstance(bars, bool):
-        modes["reentry_lock_bars"] = bars
-    same_dir = payload.get("reentry_lock_same_direction_only")
-    if isinstance(same_dir, bool):
-        modes["reentry_lock_same_direction_only"] = same_dir
+    for key in _POLICY_INT_KEYS:
+        value = payload.get(key)
+        if isinstance(value, int) and not isinstance(value, bool):
+            modes[key] = value
+    for key in _POLICY_BOOL_KEYS:
+        value = payload.get(key)
+        if isinstance(value, bool):
+            modes[key] = value
     return modes
 
 
-def observation_universe_enabled(settings: Any, path: Path = CRYPTO_POLICY_PARAMETERS_PATH) -> bool:
+def observation_universe_enabled(settings: Any, path: Path | None = None) -> bool:
     """관측 등급 유니버스 급유를 켤 것인가 (WO-FCE-DISCOVERY-UNBLOCK-01 · C4).
 
     우선순위는 **옵트인 파일 > 설정**이다. `crypto-v2.json` 의 한 값으로 켜고 끌 수 있어야
     하고(그 파일은 커밋되므로 이력이 남는다), 환경변수로도 덮을 수 있다.
     파일에 키가 없으면 설정 기본값(False = 기존 동작)을 쓴다.
     """
+    resolved = crypto_policy_parameters_path() if path is None else path
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(resolved.read_text(encoding="utf-8")) if resolved is not None else {}
     except (OSError, json.JSONDecodeError):
         payload = {}
     value = payload.get("observation_universe_enabled")
@@ -389,6 +444,10 @@ def run_paper_engine(
                         data_fresh=_data_fresh(bar, timeframe, now),
                         confirmed_bar=True,
                         policy=policy_from_settings(settings, str(analysis.get("asset_class") or "unknown")),
+                        # WO-FCE-NET-EDGE-01. 셋 다 게이트가 꺼져 있어도 관측으로 남는다.
+                        cost_r=_float(target_plan.get("cost_r")),
+                        stop_atr_multiple=_float(target_plan.get("stop_atr_multiple")),
+                        htf_conflict=simulation.get("htf_conflict") is True,
                     )
                 capacity_available = len(repo.list_paper_trades(status="open", limit=100)) < int(settings.paper_max_open_positions)
                 # Phase 3: 같은 확정봉 왕복 차단. 품질 게이트가 아니라 **표본 독립성** 게이트다(C1).
@@ -432,6 +491,9 @@ def run_paper_engine(
                     action_levels=bool(invalidation is not None and take_profit is not None),
                     capacity_available=capacity_available,
                     rr_ratio=_float(target_plan.get("rr_ratio")),
+                    cost_r=_float(target_plan.get("cost_r")),
+                    stop_atr_multiple=_float(target_plan.get("stop_atr_multiple")),
+                    rr_basis=str(target_plan.get("rr_basis") or "") or None,
                     earnings_clear=earnings_gate_passes(state_of_earnings, required=earnings_required),
                     earnings_state=state_of_earnings,
                     earnings_required=earnings_required,
@@ -662,6 +724,7 @@ def _bootstrap_validation_positions(
             checklist_total = int(simulation.get("checklist_total") or 0)
             rr_ratio = _float(target_plan.get("rr_ratio"))
             signature_gates = _signature_gate_evaluation(repo, settings, analysis, payload, direction, now=now)
+            bootstrap_policy = policy_from_settings(settings, str(analysis.get("asset_class") or "unknown"))
             gates = {
                 "confirmed_stance": True,
                 "not_transitioning": True,
@@ -670,6 +733,13 @@ def _bootstrap_validation_positions(
                 "invalidation_hygiene": simulation.get("invalidation_too_close") is not True
                 and target_plan.get("execution_invalidation_too_close") is not True,
                 "risk_reward": rr_ratio is not None and rr_ratio >= VALIDATION_BOOTSTRAP_MIN_RR,
+                # WO-FCE-NET-EDGE-01. 산술 게이트는 **부트스트랩에도 똑같이 건다.**
+                # 관문이 둘이면 그중 하나는 반드시 잊힌다(AGENTS.md). 품질 임계는 여기서
+                # 완화돼 있지만 마찰은 완화할 수 있는 종류가 아니다 — 비용이 1R 을 먹는
+                # 자리에서 만든 표본은 시그니처를 채점하지 못하고 계좌만 깎는다.
+                "stop_bounds": stop_within_bounds(_float(target_plan.get("stop_atr_multiple")), bootstrap_policy),
+                "cost_efficiency": bootstrap_policy.max_entry_cost_r is None
+                or (_float(target_plan.get("cost_r")) is not None and float(target_plan["cost_r"]) <= bootstrap_policy.max_entry_cost_r),
                 "liquidation_safety": simulation.get("survives_to_invalidation") is True,
                 "action_levels": invalidation is not None and take_profit is not None,
                 "event_window": _earnings_clear(analysis),
@@ -1351,8 +1421,13 @@ GATE_ORDER = (
     "evidence",
     "checklist",
     "invalidation_hygiene",
+    # WO-FCE-NET-EDGE-01. 스톱 경계 → RR → 마찰 순이다. 스톱이 먼저인 이유는 RR 도 비용R 도
+    # 스톱 거리의 함수이기 때문이다 — 거리가 경계 밖이면 뒤 두 판정은 의미가 없다.
+    "stop_bounds",
     "risk_reward",
+    "cost_efficiency",
     "liquidation_safety",
+    "htf_alignment",
     "action_levels",
     "signature_gate",
     "regime_gate",
@@ -1366,8 +1441,11 @@ GATE_STAGE_LABELS = {
     "evidence": "근거 수 통과",
     "checklist": "체크리스트 통과",
     "invalidation_hygiene": "무효화 거리 통과",
+    "stop_bounds": "스톱 거리 경계 통과",
     "risk_reward": "R:R 통과",
+    "cost_efficiency": "마찰 상한 통과",
     "liquidation_safety": "청산 안전거리 통과",
+    "htf_alignment": "상위 타임프레임 정렬 통과",
     "action_levels": "행동 가격 확보",
     "signature_gate": "검증 시그니처 통과",
     "regime_gate": "현재 레짐 성적 통과",
@@ -1381,8 +1459,11 @@ GATE_REJECTION_LABELS = {
     "evidence": "근거 수 부족",
     "checklist": "체크리스트 미달",
     "invalidation_hygiene": "무효화 과근접",
+    "stop_bounds": "스톱 거리 상한 초과",
     "risk_reward": "R:R 미달",
+    "cost_efficiency": "마찰이 1R 을 과다 잠식",
     "liquidation_safety": "청산 안전거리 미달",
+    "htf_alignment": "상위 타임프레임 충돌",
     "action_levels": "무효화·익절가 부재",
     "signature_gate": "검증 시그니처 부재",
     "regime_gate": "현재 레짐 성적 미달",
@@ -1400,7 +1481,9 @@ def paper_gate_funnel(repo: Any, *, days: int = 7, now: datetime | None = None) 
     stages: list[dict[str, Any]] = [{"id": "evaluated", "label": "평가", "count": len(rows)}]
     survivors = rows
     for gate in GATE_ORDER:
-        survivors = [row for row in survivors if bool(_dict(row.get("gates")).get(gate))]
+        # 게이트가 생기기 **전에** 쓰인 행은 그 키를 갖지 않는다. 없는 키를 False 로 읽으면
+        # 과거 전 구간이 새 게이트에서 탈락한 것처럼 보인다 — 없음은 탈락의 근거가 아니다.
+        survivors = [row for row in survivors if _gate_recorded_pass(_dict(row.get("gates")), gate)]
         reason_counts: dict[str, int] = {}
         for log in block_logs:
             if str(log.get("failed_gate") or "") != gate:
@@ -1461,6 +1544,16 @@ def paper_gate_funnel(repo: Any, *, days: int = 7, now: datetime | None = None) 
     }
 
 
+def _gate_recorded_pass(gates: dict[str, Any], gate: str) -> bool:
+    """이 행이 그 게이트를 **통과로 기록했는가.**
+
+    키가 아예 없으면 통과로 센다. 그 행은 게이트가 존재하기 전에 쓰였고, 없는 판정을
+    탈락으로 읽으면 퍼널이 과거를 소급해 거짓말한다(AGENTS.md — 빈 목록은 없음의 근거가
+    아니다의 같은 원리).
+    """
+    return bool(gates[gate]) if gate in gates else True
+
+
 def _gate_funnel_record(
     *,
     symbol: str,
@@ -1476,6 +1569,9 @@ def _gate_funnel_record(
     rr_ratio: float | None,
     earnings_clear: bool,
     freshness: bool,
+    cost_r: float | None = None,
+    stop_atr_multiple: float | None = None,
+    rr_basis: str | None = None,
     earnings_state: str = "clear",
     earnings_required: bool = False,
     entry_decision: Any,
@@ -1489,8 +1585,13 @@ def _gate_funnel_record(
         "evidence": bool(decision_gates.get("evidence")),
         "checklist": bool(decision_gates.get("checklist")),
         "invalidation_hygiene": bool(decision_gates.get("invalidation_hygiene")),
+        # WO-FCE-NET-EDGE-01. 게이트가 꺼져 있으면 정책이 True 를 돌려주므로 퍼널에도 통과로
+        # 남는다 — 켜지지 않은 축이 탈락으로 위장하지 않는다.
+        "stop_bounds": bool(decision_gates.get("stop_bounds", True)),
         "risk_reward": bool(decision_gates.get("risk_reward")),
+        "cost_efficiency": bool(decision_gates.get("cost_efficiency", True)),
         "liquidation_safety": bool(decision_gates.get("liquidation_safety")),
+        "htf_alignment": bool(decision_gates.get("htf_alignment", True)),
         "action_levels": action_levels,
         "signature_gate": bool(signature_gates.get("signature_gate")),
         "regime_gate": bool(signature_gates.get("regime_gate")),
@@ -1511,6 +1612,11 @@ def _gate_funnel_record(
             "total": int(simulation.get("checklist_total") or 0),
         },
         "rr_ratio": rr_ratio,
+        # WO-FCE-NET-EDGE-01. 새 게이트의 입력값을 행에 남긴다 — 굶주림이 생겼을 때
+        # "임계가 높았나 분포가 이동했나"를 원장만으로 가를 수 있어야 한다.
+        "cost_r": cost_r,
+        "stop_atr_multiple": stop_atr_multiple,
+        "rr_basis": rr_basis,
         # 4-3 · C9: "실적 구간이라 막았다"와 "데이터가 없어 못 봤다"를 구분해 남긴다.
         # 둘을 같은 불리언으로 적으면 공급 결함이 게이트 성과로 위장된다.
         "earnings_gate": earnings_observation(earnings_state, required=earnings_required),
@@ -1588,7 +1694,12 @@ def _entry_block_detail(record: dict[str, Any], gate: str) -> str:
         )
         return f"validated 시그니처 0 · candidate {len(candidates)}종 {sample_text or '표본 없음'}"
     if gate == "risk_reward":
-        return f"R:R {_format_gate_number(record.get('rr_ratio'))}<1.5"
+        basis = "순" if str(record.get("rr_basis") or "") == "net" else "총"
+        return f"{basis} R:R {_format_gate_number(record.get('rr_ratio'))} 미달"
+    if gate == "cost_efficiency":
+        return f"비용R {_format_gate_number(record.get('cost_r'))} — 왕복 마찰이 1R 을 과다 잠식"
+    if gate == "stop_bounds":
+        return f"스톱 {_format_gate_number(record.get('stop_atr_multiple'))} ATR — 상한 초과"
     if gate == "invalidation_hygiene":
         return "무효화 과근접 — 0.8% 미만 노이즈 의심"
     if gate == "evidence":
@@ -2346,39 +2457,78 @@ def _paper_target_plan(
     action_plan: dict[str, Any],
     policy: PaperPolicy,
 ) -> dict[str, Any]:
+    """진입 한 건의 **리스크·보상·마찰**을 한 자리에서 정한다.
+
+    ## 왜 재설계했나 (WO-FCE-NET-EDGE-01)
+
+    `atr_capped` + `atr_ladder` 조합은 세 결함을 동시에 만든다:
+
+        execution_risk  = min(structural_risk, ATR)       ← 구조가 멀면 조용히 좁힌다
+        staged_reward   = ATR×k1×0.5 + ATR×k2×0.5 = ATR×1.5
+
+        structural_risk ≥ ATR  이면  RR = ATR×1.5 / ATR = 1.5   ← 산술적으로 항상
+
+    1. **RR 게이트가 항등식이다.** 실측 20/24 건이 정확히 1.5000 이고 RR<1.5 는 0건 —
+       이 게이트는 한 번도 무언가를 거른 적이 없다.
+    2. **스톱이 조용히 좁혀진다.** 그 자리는 구조가 무효라고 말한 곳이 아니라 변동성이
+       정한 곳이다. 노이즈에 털린다.
+    3. **좁은 스톱이 마찰을 키운다.** 리스크 기준 사이징에서 1R 금액은 예산 상수이므로
+       `비용R = 왕복 비용률 / 스톱거리%` 다. 스톱을 절반으로 좁히면 비용R 이 두 배가 된다.
+       재판정 N=427: 비용 56.5R vs gross −10.8R — **비용이 우위의 2.9배.**
+
+    `structural` + `risk_multiple` 은 같은 뿌리를 끊는다. 리스크는 구조가 정하고(좁히지
+    않는다 — 상한을 넘으면 거부), 보상은 리스크의 배수로 잡되 구조 목표가 경계 안에 있으면
+    그것을 쓴다. 그러면 RR 은 상수가 아니라 **셋업 품질의 함수**가 되고, 순 기준 RR 하한이
+    비로소 마찰을 감당 못 하는 자리를 거른다.
+
+    **임계값은 하나도 완화하지 않았다.** `min_rr`·`min_evidence`·체크리스트 임계 diff 0.
+    """
     candles = _confirmed_candles(analysis, gauges)
     atr_value = atr(candles) if candles else max(bar.close * 0.015, 1e-9)
     sign = 1.0 if direction == Direction.long else -1.0
-    tp1_distance = atr_value * policy.take_profit_atr_k1
-    tp2_distance = atr_value * policy.take_profit_atr_k2
     structural = _first_take_profit(action_plan)
     structural_distance = (structural - bar.close) * sign if structural is not None else None
-    tp2_source = "atr"
-    if structural_distance is not None and tp1_distance < structural_distance < tp2_distance:
-        tp2_distance = structural_distance
-        tp2_source = "action_plan_nearer"
     structural_risk = abs(bar.close - invalidation_price) if invalidation_price is not None else None
     invalidation_directional = bool(
         invalidation_price is not None
         and ((direction == Direction.long and invalidation_price < bar.close) or (direction == Direction.short and invalidation_price > bar.close))
     )
-    execution_risk = min(structural_risk, atr_value) if structural_risk and structural_risk > 0 and invalidation_directional else None
+    usable_risk = bool(structural_risk and structural_risk > 0 and invalidation_directional)
+    execution_risk, risk_source = _execution_risk(
+        structural_risk=structural_risk if usable_risk else None,
+        structure_distances=_stop_side_structure_distances(analysis, entry_price=bar.close, direction=direction),
+        atr_value=atr_value,
+        policy=policy,
+    )
+    tp1_distance, tp2_distance, tp2_source = _staged_reward(
+        atr_value=atr_value,
+        execution_risk=execution_risk,
+        structural_distance=structural_distance,
+        policy=policy,
+    )
     execution_invalidation = bar.close - sign * execution_risk if execution_risk is not None else None
     staged_reward = tp1_distance * 0.5 + tp2_distance * 0.5
     gross_rr_ratio = staged_reward / execution_risk if execution_risk and execution_risk > 0 else None
     # Phase 3-4: 왕복 비용을 가격 거리로 환산해 보상에서 빼고 리스크에 더한다.
     # 비용은 진입·청산 양쪽에서 나가므로 명목의 2배율이다.
-    roundtrip_cost_distance = bar.close * policy.execution_cost_rate * 2.0
+    roundtrip_cost_distance = bar.close * policy.roundtrip_cost_rate
     net_rr_ratio = (staged_reward - roundtrip_cost_distance) / (execution_risk + roundtrip_cost_distance) if execution_risk and execution_risk > 0 else None
     # 게이트가 쓰는 값만 기준에 따라 갈린다. **둘 다 원장에 남긴다**(C10).
     rr_ratio = net_rr_ratio if policy.rr_basis == "net" else gross_rr_ratio
+    minimum_rr = policy.effective_min_net_rr if policy.rr_basis == "net" else policy.min_rr
     execution_distance_pct = abs(execution_risk / bar.close * 100.0) if execution_risk is not None and bar.close else None
+    # 비용R 은 사이즈와 무관한 항등식이다 — 이 한 값이 "이 자리에서 마찰이 1R 의 몇 퍼센트를
+    # 먹는가"를 진입 시점에 확정한다. 게이트를 켜지 않아도 **항상 기록한다**(C10).
+    cost_r = roundtrip_cost_distance / execution_risk if execution_risk and execution_risk > 0 else None
+    stop_atr_multiple = execution_risk / atr_value if execution_risk is not None and atr_value > 0 else None
     return {
         "method": "atr_multistage",
         "atr": round(atr_value, 8),
         "atr_period": 14,
         "k1": policy.take_profit_atr_k1,
         "k2": policy.take_profit_atr_k2,
+        "risk_mode": policy.risk_mode,
+        "reward_mode": policy.reward_mode,
         "take_profit_1": round(bar.close + sign * tp1_distance, 8),
         "take_profit_2": round(bar.close + sign * tp2_distance, 8),
         "take_profit_2_source": tp2_source,
@@ -2386,12 +2536,11 @@ def _paper_target_plan(
         "thesis_invalidation": invalidation_price,
         "structural_risk_distance": round(structural_risk, 8) if structural_risk is not None else None,
         "execution_invalidation": round(execution_invalidation, 8) if execution_invalidation is not None else None,
-        "execution_invalidation_source": "atr_risk_cap"
-        if execution_risk is not None and structural_risk is not None and execution_risk < structural_risk
-        else "structural",
+        "execution_invalidation_source": risk_source,
         "execution_invalidation_distance_pct": round(execution_distance_pct, 4) if execution_distance_pct is not None else None,
         "execution_invalidation_too_close": bool(execution_distance_pct is not None and execution_distance_pct < 0.8),
         "risk_distance": round(execution_risk, 8) if execution_risk is not None else None,
+        "stop_atr_multiple": round(stop_atr_multiple, 4) if stop_atr_multiple is not None else None,
         "staged_reward_distance": round(staged_reward, 8),
         "reward_weighting": {"take_profit_1": 0.5, "take_profit_2": 0.5},
         "rr_ratio": round(rr_ratio, 4) if rr_ratio is not None else None,
@@ -2399,9 +2548,124 @@ def _paper_target_plan(
         "gross_rr_ratio": round(gross_rr_ratio, 4) if gross_rr_ratio is not None else None,
         "net_rr_ratio": round(net_rr_ratio, 4) if net_rr_ratio is not None else None,
         "roundtrip_cost_distance": round(roundtrip_cost_distance, 8),
-        "minimum_rr": policy.min_rr,
-        "rr_eligible": bool(rr_ratio is not None and rr_ratio >= policy.min_rr),
+        "cost_r": round(cost_r, 6) if cost_r is not None else None,
+        "max_entry_cost_r": policy.max_entry_cost_r,
+        "minimum_rr": minimum_rr,
+        "rr_eligible": bool(rr_ratio is not None and rr_ratio >= minimum_rr),
     }
+
+
+def _stop_side_structure_distances(
+    analysis: dict[str, Any],
+    *,
+    entry_price: float,
+    direction: Direction,
+) -> tuple[float, ...]:
+    """손절 쪽에 있는 구조 레벨까지의 거리 (오름차순).
+
+    롱이면 진입가 **아래**의 지지·무효화 후보, 숏이면 **위**의 저항·무효화 후보다. 반대쪽
+    레벨은 손절 자리가 될 수 없으므로 섞지 않는다 — 섞으면 "가장 가까운 레벨"이 목표 쪽에서
+    나와 스톱이 진입가 반대편에 놓인다.
+
+    새 레벨을 만들지 않는다. 이미 확정봉 분석이 낸 `price_levels` 를 읽을 뿐이다(룩어헤드 없음).
+    """
+    levels = _dict(analysis.get("price_levels"))
+    side = "support" if direction == Direction.long else "resistance"
+    distances: list[float] = []
+    for item in [*_list(levels.get("invalidation")), *_list(levels.get(side))]:
+        price = _price_from(item)
+        if price is None or price <= 0:
+            continue
+        on_stop_side = price < entry_price if direction == Direction.long else price > entry_price
+        if on_stop_side:
+            distances.append(abs(entry_price - price))
+    return tuple(sorted(distances))
+
+
+def _execution_risk(
+    *,
+    structural_risk: float | None,
+    structure_distances: tuple[float, ...] = (),
+    atr_value: float,
+    policy: PaperPolicy,
+) -> tuple[float | None, str]:
+    """체결 리스크 거리와 **그것이 어디서 왔는지** (WO-FCE-NET-EDGE-01).
+
+    `atr_capped`(기본)는 구조가 멀면 1 ATR 로 좁힌다 — 기존 동작이며 diff 0.
+    `structural`은 좁히지 않는다. 상한 초과는 `stop_bounds` 게이트가 거부하므로 여기서는
+    **하한만** 손댄다 — 하한 미만을 넓히는 것은 리스크 확대가 아니다. 리스크 기준 사이징에서
+    1R 금액은 예산 상수라 스톱을 넓히면 수량이 줄어 금액 리스크가 같고, 비용R 만 내려간다.
+    """
+    if policy.risk_mode == "atr_capped":
+        if structural_risk is None:
+            return None, "unavailable"
+        capped = min(structural_risk, atr_value)
+        return capped, "atr_risk_cap" if capped < structural_risk else "structural"
+
+    floor = atr_value * policy.min_stop_atr_multiple if (policy.min_stop_atr_multiple is not None and atr_value > 0) else None
+
+    if policy.risk_mode == "nearest_structure":
+        # 하한을 넘는 **가장 가까운** 레벨. 하한이 없으면 그냥 가장 가까운 레벨이다.
+        for distance in structure_distances:
+            if floor is None or distance >= floor:
+                return distance, "nearest_structure"
+        # 모든 레벨이 하한보다 가깝다 = 전부 노이즈 범위다. 바닥으로 넓힌다.
+        if structure_distances and floor is not None:
+            return floor, "atr_floor"
+        if structural_risk is None:
+            return (floor, "atr_floor") if floor is not None else (None, "unavailable")
+        return _bounded_structural(structural_risk, floor)
+
+    if structural_risk is None:
+        return None, "unavailable"
+    return _bounded_structural(structural_risk, floor)
+
+
+def _bounded_structural(structural_risk: float, floor: float | None) -> tuple[float, str]:
+    if floor is not None and structural_risk < floor:
+        return floor, "atr_floor"
+    return structural_risk, "structural"
+
+
+def _staged_reward(
+    *,
+    atr_value: float,
+    execution_risk: float | None,
+    structural_distance: float | None,
+    policy: PaperPolicy,
+) -> tuple[float, float, str]:
+    """TP1·TP2 거리와 TP2 의 출처.
+
+    `atr_ladder`(기본): 구조 목표는 **줄이는 방향으로만** 반영된다 — 기존 동작이며 diff 0.
+    `risk_multiple`: 사다리가 리스크의 배수다. 구조 목표는 `[min, max]×리스크` 로 잘라 쓴다 —
+    구조가 더 멀리 있으면 늘려 쓰고(상한까지), 더 가까우면 그대로 쓰되 하한 밑으로는 내려가지
+    않는다. 하한 밑 목표는 그 사다리로 RR 을 만들 수 없다는 뜻이므로 RR 게이트가 거른다.
+    """
+    if policy.reward_mode != "risk_multiple" or execution_risk is None or execution_risk <= 0:
+        tp1 = atr_value * policy.take_profit_atr_k1
+        tp2 = atr_value * policy.take_profit_atr_k2
+        if policy.reward_mode == "structural_extend":
+            # 구조 목표를 **늘리는 방향으로만** 쓴다. 줄이는 쪽은 쓰지 않는다 —
+            # 가까운 목표 하나로 사다리를 당겨오면 추세 구간이 계획에서 통째로 빠진다.
+            ceiling = atr_value * policy.max_reward_atr_multiple
+            if structural_distance is not None and structural_distance > tp2:
+                extended = min(structural_distance, ceiling)
+                return tp1, extended, "action_plan_extended" if extended >= structural_distance else "reward_ceiling"
+            return tp1, tp2, "atr"
+        if structural_distance is not None and tp1 < structural_distance < tp2:
+            return tp1, structural_distance, "action_plan_nearer"
+        return tp1, tp2, "atr"
+
+    tp1 = execution_risk * policy.take_profit_1_r
+    high = execution_risk * policy.take_profit_2_r_max
+    if structural_distance is not None and structural_distance > 0:
+        # **바닥을 깔지 않는다.** 구조 목표가 가까우면 그 사다리로는 RR 이 안 나오는 셋업이고,
+        # 그것을 최소 배수로 끌어올리면 RR 이 다시 상수가 된다 — 항등식이 자리를 옮길 뿐이다.
+        # TP2 가 TP1 보다 가까울 수는 없으므로 아래 경계는 TP1 이고, 위는 상한이다.
+        clamped = min(max(structural_distance, tp1), high)
+        source = "action_plan" if tp1 <= structural_distance <= high else ("action_plan_floored_to_tp1" if structural_distance < tp1 else "action_plan_capped")
+        return tp1, clamped, source
+    return tp1, execution_risk * policy.take_profit_2_r_default, "risk_multiple_default"
 
 
 def _paper_simulation_contract(simulation: dict[str, Any], target_plan: dict[str, Any]) -> dict[str, Any]:

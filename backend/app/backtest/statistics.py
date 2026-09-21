@@ -34,6 +34,33 @@ def bootstrap_win_ci(
     return (round(rates[low_index] * 100, 1), round(rates[high_index] * 100, 1))
 
 
+def bootstrap_mean_ci(
+    values: list[float],
+    *,
+    iterations: int = 1000,
+    confidence: float = 0.95,
+) -> tuple[float, float] | None:
+    """연속값 평균의 부트스트랩 신뢰구간. 결정론(값 시퀀스 기반 시드).
+
+    `bootstrap_win_ci` 는 승패(이진)용이라 **거래당 R 에는 쓸 수 없다.** R 은 −3.5 도 +2.25 도
+    되는 연속값이고, 그 분포의 꼬리가 판정을 좌우한다(실측: SPCXUSDT −3.550R 한 건이 N=25
+    의 부호를 뒤집었다). 승률만 보면 그 사실이 안 보인다.
+
+    같은 입력은 같은 구간을 낸다 — 시드가 값 시퀀스에서 나오므로 재판정 대조표가 실행마다
+    흔들리지 않는다. 흔들리면 그 표로는 어떤 채택도 정당화할 수 없다.
+    """
+    count = len(values)
+    if count == 0:
+        return None
+    seed = zlib.crc32("|".join(f"{value:.6f}" for value in values).encode())
+    rng = random.Random(seed)
+    means = sorted(sum(values[rng.randrange(count)] for _ in range(count)) / count for _ in range(max(100, iterations)))
+    total = len(means)
+    low_index = max(0, int((1 - confidence) / 2 * total))
+    high_index = min(total - 1, int((1 + confidence) / 2 * total) - 1)
+    return (round(means[low_index], 4), round(means[high_index], 4))
+
+
 def bootstrap_ci_from_counts(
     correct: int,
     tested: int,

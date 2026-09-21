@@ -8,7 +8,7 @@ cd backend
 # ① 전 구간 재판정 + 손절 체결 반사실 (봉 중간 터치 vs 종가)
 PYTHONPATH=. python3 scripts/paper_replay_report.py --database ~/fomo_control_engine.db
 
-# ② 파라미터 스윕 — 축을 하나씩 가른다
+# ② 파라미터 스윕 — 축을 하나씩 가르고 부트스트랩 CI 로 판정한다
 PYTHONPATH=. python3 scripts/paper_replay_report.py --database ~/fomo_control_engine.db --sweep
 
 # ③ 발표값 자동 대조 (원장 기준선까지 포함). 어긋나면 종료 코드 1
@@ -37,7 +37,11 @@ from app.validation import risk_sizing_replay as rsr
 
 
 # 스윕 축. **한 번에 하나씩** — 여러 축을 동시에 움직인 행만 보면 무엇이 효과였는지
-# 영원히 알 수 없다(AGENTS.md).
+# 영원히 알 수 없다(AGENTS.md). 첫 행이 기준선이고 나머지는 그것과 대조 판정된다.
+#
+# WO-FCE-NET-EDGE-01 이 추가한 축들은 **전부 기본값 off 로 배선돼 있다.** 임계값을
+# 합성 픽스처(N=11)에서 정하면 그것은 측정이 아니라 과적합이다 — 호스트 실캔들에서
+# 이 스윕이 판정한 뒤에 `params/crypto-v3.json` 에 적는다.
 SWEEP_AXES: tuple[tuple[str, dict[str, Any]], ...] = (
     ("현행", {}),
     ("잠금 same_bar", {"reentry_lock_mode": "same_bar"}),
@@ -48,6 +52,28 @@ SWEEP_AXES: tuple[tuple[str, dict[str, Any]], ...] = (
     ("TP2 배수 1.5", {"take_profit_atr_k2": 1.5}),
     ("TP2 배수 2.5", {"take_profit_atr_k2": 2.5}),
     ("RR 기준 net", {"rr_basis": "net"}),
+    # ── 리스크 출처 ── 스톱을 1 ATR 로 캡하는 것이 RR 항등식과 과다 마찰의 공통 뿌리다.
+    ("리스크 구조", {"risk_mode": "structural"}),
+    ("리스크 최근접구조", {"risk_mode": "nearest_structure"}),
+    ("최근접+하한1ATR", {"risk_mode": "nearest_structure", "min_stop_atr_multiple": 1.0}),
+    ("최근접+상한3ATR", {"risk_mode": "nearest_structure", "max_stop_atr_multiple": 3.0}),
+    # ── 보상 사다리 ── 구조 목표를 늘리는 방향으로 쓰는가, 리스크 배수로 잡는가.
+    ("보상 구조연장 3.0", {"reward_mode": "structural_extend", "max_reward_atr_multiple": 3.0}),
+    ("보상 구조연장 3.5", {"reward_mode": "structural_extend", "max_reward_atr_multiple": 3.5}),
+    ("보상 구조연장 5.0", {"reward_mode": "structural_extend", "max_reward_atr_multiple": 5.0}),
+    ("보상 리스크배수", {"reward_mode": "risk_multiple"}),
+    # ── 마찰 상한 ── 비용R = 왕복 비용률 / 스톱거리%. 실측 평균 0.11~0.15 다.
+    ("마찰상한 0.16", {"max_entry_cost_r": 0.16}),
+    ("마찰상한 0.12", {"max_entry_cost_r": 0.12}),
+    ("마찰상한 0.08", {"max_entry_cost_r": 0.08}),
+    # ── 체결 규칙 · 정렬 ──
+    ("손절 봉중간", {"stop_fill_mode": "intrabar"}),
+    ("상위TF 충돌 차단", {"htf_conflict_blocks": True}),
+    # ── 채택 조합 (crypto-v3) ── 축별 판정 뒤에 조합도 같은 표에서 본다.
+    (
+        "crypto-v3 조합",
+        {"reward_mode": "structural_extend", "max_reward_atr_multiple": 3.5, "max_entry_cost_r": 0.16, "stop_fill_mode": "intrabar"},
+    ),
 )
 
 
@@ -157,7 +183,15 @@ def main() -> int:
                 print(f"\n### {symbol} 파라미터 스윕 (한 번에 한 축)\n")
                 for row in sweep["rows"]:
                     print(_metrics_row(row["policy"], row))
-                print(f"\n> {sweep['overfit_warning']}")
+                print(f"\n#### {symbol} 판정 — 거래당 netR · 부트스트랩 95% CI 비겹침만 '개선'이다\n")
+                for verdict in sweep["verdicts"]:
+                    print(verdict["row"])
+                adopted = [item for item in sweep["verdicts"] if item["verdict"] == "개선 (유의)"]
+                print(
+                    f"\n> 채택 후보 {len(adopted)}개"
+                    + (": " + " · ".join(item["label"] for item in adopted) if adopted else " — 유의한 개선 축이 없다. 그대로 보고한다.")
+                )
+                print(f"> {sweep['overfit_warning']}")
                 payload["symbols"][symbol]["sweep"] = sweep
 
         payload["totals"] = {

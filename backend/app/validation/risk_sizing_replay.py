@@ -38,6 +38,8 @@ import json
 import sqlite3
 from typing import Any, Iterable, Sequence
 
+from app.backtest.statistics import bootstrap_mean_ci
+
 
 # Phase 1 채택값. 금액 환산에만 쓰며 R 계산에는 관여하지 않는다.
 DEFAULT_RISK_BUDGET_USDT = 2.5
@@ -112,6 +114,13 @@ class Metrics:
     net_pnl_usdt: float
     mean_stop_distance_pct: float
     edge_to_cost_ratio: float | None
+    # 거래당 netR. 합계만으로는 **표본 크기가 다른 두 축을 비교할 수 없다** — 거래를 줄여
+    # 얻은 합계 개선과 거래당 개선이 구분되지 않는다. 판정은 평균과 그 CI 로 한다.
+    net_r_per_trade: tuple[float, ...] = ()
+
+    @property
+    def mean_net_r(self) -> float | None:
+        return sum(self.net_r_per_trade) / len(self.net_r_per_trade) if self.net_r_per_trade else None
 
     def as_row(self, label: str) -> str:
         pf = "n/a" if self.profit_factor is None else f"{self.profit_factor:.4f}"
@@ -205,6 +214,7 @@ def metrics(
         net_pnl_usdt=net_r * risk_budget_usdt,
         mean_stop_distance_pct=sum(item.stop_distance_pct for item in ordered) / len(ordered),
         edge_to_cost_ratio=gross_r / cost_r if cost_r else None,
+        net_r_per_trade=tuple(net_per_trade),
     )
 
 
@@ -459,3 +469,88 @@ def _number(value: Any) -> float | None:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
     return float(value)
+
+
+# ---------------------------------------------------------------------------
+# 개선 판정 (ImprovementProof 문법을 재판정 대조에 적용)
+# ---------------------------------------------------------------------------
+
+# 이 아래에서는 어떤 방향 주장도 하지 않는다. `docs/ImprovementProof.md` 와 같은 수치다.
+MIN_VERDICT_SAMPLE = 15
+# 잡음 컷. 거래당 netR 이 이만큼 못 움직이면 "효과 없음"이다. 1R 의 2% 다.
+NET_R_SIGNAL_DELTA = 0.02
+
+
+@dataclass(frozen=True)
+class Verdict:
+    """한 축의 판정. **CI 비겹침만이 "개선"으로 주장 가능한 등급이다.**"""
+
+    label: str
+    baseline_n: int
+    variant_n: int
+    baseline_mean_net_r: float | None
+    variant_mean_net_r: float | None
+    delta: float | None
+    baseline_ci: tuple[float, float] | None
+    variant_ci: tuple[float, float] | None
+    verdict: str
+    reason: str
+
+    def as_row(self) -> str:
+        delta = "n/a" if self.delta is None else f"{self.delta:+.4f}"
+        baseline_ci = "n/a" if self.baseline_ci is None else f"[{self.baseline_ci[0]:+.3f},{self.baseline_ci[1]:+.3f}]"
+        variant_ci = "n/a" if self.variant_ci is None else f"[{self.variant_ci[0]:+.3f},{self.variant_ci[1]:+.3f}]"
+        return f"{self.label:<28} N {self.baseline_n:>3}→{self.variant_n:<3} Δ거래당netR={delta:>9}  기준선CI={baseline_ci:>17} 변형CI={variant_ci:>17}  {self.verdict}"
+
+
+def judge(label: str, baseline: Metrics, variant: Metrics) -> Verdict:
+    """기준선 대비 변형의 판정 (ImprovementProof 등급).
+
+    **합계가 아니라 거래당 평균으로 판정한다.** 한 축이 거래를 80% 줄이면 합계 netR 은
+    저절로 0 에 가까워진다 — 그것을 "손실 감소"로 읽으면 아무것도 안 하는 정책이 늘 이긴다.
+    거래당으로 재야 "이 축이 더 나은 거래를 고르는가"를 묻게 된다.
+    """
+    base_mean, variant_mean = baseline.mean_net_r, variant.mean_net_r
+    if baseline.sample_size < MIN_VERDICT_SAMPLE or variant.sample_size < MIN_VERDICT_SAMPLE:
+        return Verdict(
+            label,
+            baseline.sample_size,
+            variant.sample_size,
+            base_mean,
+            variant_mean,
+            None if base_mean is None or variant_mean is None else variant_mean - base_mean,
+            None,
+            None,
+            "판별 불가",
+            f"표본 N<{MIN_VERDICT_SAMPLE} — 이 아래에서는 어떤 방향 주장도 하지 않는다",
+        )
+
+    base_ci = bootstrap_mean_ci(list(baseline.net_r_per_trade))
+    variant_ci = bootstrap_mean_ci(list(variant.net_r_per_trade))
+    delta = (variant_mean or 0.0) - (base_mean or 0.0)
+    disjoint = bool(base_ci and variant_ci and (variant_ci[0] > base_ci[1] or variant_ci[1] < base_ci[0]))
+
+    if delta > 0 and disjoint:
+        return Verdict(label, baseline.sample_size, variant.sample_size, base_mean, variant_mean, delta, base_ci, variant_ci, "개선 (유의)", "CI 비겹침")
+    if delta < 0 and disjoint:
+        return Verdict(label, baseline.sample_size, variant.sample_size, base_mean, variant_mean, delta, base_ci, variant_ci, "악화 (유의)", "CI 비겹침")
+    if delta >= NET_R_SIGNAL_DELTA:
+        return Verdict(
+            label,
+            baseline.sample_size,
+            variant.sample_size,
+            base_mean,
+            variant_mean,
+            delta,
+            base_ci,
+            variant_ci,
+            "개선 신호 (유의 아님)",
+            "CI 겹침 — 개선 주장 금지",
+        )
+    if delta <= -NET_R_SIGNAL_DELTA:
+        return Verdict(
+            label, baseline.sample_size, variant.sample_size, base_mean, variant_mean, delta, base_ci, variant_ci, "악화 신호 (유의 아님)", "CI 겹침"
+        )
+    return Verdict(
+        label, baseline.sample_size, variant.sample_size, base_mean, variant_mean, delta, base_ci, variant_ci, "효과 없음", f"|Δ| < {NET_R_SIGNAL_DELTA}"
+    )

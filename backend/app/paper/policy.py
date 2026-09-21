@@ -91,10 +91,88 @@ class PaperPolicy:
     max_correlation_cluster_positions: int | None = None
     # 상관 군집 분류. **측정이 아니라 선언이다** — 근거와 한계는 POSITION_SIZING.md 에 남긴다.
     correlation_clusters: dict[str, str] = field(default_factory=dict)
+    # ------------------------------------------------------------------
+    # WO-FCE-NET-EDGE-01. 기본값은 **전부 기존 동작**이며 옵트인이다.
+    #
+    # 재판정 N=427(BTC 204 · ETH 223)이 말한 것: gross 우위 −10.8R · 비용 56.5R ·
+    # netR −67.2R. **비용이 우위의 2.9배다.** 그리고 비용R 은 사이즈와 무관한 항등식이다:
+    #
+    #     비용R = 왕복 비용률 / 스톱거리%        (리스크 기준 사이징에서 1R 금액은 상수)
+    #
+    # 즉 **스톱을 좁히는 모든 것이 비용을 키운다.** 그런데 현행은 스톱을 1 ATR 로
+    # 캡한다(`execution_risk = min(structural_risk, ATR)`). 실측 20/24 건에서 이 캡이
+    # 물렸고, 그 결과 스톱거리 1.2~1.6% · 비용R 0.11~0.15 가 됐다. 같은 캡이 RR 을
+    # 항등식으로 만든다 — `staged_reward = ATR×1.5` 이므로 RR 이 산술적으로 정확히 1.5 다.
+    #
+    # 세 축은 같은 뿌리를 공유한다. 그래서 같은 WO 에서 고치되 **축은 분리해 둔다** —
+    # 하나씩 켜고 끄며 재판정 스윕으로 축별 기여를 가를 수 있어야 한다(AGENTS.md).
+    # ------------------------------------------------------------------
+    #
+    # `atr_capped`(기본): 기존 동작. 구조 무효화가 1 ATR 보다 멀면 **조용히 1 ATR 로 좁힌다.**
+    # `structural`: 논제 무효화를 그대로 쓴다. 좁히지 않는다 — 경계를 벗어나면 **거부**한다.
+    # `nearest_structure`: 논제 무효화 하나만 보지 않는다. 그 봉의 구조 레벨(지지/저항/무효화
+    #     후보) 중 **손절 쪽에 있으면서 하한을 넘는 가장 가까운 것**을 고른다.
+    #
+    #     왜 필요한가: `action_plan` 의 무효화는 `invalidation_levels[0]` 또는 `support[0]`
+    #     이며 **근접 순이 아니다.** 픽스처 실측에서 그 거리가 6~19 ATR 로 나온다 — 손절이
+    #     아니라 "가격이 반토막 나야 틀린 것"이다. 1 ATR 캡은 그 거리를 쓸 수 있게 만들려고
+    #     덧댄 반창고였고, 그 반창고가 RR 항등식·노이즈 손절·과다 마찰을 낳았다.
+    #     같은 레벨 목록에서 **가장 가까운 유효 레벨**을 고르면 반창고 없이 성립한다.
+    #
+    #     새 감지기가 아니다 — 기존 구조 레벨을 소비할 뿐이며 방향 판정에는 관여하지 않는다.
+    risk_mode: str = "atr_capped"
+    # 구조 스톱이 이 배수보다 가까우면 **넓힌다**(비용R 감소 · 1R 금액은 예산 상수라 불변).
+    min_stop_atr_multiple: float | None = None
+    # 구조 스톱이 이 배수보다 멀면 **거부한다**(좁히지 않는다).
+    max_stop_atr_multiple: float | None = None
+    #
+    # `atr_ladder`(기본): TP1 = k1×ATR · TP2 = k2×ATR. 구조 목표는 **줄이는 방향으로만**
+    #                     반영된다(`tp2_distance = structural` 은 더 가까울 때만).
+    # `risk_multiple`: 사다리를 **리스크의 배수**로 잡는다. 구조 목표는 경계 안에서 늘릴 수도
+    #                  있다. 이때 RR 은 더 이상 상수가 아니라 셋업 품질의 함수가 된다.
+    # `structural_extend`: TP1·TP2 는 ATR 사다리 그대로 두되, 구조 목표가 TP2 **너머**에 있으면
+    #     상한까지 늘려 쓴다. 현행은 구조 목표를 **줄이는 방향으로만** 반영한다 — 가까우면
+    #     당겨오고 멀면 무시한다. 그래서 추세가 길게 갈 때 그 구간이 계획에 아예 안 들어간다.
+    #     늘어난 잔량은 기존 익절 압력 청산이 보호한다(실측 9건 합 +26.87%).
+    reward_mode: str = "atr_ladder"
+    # `structural_extend` 에서 TP2 가 ATR 의 몇 배를 넘지 못하는가.
+    max_reward_atr_multiple: float = 3.5
+    take_profit_1_r: float = 1.0
+    # TP2 상한. **하한은 두지 않는다** — 최소 배수를 깔면 RR 이 그 배수에 고정돼 항등식이
+    # 자리를 옮길 뿐이다. 구조 목표가 가까우면 RR 이 낮게 나오고, 그 판정은 게이트가 한다.
+    take_profit_2_r_max: float = 3.5
+    # 구조 목표가 **아예 없을 때만** 쓰는 기본 배수.
+    take_profit_2_r_default: float = 2.5
+    #
+    # 마찰 상한. `비용R = 왕복 비용률 / 스톱거리%` 가 이 값을 넘으면 거부한다.
+    # 품질 게이트가 아니라 **산술 게이트다** — 보상이 아무리 좋아도 마찰이 1R 의 이만큼을
+    # 먹는 자리에서는 우위가 남을 수 없다. `None`(기본)이면 재지 않는다.
+    max_entry_cost_r: float | None = None
+    # `rr_basis="net"` 일 때 쓰는 하한. `None` 이면 `min_rr` 을 그대로 쓴다 —
+    # 총 기준과 순 기준의 임계를 따로 풀 수 있어야 굶주림을 국소 진단할 수 있다.
+    min_net_rr: float | None = None
+    # 상위 타임프레임 충돌을 **차단 사유로** 쓸 것인가. 기본은 기존 동작(체크리스트 6항목 중
+    # 하나로만 셈 — 다른 5항목에 표로 뒤집힌다).
+    htf_conflict_blocks: bool = False
+    #
+    # 손절 체결 시점. `close`(기본)는 봉이 닫힐 때까지 기다렸다 **종가**에 체결한다.
+    # 익절은 이미 봉 중간 터치이므로 이 비대칭이 초과 손실의 82% 를 만들었다
+    # (실측 평균 −1.559R · 계획은 −1.000R). `intrabar` 는 실제 스톱 주문처럼
+    # 봉 중간에 **무효화가로** 체결하고, 봉이 이미 넘어서 열렸으면 **시가로** 체결한다(갭).
+    stop_fill_mode: str = "close"
 
     @property
     def execution_cost_rate(self) -> float:
         return max(0.0, self.taker_fee_pct + self.slippage_pct) / 100.0
+
+    @property
+    def roundtrip_cost_rate(self) -> float:
+        """왕복 비용률. 진입·청산 두 번 나간다 — 편도의 2배다."""
+        return self.execution_cost_rate * 2.0
+
+    @property
+    def effective_min_net_rr(self) -> float:
+        return self.min_rr if self.min_net_rr is None else self.min_net_rr
 
     def correlation_cluster(self, symbol: str) -> str:
         return self.correlation_clusters.get(symbol.upper(), "unclustered")
@@ -133,6 +211,10 @@ def evaluate_entry(
     data_fresh: bool,
     confirmed_bar: bool,
     policy: PaperPolicy,
+    # WO-FCE-NET-EDGE-01. 셋 다 기본값이 **재지 않음**이라 기존 호출자는 회귀 0 이다.
+    cost_r: float | None = None,
+    stop_atr_multiple: float | None = None,
+    htf_conflict: bool = False,
 ) -> EntryDecision:
     stance = str(stance_state.get("stance") or "")
     stance_direction = "long" if stance in {"long", "long_leaning"} else "short" if stance in {"short", "short_leaning"} else stance
@@ -162,13 +244,22 @@ def evaluate_entry(
         if policy.signature_gate_mode == "record_only"
         else bool(validated_signature and signature_ci_low_pct is not None and signature_ci_low_pct >= policy.min_signature_ci_low_pct)
     )
+    # WO-FCE-NET-EDGE-01. `rr_basis="net"` 이면 하한도 순 기준 하한을 쓴다 — 총 기준
+    # 임계(1.5)를 순 기준에 그대로 적용하면 두 축이 한 숫자에 묶여 따로 풀 수 없다.
+    minimum_rr = policy.effective_min_net_rr if policy.rr_basis == "net" else policy.min_rr
     gates = {
         "confirmed_flip": stance_passed,
         "evidence": evidence_count >= policy.min_evidence,
         "checklist": checklist_passed >= policy.min_checklist_passed and checklist_total >= policy.min_checklist_total,
         "invalidation_hygiene": invalidation_hygiene,
-        "risk_reward": rr_ratio is not None and rr_ratio >= policy.min_rr,
+        # 스톱 경계. **넓히는 쪽은 목표 계획이 이미 처리했고**, 여기서 막는 것은 상한뿐이다 —
+        # 조용히 좁히는 대신 거부한다. 경계를 안 쓰면(None) 항상 통과다.
+        "stop_bounds": stop_within_bounds(stop_atr_multiple, policy),
+        "risk_reward": rr_ratio is not None and rr_ratio >= minimum_rr,
+        # 마찰 상한. 비용R = 왕복 비용률 / 스톱거리% — 사이즈와 무관한 산술이다.
+        "cost_efficiency": policy.max_entry_cost_r is None or (cost_r is not None and cost_r <= policy.max_entry_cost_r),
         "liquidation_safety": survives_to_invalidation,
+        "htf_alignment": not (policy.htf_conflict_blocks and htf_conflict),
         "validated_signature": signature_passed,
         "earnings_clear": earnings_clear,
         "data_fresh": data_fresh,
@@ -186,8 +277,32 @@ def evaluate_entry(
         "transitioning": stance_state.get("transitioning"),
         "validated_signature_observed": bool(validated_signature),
         "signature_ci_low_pct_observed": signature_ci_low_pct,
+        # WO-FCE-NET-EDGE-01. 게이트를 켜지 않아도 **관측은 남긴다** — 임계를 정하려면
+        # 먼저 분포를 봐야 하고, 조건에서 뺐다고 관측까지 버리면 그 질문에 답할 수 없다.
+        "risk_mode": policy.risk_mode,
+        "reward_mode": policy.reward_mode,
+        "rr_basis": policy.rr_basis,
+        "cost_r_observed": cost_r,
+        "stop_atr_multiple_observed": stop_atr_multiple,
+        "htf_conflict_observed": bool(htf_conflict),
+        "minimum_rr_applied": minimum_rr,
     }
     return EntryDecision(enter=not rejected, gates=gates, rejection_reasons=rejected, observations=observations)
+
+
+def stop_within_bounds(stop_atr_multiple: float | None, policy: PaperPolicy) -> bool:
+    """스톱이 ATR 배수 상한 안에 있는가 (WO-FCE-NET-EDGE-01).
+
+    **하한은 여기서 재지 않는다.** 하한은 거부 사유가 아니라 넓히는 지시이고, 목표 계획이
+    이미 넓혀서 넘겨준다. 여기서 또 재면 넓혀진 값이 스스로를 탈락시킨다.
+
+    상한은 반대다 — 구조 무효화가 ATR 의 몇 배나 떨어져 있으면 그 자리는 이 사다리로
+    감당할 셋업이 아니다. 현행은 이것을 **조용히 1 ATR 로 좁혀서** 진입했고, 그 축소가
+    RR 항등식과 노이즈 손절을 동시에 만들었다. 좁히는 대신 거부한다.
+    """
+    if policy.max_stop_atr_multiple is None or stop_atr_multiple is None:
+        return True
+    return stop_atr_multiple <= policy.max_stop_atr_multiple + 1e-9
 
 
 def reentry_locked(
@@ -402,9 +517,10 @@ def evaluate_exit(
     policy: PaperPolicy,
 ) -> ExitDecision:
     next_holding_bars = trade.holding_bars + 1
-    if _stop_breached(trade, bar.close):
+    stop_fill = stop_fill_price(trade, bar=bar, policy=policy)
+    if stop_fill is not None:
         reason: ExitReason = "breakeven_stop" if trade.partial_exit_at else "invalidation_breach"
-        return ExitDecision("close", reason, 0)
+        return ExitDecision("close", reason, 0, stop_fill)
 
     if trade.partial_exit_at is None and _take_profit_touched(trade, bar):
         return ExitDecision("partial", "take_profit_1", 0, trade.take_profit_price)
@@ -476,6 +592,32 @@ def apply_exit_decision(
             "exit_reason": decision.reason,
         }
     )
+
+
+def stop_fill_price(trade: PaperTrade, *, bar: MarketCandle, policy: PaperPolicy) -> float | None:
+    """이 봉에서 손절이 체결되는가, 그렇다면 **얼마에** (WO-FCE-NET-EDGE-01).
+
+    `close`(기본): 봉이 닫힐 때까지 기다렸다 종가에 체결한다 — 기존 동작. 봉 중간에
+    무효화가를 관통했다가 되돌아온 봉은 손절되지 않는다.
+
+    `intrabar`: 실제 스톱 주문이 하는 일이다. **무효화 임계는 한 줄도 완화되지 않는다 —
+    같은 가격에서 더 일찍 체결될 뿐이다.** 익절은 이미 봉 중간 터치이므로 이 모드에서
+    비로소 두 방향의 체결 규칙이 같아진다(실측: 초과 손실의 82% 가 이 비대칭에서 왔다).
+
+    갭은 따로 다룬다. 봉이 **이미 무효화가를 넘어서 열렸으면** 스톱 가격에 체결될 수 없다 —
+    시가가 첫 체결 가능 가격이다. 이것을 무효화가로 적으면 갭 손실이 원장에서 사라진다
+    (실측 SPCXUSDT 1건이 8건 초과분의 56%). 시가는 봉 시작에 알 수 있으므로 룩어헤드가
+    아니다.
+    """
+    if policy.stop_fill_mode != "intrabar":
+        return bar.close if _stop_breached(trade, bar.close) else None
+    if trade.direction == Direction.long:
+        if bar.open <= trade.stop_price:
+            return bar.open
+        return trade.stop_price if bar.low <= trade.stop_price else None
+    if bar.open >= trade.stop_price:
+        return bar.open
+    return trade.stop_price if bar.high >= trade.stop_price else None
 
 
 def _stop_breached(trade: PaperTrade, close: float) -> bool:

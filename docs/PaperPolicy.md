@@ -199,3 +199,65 @@ correlation_clusters: dict[str, str] = {}             # 군집 분류 — **선�
 `crypto-v2.json` 에 상한 키를 넣지 않았다 — 파일에 없으면 `off` 다.
 
 근거: [`validation/POSITION_SIZING.md`](validation/POSITION_SIZING.md) §4-3
+
+---
+
+## crypto-v2 → crypto-v3 (WO-FCE-NET-EDGE-01 · 2026-09-21)
+
+정책 파일: `backend/app/paper/params/crypto-v3.json`. 로더는 `params/` 에서 **버전 번호가
+가장 큰 파일**을 고른다 — v3 를 지우면 즉시 v2 로 되돌아간다.
+
+정본: [`validation/NET_EDGE.md`](validation/NET_EDGE.md)
+
+### 왜 — 위 §"순 기준 RR"이 이관한 항목이 여기서 닫힌다
+
+이 문서 §"순 기준 RR" 은 이렇게 남겼다:
+
+> 진짜 수리 대상은 기준(gross/net)이 아니라 **RR 이 자기 자신을 확인하는 구조**다.
+> `execution_risk` 가 ATR 로 캡되고 보상도 ATR 배수라 비율이 상수가 된다.
+
+그 구조가 RR 항등식만 만든 것이 아니었다. **같은 한 줄이 스톱 거리를 정하고, 스톱 거리가
+마찰을 정한다:**
+
+```
+비용R = 왕복 비용률 / 스톱거리%        ← 리스크 기준 사이징에서 1R 금액은 예산 상수
+```
+
+재판정 N=427: gross −10.8R · 비용 **56.5R** · netR **−67.2R**. 비용이 우위의 **2.9배**다.
+
+### diff
+
+| 축 | v2 | v3 | 판정 |
+| --- | --- | --- | --- |
+| `reward_mode` | `atr_ladder` (구조 목표는 **줄이는 쪽만**) | `structural_extend` (**늘리는 쪽만**) | **변경** |
+| `max_reward_atr_multiple` | — | `3.5` | **신설** |
+| `max_entry_cost_r` | 없음 | `0.16` | **신설 — 거부만 한다** |
+| `stop_fill_mode` | `close` (종가) | `intrabar` (봉 중간 · 갭은 시가) | **변경** |
+| `stance_gate_mode` · `signature_gate_mode` | | 동일 | diff 0 |
+| `sizing_mode` · `risk_budget_usdt` · 명목 상하한 | | 동일 | diff 0 |
+| `reentry_lock_*` | | 동일 | diff 0 |
+| `rr_basis` | `gross` | 동일 | diff 0 |
+| `min_rr` · `min_evidence` · `min_checklist_*` | | **손대지 않았다** | diff 0 |
+
+### 배선만 하고 끄고 둔 축
+
+`risk_mode`(`structural` · `nearest_structure`) · `min/max_stop_atr_multiple` ·
+`reward_mode=risk_multiple` · `min_net_rr` · `htf_conflict_blocks`.
+
+전부 임계값을 필요로 한다. 합성 픽스처(N=11)에서 임계를 정하면 그것은 측정이 아니라
+과적합이다. `scripts/paper_replay_report.py --sweep` 이 호스트 실캔들에서 축별로 재판정하고
+부트스트랩 CI 로 판정한다 — **"개선 (유의)" 등급을 받은 축만 파일에 적는다.**
+
+> ⚠️ `risk_mode` 를 그냥 켜면 **진입이 0이 된다**(픽스처 실측). 1 ATR 캡은 성적을 위한
+> 장치가 아니라 `action_plan` 의 무효화 거리(실측 6~19 ATR)를 쓸 수 있게 만들려던
+> 반창고였다. 리스크 출처를 바꾸려면 **무효화 레벨 선택 자체**를 함께 봐야 한다.
+
+### 새 게이트 3종
+
+`stop_bounds`(스톱 상한 초과 거부) · `cost_efficiency`(마찰 상한) · `htf_alignment`(상위 TF
+충돌). 셋 다 **꺼져 있으면 항상 통과**이고, 켜져 있으면 **거부만 한다** — 어떤 임계도
+완화하지 않는다. 퍼널·`entry_block_logs` 에 사유와 입력값(`cost_r`·`stop_atr_multiple`)이
+남으므로 굶주림이 생기면 "임계가 높았나 분포가 이동했나"를 원장만으로 가를 수 있다.
+
+**두 진입 경로(정규 · 검증 부트스트랩)에 같은 산술 게이트가 걸린다** — 관문이 둘이면
+그중 하나는 반드시 잊힌다(AGENTS.md).

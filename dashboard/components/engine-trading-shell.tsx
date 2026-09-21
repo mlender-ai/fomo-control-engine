@@ -850,7 +850,9 @@ function CandidateReviewCard({ review }: { review: PaperDashboard["calibration"]
 }
 
 function GateFunnel({ funnel }: { funnel: PaperGateFunnel }) {
-  const visible = funnel.stages.filter((stage) => ["evaluated", "confirmed_flip", "checklist", "signature_gate", "entered"].includes(stage.id));
+  // WO-FCE-NET-EDGE-01: `cost_efficiency` 를 노출한다. 마찰 상한은 v3 에서 켜져 있고 설계상
+  // 거부 건수가 많은 관문이다 — 화면에서 빠지면 "왜 진입이 줄었나"에 단계가 답하지 못한다.
+  const visible = funnel.stages.filter((stage) => ["evaluated", "confirmed_flip", "checklist", "cost_efficiency", "signature_gate", "entered"].includes(stage.id));
   const pills = funnel.pill_diagnostics;
   return (
     <section className="engineStatusCard engineGateFunnel" data-testid="paper-gate-funnel">
