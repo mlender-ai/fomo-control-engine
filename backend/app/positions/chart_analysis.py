@@ -369,18 +369,75 @@ def _invalidation_levels(
             }
         ]
     candidates = support if context.direction == "long" else resistance
-    strong_candidates = [level for level in candidates if level.score >= 40]
-    if strong_candidates:
-        level = strong_candidates[0]
+    level, selection = _select_invalidation_level(candidates, context)
+    if level is not None:
         action = "이탈 시 진입 논리 약화" if context.direction == "long" else "돌파 시 진입 논리 약화"
-        return [{**level.model_dump(), "label": action, "source": "structure_level"}]
+        reference = context.mark_price or context.current_price or context.entry_price
+        distance = abs(level.price - reference) / reference * 100 if reference else None
+        return [
+            {
+                **level.model_dump(),
+                "label": action,
+                "source": "structure_level",
+                # 어느 후보를 왜 골랐는지 남긴다 — 사후에 "왜 손절이 저기냐"를 답할 수 있어야 한다.
+                "selection": selection,
+                "distance_pct": round(distance, 4) if distance is not None else None,
+            }
+        ]
     return [
         {
             "price": None,
             "label": "구조 레벨 부족, 사용자 손절 기준 필요",
             "source": "insufficient_structure",
+            "selection": selection,
         }
     ]
+
+
+# 무효화가 진입가에서 이 거리보다 가까우면 손절이 아니라 노이즈다 (`simulator` 와 같은 값).
+MIN_INVALIDATION_DISTANCE_PCT = 0.8
+
+
+def _select_invalidation_level(
+    candidates: list[StructureLevel],
+    context: PositionContext,
+) -> tuple[StructureLevel | None, str]:
+    """손절로 쓸 구조 레벨을 고른다 — **가장 강한 것이 아니라 가장 가까운 것.**
+
+    ## 왜 바꿨나 (WO-FCE-ALERT-TRUTH-01)
+
+    `detect_structure_levels` 는 `(-score, 거리)` 순으로 정렬한다. 화면에 "어느 레벨이
+    중요한가"를 보여주기에는 맞는 순서지만, **여기서 `[0]` 을 집으면 "가장 강한 지지"가
+    손절이 된다.** 그 둘은 다른 질문이다.
+
+    실측(2026-09-21 · MARSCOINUSDT 롱 @ 0.133510):
+
+        무효화 0.097105  (−27.10%)      ← 최고 점수 지지
+        익절1  0.136000  (+ 1.87%)      ← 가장 가까운 저항
+        R:R = 1.87 / 27.10 = 0.069
+
+    1.87% 를 먹자고 27% 를 걸고 있었다. 사용자가 "TP 가 왜 이렇게 짧냐"고 물은 것의 실체는
+    **TP 가 짧은 것이 아니라 손절이 터무니없이 먼 것**이다. 페이퍼 트랙에서 같은 결함을
+    이미 측정했다(`NET_EDGE.md` §2-4 — 무효화 거리 6~19 ATR).
+
+    ## 규칙
+
+    점수 문턱(40)을 **낮추지 않는다.** 그 문턱을 통과한 후보 중에서 노이즈 범위(0.8%)를
+    넘는 가장 가까운 것을 고른다. 전부 노이즈 범위 안이면 쓸 수 있는 구조가 없다는 뜻이므로
+    `insufficient_structure` 로 돌려보낸다 — 27% 짜리를 조용히 쓰는 것보다 정직하다.
+    """
+    qualified = [level for level in candidates if level.score >= 40]
+    if not qualified:
+        return None, "no_qualified_level"
+    reference = context.mark_price or context.current_price or context.entry_price
+    if not reference or reference <= 0:
+        # 기준가가 없으면 거리를 잴 수 없다. 기존 동작(최고 점수)으로 되돌린다.
+        return qualified[0], "highest_score_no_reference"
+    floor = reference * MIN_INVALIDATION_DISTANCE_PCT / 100.0
+    usable = [level for level in qualified if abs(level.price - reference) >= floor]
+    if not usable:
+        return None, "all_levels_within_noise_band"
+    return min(usable, key=lambda level: abs(level.price - reference)), "nearest_qualified"
 
 
 def _volume_profile(candles: list[MarketCandle], trade_flow: dict | None = None, bin_count: int = 24) -> dict:

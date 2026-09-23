@@ -290,7 +290,14 @@ async def test_short_take_profit_alert_uses_directional_progress(repo) -> None:
     )
 
     assert await engine.evaluate_positions([payload]) == 1
-    assert "익절1 90.0000에 도달했습니다. 현재 89.0000 · 목표 대비 +1.11%" in sender.messages[0]
+    # WO-FCE-ALERT-TRUTH-01: 가격에 **출처와 시각 딱지**가 붙는다. 맨 "현재"는 한 메시지
+    # 안에서 확정봉 종가와 거래소 스냅샷을 섞어도 티가 나지 않았고, 그것이 실제로 닿은 적
+    # 없는 "익절 도달"을 낳았다(MARSCOINUSDT 2026-09-21).
+    message = sender.messages[0]
+    assert "익절1 90.0000에 도달했습니다. 현재가 89.0000" in message
+    assert "목표 대비 +1.11%" in message
+    # 가격 줄과 손익 줄이 **같은 시계**를 가리켜야 한다.
+    assert message.count("21:00") == 2
 
 
 @pytest.mark.asyncio
@@ -444,4 +451,6 @@ async def test_alert_payload_records_number_sources(repo) -> None:
 
     sources = {item["source"] for item in payload["number_sources"]}
     assert "action_plan.invalidation.price" in sources
-    assert "snapshot.mark_price_or_last_close" in sources
+    # WO-FCE-ALERT-TRUTH-01: 출처가 규칙별로 갈린다 — 무효화는 확정봉 종가,
+    # 익절·근접은 현재가다. 하나의 뭉뚱그린 딱지가 두 시계를 가리고 있었다.
+    assert any(source.startswith("alert_price:") for source in sources)
