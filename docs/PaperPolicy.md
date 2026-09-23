@@ -207,7 +207,8 @@ correlation_clusters: dict[str, str] = {}             # 군집 분류 — **선�
 정책 파일: `backend/app/paper/params/crypto-v3.json`. 로더는 `params/` 에서 **버전 번호가
 가장 큰 파일**을 고른다 — v3 를 지우면 즉시 v2 로 되돌아간다.
 
-정본: [`validation/NET_EDGE.md`](validation/NET_EDGE.md)
+정본: [`validation/NET_EDGE.md`](validation/NET_EDGE.md) ·
+운영 실측: [`validation/STOP_SLIPPAGE_LEDGER.md`](validation/STOP_SLIPPAGE_LEDGER.md) (N=153)
 
 ### 왜 — 위 §"순 기준 RR"이 이관한 항목이 여기서 닫힌다
 
