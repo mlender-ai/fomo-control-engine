@@ -148,25 +148,30 @@ def rearm_signals(payload: dict[str, Any], settings: Settings) -> dict[str, bool
     position = _position(payload)
     state = _state(payload)
     position_id = _text(position.get("id"))
-    current = _current_price(payload)
     direction = _direction(position)
     plan = _plan(payload)
+    # 재무장은 **발화와 같은 가격**으로 재야 한다. 익절을 현재가로 켜고 종가로 끄면 두 시계가
+    # 엇갈려 알림이 멈추거나(끄지 못해 반복) 영영 다시 켜지지 않는다.
+    mark = _price_reading(payload, "mark")
+    close = _price_reading(payload, "confirmed_close")
 
     for trigger in _plan_triggers(plan):
         price = _float(trigger.get("price"))
-        if price is None or current is None:
+        if price is None:
             continue
-        distance = _distance_pct(current, price)
         identity = trigger["identity"]
-        signals[f"trigger_near:{position_id}:{identity}"] = abs(distance) >= settings.alert_trigger_rearm_pct
+        if mark is not None:
+            signals[f"trigger_near:{position_id}:{identity}"] = abs(_distance_pct(mark.price, price)) >= settings.alert_trigger_rearm_pct
         if trigger["kind"] == "invalidation":
             # 이탈은 **상태**다. 상태가 지속되는 동안 재무장하지 않는다 — 복귀했을 때만 재무장.
             # 쿨다운 만료는 재발송 사유가 아니다(WO-FCE-BREACH-ALERT-FIX-01 작업 1).
-            signals[f"invalidation_breach:{position_id}:{identity}"] = not _breached(direction, current, price)
+            if close is not None:
+                signals[f"invalidation_breach:{position_id}:{identity}"] = not _breached(direction, close.price, price)
         elif trigger["kind"] == "take_profit":
             if not _is_valid_take_profit_target(direction, position, price):
                 continue
-            signals[f"take_profit_hit:{position_id}:{identity}"] = not _take_profit_reached(direction, current, price)
+            if mark is not None:
+                signals[f"take_profit_hit:{position_id}:{identity}"] = not _take_profit_reached(direction, mark.price, price)
 
     liq_distance = _float(state.get("liquidation_distance_pct") or _snapshot(payload).get("liquidation_distance_pct"))
     if liq_distance is not None:
@@ -299,9 +304,11 @@ def morning_summary_due(settings: Settings, last_summary_date: str | None, now: 
 
 
 def _trigger_candidates(payload: dict[str, Any], settings: Settings) -> list[AlertCandidate]:
-    current = _current_price(payload)
-    if current is None:
+    # 근접도 지금 행동하라는 알림이다 — 묵은 종가 기준의 "남았습니다"는 거리를 왜곡한다.
+    reading = _price_reading(payload, "mark")
+    if reading is None:
         return []
+    current = reading.price
     position, state = _position(payload), _state(payload)
     direction = _direction(position)
     candidates: list[AlertCandidate] = []
@@ -311,8 +318,9 @@ def _trigger_candidates(payload: dict[str, Any], settings: Settings) -> list[Ale
             continue
         if trigger["kind"] == "take_profit" and not _is_valid_take_profit_target(direction, position, price):
             continue
-        distance = trigger.get("distance_pct")
-        distance = _float(distance) if distance is not None else _distance_pct(current, price)
+        # `trigger.distance_pct` 는 액션플랜이 만들 때의 가격 기준이다. 여기서 그대로 쓰면
+        # 본문의 "현재"와 거리가 서로 다른 시계를 가리킨다 — 같은 값으로 다시 잰다.
+        distance = _distance_pct(current, price)
         if abs(distance) > settings.alert_trigger_near_pct:
             continue
         label = "무효화" if trigger["kind"] == "invalidation" else "익절"
@@ -320,7 +328,7 @@ def _trigger_candidates(payload: dict[str, Any], settings: Settings) -> list[Ale
         message = "\n".join(
             [
                 _headline(payload, "🟡", title),
-                f"{label} {_price(price)}까지 {_signed_pct(distance)} 남았습니다. 현재 {_price(current)}",
+                f"{label} {_price(price)}까지 {_signed_pct(distance)} 남았습니다. {reading.sentence()}",
                 f"→ {escape(str(trigger.get('action') or '조건 확인'))}. 근거: {escape(str(trigger.get('basis') or '액션 플랜'))}",
                 _snapshot_line(state),
             ]
@@ -353,10 +361,13 @@ def _trigger_candidates(payload: dict[str, Any], settings: Settings) -> list[Ale
 
 
 def _invalidation_candidates(payload: dict[str, Any]) -> list[AlertCandidate]:
-    current = _current_price(payload)
+    # 무효화는 **종가 이탈**이 규칙이다(꼬리에 털리지 않으려는 설계). 출처를 바꾸지 않는다 —
+    # 다만 그 값을 "현재"라고 부르지 않는다. 최대 한 봉만큼 묵은 값이다.
+    reading = _price_reading(payload, "confirmed_close")
     direction = _direction(_position(payload))
-    if current is None:
+    if reading is None:
         return []
+    current = reading.price
     candidates: list[AlertCandidate] = []
     for trigger in _plan_triggers(_plan(payload)):
         if trigger["kind"] != "invalidation":
@@ -369,7 +380,7 @@ def _invalidation_candidates(payload: dict[str, Any]) -> list[AlertCandidate]:
         message = "\n".join(
             [
                 _headline(payload, "🔴", "무효화 이탈"),
-                f"{_price(price)} 기준을 종가 이탈했습니다. 현재 {_price(current)} · {_signed_pct(distance)}",
+                f"{_price(price)} 기준을 종가 이탈했습니다. {reading.sentence()} · {_signed_pct(distance)}",
                 "→ 손절 검토. 이탈 시 진입 논리 약화 판정.",
                 _snapshot_line(state),
             ]
@@ -391,7 +402,7 @@ def _invalidation_candidates(payload: dict[str, Any]) -> list[AlertCandidate]:
                     "action": "손절 검토",
                     "number_sources": _number_sources(
                         ("trigger_price", price, "action_plan.invalidation.price"),
-                        ("current_price", current, "snapshot.mark_price_or_last_close"),
+                        ("current_price", current, f"alert_price:{reading.source}"),
                         ("distance_pct", distance, "computed_from_snapshot"),
                     ),
                 },
@@ -401,11 +412,13 @@ def _invalidation_candidates(payload: dict[str, Any]) -> list[AlertCandidate]:
 
 
 def _take_profit_candidates(payload: dict[str, Any]) -> list[AlertCandidate]:
-    current = _current_price(payload)
+    # 익절 도달은 **지금 행동하라**는 알림이다. 묵은 종가로 외치면 없는 기회를 보고 움직인다.
+    reading = _price_reading(payload, "mark")
     position, state = _position(payload), _state(payload)
     direction = _direction(position)
-    if current is None:
+    if reading is None:
         return []
+    current = reading.price
     candidates: list[AlertCandidate] = []
     for trigger in _plan_triggers(_plan(payload)):
         if trigger["kind"] != "take_profit":
@@ -418,7 +431,7 @@ def _take_profit_candidates(payload: dict[str, Any]) -> list[AlertCandidate]:
         message = "\n".join(
             [
                 _headline(payload, "🟢", title),
-                f"{escape(str(trigger.get('label', '익절')))} {_price(price)}에 도달했습니다. 현재 {_price(current)} · 목표 대비 {_signed_pct(distance)}",
+                f"{escape(str(trigger.get('label', '익절')))} {_price(price)}에 도달했습니다. {reading.sentence()} · 목표 대비 {_signed_pct(distance)}",
                 f"→ {escape(str(trigger.get('action') or '부분 익절 검토'))}. 근거: {escape(str(trigger.get('basis') or '액션 플랜'))}",
                 _snapshot_line(state),
             ]
@@ -440,7 +453,7 @@ def _take_profit_candidates(payload: dict[str, Any]) -> list[AlertCandidate]:
                     "action": trigger.get("action") or "부분 익절 검토",
                     "number_sources": _number_sources(
                         ("trigger_price", price, "action_plan.take_profit.price"),
-                        ("current_price", current, "snapshot.mark_price_or_last_close"),
+                        ("current_price", current, f"alert_price:{reading.source}"),
                         ("distance_pct", distance, "computed_direction_aware_from_snapshot"),
                     ),
                 },
@@ -706,7 +719,10 @@ def _derivative_position_candidates(payload: dict[str, Any], settings: Settings)
     position = _position(payload)
     state = _state(payload)
     signals = derivatives.get("signals") if isinstance(derivatives.get("signals"), dict) else {}
-    current = _current_price(payload)
+    # 청산 군집까지의 거리는 관측이지 행동 지시가 아니다 — 확정봉 우선을 유지하되
+    # 출처는 값과 함께 남긴다(맨 "현재"로 적으면 어느 시계인지 알 수 없다).
+    price_reading = _price_reading(payload, "confirmed_close")
+    current = price_reading.price if price_reading is not None else None
     candidates: list[AlertCandidate] = []
     money_flow = signals.get("money_flow") if isinstance(signals.get("money_flow"), dict) else None
     if "flow_divergence" in enabled and money_flow and money_flow.get("state") == "futures_led" and not money_flow.get("provisional"):
@@ -842,7 +858,7 @@ def _derivative_position_candidates(payload: dict[str, Any], settings: Settings)
                                 (
                                     "current_price",
                                     current,
-                                    "snapshot.mark_price_or_last_close",
+                                    f"alert_price:{price_reading.source}" if price_reading is not None else "unavailable",
                                 ),
                                 ("distance_pct", distance, "computed_from_snapshot"),
                             ),
@@ -1001,22 +1017,89 @@ def _timeframe_seconds(timeframe: str) -> int:
     return 4 * 3600
 
 
-def _current_price(payload: dict[str, Any]) -> float | None:
-    last_close = _last_close(payload)
-    if last_close is not None:
-        return last_close
-    state = _state(payload)
-    snapshot = _snapshot(payload)
-    position = _position(payload)
-    return _float(state.get("mark_price") or snapshot.get("mark_price") or position.get("mark_price") or position.get("current_price"))
+@dataclass(frozen=True)
+class PriceReading:
+    """알림이 쓴 가격과 **그것이 어디서 왔는지**.
+
+    출처를 값과 함께 들고 다니지 않으면 한 알림 안에서 서로 다른 시계의 숫자가 섞인다.
+    실제로 그렇게 됐다 (`AlertPriceTruth.md`):
+
+        익절1 0.136000에 도달했습니다. 현재 0.138190 · 목표 대비 +1.61%
+        건강도 60 · PnL -2.25% · 15:41 기준
+
+    같은 메시지 안에서 "현재 0.138190"(진입가 대비 +3.5%)과 "PnL −2.25%"가 함께 있다.
+    둘 다 참일 수 없다. 앞은 **확정 4시간봉 종가**(최대 4시간 묵은 값)였고 뒤는 거래소
+    스냅샷이었다. 익절 도달 판정도 앞의 값으로 내려졌다 — 도달한 적이 없는데 도달했다고
+    알렸다.
+    """
+
+    price: float
+    source: str
+    as_of: Any = None
+
+    @property
+    def label(self) -> str:
+        return {"mark": "현재가", "confirmed_close": "확정봉 종가"}.get(self.source, self.source)
+
+    def sentence(self) -> str:
+        stamp = _time(self.as_of)
+        return f"{self.label} {_price(self.price)}" + (f"({stamp})" if stamp != "-" else "")
 
 
-def _last_close(payload: dict[str, Any]) -> float | None:
+def _mark_reading(payload: dict[str, Any]) -> PriceReading | None:
+    """거래소가 준 **지금 가격**. 포지션 손익이 계산된 바로 그 값이다."""
+    state, snapshot, position = _state(payload), _snapshot(payload), _position(payload)
+    for source, stamp in (
+        (state.get("mark_price"), state.get("as_of")),
+        (snapshot.get("mark_price"), snapshot.get("as_of")),
+        (position.get("mark_price"), position.get("updated_at")),
+        (position.get("current_price"), position.get("updated_at")),
+    ):
+        price = _float(source)
+        if price is not None and price > 0:
+            return PriceReading(price, "mark", stamp)
+    return None
+
+
+def _confirmed_close_reading(payload: dict[str, Any]) -> PriceReading | None:
+    """마지막으로 **닫힌** 봉의 종가.
+
+    `market_provider` 는 확정 봉만 돌려주므로 이 값은 타임프레임 하나만큼(4h) 묵을 수 있다.
+    무효화 이탈은 "종가 이탈"이 규칙 자체이므로 이것이 맞는 출처다 — 꼬리에 털리지 않으려는
+    설계다. 그러나 **"현재"라고 부르면 안 된다.**
+    """
     analysis = payload.get("chart_analysis") if isinstance(payload.get("chart_analysis"), dict) else {}
     candles = analysis.get("candles")
     if isinstance(candles, list) and candles:
-        return _float(_dump(candles[-1]).get("close"))
+        last = _dump(candles[-1])
+        price = _float(last.get("close"))
+        if price is not None:
+            return PriceReading(price, "confirmed_close", last.get("time") or last.get("timestamp"))
     return None
+
+
+def _price_reading(payload: dict[str, Any], basis: str) -> PriceReading | None:
+    """이 판정이 써야 하는 가격.
+
+    `mark`: 지금 행동해야 하는 규칙(익절 도달·트리거 근접). 묵은 종가로 "도달"을 외치면
+        사용자가 없는 기회를 보고 움직인다. 현재가가 없으면 **판정하지 않는다** —
+        없는 것을 마지막 종가로 대신하는 것이 이 결함의 시작이었다.
+    `confirmed_close`: 종가 이탈이 규칙인 무효화. 확정봉이 없으면 현재가로 내려가되
+        그 사실이 출처에 남는다.
+    """
+    if basis == "mark":
+        return _mark_reading(payload)
+    return _confirmed_close_reading(payload) or _mark_reading(payload)
+
+
+def _current_price(payload: dict[str, Any], basis: str = "confirmed_close") -> float | None:
+    reading = _price_reading(payload, basis)
+    return reading.price if reading is not None else None
+
+
+def _last_close(payload: dict[str, Any]) -> float | None:
+    reading = _confirmed_close_reading(payload)
+    return reading.price if reading is not None else None
 
 
 def _direction(position: dict[str, Any]) -> str:

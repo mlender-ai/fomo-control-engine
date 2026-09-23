@@ -37,6 +37,7 @@ def opened_candidate(context: dict[str, Any]) -> AlertCandidate:
         f"🟢 진입 감지 · <b>{escape(str(position.get('symbol') or '-'))}</b> {_direction_kr(position)} {position.get('leverage', '-')}x @ {_price(position.get('entry_price'))}",
         f"초기 판정: {VERDICT_LABELS.get(str(plan.get('verdict_state') or 'unknown'), '미판정')} — {_counts_line(one_liners)}",
         _next_price_sentence(plan),
+        _risk_reward_sentence(position, plan),
         scenario_line,
         "판단은 사용자 몫입니다. 주문 실행 없음.",
     ]
@@ -343,6 +344,51 @@ def _next_price_sentence(plan: dict[str, Any]) -> str:
     if headline:
         return f"다음 가격: {next_price} · {escape(headline[:90])}"
     return f"다음 가격: {next_price}"
+
+
+def _risk_reward_sentence(position: dict[str, Any], plan: dict[str, Any]) -> str:
+    """이 계획이 얼마를 걸고 얼마를 노리는지 (WO-FCE-ALERT-TRUTH-01).
+
+    ## 왜 필요한가
+
+    실측(2026-09-21 · MARSCOINUSDT 롱 @ 0.133510)에서 알림은 이렇게 나갔다:
+
+        다음 가격: 무효화 0.097105 (-27.10%) · 지금 볼 것: 0.136 저항 반응.
+
+    두 숫자가 한 줄에 있는데 **그 둘의 비가 어디에도 없다.** 1.87% 를 먹자고 27.10% 를
+    걸고 있었고(R:R 0.07), 알림은 그것을 계획처럼 제시했다. 손절 선택은 따로 고쳤지만
+    (`chart_analysis._select_invalidation_level`), 계획이 뒤집혔을 때 **말하지 않는 것**은
+    그 자체로 결함이다 — 게이트가 아니라 문장으로 고친다.
+    """
+    entry = _float(position.get("entry_price"))
+    invalidation = _plan_price(plan.get("invalidation") or plan.get("engine_invalidation"))
+    target = _first_take_profit_price(plan)
+    if entry is None or entry <= 0 or invalidation is None or target is None:
+        return ""
+    risk = abs(entry - invalidation)
+    reward = abs(target - entry)
+    if risk <= 0:
+        return ""
+    ratio = reward / risk
+    line = f"손익비: {reward / entry * 100:.2f}% 목표 / {risk / entry * 100:.2f}% 위험 = R:R {ratio:.2f}"
+    if ratio < 1.0:
+        return f"⚠️ {line} — 거는 돈이 노리는 돈보다 큽니다. 손절 위치를 먼저 확인하세요."
+    return line
+
+
+def _plan_price(item: Any) -> float | None:
+    return _float(item.get("price")) if isinstance(item, dict) else None
+
+
+def _first_take_profit_price(plan: dict[str, Any]) -> float | None:
+    targets = plan.get("take_profit")
+    if not isinstance(targets, list):
+        return None
+    for target in targets:
+        price = _plan_price(target)
+        if price is not None:
+            return price
+    return None
 
 
 def _closed_pnl_line(position: dict[str, Any], pnl_amount: float | None, pnl_percent: float | None) -> str:
