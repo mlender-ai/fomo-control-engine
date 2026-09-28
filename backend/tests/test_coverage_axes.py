@@ -172,3 +172,11 @@ def test_axis_breakdown_summarises_every_axis(conn) -> None:
 
     assert set(breakdown) >= {"holiday", "host_sleep", "session_edge", "source_response"}
     assert "겹치지 않는다" in breakdown["host_sleep"]["verdict"]
+
+
+def test_chuseok_and_foundation_substitute_are_confirmed_kr_holidays(conn) -> None:
+    """OPS-02 B-2 — 추석(9/24·25) · 개천절 대체(10/5)가 확인 필요로 남아 유효일 분모에 섞였다."""
+    for day in (date(2026, 9, 24), date(2026, 9, 25), date(2026, 10, 5)):
+        assert market_calendar.is_market_holiday("KR", day)
+        assert not market_calendar.is_trading_day("KR", day)
+    assert market_calendar.pending_holiday_reason("KR", date(2026, 6, 3)) is not None
