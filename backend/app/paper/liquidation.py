@@ -66,7 +66,9 @@ def _direction(value: Any) -> int:
     return -1 if text == "short" else 1
 
 
-def liquidation_price(*, direction: Any, entry: float, quantity: float, margin: float, mmr: float, taker_fee: float = TAKER_FEE_RATE, offset: float = 0.0) -> float | None:
+def liquidation_price(
+    *, direction: Any, entry: float, quantity: float, margin: float, mmr: float, taker_fee: float = TAKER_FEE_RATE, offset: float = 0.0
+) -> float | None:
     """Bitget 격리 청산가. 성립하지 않으면 None."""
     d = _direction(direction)
     denom = quantity * (mmr + taker_fee - d)
@@ -187,9 +189,7 @@ def liquidation_first(trade: Any, *, bar: Any, price: float, stop_fill: float | 
 def check_position_loss(trade: Any) -> None:
     """PART C — 가격 손익이 증거금 아래로 갈 수 없다."""
     if trade.gross_pnl_usdt < -trade.margin_usdt * (1 + 1e-9):
-        raise PositionLossInvariantViolation(
-            f"{trade.symbol} {trade.id}: position loss {trade.gross_pnl_usdt:.4f} exceeds margin {trade.margin_usdt:.4f}"
-        )
+        raise PositionLossInvariantViolation(f"{trade.symbol} {trade.id}: position loss {trade.gross_pnl_usdt:.4f} exceeds margin {trade.margin_usdt:.4f}")
 
 
 _TIMEFRAME_MS = {"15m": 15 * 60_000, "1h": 3_600_000, "4h": 4 * 3_600_000, "1d": 24 * 3_600_000}

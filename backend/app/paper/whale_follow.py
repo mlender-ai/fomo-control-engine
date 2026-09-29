@@ -789,7 +789,16 @@ def run_exits(
     moment = now or utc_now()
     halt = liquidation.track_halt(repo, "whale")
     if halt is not None:
-        return {"open": 0, "held": 0, "deferred": 0, "evaluation_cap": MAX_EXIT_EVALUATIONS_PER_RUN, "closed": [], "closed_count": 0, "errors": [], "halted": halt}
+        return {
+            "open": 0,
+            "held": 0,
+            "deferred": 0,
+            "evaluation_cap": MAX_EXIT_EVALUATIONS_PER_RUN,
+            "closed": [],
+            "closed_count": 0,
+            "errors": [],
+            "halted": halt,
+        }
     open_trades = repo.list_whale_follow_trades(status="open", limit=200)
     closed: list[dict[str, Any]] = []
     held = 0

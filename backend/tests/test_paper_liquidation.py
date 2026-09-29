@@ -36,8 +36,8 @@ def _trade(direction: Direction = Direction.long, stop: float = 0.9) -> PaperTra
     )
 
 
-def _bar(o: float, h: float, l: float, c: float, i: int = 1) -> MarketCandle:
-    return MarketCandle(symbol="ADAUSDT", timeframe="4h", timestamp=T0 + timedelta(hours=4 * i), open=o, high=h, low=l, close=c, volume=1.0)
+def _bar(o: float, h: float, low: float, c: float, i: int = 1) -> MarketCandle:
+    return MarketCandle(symbol="ADAUSDT", timeframe="4h", timestamp=T0 + timedelta(hours=4 * i), open=o, high=h, low=low, close=c, volume=1.0)
 
 
 def _policy() -> PaperPolicy:
@@ -60,7 +60,9 @@ def test_funding_moves_liquidation_toward_entry():
 def test_touch_liquidates_when_stop_is_outside():
     trade = _trade(stop=0.5)  # 손절이 청산가 바깥 — 청산이 먼저
     lp = trade_liquidation(trade, mmr=0.0066, funding_paid=0.0)
-    decision = evaluate_exit(trade, bar=_bar(0.95, 0.96, 0.66, 0.7), stance_state={}, take_profit_pressure=None, prior_high_pressure_streak=0, policy=_policy(), liquidation_price=lp)
+    decision = evaluate_exit(
+        trade, bar=_bar(0.95, 0.96, 0.66, 0.7), stance_state={}, take_profit_pressure=None, prior_high_pressure_streak=0, policy=_policy(), liquidation_price=lp
+    )
     assert decision.reason == "liquidation"
     assert decision.execution_price == pytest.approx(lp)
     closed = apply_exit_decision(trade, decision=decision, bar=_bar(0.95, 0.96, 0.66, 0.7), policy=_policy())
@@ -72,7 +74,9 @@ def test_touch_liquidates_when_stop_is_outside():
 def test_gap_liquidates_at_open():
     trade = _trade(stop=0.9)
     lp = trade_liquidation(trade, mmr=0.0066, funding_paid=0.0)
-    decision = evaluate_exit(trade, bar=_bar(0.6, 0.62, 0.55, 0.6), stance_state={}, take_profit_pressure=None, prior_high_pressure_streak=0, policy=_policy(), liquidation_price=lp)
+    decision = evaluate_exit(
+        trade, bar=_bar(0.6, 0.62, 0.55, 0.6), stance_state={}, take_profit_pressure=None, prior_high_pressure_streak=0, policy=_policy(), liquidation_price=lp
+    )
     assert decision.reason == "liquidation"
     assert decision.execution_price == 0.6
 
@@ -80,7 +84,9 @@ def test_gap_liquidates_at_open():
 def test_stop_first_when_closer_to_entry():
     trade = _trade(stop=0.9)
     lp = trade_liquidation(trade, mmr=0.0066, funding_paid=0.0)
-    decision = evaluate_exit(trade, bar=_bar(0.95, 0.96, 0.66, 0.7), stance_state={}, take_profit_pressure=None, prior_high_pressure_streak=0, policy=_policy(), liquidation_price=lp)
+    decision = evaluate_exit(
+        trade, bar=_bar(0.95, 0.96, 0.66, 0.7), stance_state={}, take_profit_pressure=None, prior_high_pressure_streak=0, policy=_policy(), liquidation_price=lp
+    )
     assert decision.reason == "invalidation_breach"
     assert decision.execution_price == 0.9
 

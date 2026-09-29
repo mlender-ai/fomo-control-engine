@@ -525,9 +525,7 @@ def evaluate_exit(
     # 진입가에 가까우면 청산이다. 그 밖에는 손절이 먼저 걸린다(`liquidation_first`). 청산가는 호출하는 쪽이
     # 거래소 단계 · 펀딩으로 재서 넘긴다 — 이 함수는 네트워크를 타지 않는다.
     liquidation_fill_price = liquidation_fill(trade, bar=bar, price=liquidation_price)
-    if liquidation_fill_price is not None and liquidation_price is not None and liquidation_first(
-        trade, bar=bar, price=liquidation_price, stop_fill=stop_fill
-    ):
+    if liquidation_fill_price is not None and liquidation_price is not None and liquidation_first(trade, bar=bar, price=liquidation_price, stop_fill=stop_fill):
         return ExitDecision("close", "liquidation", 0, liquidation_fill_price)
     if stop_fill is not None:
         reason: ExitReason = "breakeven_stop" if trade.partial_exit_at else "invalidation_breach"
@@ -590,9 +588,7 @@ def apply_exit_decision(
     }
     # ENG-01 PART C — 가격 손익이 증거금 아래로 갈 수 없다. 넘었으면 청산 모델이 그 전에 청산했어야 한다.
     if gross < -trade.margin_usdt * (1 + 1e-9):
-        raise PositionLossInvariantViolation(
-            f"{trade.symbol} {trade.id}: position loss {gross:.4f} exceeds margin {trade.margin_usdt:.4f} ({decision.reason})"
-        )
+        raise PositionLossInvariantViolation(f"{trade.symbol} {trade.id}: position loss {gross:.4f} exceeds margin {trade.margin_usdt:.4f} ({decision.reason})")
     if decision.action == "partial":
         return trade.model_copy(
             update={
