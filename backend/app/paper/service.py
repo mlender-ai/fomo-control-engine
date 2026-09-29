@@ -23,6 +23,7 @@ from app.db.models import (
 )
 from app.exchange.bitget.trades import timeframe_seconds
 from app.paper import window as paper_window
+from app.paper.liquidation import PositionLossInvariantViolation, halt_track, track_halt, with_liquidation
 from app.paper.policy import (
     PaperPolicy,
     apply_exit_decision,
@@ -285,6 +286,10 @@ def run_paper_engine(
 ) -> dict[str, Any]:
     if not bool(settings.paper_engine_enabled):
         return {"enabled": False, "evaluated": 0, "opened": 0, "partial": 0, "closed": 0, "errors": []}
+    # ENG-01 PART C — invariant(손실 > 증거금) 위반으로 멈춘 트랙은 돌지 않는다. 사람이 원인을 고치고 표식을 지운다.
+    halt = track_halt(repo, "crypto")
+    if halt is not None:
+        return {"enabled": True, "halted": halt, "effective_run": False, "evaluated": 0, "opened": 0, "partial": 0, "closed": 0, "errors": []}
     now = now or utc_now()
     repaired_policy_exits = _repair_pre_tp_pressure_exits(repo)
     suppressed_duplicates = _suppress_duplicate_bootstrap_trades(repo, now=now)
@@ -357,6 +362,8 @@ def run_paper_engine(
                     timeframe=timeframe,
                 )
                 pressure = _normalize_pressure(_dict(position_gauges.get("take_profit")).get("level"))
+                # ENG-01 — 이 봉 기준 청산가(거래소 단계 · 펀딩). 보유 중에도 기록에 남는다(`liquidation_price`).
+                open_trade_row = with_liquidation(open_trade_row, bar=bar)
                 exit_decision = evaluate_exit(
                     open_trade_row,
                     bar=bar,
@@ -364,13 +371,20 @@ def run_paper_engine(
                     take_profit_pressure=pressure,
                     prior_high_pressure_streak=high_streak,
                     policy=policy_from_settings(settings, open_trade_row.asset_class),
+                    liquidation_price=open_trade_row.liquidation_price,
                 )
-                updated = apply_exit_decision(
-                    open_trade_row,
-                    decision=exit_decision,
-                    bar=bar,
-                    policy=policy_from_settings(settings, open_trade_row.asset_class),
-                )
+                try:
+                    updated = apply_exit_decision(
+                        open_trade_row,
+                        decision=exit_decision,
+                        bar=bar,
+                        policy=policy_from_settings(settings, open_trade_row.asset_class),
+                    )
+                except PositionLossInvariantViolation as exc:
+                    halt_track(repo, "crypto", reason="position_loss_exceeds_margin", detail=str(exc), at=now)
+                    errors.append({"symbol": symbol, "error": f"invariant: {exc}"})
+                    events.append({"type": "track_halted", "symbol": symbol, "reason": "position_loss_exceeds_margin"})
+                    break
                 if exit_decision.action in {"partial", "close"} and depth_observations < depth_budget:
                     # 청산도 체결이다 — 진입만 재면 왕복 비용의 절반을 못 본다 (4-1 작업 1).
                     depth_observations += int(
@@ -1114,6 +1128,8 @@ def paper_dashboard(repo: Any, settings: Any, *, calibration: dict[str, Any] | N
     activation = _paper_activation(repo, settings, funnel_24h, funnel_7d)
     return {
         "scoreboard": scoreboard,
+        # ENG-01 PART C — invariant 위반으로 멈춘 트랙(없으면 null). 화면이 "정지" 로 옮긴다.
+        "track_halts": {"crypto": track_halt(repo, "crypto"), "whale": track_halt(repo, "whale")},
         "open_trades": [_open_trade_payload(repo, item) for item in open_trades],
         "closed_trades": [item.model_dump(mode="json") for item in closed_trades],
         "calibration": {
