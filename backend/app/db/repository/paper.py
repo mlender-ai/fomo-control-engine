@@ -43,6 +43,24 @@ class MemoryPaperRepositoryMixin:
             trades = [trade for trade in trades if trade.symbol == symbol.upper()]
         return sorted(trades, key=lambda trade: trade.updated_at, reverse=True)[:limit]
 
+    # ENG-02 — 그림자 원장. 본 트랙(`paper_trades`)과 섞지 않는다.
+    def upsert_paper_shadow_trade(self, shadow: int, trade: PaperTrade) -> PaperTrade:
+        normalized = trade.model_copy(update={"symbol": trade.symbol.upper(), "updated_at": utc_now()})
+        self.paper_shadow_trades[normalized.id] = (int(shadow), normalized)
+        return normalized
+
+    def list_paper_shadow_trades(
+        self, shadow: int | None = None, status: str | None = None, symbol: str | None = None, limit: int = 2000
+    ) -> list[tuple[int, PaperTrade]]:
+        rows = list(self.paper_shadow_trades.values())
+        if shadow is not None:
+            rows = [row for row in rows if row[0] == int(shadow)]
+        if status:
+            rows = [row for row in rows if row[1].status == status]
+        if symbol:
+            rows = [row for row in rows if row[1].symbol == symbol.upper()]
+        return sorted(rows, key=lambda row: row[1].updated_at, reverse=True)[:limit]
+
     def list_paper_trades(
         self,
         status: str | None = None,
@@ -309,6 +327,53 @@ class SQLitePaperRepositoryMixin:
         with self._connect() as connection:
             row = connection.execute("SELECT payload FROM whale_follow_trades WHERE id = ?", (str(trade_id),)).fetchone()
         return PaperTrade.model_validate_json(row["payload"]) if row else None
+
+    def upsert_paper_shadow_trade(self, shadow: int, trade: PaperTrade) -> PaperTrade:
+        """ENG-02 그림자 원장 — `paper_trades` 와 **다른 테이블**이다."""
+        normalized = trade.model_copy(update={"symbol": trade.symbol.upper(), "updated_at": utc_now()})
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT OR REPLACE INTO paper_shadow_trades
+                    (id, shadow, symbol, timeframe, status, entry_bar_at, exit_at, updated_at, payload)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(normalized.id),
+                    int(shadow),
+                    normalized.symbol,
+                    normalized.timeframe,
+                    normalized.status,
+                    normalized.entry_bar_at.isoformat(),
+                    normalized.exit_at.isoformat() if normalized.exit_at else None,
+                    normalized.updated_at.isoformat(),
+                    _dump_model(normalized),
+                ),
+            )
+        return normalized
+
+    def list_paper_shadow_trades(
+        self, shadow: int | None = None, status: str | None = None, symbol: str | None = None, limit: int = 2000
+    ) -> list[tuple[int, PaperTrade]]:
+        query = "SELECT shadow, payload FROM paper_shadow_trades"
+        clauses: list[str] = []
+        params: list[str | int] = []
+        if shadow is not None:
+            clauses.append("shadow = ?")
+            params.append(int(shadow))
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        if symbol:
+            clauses.append("symbol = ?")
+            params.append(symbol.upper())
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
+        query += " ORDER BY updated_at DESC LIMIT ?"
+        params.append(limit)
+        with self._connect() as connection:
+            rows = connection.execute(query, tuple(params)).fetchall()
+        return [(int(row["shadow"]), PaperTrade.model_validate_json(row["payload"])) for row in rows]
 
     def list_whale_follow_trades(self, status: str | None = None, symbol: str | None = None, limit: int = 500) -> list[PaperTrade]:
         query = "SELECT payload FROM whale_follow_trades"

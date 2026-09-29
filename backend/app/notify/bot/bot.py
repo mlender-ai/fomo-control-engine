@@ -36,8 +36,10 @@ from app.notify.bot.formatters import (
     scout_tracking_keyboard,
     split_telegram_text,
 )
+from app.db.models import utc_now
 from app.notify.bot.security import ChatGuard
 from app.notify.state import NotificationState
+from app.paper.shadows import record_decision
 from app.services import runtime as service
 from app.worker.runtime import get_worker_status
 
@@ -169,6 +171,12 @@ class TelegramBotSupervisor:
         async def experiments(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await guarded(update, self._experiments, context)
 
+        async def approve(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+            await guarded(update, self._approve, context)
+
+        async def reject(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+            await guarded(update, self._reject, context)
+
         async def status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await guarded(update, self._status, context)
 
@@ -206,6 +214,9 @@ class TelegramBotSupervisor:
         app.add_handler(CommandHandler("whale", whale))
         app.add_handler(CommandHandler("veto", veto))
         app.add_handler(CommandHandler("experiments", experiments))
+        # FOMO LAB ENG-02 — 그림자 실험 승인 · 기각. **기록만** 한다 — 반영은 LAB 이 승인 대기인지 확인한 뒤다.
+        app.add_handler(CommandHandler("approve", approve))
+        app.add_handler(CommandHandler("reject", reject))
         app.add_handler(CommandHandler("status", status))
         app.add_handler(CommandHandler("mute", mute))
         app.add_handler(CommandHandler("unmute", unmute))
@@ -398,6 +409,28 @@ class TelegramBotSupervisor:
             await self._reply(update.effective_message, "거부권 처리 실패: 제안 ID를 확인해주세요.")
             return
         await self._reply(update.effective_message, f"거부권 처리 완료: {suggestion.get('title', suggestion_id)}")
+
+    async def _approve(self, update: Any, context: Any) -> None:
+        number = _first_arg(context.args)
+        if not number or not number.isdigit():
+            await self._reply(update.effective_message, "사용법: /approve <실험 번호>  예) /approve 7")
+            return
+        chat_id = update.effective_chat.id if update.effective_chat else None
+        record_decision("approve", int(number), reason="", chat_id=chat_id, at=utc_now())
+        await self._reply(
+            update.effective_message,
+            f"접수 — 그림자 #{int(number)} 승인 요청. 랩이 '승인 대기' 인지 확인한 뒤 새 정책 버전으로 반영한다(자동 승인 없음).",
+        )
+
+    async def _reject(self, update: Any, context: Any) -> None:
+        args = list(context.args or [])
+        number = args[0] if args else None
+        if not number or not str(number).isdigit():
+            await self._reply(update.effective_message, "사용법: /reject <실험 번호> <사유>")
+            return
+        chat_id = update.effective_chat.id if update.effective_chat else None
+        record_decision("reject", int(number), reason=" ".join(args[1:]), chat_id=chat_id, at=utc_now())
+        await self._reply(update.effective_message, f"접수 — 그림자 #{int(number)} 기각. 랩이 노트에 사유를 적고 닫는다.")
 
     async def _experiments(self, update: Any, context: Any) -> None:
         payload = await self._run(service.calibration_experiments)

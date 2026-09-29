@@ -24,6 +24,7 @@ from app.db.models import (
 from app.exchange.bitget.trades import timeframe_seconds
 from app.paper import window as paper_window
 from app.paper.liquidation import PositionLossInvariantViolation, halt_track, track_halt, with_liquidation
+from app.paper.shadows import run_shadows_for_bar
 from app.paper.policy import (
     PaperPolicy,
     apply_exit_decision,
@@ -351,6 +352,8 @@ def run_paper_engine(
 
             open_rows = repo.list_paper_trades(status="open", symbol=symbol, limit=5)
             open_trade_row = next((item for item in open_rows if item.timeframe == timeframe), None)
+            # ENG-02 — 본 트랙이 이 봉에서 받은 시뮬레이션 · 시그니처를 그림자가 다시 받지 않게 넘긴다(읽기만).
+            shadow_inputs: dict[str, Any] = {}
             high_streak = int(state.get("take_profit_pressure_high_streak") or 0)
             if open_trade_row is not None:
                 position_gauges = build_gauges(
@@ -426,6 +429,7 @@ def run_paper_engine(
                 if direction is not None:
                     simulation = simulation_loader(symbol, timeframe, direction.value, bar.close)
                     signature_gates = _signature_gate_evaluation(repo, settings, analysis, payload, direction, now=now)
+                    shadow_inputs = {f"sim:{direction.value}": simulation, "signature_gates": signature_gates}
                     qualified = _dict(signature_gates.get("qualified")) or None
                     action_plan = _dict(simulation.get("action_plan"))
                     invalidation = _price_from(action_plan.get("invalidation") or action_plan.get("engine_invalidation"))
@@ -602,6 +606,27 @@ def run_paper_engine(
                     opened += 1
                     events.append(_paper_event("opened", paper_trade))
 
+            # ENG-02 — 그림자. 같은 봉 · 같은 분석 · 정책 하나만 다르게. `paper_trades` 에는 쓰지 않는다.
+            # 따로 감싼다 — 그림자가 무엇을 해도 본 트랙의 이 봉은 이미 끝났고, 엔진 상태도 아래에서 그대로 쓴다.
+            try:
+                events.extend(
+                    run_shadows_for_bar(
+                        repo,
+                        settings,
+                        symbol=symbol,
+                        timeframe=timeframe,
+                        bar=bar,
+                        analysis=analysis,
+                        gauges=gauges,
+                        confluence=confluence,
+                        payload=payload,
+                        now=now,
+                        simulation_loader=simulation_loader,
+                        shared=shadow_inputs,
+                    )
+                )
+            except Exception as exc:  # 그림자 실패는 본 트랙을 멈추지 않는다
+                errors.append({"symbol": symbol, "error": f"shadow: {type(exc).__name__}: {exc}"})
             repo.upsert_paper_engine_state(
                 symbol,
                 timeframe,

@@ -22,6 +22,14 @@ def list_paper_trades(
     return service.paper_trades(status=status, symbol=symbol, limit=limit)
 
 
+@router.get("/shadows")
+def get_paper_shadows() -> dict:
+    """FOMO LAB ENG-02 — 도는 그림자 · 그림자 거래 전부. 본 트랙 원장과 따로다(`paper_shadow_trades`)."""
+    from app.paper.shadows import shadow_payload
+
+    return shadow_payload(service.runtime.repository)
+
+
 @router.get("/scoreboard")
 def get_paper_scoreboard() -> dict:
     return service.paper_scoreboard()
