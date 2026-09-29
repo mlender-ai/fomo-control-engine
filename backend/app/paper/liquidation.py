@@ -109,7 +109,7 @@ def maintenance_margin_rate(symbol: str, notional: float) -> tuple[float, str]:
             if tiers:
                 hit = (now, sorted(tiers, key=lambda t: t["start"]))
                 _tiers[symbol] = hit
-        except Exception as exc:  # noqa: BLE001 — 청산가는 기본값으로라도 계속 잰다
+        except Exception as exc:  # 청산가는 기본값으로라도 계속 잰다
             logger.warning("liquidation tiers %s: %s", symbol, exc)
     if hit is None:
         return FALLBACK_MMR, "fce_default"
@@ -133,7 +133,7 @@ def funding_settlements(symbol: str, since_ms: int) -> list[tuple[int, float]]:
             points.extend((int(r["fundingTime"]), float(r["fundingRate"])) for r in rows if isinstance(r, dict))
             if min(int(r["fundingTime"]) for r in rows) <= since_ms:
                 break
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.warning("liquidation funding %s: %s", symbol, exc)
         return hit[1] if hit else []
     points = sorted(set(points))
