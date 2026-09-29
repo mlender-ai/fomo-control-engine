@@ -6,9 +6,11 @@ from typing import Any, Literal, Sequence
 from uuid import UUID
 
 from app.db.models import Direction, MarketCandle, PaperTrade
+from app.paper.liquidation import PositionLossInvariantViolation, liquidation_fill, liquidation_first
 
 
 ExitReason = Literal[
+    "liquidation",
     "invalidation_breach",
     "breakeven_stop",
     "opposite_stance_flip",
@@ -515,9 +517,18 @@ def evaluate_exit(
     take_profit_pressure: str | None,
     prior_high_pressure_streak: int,
     policy: PaperPolicy,
+    liquidation_price: float | None = None,
 ) -> ExitDecision:
     next_holding_bars = trade.holding_bars + 1
     stop_fill = stop_fill_price(trade, bar=bar, policy=policy)
+    # ENG-01 — 강제청산. 손절보다 먼저 본다: 갭으로 청산가를 넘어 열렸거나, 같은 봉에서 청산가가 손절선보다
+    # 진입가에 가까우면 청산이다. 그 밖에는 손절이 먼저 걸린다(`liquidation_first`). 청산가는 호출하는 쪽이
+    # 거래소 단계 · 펀딩으로 재서 넘긴다 — 이 함수는 네트워크를 타지 않는다.
+    liquidation_fill_price = liquidation_fill(trade, bar=bar, price=liquidation_price)
+    if liquidation_fill_price is not None and liquidation_price is not None and liquidation_first(
+        trade, bar=bar, price=liquidation_price, stop_fill=stop_fill
+    ):
+        return ExitDecision("close", "liquidation", 0, liquidation_fill_price)
     if stop_fill is not None:
         reason: ExitReason = "breakeven_stop" if trade.partial_exit_at else "invalidation_breach"
         return ExitDecision("close", reason, 0, stop_fill)
@@ -557,8 +568,15 @@ def apply_exit_decision(
 
     execution_price = decision.execution_price or bar.close
     exit_quantity = trade.remaining_quantity * (0.5 if decision.action == "partial" else 1.0)
-    gross_increment = _gross_pnl(trade.direction, trade.entry_price, execution_price, exit_quantity)
-    exit_cost = execution_price * exit_quantity * policy.execution_cost_rate
+    if decision.reason == "liquidation":
+        # 격리 — 남은 수량 몫의 증거금 전부를 잃는다. 청산 수수료는 청산가 공식의 수수료율에 이미 들어 있다.
+        # 갭으로 청산가보다 나쁜 시가에 닿아도 손실은 증거금에서 멈춘다(격리 · 초과분은 거래소 보험 기금).
+        share = trade.remaining_quantity / trade.quantity if trade.quantity > 0 else 1.0
+        gross_increment = -(trade.margin_usdt * share)
+        exit_cost = 0.0
+    else:
+        gross_increment = _gross_pnl(trade.direction, trade.entry_price, execution_price, exit_quantity)
+        exit_cost = execution_price * exit_quantity * policy.execution_cost_rate
     gross = trade.gross_pnl_usdt + gross_increment
     costs = trade.costs_usdt + exit_cost
     net = gross - costs
@@ -570,6 +588,11 @@ def apply_exit_decision(
         "holding_bars": holding_bars,
         "updated_at": event_at,
     }
+    # ENG-01 PART C — 가격 손익이 증거금 아래로 갈 수 없다. 넘었으면 청산 모델이 그 전에 청산했어야 한다.
+    if gross < -trade.margin_usdt * (1 + 1e-9):
+        raise PositionLossInvariantViolation(
+            f"{trade.symbol} {trade.id}: position loss {gross:.4f} exceeds margin {trade.margin_usdt:.4f} ({decision.reason})"
+        )
     if decision.action == "partial":
         return trade.model_copy(
             update={

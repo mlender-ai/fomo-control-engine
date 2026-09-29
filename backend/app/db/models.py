@@ -490,6 +490,11 @@ class PaperTrade(BaseModel):
     net_return_pct: float = 0.0
     holding_bars: int = 0
     loss_tags: list[str] = Field(default_factory=list)
+    # ENG-01 강제청산 — 봉마다 거래소 단계 · 펀딩으로 다시 잰다(`app/paper/liquidation.py`). 옛 거래는 기본값으로 읽힌다.
+    liquidation_price: float | None = None
+    maintenance_margin_rate: float | None = None
+    mmr_source: str | None = None
+    funding_paid_usdt: float = 0.0
     judgment_id: str | None = None
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)

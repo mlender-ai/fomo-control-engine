@@ -64,6 +64,7 @@ from uuid import NAMESPACE_URL, uuid5
 
 from app.db.models import Direction, MarketCandle, PaperTrade, utc_now
 from app.onchain.follow_eligibility import QUALIFICATION_FOLLOW
+from app.paper import liquidation
 from app.paper import policy as paper_policy
 from app.paper import service as paper_service
 
@@ -786,6 +787,9 @@ def run_exits(
     `_opposite_confirmed_flip` 가 발화하지 않게 한다. 손절·익절·시간 만료는 그대로다.
     """
     moment = now or utc_now()
+    halt = liquidation.track_halt(repo, "whale")
+    if halt is not None:
+        return {"open": 0, "held": 0, "deferred": 0, "evaluation_cap": MAX_EXIT_EVALUATIONS_PER_RUN, "closed": [], "closed_count": 0, "errors": [], "halted": halt}
     open_trades = repo.list_whale_follow_trades(status="open", limit=200)
     closed: list[dict[str, Any]] = []
     held = 0
@@ -804,6 +808,7 @@ def run_exits(
                 held += 1
                 continue
             policy = paper_service.policy_from_settings(settings, str(analysis.get("asset_class") or "crypto"))
+            trade = liquidation.with_liquidation(trade, bar=bar)  # ENG-01 — 이 봉 기준 청산가
             decision = paper_policy.evaluate_exit(
                 trade,
                 bar=bar,
@@ -811,8 +816,14 @@ def run_exits(
                 take_profit_pressure=None,
                 prior_high_pressure_streak=0,
                 policy=policy,
+                liquidation_price=trade.liquidation_price,
             )
-            updated = paper_policy.apply_exit_decision(trade, decision=decision, bar=bar, policy=policy)
+            try:
+                updated = paper_policy.apply_exit_decision(trade, decision=decision, bar=bar, policy=policy)
+            except liquidation.PositionLossInvariantViolation as exc:
+                liquidation.halt_track(repo, "whale", reason="position_loss_exceeds_margin", detail=str(exc), at=moment)
+                errors.append({"id": str(trade.id), "symbol": trade.symbol, "error": f"invariant: {exc}"})
+                break
             repo.upsert_whale_follow_trade(updated)
             if decision.action == "hold":
                 held += 1
